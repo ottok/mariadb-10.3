@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mariadb-10.0\n"
 "Report-Msgid-Bugs-To: mariadb-10.0@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-30 22:44+0300\n"
+"POT-Creation-Date: 2016-09-03 15:05+0200\n"
 "PO-Revision-Date: 2016-07-09 22:41+0200\n"
 "Last-Translator: Joe Hansen <joedalton2@yahoo.dk>\n"
 "Language-Team: Danish <debian-l10n-danish@lists.debian.org>\n"
@@ -32,8 +32,8 @@ msgid ""
 "upgraded (or downgraded)."
 msgstr ""
 "En fil navngivet /var/lib/msyql/debian-*.flag findes på dette system. "
-"Nummeret antyder en databaseversion i binært format, som ikke automatisk "
-"kan opgraderes (eller nedgraderes)."
+"Nummeret antyder en databaseversion i binært format, som ikke automatisk kan "
+"opgraderes (eller nedgraderes)."
 
 #. Type: note
 #. Description
@@ -42,8 +42,8 @@ msgid ""
 "Therefore the previous data directory will be renamed to /var/lib/mysql-* "
 "and a new data directory will be initialized at /var/lib/mysql."
 msgstr ""
-"Derfor vil den tidligere datamappe blive omdøbt til /var/lib/mysql-* "
-"og en ny datamappe vil blive initialiseret i /var/lib/msyql."
+"Derfor vil den tidligere datamappe blive omdøbt til /var/lib/mysql-* og en "
+"ny datamappe vil blive initialiseret i /var/lib/msyql."
 
 #. Type: note
 #. Description
@@ -108,3 +108,37 @@ msgstr ""
 "eller hvis en anden mariadb-server-pakke allerede benytter den, bør dataene "
 "bevares."
 
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid "Enable the Feedback plugin?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The User Feedback plugin is designed to collect configuration and usage "
+"information and optionally upload it to mariadb.org, or to any other "
+"configured URL."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The collected data will be used to steer engineering and community "
+"development of MariaDB in the right direction, in order to continuously "
+"improve the product. The plugin gathers only non-sensitive information; no "
+"personal data or anything that would enable tracking of the user will be "
+"sent."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"See https://mariadb.org/about/statistics/ for more information on how to "
+"configure the User Feedback plugin, as well as collected MariaDB usage "
+"statistics."
+msgstr ""

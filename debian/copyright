@@ -909,6 +909,21 @@ Files: zlib/CMakeLists.txt
 Copyright: 2006, 2014, Oracle and/or its affiliates
 License: GPL-2
 
+Files: debian/mariadb-server-10.0.templates
+Copyright:
+  2016 MariaDB Corporation Ab
+  2016 MariaDB Foundation
+License: CC-BY-SA
+Comment:
+ The description of template: mariadb-server-10.0/feedback_plugin uses content
+ from the MariaDB Corporation Ab and MariaDB Foundation websites :
+  - https://mariadb.com/kb/en/mariadb/feedback-plugin/ (CC-BY-SA)
+  - https://mariadb.org/about/statistics/
+    (permission to freely copy granted by Otto Kekäläinen <otto@mariadb.org>)
+ .
+ Copyright and license for other content in this file is described in the
+ 'Files: debian/*' section
+
 License: GPL-2
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by

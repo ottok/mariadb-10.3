@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mariadb-10.0\n"
 "Report-Msgid-Bugs-To: mariadb-10.0@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-13 11:44+0300\n"
+"POT-Creation-Date: 2016-09-03 15:05+0200\n"
 "PO-Revision-Date: 2016-04-30 16:16-0300\n"
 "Last-Translator: Adriano Rafael Gomes <adrianorg@arg.eti.br>\n"
 "Language-Team: Brazilian Portuguese <debian-l10n-portuguese@lists.debian."
@@ -107,6 +107,41 @@ msgstr ""
 "Caso você esteja removendo o pacote MariaDB para posteriormente instalar uma "
 "versão mais recente ou, caso uma versão diferente do pacote mariadb-server "
 "esteja sendo utilizada, os dados deverão ser mantidos."
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid "Enable the Feedback plugin?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The User Feedback plugin is designed to collect configuration and usage "
+"information and optionally upload it to mariadb.org, or to any other "
+"configured URL."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The collected data will be used to steer engineering and community "
+"development of MariaDB in the right direction, in order to continuously "
+"improve the product. The plugin gathers only non-sensitive information; no "
+"personal data or anything that would enable tracking of the user will be "
+"sent."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"See https://mariadb.org/about/statistics/ for more information on how to "
+"configure the User Feedback plugin, as well as collected MariaDB usage "
+"statistics."
+msgstr ""
 
 #~ msgid "A file named /var/lib/mysql/debian-*.flag exists on this system."
 #~ msgstr "Um arquivo de nome /var/lib/mysql/debian-*.flag existe no sistema."

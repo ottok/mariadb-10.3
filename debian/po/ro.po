@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: po-debconf://mysql-dfsg\n"
 "Report-Msgid-Bugs-To: mariadb-10.0@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-30 22:44+0300\n"
+"POT-Creation-Date: 2016-09-03 15:05+0200\n"
 "PO-Revision-Date: 2006-12-20 21:27+0200\n"
 "Last-Translator: stan ioan-eugen <stan.ieugen@gmail.com>\n"
 "Language-Team: romanian <debian-l10n-romanian@lists.debian.org>\n"
@@ -101,6 +101,41 @@ msgstr ""
 "Scriptul urmează să şteargă directorul de date /var/lib/mysql. Dacă plănuiţi "
 "doar să instalaţi o versiune nouă MariaDB sau datele sunt folosite de către "
 "un alt pachet mariadb-server, atunci ar trebui păstraţi datele."
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid "Enable the Feedback plugin?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The User Feedback plugin is designed to collect configuration and usage "
+"information and optionally upload it to mariadb.org, or to any other "
+"configured URL."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The collected data will be used to steer engineering and community "
+"development of MariaDB in the right direction, in order to continuously "
+"improve the product. The plugin gathers only non-sensitive information; no "
+"personal data or anything that would enable tracking of the user will be "
+"sent."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"See https://mariadb.org/about/statistics/ for more information on how to "
+"configure the User Feedback plugin, as well as collected MariaDB usage "
+"statistics."
+msgstr ""
 
 #, fuzzy
 #~| msgid "Do you really want to downgrade?"

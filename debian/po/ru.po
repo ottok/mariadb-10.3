@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mariadb-10.0 10.0.25-1\n"
 "Report-Msgid-Bugs-To: mariadb-10.0@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-13 11:44+0300\n"
+"POT-Creation-Date: 2016-09-03 15:05+0200\n"
 "PO-Revision-Date: 2016-05-04 18:56+0300\n"
 "Last-Translator: Yuri Kozlov <yuray@komyakino.ru>\n"
 "Language-Team: Russian <debian-l10n-russian@lists.debian.org>\n"
@@ -34,9 +34,9 @@ msgid ""
 "indicates a database binary format version that cannot automatically be "
 "upgraded (or downgraded)."
 msgstr ""
-"В системе найден файл /var/lib/mysql/debian-*.flag. Число представляет версию "
-"двоичного формата базы данных, которую невозможно обновить автоматически "
-"(или откатить к старой версии)."
+"В системе найден файл /var/lib/mysql/debian-*.flag. Число представляет "
+"версию двоичного формата базы данных, которую невозможно обновить "
+"автоматически (или откатить к старой версии)."
 
 #. Type: note
 #. Description
@@ -45,9 +45,9 @@ msgid ""
 "Therefore the previous data directory will be renamed to /var/lib/mysql-* "
 "and a new data directory will be initialized at /var/lib/mysql."
 msgstr ""
-"В следствии этого, предыдущий каталог с данными будет переименован в "
-"/var/lib/mysql-*, а в /var/lib/mysql будет инициализирован каталог для "
-"новых данных."
+"В следствии этого, предыдущий каталог с данными будет переименован в /var/"
+"lib/mysql-*, а в /var/lib/mysql будет инициализирован каталог для новых "
+"данных."
 
 #. Type: note
 #. Description
@@ -108,6 +108,41 @@ msgstr ""
 "Если вы удаляете пакет MariaDB для установки более новой версии MariaDB, или "
 "есть другие пакеты mariadb-server, использующие этот каталог, то данные "
 "лучше сохранить."
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid "Enable the Feedback plugin?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The User Feedback plugin is designed to collect configuration and usage "
+"information and optionally upload it to mariadb.org, or to any other "
+"configured URL."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"The collected data will be used to steer engineering and community "
+"development of MariaDB in the right direction, in order to continuously "
+"improve the product. The plugin gathers only non-sensitive information; no "
+"personal data or anything that would enable tracking of the user will be "
+"sent."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mariadb-server-10.0.templates:5001
+msgid ""
+"See https://mariadb.org/about/statistics/ for more information on how to "
+"configure the User Feedback plugin, as well as collected MariaDB usage "
+"statistics."
+msgstr ""
 
 #~ msgid "A file named /var/lib/mysql/debian-*.flag exists on this system."
 #~ msgstr "В системе найден файл /var/lib/mysql/debian-*.flag."

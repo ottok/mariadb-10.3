@@ -49,6 +49,9 @@ if [ "$1" = "purge" -a ! \( -x /usr/sbin/mysqld -o -L /usr/sbin/mysqld \) ]; the
   rm -f /var/log/mysql.{log,err}{,.0,.[1234567].gz}
   rm -rf /var/log/mysql
 
+  # remove User Feedback Plugin config file
+  rm -f /etc/mysql/mariadb.conf.d/50-feedback.cnf
+
   db_input high mariadb-server-10.0/postrm_remove_databases || true
   db_go || true
   db_get mariadb-server-10.0/postrm_remove_databases || true
