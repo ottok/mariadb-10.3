@@ -43,7 +43,7 @@ endif
 # Skip TokuDB if arch is not amd64 (also disable for kfreebsd-amd64 as it FTBFS)
 # Skipped on the x32 ABI too; untested, but unlikely to work given i386 is not
 # supported.
-ifneq ($(DEB_HOST_ARCH_ABI)-$(DEB_HOST_ARCH_CPU), base-amd64)
+ifneq ($(DEB_HOST_ARCH),amd64)
     CMAKEFLAGS += -DWITHOUT_TOKUDB=true
 endif
 
