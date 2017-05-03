@@ -19,11 +19,8 @@ export DEB_BUILD_OPTIONS="nocheck"
 
 # Automatically use major.minor version strings from the sources
 #
-source ./VERSION
-UPSTREAM="${MYSQL_VERSION_MAJOR}.${MYSQL_VERSION_MINOR}.${MYSQL_VERSION_PATCH}${MYSQL_VERSION_EXTRA}"
-RELEASE_EXTRA=""
+DEB_VERSION=$(dpkg-parsechangelog -SVersion)
 
-RELEASE_NAME=""
 PATCHLEVEL="+deb" # Differentiate from MariaDB.org repositories that use '+maria' 
 LOGSTRING="MariaDB build"
 
@@ -32,14 +29,14 @@ CODENAME="$(lsb_release -sc)"
 
 # Adjust changelog, add new version
 echo "Incrementing changelog and starting build scripts"
-dch -b -D ${CODENAME} -v "${UPSTREAM}${PATCHLEVEL}~${CODENAME}" "Automatic build with ${LOGSTRING}."
+dch --force-bad-version --force-distribution -D ${CODENAME} -v "${DEB_VERSION}${PATCHLEVEL}~${CODENAME}" "Automatic build with ${LOGSTRING}."
 
 # Build the package
 # Pass -I so that .git and other unnecessary temporary and source control files
 # will be ignored by dpkg-source when creating the tar.gz source package.
 # Use -b to build binary only packages as there is no need to waste time on
 # generating the source package.
-echo "Creating package version ${UPSTREAM}${PATCHLEVEL}~${CODENAME} ... "
+echo "Creating package version ${DEB_VERSION}${PATCHLEVEL}~${CODENAME} ... "
 fakeroot dpkg-buildpackage -us -uc -I -b
 
 # Don't log package contents on Travis-CI to save time and log size
