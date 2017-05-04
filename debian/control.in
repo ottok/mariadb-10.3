@@ -367,7 +367,7 @@ Description: OQGraph storage engine for MariaDB
  This package contains the OQGraph plugin for MariaDB.
 
 Package: mariadb-plugin-tokudb
-Architecture: base-any-any-amd64
+Architecture: amd64
 Depends: mariadb-server-@MARIADB_SERIES@,
          ${misc:Depends},
          ${shlibs:Depends}

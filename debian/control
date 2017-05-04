@@ -367,8 +367,13 @@ Description: OQGraph storage engine for MariaDB
  This package contains the OQGraph plugin for MariaDB.
 
 Package: mariadb-plugin-tokudb
+<<<<<<< HEAD
 Architecture: base-any-any-amd64
 Depends: mariadb-server-10.3,
+=======
+Architecture: amd64
+Depends: mariadb-server-10.2,
+>>>>>>> e9c28a8f... Declare mariadb-plugin-tokudb as available only on (linux-)amd64 to fix FTBFS on kfreebsd-amd64
          ${misc:Depends},
          ${shlibs:Depends}
 Breaks: mariadb-server-10.0,
