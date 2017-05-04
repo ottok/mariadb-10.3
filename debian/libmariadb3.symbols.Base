@@ -214,11 +214,9 @@ libmariadb.so.3 libmariadb3 #MINVER#
  list_length@Base 10.1.22
  list_reverse@Base 10.1.22
  list_walk@Base 10.1.22
- ll2str@Base 10.1.22
  llstr@Base 10.1.22
  load_defaults@Base 5.5.36
  log_10_int@Base 10.1.22
- longlong10_to_str@Base 10.1.22
  longlong2decimal@Base 10.1.22
  make_password_from_salt@Base 10.1.22
  make_password_from_salt_323@Base 10.1.22
