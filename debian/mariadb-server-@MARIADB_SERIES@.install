@@ -11,6 +11,8 @@ debian/additions/mariadb.conf.d/50-server.cnf etc/mysql/mariadb.conf.d
 debian/additions/source_mariadb-*.py usr/share/apport/package-hooks
 debian/mariadb-server-@MARIADB_SERIES@.insserv.conf => etc/insserv.conf.d/mariadb
 etc/apparmor.d/usr.sbin.mysqld
+[linux-any] lib/systemd/system/mariadb@.service
+[linux-any] lib/systemd/system/mariadb.service
 usr/bin/aria_chk
 usr/bin/aria_dump_log
 usr/bin/aria_ftdump
