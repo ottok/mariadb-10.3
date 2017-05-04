@@ -133,7 +133,7 @@ override_dh_systemd_enable:
 # started which might depend on a running database server.
 override_dh_installinit-arch:
 	dh_installinit --name=mariadb -- defaults 19 21
-	dh_systemd_start --restart-after-upgrade
+	dh_systemd_start --no-restart-after-upgrade
 
 override_dh_installcron-arch:
 	dh_installcron --name mariadb
