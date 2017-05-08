@@ -161,7 +161,8 @@ Depends: debianutils (>=1.6),
          ${shlibs:Depends}
 Conflicts: mysql-client-core-5.5,
            mysql-client-core-5.6,
-           mysql-client-core-5.7
+           mysql-client-core-5.7,
+	   mytop
 Breaks: mariadb-client-10.0,
         mariadb-client-5.5,
         mariadb-server-10.0 (<< 10.0.13-1~),
@@ -175,6 +176,7 @@ Replaces: mariadb-client-10.0,
           mysql-client-5.5,
           mysql-client-5.6,
           mysql-client-5.7,
+	  mytop,
           virtual-mysql-client
 Provides: virtual-mysql-client
 Recommends: libdbd-mysql-perl (>= 1.2202),
