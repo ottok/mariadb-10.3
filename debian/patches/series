@@ -16,3 +16,4 @@ armhf_mroonga_storage_fail.patch
 remove-systemd-obsolete-target.patch
 kFreeBSD-gettid.patch
 0018-Fix-the-awk-path-on-Debian.patch
+mips-innobase-atomic.patch
