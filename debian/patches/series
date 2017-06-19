@@ -19,3 +19,4 @@ kFreeBSD-gettid.patch
 0018-Fix-the-awk-path-on-Debian.patch
 mips-innobase-atomic.patch
 fix-FTBFS-on-GNU-Hurd.patch
+mytop-merge_src:mytop_improvements.patch
