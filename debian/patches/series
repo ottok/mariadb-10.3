@@ -13,6 +13,7 @@ mips-machine.patch
 mips-unstable-tests.patch
 hurd_socket.patch
 armhf_mroonga_storage_fail.patch
+c11_atomics.patch
 remove-systemd-obsolete-target.patch
 kFreeBSD-gettid.patch
 0018-Fix-the-awk-path-on-Debian.patch
