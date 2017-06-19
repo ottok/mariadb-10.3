@@ -20,3 +20,4 @@ kFreeBSD-gettid.patch
 mips-innobase-atomic.patch
 fix-FTBFS-on-GNU-Hurd.patch
 mytop-merge_src:mytop_improvements.patch
+Add_default_ExecStartPre_to_mariadb@.service.patch
