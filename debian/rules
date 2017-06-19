@@ -30,7 +30,7 @@ else
 endif
 
 # Ignore test suite exit code on unstable platforms
-ifeq ($(DEB_HOST_ARCH),$(filter $(DEB_HOST_ARCH),mips mipsel alpha powerpc sh4 s390x))
+ifeq ($(DEB_HOST_ARCH),$(filter $(DEB_HOST_ARCH),mips mipsel alpha powerpc sh4 s390x hurd-i386))
     TESTSUITE_FAIL_CMD:=true
 else
     TESTSUITE_FAIL_CMD:=exit 1

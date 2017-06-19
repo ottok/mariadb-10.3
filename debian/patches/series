@@ -18,3 +18,4 @@ remove-systemd-obsolete-target.patch
 kFreeBSD-gettid.patch
 0018-Fix-the-awk-path-on-Debian.patch
 mips-innobase-atomic.patch
+fix-FTBFS-on-GNU-Hurd.patch
