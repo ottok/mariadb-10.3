@@ -73,7 +73,7 @@ https://mariadb.com/kb
 * PASSWORDS:
 ============
 It is recommended you create additional admin users for your database
-adminstration needs in addition to the default root user.
+administration needs in addition to the default root user.
 
 If your local unix account is the one you want to have local super user
 access on your database with you can create the following account that will
