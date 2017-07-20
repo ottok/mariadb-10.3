@@ -148,7 +148,7 @@ $(GENERATED_FILES): $(GENERATED_SOURCES)
 	  chmod --reference="$$in" "$$out"; \
 	done
 
-prepared-files: debian/control debian/tests/control debian/po/templates.pot debian/po/POTFILES.in
+prepared-files: debian/control debian/tests/control debian/po/templates.pot debian/po/POTFILES.in debian/watch
 	wrap-and-sort -a
 
 debian/control: debian/control.in debian/rules debian/changelog
@@ -162,6 +162,9 @@ debian/po/templates.pot: debian/po/templates.pot.in debian/rules debian/changelo
 
 debian/po/POTFILES.in: debian/po/POTFILES.in.in debian/rules debian/changelog
 	sed -e "s/@MARIADB_SERIES@/$(MARIADB_SERIES)/g" >$@ <debian/po/POTFILES.in.in
+
+debian/watch: debian/watch.in debian/rules debian/changelog
+	sed -e "s/@MARIADB_SERIES@/$(MARIADB_SERIES)/g" >$@ <debian/watch.in
 
 .PHONY: get-orig-source prepared-files generated-files $(GENERATED_FILES)
 
