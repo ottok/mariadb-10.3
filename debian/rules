@@ -11,7 +11,6 @@ include /usr/share/dpkg/default.mk
 BUILDDIR := builddir
 DEB_VERSION_REVISION := $(shell echo '$(DEB_VERSION)' | sed -e 's/^.*-//')
 MARIADB_SERIES := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -e 's/\.[0-9]*$$//')
-RELEASE := $(shell lsb_release -r -s) # Use changelog based DEB_DISTRIBUTION instead?
 TMP:=$(CURDIR)/debian/tmp
 
 GENERATED_SOURCES=$(shell find debian/ -name '*@MARIADB_SERIES@*')
@@ -79,7 +78,7 @@ override_dh_auto_configure:
 	    $(CMAKEFLAGS) \
 	    -DAWS_SDK_EXTERNAL_PROJECT=OFF \
 	    -DWITH_SSL=bundled \
-	    -DCOMPILATION_COMMENT="$(DEB_VENDOR) $(RELEASE)" \
+	    -DCOMPILATION_COMMENT="$(DEB_VENDOR) $(DEB_DISTRIBUTION)" \
 	    -DMYSQL_SERVER_SUFFIX="-$(DEB_VERSION_REVISION)" \
 	    -DSYSTEM_TYPE="debian-$(DEB_HOST_GNU_SYSTEM)" \
 	    -DCMAKE_SYSTEM_PROCESSOR=$(DEB_HOST_ARCH) \
