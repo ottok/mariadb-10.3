@@ -80,10 +80,8 @@ Section: libs
 Depends: ${misc:Depends},
          ${shlibs:Depends}
 Multi-Arch: same
-Breaks: libmariadbd-dev (<< ${source:Version}),
-        libmysqld-dev
-Replaces: libmariadbd-dev (<< ${source:Version}),
-          libmysqld-dev
+Breaks: libmariadbd-dev (<< ${source:Version})
+Replaces: libmariadbd-dev (<< ${source:Version})
 Description: MariaDB embedded database, shared library
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
@@ -127,24 +125,9 @@ Architecture: any
 Depends: mariadb-common (>= ${source:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
-Conflicts: mysql-client-5.5,
-           mysql-client-5.6,
-           mysql-client-5.7
-Breaks: mariadb-client-10.0 (<< 10.0.24-6~),
-        mariadb-client-core-10.0,
-        mariadb-client-core-5.5,
-        mysql-client-core-5.5,
-        mysql-client-core-5.6,
-        mysql-client-core-5.7,
-        virtual-mysql-client-core
-Replaces: mariadb-client-10.0 (<< 10.0.24-6~),
-          mariadb-client-core-10.0,
-          mariadb-client-core-5.5,
-          mysql-client-core-5.5,
-          mysql-client-core-5.6,
-          mysql-client-core-5.7,
-          virtual-mysql-client-core
 Provides: virtual-mysql-client-core
+Conflicts: virtual-mysql-client-core
+Replaces: virtual-mysql-client-core
 Description: MariaDB database core client binaries
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
@@ -160,27 +143,13 @@ Depends: debianutils (>=1.6),
          ${misc:Depends},
          ${perl:Depends},
          ${shlibs:Depends}
-Conflicts: mysql-client-core-5.5,
-           mysql-client-core-5.6,
-           mysql-client-core-5.7,
-           mytop
-Breaks: mariadb-client-10.0,
-        mariadb-client-5.5,
-        mariadb-server-10.0 (<< 10.0.13-1~),
-        mysql-client-5.5,
-        mysql-client-5.6,
-        mysql-client-5.7,
-        virtual-mysql-client
-Replaces: mariadb-client-10.0,
-          mariadb-client-5.5,
-          mariadb-server-10.0 (<< 10.0.13-1~),
-          mysql-client-5.5,
-          mysql-client-5.6,
-          mysql-client-5.7,
-          mytop,
+Provides: mytop,
           virtual-mysql-client
-Provides: virtual-mysql-client
-Recommends: libdbd-mysql-perl (>= 1.2202),
+Conflicts: mytop,
+           virtual-mysql-client
+Replaces: mytop,
+          virtual-mysql-client
+Recommends: libdbd-mysql-perl,
             libdbi-perl,
             libterm-readkey-perl
 Description: MariaDB database client binaries
@@ -197,32 +166,9 @@ Architecture: any
 Depends: mariadb-common (>= ${source:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
-Conflicts: mariadb-galera-server-5.5,
-           mysql-server-5.5,
-           mysql-server-5.6,
-           mysql-server-5.7
-Breaks: mariadb-client-10.3 (<< ${source:Version}),
-        mariadb-server-10.3 (<< ${source:Version}),
-        mariadb-server-core-10.0,
-        mariadb-server-core-5.5,
-        mysql-client-5.5,
-        mysql-client-5.6,
-        mysql-server-core-5.5,
-        mysql-server-core-5.6,
-        mysql-server-core-5.7,
-        virtual-mysql-server-core
-Replaces: mariadb-client-10.3 (<< ${source:Version}),
-          mariadb-server-10.3 (<< ${source:Version}),
-          mariadb-server-core-10.0,
-          mariadb-server-core-5.5,
-          mysql-client-5.5,
-          mysql-client-5.6,
-          mysql-client-5.7,
-          mysql-server-core-5.5,
-          mysql-server-core-5.6,
-          mysql-server-core-5.7,
-          virtual-mysql-server-core
 Provides: virtual-mysql-server-core
+Conflicts: virtual-mysql-server-core
+Replaces: virtual-mysql-server-core
 Description: MariaDB database core server files
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
@@ -256,142 +202,72 @@ Depends: galera-3 (>=25.3),
          socat,
          ${misc:Depends},
          ${shlibs:Depends}
-Conflicts: mariadb-tokudb-engine-10.0,
-           mariadb-tokudb-engine-10.1,
-           mariadb-tokudb-engine-5.5,
-           mysql-server-core-5.5,
-           mysql-server-core-5.6,
-           mysql-server-core-5.7
-Breaks: mariadb-galera-server,
-        mariadb-galera-server-10.0,
-        mariadb-galera-server-5.5,
-        mariadb-server-10.0,
-        mariadb-server-5.5,
-        mariadb-tokudb-engine-10.0,
-        mariadb-tokudb-engine-10.1,
-        mariadb-tokudb-engine-5.5,
-        mysql-client-5.5,
-        mysql-server-5.5,
-        mysql-server-5.6,
-        mysql-server-5.7,
-        virtual-mysql-server
-Replaces: mariadb-galera-server,
-          mariadb-galera-server-10.0,
-          mariadb-galera-server-5.5,
-          mariadb-server-10.0,
-          mariadb-server-5.5,
-          mariadb-tokudb-engine-10.0,
-          mariadb-tokudb-engine-10.1,
-          mariadb-tokudb-engine-5.5,
-          mysql-client-5.5,
-          mysql-server-5.5,
-          mysql-server-5.6,
-          mysql-server-5.7,
-          virtual-mysql-server
 Provides: virtual-mysql-server
+Conflicts: virtual-mysql-server
+Replaces: virtual-mysql-server
 Description: MariaDB database server binaries
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
  language in the world. The main goals of MariaDB are speed, robustness and
  ease of use.
  .
- This package includes the server binaries.
+ This package includes the MariaDB 10.3 server binaries.
 
-Package: mariadb-server
-Architecture: all
-Depends: mariadb-server-10.3 (>= ${source:Version}),
-         ${misc:Depends}
-Description: MariaDB database server (metapackage depending on the latest version)
- This is an empty package that depends on the current "best" version of
- mariadb-server (currently mariadb-server-10.0), as determined by the MariaDB
- maintainers. Install this package if in doubt about which MariaDB
- version you need. That will install the version recommended by the
- package maintainers.
- .
- MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
- server. SQL (Structured Query Language) is the most popular database query
- language in the world. The main goals of MariaDB are speed, robustness and
- ease of use.
-
-Package: mariadb-client
-Architecture: all
-Depends: mariadb-client-10.3 (>= ${source:Version}),
-         ${misc:Depends}
-Description: MariaDB database client (metapackage depending on the latest version)
- This is an empty package that depends on the current "best" version of
- mariadb-client (currently mariadb-client-10.0), as determined by the MariaDB
- maintainers.  Install this package if in doubt about which MariaDB version
- you want, as this is the one considered to be in the best shape.
-
-Package: mariadb-plugin-connect
+Package: mariadb-plugin-connect-10.3
 Architecture: any
 Depends: libxml2,
          mariadb-server-10.3,
          unixodbc,
          ${misc:Depends},
          ${shlibs:Depends}
-Conflicts: mariadb-connect-engine-10.0,
-           mariadb-connect-engine-10.1
-Breaks: mariadb-connect-engine-10.0,
-        mariadb-connect-engine-10.1,
-        mariadb-server-10.0,
-        mariadb-server-10.3 (<< ${source:Version})
-Replaces: mariadb-connect-engine-10.0,
-          mariadb-connect-engine-10.1,
-          mariadb-server-10.0,
-          mariadb-server-10.1
+Provides: mariadb-plugin-connect
+Conflicts: mariadb-plugin-connect
+Replaces: mariadb-plugin-connect
 Description: Connect storage engine for MariaDB
  Connect engine supports a number of file formats (dbf, xml, txt, bin, etc),
  connections to ODBC tables and remote MySQL tables, as well as a number of
  other interesting features.
- This package contains the Connect plugin for MariaDB.
+ .
+ This package contains the Connect plugin for MariaDB 10.3.
 
-Package: mariadb-plugin-oqgraph
+Package: mariadb-plugin-oqgraph-10.3
 Architecture: any
 Depends: libjudydebian1,
          mariadb-server-10.3,
          ${misc:Depends},
          ${shlibs:Depends}
-Conflicts: mariadb-oqgraph-engine-10.0,
-           mariadb-oqgraph-engine-10.1
-Breaks: mariadb-oqgraph-engine-10.0,
-        mariadb-oqgraph-engine-10.1,
-        mariadb-server-10.0,
-        mariadb-server-10.1
-Replaces: mariadb-oqgraph-engine-10.0,
-          mariadb-oqgraph-engine-10.1,
-          mariadb-server-10.0,
-          mariadb-server-10.1
+Conflicts: mariadb-plugin-oqgraph
+Replaces: mariadb-plugin-oqgraph
+Provides: mariadb-plugin-oqgraph
 Description: OQGraph storage engine for MariaDB
  The OQGraph engine is a computation engine plugin for handling hierarchies
  (trees) and graphs (friend-of-a-friend, etc) cleanly through standard SQL.
- This package contains the OQGraph plugin for MariaDB.
+ .
+ This package contains the OQGraph plugin for MariaDB 10.3.
 
-Package: mariadb-plugin-tokudb
+Package: mariadb-plugin-tokudb-10.3
 Architecture: amd64
 Depends: mariadb-server-10.3,
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-server-10.0,
-        mariadb-server-10.1
-Replaces: mariadb-server-10.0,
-          mariadb-server-10.1
+Conflicts: mariadb-plugin-tokudb
+Replaces: mariadb-plugin-tokudb
+Provides: mariadb-plugin-tokudb
 Description: TokuDB storage engine for MariaDB
  The TokuDB storage engine is for use in high-performance and write-intensive
  environments, offering increased compression and better performance based
  on fractal indexes.
  .
- This package contains the TokuDB plugin for MariaDB.
+ This package contains the TokuDB plugin for MariaDB 10.3.
 
-Package: mariadb-plugin-rocksdb
+Package: mariadb-plugin-rocksdb-10.3
 Architecture: amd64 arm64 mips64el ppc64el
 Depends: mariadb-server-10.3,
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-server-10.0,
-        mariadb-server-10.1
-Replaces: mariadb-server-10.0,
-          mariadb-server-10.1
+Conflicts: mariadb-plugin-rocksdb
+Replaces: mariadb-plugin-rocksdb
+Provides: mariadb-plugin-rocksdb
 Description: RocksDB storage engine for MariaDB
  The RocksDB storage engine offers excellent write performance without
  sacrificing too much read performance.  And as a modern storage
@@ -399,73 +275,73 @@ Description: RocksDB storage engine for MariaDB
  .
  This package contains the RocksDB plugin for MariaDB.
 
-Package: mariadb-plugin-mroonga
+Package: mariadb-plugin-mroonga-10.3
 Architecture: any-alpha any-amd64 any-arm any-arm64 any-i386 any-ia64 any-mips64el any-mips64r6el any-mipsel any-mipsr6el any-nios2 any-powerpcel any-ppc64el any-sh3 any-sh4 any-tilegx
 Depends: mariadb-server-10.3,
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-server-10.0,
-        mariadb-server-10.1
-Replaces: mariadb-server-10.0,
-          mariadb-server-10.1
+Conflicts: mariadb-plugin-mroonga
+Replaces: mariadb-plugin-mroonga
+Provides: mariadb-plugin-mroonga
 Description: Mroonga storage engine for MariaDB
  Mroonga (formerly named Groonga Storage Engine) is a storage engine that
  provides fast CJK-ready full text searching using column store.
- This package contains the Mroonga plugin for MariaDB.
+ .
+ This package contains the Mroonga plugin for MariaDB 10.3.
 
-Package: mariadb-plugin-spider
+Package: mariadb-plugin-spider-10.3
 Architecture: any
 Depends: mariadb-server-10.3,
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-server-10.0,
-        mariadb-server-10.1
-Replaces: mariadb-server-10.0,
-          mariadb-server-10.1
+Conflicts: mariadb-plugin-spider
+Replaces: mariadb-plugin-spider
+Provides: mariadb-plugin-spider
 Description: Spider storage engine for MariaDB
  The Spider storage engine with built-in sharding features. It supports
  partitioning and xa transactions, and allows tables of different MariaDB
  instances to be handled as if they were on the same instance. It refers to one
  possible implementation of ISO/IEC 9075-9:2008 SQL/MED.
 
-Package: mariadb-plugin-gssapi-server
+Package: mariadb-plugin-gssapi-server-10.3
 Architecture: any
 Depends: libgssapi-krb5-2,
          mariadb-server-10.3,
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-gssapi-server-10.1,
-        mariadb-gssapi-server-10.2
-Replaces: mariadb-gssapi-server-10.1,
-          mariadb-gssapi-server-10.2
+Conflicts: mariadb-plugin-gssapi-server
+Replaces: mariadb-plugin-gssapi-server
+Provides: mariadb-plugin-gssapi-server
 Description: GSSAPI authentication plugin for MariaDB server
  This plugin includes support for Kerberos on Unix, but can also be used for
  Windows authentication with or without domain environment.
  .
  This package contains the server parts.
 
-Package: mariadb-plugin-gssapi-client
+Package: mariadb-plugin-gssapi-client-10.3
 Architecture: any
 Depends: libgssapi-krb5-2,
-         mariadb-client-10.3,
+         libmariadb3 (= ${source:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-gssapi-client-10.1,
-        mariadb-gssapi-client-10.2
-Replaces: mariadb-gssapi-client-10.1,
-          mariadb-gssapi-client-10.2
+Conflicts: mariadb-plugin-gssapi-client
+Replaces: mariadb-plugin-gssapi-client
+Provides: mariadb-plugin-gssapi-client
 Description: GSSAPI authentication plugin for MariaDB client
  This plugin includes support for Kerberos on Unix, but can also be used for
  Windows authentication with or without domain environment.
  .
  This package contains the client parts.
 
-Package: mariadb-plugin-cracklib-password-check
+Package: mariadb-plugin-cracklib-password-check-10.3
 Architecture: any
 Depends: libcrack2 (>= 2.9.0),
-         mariadb-server-10.3,
+         libmariadb3 (= ${source:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
+Conflicts: mariadb-plugin-gssapi-client
+Replaces: mariadb-plugin-gssapi-client
+Provides: mariadb-plugin-gssapi-client
 Description: CrackLib Password Validation Plugin for MariaDB
  This password validation plugin uses cracklib to allow only
  sufficiently secure (as defined by cracklib) user passwords in MariaDB.
@@ -478,22 +354,8 @@ Depends: libmariadb3 (= ${binary:Version}),
          mariadb-test-data (= ${source:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: mariadb-test-10.0,
-        mariadb-test-10.1,
-        mariadb-test-5.5,
-        mysql-testsuite,
-        mysql-testsuite-5.5,
-        mysql-testsuite-5.6,
-        mysql-testsuite-5.7,
-        virtual-mysql-testsuite
-Replaces: mariadb-test-10.0,
-          mariadb-test-10.1,
-          mariadb-test-5.5,
-          mysql-testsuite,
-          mysql-testsuite-5.5,
-          mysql-testsuite-5.6,
-          mysql-testsuite-5.7,
-          virtual-mysql-testsuite
+Conflicts: virtual-mysql-testsuite
+Replaces: virtual-mysql-testsuite
 Provides: virtual-mysql-testsuite
 Suggests: patch
 Description: MariaDB database regression test suite
@@ -508,22 +370,9 @@ Package: mariadb-test-data
 Architecture: all
 Multi-Arch: foreign
 Depends: ${misc:Depends}
-Breaks: mariadb-test-10.0,
-        mariadb-test-10.1,
-        mariadb-test-5.5,
-        mariadb-test-data-10.0,
-        mysql-testsuite,
-        mysql-testsuite-5.5,
-        mysql-testsuite-5.6,
-        mysql-testsuite-5.7
-Replaces: mariadb-test-10.0,
-          mariadb-test-10.1,
-          mariadb-test-5.5,
-          mariadb-test-data-10.0,
-          mysql-testsuite,
-          mysql-testsuite-5.5,
-          mysql-testsuite-5.6,
-          mysql-testsuite-5.7
+Conflicts: virtual-mariadb-test-data
+Replaces: virtual-mariadb-test-data
+Provides: virtual-mariadb-test-data
 Description: MariaDB database regression test suite - data files
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
