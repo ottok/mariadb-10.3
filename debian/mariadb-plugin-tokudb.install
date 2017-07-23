@@ -3,4 +3,5 @@ usr/bin/tokuft_logprint
 usr/bin/tokuftdump
 usr/lib/*/mariadb3/plugin/ha_tokudb.so
 usr/share/doc/mariadb-server-*/README.md usr/share/doc/mariadb-plugin-tokudb/README.md
+usr/share/man/man1/tokuft_logdump.1
 usr/share/man/man1/tokuftdump.1

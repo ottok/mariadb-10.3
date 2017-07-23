@@ -106,6 +106,10 @@ override_dh_auto_install: generated-files
 	rm -rf $(TMP)/usr/share/mysql/mysql-test/plugin/tokudb/tokudb/*.py
 	rm -rf $(TMP)/usr/share/mysql/mysql-test/plugin/tokudb/tokudb/t/*.py
 
+	# Delete compat libmysqlclient.* and libmysqlclient_r.* libraries
+	rm -f $(TMP)/usr/lib/$(DEB_HOST_MULTIARCH)/libmysqlclient_r.* \
+	      $(TMP)/usr/lib/$(DEB_HOST_MULTIARCH)/libmysqlclient.*
+
 	# nm numeric soft is not enough, therefore extra sort in command
 	# to satisfy Debian reproducible build requirements
 	nm --defined-only $(BUILDDIR)/sql/mysqld | LC_ALL=C sort | gzip -n -9 > $(TMP)/usr/share/doc/mariadb-server-$(MARIADB_SERIES)/mysqld.sym.gz
@@ -148,7 +152,7 @@ $(GENERATED_FILES): $(GENERATED_SOURCES)
 	  chmod --reference="$$in" "$$out"; \
 	done
 
-prepared-files: debian/control debian/tests/control debian/po/templates.pot debian/po/POTFILES.in debian/watch
+prepared-files: debian/control debian/tests/control debian/po/templates.pot debian/po/POTFILES.in debian/watch debian/not-installed
 	wrap-and-sort -a
 
 debian/control: debian/control.in debian/rules debian/changelog
@@ -165,6 +169,9 @@ debian/po/POTFILES.in: debian/po/POTFILES.in.in debian/rules debian/changelog
 
 debian/watch: debian/watch.in debian/rules debian/changelog
 	sed -e "s/@MARIADB_SERIES@/$(MARIADB_SERIES)/g" >$@ <debian/watch.in
+
+debian/not-installed: debian/not-installed.in debian/rules debian/changelog
+	sed -e "s/@MARIADB_SERIES@/$(MARIADB_SERIES)/g" >$@ <debian/not-installed.in
 
 .PHONY: get-orig-source prepared-files generated-files $(GENERATED_FILES)
 
