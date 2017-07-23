@@ -4,13 +4,13 @@ debian/additions/mariadb.conf.d/50-client.cnf etc/mysql/mariadb.conf.d
 debian/additions/mariadb.conf.d/50-mysql-clients.cnf etc/mysql/mariadb.conf.d
 debian/additions/mysqlreport usr/bin/
 debian/additions/mysqlreport.1 usr/share/man/man1/
+usr/bin/mariabackup
 usr/bin/mbstream
 usr/bin/mysql_find_rows
 usr/bin/mysql_fix_extensions
 usr/bin/mysql_waitpid
 usr/bin/mysqlaccess
 usr/bin/mysqladmin
-usr/bin/mariabackup
 usr/bin/mysqlbinlog
 usr/bin/mysqldump
 usr/bin/mysqldumpslow

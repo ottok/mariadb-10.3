@@ -7,7 +7,3 @@ outdated-autotools-helper-file storage/tokudb/PerconaFT/third_party/snappy-1.1.2
 outdated-autotools-helper-file storage/tokudb/PerconaFT/third_party/snappy-1.1.2/config.sub 2012-02-10
 # TokuDB requires specifically xz-4.999.9beta, and bundled xz does in fact use these autotools files
 outdated-autotools-helper-file storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/build-aux/config.sub 2009-04-17
-# libmariadbclient-dev contains usr/bin/mysql_config which will never be multi-arch
-# (and is not multi-arch in Oracle MySQL packages either)
-dependency-is-not-multi-archified libmariadbclient-dev-compat depends on libmariadbclient-dev (multi-arch: no)
-dependency-is-not-multi-archified libmariadbd-dev depends on libmariadbclient-dev (multi-arch: no)

@@ -72,29 +72,6 @@ Description: MariaDB database development files
  .
  This package includes development libraries and header files.
 
-Package: libmariadb-dev-compat
-Architecture: any
-Multi-Arch: same
-Section: libdevel
-Pre-Depends: ${misc:Pre-Depends}
-Depends: libmariadb-dev,
-         ${misc:Depends},
-         ${shlibs:Depends}
-Conflicts: libmariadb-client-lgpl-dev-compat,
-           libmariadb-dev-compat,
-           libmysqlclient-dev
-Description: MariaDB database development files (libmysqlclient compatibility)
- MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
- server. SQL (Structured Query Language) is the most popular database query
- language in the world. The main goals of MariaDB are speed, robustness and
- ease of use.
- .
- This package provides a version of libmysqlclient.so to allow
- packages to link using -lmysqlclient but end up with a link against
- libmariadb instead. This allows packages designed for
- MySQL to link against MariaDB's client library instead, while still permitting
- MySQL's client library to co-exist on users' systems.
-
 Package: libmariadbd19
 Architecture: any
 Section: libs
