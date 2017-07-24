@@ -1,6 +1,16 @@
---- mariadb-10.1.orig/scripts/mytop.sh
-+++ mariadb-10.1/scripts/mytop.sh
-@@ -15,6 +15,7 @@ mytop - display MariaDB server performan
+From: Debian MySQL Maintainers <pkg-mysql-maint@lists.alioth.debian.org>
+Date: Mon, 24 Jul 2017 07:32:35 +0200
+Subject: mytop-merge_src:mytop_improvements
+
+---
+ scripts/mytop.sh | 184 +++++++++++++++++++++++++++++++++++++++----------------
+ 1 file changed, 132 insertions(+), 52 deletions(-)
+
+diff --git a/scripts/mytop.sh b/scripts/mytop.sh
+index 17a87e9..e8cc902 100644
+--- a/scripts/mytop.sh
++++ b/scripts/mytop.sh
+@@ -15,6 +15,7 @@ mytop - display MariaDB server performance info like `top'
  use 5.005;
  use strict;
  use DBI;
@@ -26,7 +36,7 @@
      port          => 3306,
      resolve       => 0,
      slow	  => 10,	# slow query time
-@@ -125,6 +128,37 @@ if (!defined($my_print_defaults=my_which
+@@ -125,6 +128,37 @@ if (!defined($my_print_defaults=my_which("my_print_defaults")))
  
  unshift @ARGV, split "\n", `$my_print_defaults client mytop`;
  
@@ -251,7 +261,7 @@
  
      open P, "|$config{pager}" or die "$!";
      print keys %{$data[0]};
-@@ -1722,7 +1770,7 @@ Help for mytop version $main::VERSION by
+@@ -1722,7 +1770,7 @@ Help for mytop version $main::VERSION by Jeremy D. Zawodny <${YELLOW}Jeremy\@Zaw
    e - explain the query that a thread is running
    E - display current replication error
    f - show full query info for a given thread
@@ -260,7 +270,7 @@
    h - show only a specifc host's connections
    H - toggle the mytop header
    i - toggle the display of idle (sleeping) threads
-@@ -1737,7 +1785,7 @@ Help for mytop version $main::VERSION by
+@@ -1737,7 +1785,7 @@ Help for mytop version $main::VERSION by Jeremy D. Zawodny <${YELLOW}Jeremy\@Zaw
    r - reset the status counters (via FLUSH STATUS on your server)
    R - change reverse IP lookup
    s - change the delay between screen updates
@@ -269,7 +279,7 @@
    t - switch to thread view (default)
    u - show only a specific user
    V - show variables
-@@ -1745,7 +1793,7 @@ Help for mytop version $main::VERSION by
+@@ -1745,7 +1793,7 @@ Help for mytop version $main::VERSION by Jeremy D. Zawodny <${YELLOW}Jeremy\@Zaw
    ! - Skip an error that has stopped replications (at your own risk)
    L - show full queries (do not strip to terminal width)
  
@@ -297,7 +307,7 @@
  
  This version comes as part of the B<MariaDB> distribution. See B<http://mariadb.org/>.
  
-@@ -1875,6 +1926,7 @@ In order for B<mytop> to function proper
+@@ -1875,6 +1926,7 @@ In order for B<mytop> to function properly, you must have the
  following:
  
    * Perl 5.005 or newer
@@ -305,7 +315,7 @@
    * Getopt::Long
    * DBI and DBD::mysql
    * Term::ReadKey from CPAN
-@@ -2016,46 +2068,49 @@ have two dashes `--'. Short arguments on
+@@ -2016,46 +2068,49 @@ have two dashes `--'. Short arguments only have one '-'.
  
  =over
  
@@ -427,7 +437,7 @@
  =head2 Shortcut Keys
  
  The following keys perform various actions while B<mytop> is
-@@ -2204,8 +2287,8 @@ running queries appear at the top of the
+@@ -2204,8 +2287,8 @@ running queries appear at the top of the list.
  
  =item B<I>
  
@@ -449,7 +459,7 @@
  
  =head1 BUGS
  
-@@ -2292,9 +2375,6 @@ width. If you have fairly long database/
+@@ -2292,9 +2375,6 @@ width. If you have fairly long database/user/host names the display
  may appear odd. I have no good idea as to how best to deal with that
  yet. Suggestions are welcome.
  
