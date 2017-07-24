@@ -14,7 +14,6 @@ mariadb-10.3 (10.3.0-0+exp3) experimental; urgency=medium
   * fix FTBFS on 32-bit mips*
 
   [ James Cowgill ]
-  * Update C11 atomics to have correct semantics
   * Disable jemalloc on mips*.
 
   [ Svante Signell ]
