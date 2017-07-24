@@ -43,8 +43,11 @@ mariadb-10.3 (10.3.0-0+exp3) experimental; urgency=medium
   * Add libarchive-dev needed by mariabackup to Build-Depends
   * Move mysql_install_db from mariadb-server-@MARIADB_SERIES@ to mariadb-server-core-@MARIADB_SERIES@
   * Update prepared-files after master-10.2 merge into master-10.3
+  * Remove debian/patches/mips-innobase-atomic.patch; perhaps not needed anymore
+  * Adjust GNU Hurd FTBFS patch for MariaDB 10.3 series
+  * Rebase patches on top of MariaDB 10.3.0 using gbp pq import/export
 
- -- Ondřej Surý <ondrej@debian.org>  Mon, 24 Jul 2017 07:19:54 +0200
+ -- Ondřej Surý <ondrej@debian.org>  Mon, 24 Jul 2017 07:33:06 +0200
 
 mariadb-10.3 (10.3.0-0+exp2) experimental; urgency=medium
 
