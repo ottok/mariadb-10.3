@@ -384,7 +384,7 @@ Description: TokuDB storage engine for MariaDB
  This package contains the TokuDB plugin for MariaDB.
 
 Package: mariadb-plugin-rocksdb
-Architecture: amd64 arm64 ppc64el mips64el
+Architecture: amd64 arm64 mips64el ppc64el
 Depends: mariadb-server-@MARIADB_SERIES@,
          ${misc:Depends},
          ${shlibs:Depends}
