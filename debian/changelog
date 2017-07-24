@@ -1,3 +1,52 @@
+mariadb-10.3 (10.3.0-0+exp3) experimental; urgency=medium
+
+  [ Ondřej Surý ]
+  * Merge changes from MariaDB 10.2 and 10.1 packaging
+  * Fix autobake-deb.sh to use proper Debian versioning
+  * Don't modify mysql-test/unstable-tests if we don't run the test suite
+  * Use DEB_DISTRIBUTION instead of RELEASE for COMPILATION_COMMENT
+  * Autogenerate debian/watch based on MARIADB_SERIES
+  * Handle the new files (sync with mariadb-10.1)
+  * Remove libmariadb-dev-compat from Debian buster, it shouldn't be needed
+  * Add cracklib-runtime to Build-Depends
+
+  [ Andreas Beckmann ]
+  * fix FTBFS on 32-bit mips*
+
+  [ James Cowgill ]
+  * Update C11 atomics to have correct semantics
+  * Disable jemalloc on mips*.
+
+  [ Svante Signell ]
+  * Fix FTBFS on Debian GNU/Hurd
+
+  [ Ondřej Surý ]
+  * Merge mytop script improvements from src:mytop package (Original
+    patches by Philipp Matthias Hahn, Werner Detter, Olaf van der Spek,
+    and Steffen Zieger)
+  * Add @SYSTEMD_EXECSTARTPOST@ replacement token to mariadb@.service, so
+    the /var/run/mysqld directory is created even for multi-server setup
+
+  [ =Ian Gilfillan ]
+  * README.Debian typo
+
+  [ Ondřej Surý ]
+  * Use /etc/insserv.conf.d/mariadb to provide  system facility
+  * Remove hard Breaks/Replaces with mysql-server and mysql-client
+  * Properly declare conflict on mytop
+  * Remove two internal symbols (ll2str and longlong2str) from kfrebsd-amd64 symbols file
+  * Fix FTBFS on kfrebsd-any due missing .service files
+  * Declare mariadb-plugin-tokudb as available only on (linux-)amd64 to fix FTBFS on kfreebsd-amd64
+  * Filter most common cruft in the orig tarball
+  * Disable TokuDB on kfreebsd-amd64
+  * Stop /usr/sbin/mysqld in prerm script even with systemd
+  * Remove the extra sanity check as it is already there via standard dh_installinit (|| exit 0) (Closes: #861782)
+  * Add libarchive-dev needed by mariabackup to Build-Depends
+  * Move mysql_install_db from mariadb-server-@MARIADB_SERIES@ to mariadb-server-core-@MARIADB_SERIES@
+  * Update prepared-files after master-10.2 merge into master-10.3
+
+ -- Ondřej Surý <ondrej@debian.org>  Mon, 24 Jul 2017 07:19:54 +0200
+
 mariadb-10.3 (10.3.0-0+exp2) experimental; urgency=medium
 
   * Separate RocksDB storage engine into separate package and build it
