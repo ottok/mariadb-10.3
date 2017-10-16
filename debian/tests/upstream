@@ -27,6 +27,11 @@ main.ctype_uca : Requires writable /usr
 rpl.rpl_gtid_mode : Requires starting server as root ref http://bugs.mysql.com/bug.php?id=70517
 EOF
 
+ARCH=$(dpkg --print-architecture)
+if [ "$ARCH" = "s390x" ]; then
+    echo "main.func_regexp_pcre : recursion fails on s390x https://bugs.launchpad.net/ubuntu/+source/mariadb-10.1/+bug/1723947" >> $SKIP_TEST_LST
+fi
+
 cd /usr/share/mysql/mysql-test
 echo "starting mysql-test-tun.pl..."
 perl -I. ./mysql-test-run.pl --suite=main --vardir=$WORKDIR/var --tmpdir=$WORKDIR/tmp \
