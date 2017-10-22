@@ -130,6 +130,7 @@ Description: MariaDB database core client binaries
 Package: mariadb-client-10.3
 Architecture: any
 Depends: debianutils (>=1.6),
+         libconfig-inifiles-perl,
          mariadb-client-core-10.3 (>= ${source:Version}),
          ${misc:Depends},
          ${perl:Depends},
