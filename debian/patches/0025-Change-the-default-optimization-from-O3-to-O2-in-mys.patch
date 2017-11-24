@@ -9,10 +9,10 @@ Subject: Change the default optimization from -O3 to -O2 in
  2 files changed, 14 insertions(+), 14 deletions(-)
 
 diff --git a/cmake/build_configurations/mysql_release.cmake b/cmake/build_configurations/mysql_release.cmake
-index c07de46..69a70ff 100644
+index fcac8dd..c26fa98 100644
 --- a/cmake/build_configurations/mysql_release.cmake
 +++ b/cmake/build_configurations/mysql_release.cmake
-@@ -155,12 +155,12 @@ IF(UNIX)
+@@ -158,12 +158,12 @@ IF(UNIX)
    IF(CMAKE_COMPILER_IS_GNUCC)
      SET(COMMON_C_FLAGS               "-g -static-libgcc -fno-omit-frame-pointer -fno-strict-aliasing  -Wno-uninitialized")
      SET(CMAKE_C_FLAGS_DEBUG          "-O ${COMMON_C_FLAGS}")
@@ -27,7 +27,7 @@ index c07de46..69a70ff 100644
    ENDIF()
  
    # IBM Z flags
-@@ -209,8 +209,8 @@ IF(UNIX)
+@@ -212,8 +212,8 @@ IF(UNIX)
        ENDIF()
        SET(CMAKE_C_FLAGS_DEBUG            "${COMMON_C_FLAGS}")
        SET(CMAKE_CXX_FLAGS_DEBUG          "${COMMON_CXX_FLAGS}")
@@ -38,7 +38,7 @@ index c07de46..69a70ff 100644
        SET(WITH_SSL no)
      ENDIF()
    ENDIF()
-@@ -219,12 +219,12 @@ IF(UNIX)
+@@ -222,12 +222,12 @@ IF(UNIX)
    IF(CMAKE_C_COMPILER_ID MATCHES "Clang")
      SET(COMMON_C_FLAGS               "-g -fno-omit-frame-pointer -fno-strict-aliasing")
      SET(CMAKE_C_FLAGS_DEBUG          "${COMMON_C_FLAGS}")
