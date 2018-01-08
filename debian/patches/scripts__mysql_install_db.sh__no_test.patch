@@ -12,10 +12,10 @@ Subject: scripts__mysql_install_db.sh__no_test
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/scripts/mysql_install_db.sh b/scripts/mysql_install_db.sh
-index f8f4859..16738a0 100644
+index 1777946..6ab3fad 100644
 --- a/scripts/mysql_install_db.sh
 +++ b/scripts/mysql_install_db.sh
-@@ -407,7 +407,7 @@ then
+@@ -411,7 +411,7 @@ then
  fi
  
  # Create database directories

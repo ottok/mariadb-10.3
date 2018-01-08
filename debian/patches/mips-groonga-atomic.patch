@@ -8,10 +8,10 @@ Subject: mips-groonga-atomic
  2 files changed, 3 insertions(+)
 
 diff --git a/storage/mroonga/vendor/groonga/CMakeLists.txt b/storage/mroonga/vendor/groonga/CMakeLists.txt
-index 2d8a59f..c1805a3 100644
+index e27070f..7f1899c 100644
 --- a/storage/mroonga/vendor/groonga/CMakeLists.txt
 +++ b/storage/mroonga/vendor/groonga/CMakeLists.txt
-@@ -234,6 +234,8 @@ endmacro()
+@@ -238,6 +238,8 @@ endmacro()
  include(build/ac_macros/check_headers.m4)
  include(build/ac_macros/check_functions.m4)
  
@@ -21,10 +21,10 @@ index 2d8a59f..c1805a3 100644
  ac_check_lib(m fpclassify)
  
 diff --git a/storage/mroonga/vendor/groonga/lib/CMakeLists.txt b/storage/mroonga/vendor/groonga/lib/CMakeLists.txt
-index 7825878..975bdd5 100644
+index 6765261..6c13737 100644
 --- a/storage/mroonga/vendor/groonga/lib/CMakeLists.txt
 +++ b/storage/mroonga/vendor/groonga/lib/CMakeLists.txt
-@@ -62,6 +62,7 @@ endif()
+@@ -90,6 +90,7 @@ endif()
  set_target_properties(libgroonga PROPERTIES OUTPUT_NAME "groonga")
  
  set(GRN_ALL_LIBRARIES

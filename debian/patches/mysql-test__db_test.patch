@@ -9,22 +9,21 @@ Subject: mysql-test__db_test
 ## DP: rights for anybody to connect to the test database but the test
 ## DP: suite depends on them.
 ---
- mysql-test/mysql-test-run.pl | 5 +++++
- 1 file changed, 5 insertions(+)
+ mysql-test/mysql-test-run.pl | 4 ++++
+ 1 file changed, 4 insertions(+)
 
 diff --git a/mysql-test/mysql-test-run.pl b/mysql-test/mysql-test-run.pl
-index 0b61bfc..b3fbf5d 100755
+index 90ac4c8..f2f1f9a 100755
 --- a/mysql-test/mysql-test-run.pl
 +++ b/mysql-test/mysql-test-run.pl
-@@ -3164,6 +3164,11 @@ sub mysql_install_db {
-     mtr_appendfile_to_file("$sql_dir/mysql_system_tables_data.sql",
- 			   $bootstrap_sql_file);
+@@ -3173,6 +3173,10 @@ sub mysql_install_db {
+       mtr_appendfile_to_file("$sql_dir/mysql_system_tables.sql",
+            $bootstrap_sql_file);
  
-+    mtr_tofile($bootstrap_sql_file, "-- Debian removed the default privileges on the 'test' database\n");
-+    mtr_tofile($bootstrap_sql_file, "INSERT INTO mysql.db VALUES ('%','test','','Y','Y','Y','Y','Y','Y','N','Y','Y','Y','Y','Y','Y','Y','Y','N','N','Y','Y');\n");
-+    mtr_tofile($bootstrap_sql_file, "INSERT INTO mysql.db VALUES ('%','test\\_%','','Y','Y','Y','Y','Y','Y','N','Y','Y','Y','Y','Y','Y','Y','Y','N','N','Y','Y');\n");
++      mtr_tofile($bootstrap_sql_file, "-- Debian removed the default privileges on the 'test' database\n");
++      mtr_tofile($bootstrap_sql_file, "INSERT INTO mysql.db VALUES ('%','test','','Y','Y','Y','Y','Y','Y','N','Y','Y','Y','Y','Y','Y','Y','Y','N','N','Y','Y');\n");
++      mtr_tofile($bootstrap_sql_file, "INSERT INTO mysql.db VALUES ('%','test\\_%','','Y','Y','Y','Y','Y','Y','N','Y','Y','Y','Y','Y','Y','Y','Y','N','N','Y','Y');\n");
 +
-+
-     # Add test data for timezone - this is just a subset, on a real
-     # system these tables will be populated either by mysql_tzinfo_to_sql
-     # or by downloading the timezone table package from our website
+       # Add the performance tables
+       # for a production system
+       mtr_appendfile_to_file("$sql_dir/mysql_performance_tables.sql",

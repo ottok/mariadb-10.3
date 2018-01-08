@@ -7,10 +7,10 @@ Subject: mysqld_multi_confd
  1 file changed, 1 insertion(+)
 
 diff --git a/scripts/mysqld_multi.sh b/scripts/mysqld_multi.sh
-index a0bc06e..83521de 100644
+index c6515a3..f50f0fe 100644
 --- a/scripts/mysqld_multi.sh
 +++ b/scripts/mysqld_multi.sh
-@@ -513,6 +513,7 @@ sub list_defaults_files
+@@ -497,6 +497,7 @@ sub list_defaults_files
                 '@prefix@/my.cnf',
                 ($ENV{MYSQL_HOME} ? "$ENV{MYSQL_HOME}/my.cnf" : undef),
                 $opt{'extra-file'},

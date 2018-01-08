@@ -7,10 +7,10 @@ Subject: extend_default_test_timeout_for_tokudb
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/mysql-test/CMakeLists.txt b/mysql-test/CMakeLists.txt
-index 1c7cfaf..bc45177 100644
+index 7e5ef3f..bdf4a86 100644
 --- a/mysql-test/CMakeLists.txt
 +++ b/mysql-test/CMakeLists.txt
-@@ -64,7 +64,7 @@ ELSE()
+@@ -65,7 +65,7 @@ ELSE()
  ENDIF()
  
  

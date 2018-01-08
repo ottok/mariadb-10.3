@@ -7,10 +7,10 @@ Subject: armhf_mroonga_storage_fail
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/storage/mroonga/lib/mrn_multiple_column_key_codec.cpp b/storage/mroonga/lib/mrn_multiple_column_key_codec.cpp
-index c7ef9dd..b6ad631 100644
+index b2e0e04..9c56997 100644
 --- a/storage/mroonga/lib/mrn_multiple_column_key_codec.cpp
 +++ b/storage/mroonga/lib/mrn_multiple_column_key_codec.cpp
-@@ -612,9 +612,10 @@ namespace mrn {
+@@ -624,9 +624,10 @@ namespace mrn {
      long long int long_long_value;
      mrn_byte_order_network_to_host(&long_long_value, grn_key, grn_key_size);
      int max_bit = (grn_key_size * 8 - 1);

@@ -8,24 +8,24 @@ Subject: remove-systemd-obsolete-target
  2 files changed, 2 deletions(-)
 
 diff --git a/support-files/mariadb.service.in b/support-files/mariadb.service.in
-index 6a307b2..7f40583 100644
+index fe00f16..162182e 100644
 --- a/support-files/mariadb.service.in
 +++ b/support-files/mariadb.service.in
-@@ -15,7 +15,6 @@
- [Unit]
- Description=MariaDB database server
+@@ -17,7 +17,6 @@ Description=MariaDB @VERSION@ database server
+ Documentation=man:mysqld(8)
+ Documentation=https://mariadb.com/kb/en/library/systemd/
  After=network.target
 -After=syslog.target
  
  [Install]
  WantedBy=multi-user.target
 diff --git a/support-files/mariadb@.service.in b/support-files/mariadb@.service.in
-index 410e743..02be006 100644
+index 000724d..7f08bcc 100644
 --- a/support-files/mariadb@.service.in
 +++ b/support-files/mariadb@.service.in
-@@ -20,7 +20,6 @@
- [Unit]
- Description=MariaDB database server
+@@ -22,7 +22,6 @@ Description=MariaDB @VERSION@ database server (multi-instance)
+ Documentation=man:mysqld(8)
+ Documentation=https://mariadb.com/kb/en/library/systemd/
  After=network.target
 -After=syslog.target
  
