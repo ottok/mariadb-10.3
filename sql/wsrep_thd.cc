@@ -13,8 +13,8 @@
    with this program; if not, write to the Free Software Foundation, Inc.,
    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA. */
 
+#include "mariadb.h"
 #include "wsrep_thd.h"
-
 #include "transaction.h"
 #include "rpl_rli.h"
 #include "log_event.h"
@@ -103,7 +103,7 @@ static rpl_group_info* wsrep_relay_group_init(const char* log_fname)
       new Format_description_log_event(4);
   }
 
-  static LEX_STRING connection_name= { C_STRING_WITH_LEN("wsrep") };
+  static LEX_CSTRING connection_name= { STRING_WITH_LEN("wsrep") };
 
   /*
     Master_info's constructor initializes rpl_filter by either an already
@@ -167,6 +167,7 @@ static void wsrep_prepare_bf_thd(THD *thd, struct wsrep_thd_shadow* shadow)
   shadow->db            = thd->db;
   shadow->db_length     = thd->db_length;
   shadow->user_time     = thd->user_time;
+  shadow->row_count_func= thd->get_row_count_func();
   thd->reset_db(NULL, 0);
 }
 
@@ -187,6 +188,7 @@ static void wsrep_return_from_bf_mode(THD *thd, struct wsrep_thd_shadow* shadow)
   thd->wsrep_rgi->cleanup_after_session();
   delete thd->wsrep_rgi;
   thd->wsrep_rgi = NULL;
+  thd->set_row_count_func(shadow->row_count_func);
 }
 
 void wsrep_replay_transaction(THD *thd)
@@ -201,11 +203,30 @@ void wsrep_replay_transaction(THD *thd)
         WSREP_ERROR("replay issue, thd has reported status already");
       }
 
+
       /*
         PS reprepare observer should have been removed already.
         open_table() will fail if we have dangling observer here.
       */
       DBUG_ASSERT(thd->m_reprepare_observer == NULL);
+
+      struct da_shadow
+      {
+          enum Diagnostics_area::enum_diagnostics_status status;
+          ulonglong affected_rows;
+          ulonglong last_insert_id;
+          char message[MYSQL_ERRMSG_SIZE];
+      };
+      struct da_shadow da_status;
+      da_status.status= thd->get_stmt_da()->status();
+      if (da_status.status == Diagnostics_area::DA_OK)
+      {
+        da_status.affected_rows= thd->get_stmt_da()->affected_rows();
+        da_status.last_insert_id= thd->get_stmt_da()->last_insert_id();
+        strmake(da_status.message,
+                thd->get_stmt_da()->message(),
+                sizeof(da_status.message)-1);
+      }
 
       thd->get_stmt_da()->reset_diagnostics_area();
 
@@ -213,7 +234,7 @@ void wsrep_replay_transaction(THD *thd)
       mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
 
       thd->reset_for_next_command();
-      thd->killed= NOT_KILLED;
+      thd->reset_killed();
       close_thread_tables(thd);
       if (thd->locked_tables_mode && thd->lock)
       {
@@ -231,7 +252,7 @@ void wsrep_replay_transaction(THD *thd)
       MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
       thd->m_statement_psi= NULL;
       thd->m_digest= NULL;
-      thd_proc_info(thd, "wsrep replaying trx");
+      thd_proc_info(thd, "WSREP replaying trx");
       WSREP_DEBUG("replay trx: %s %lld",
                   thd->query() ? thd->query() : "void",
                   (long long)wsrep_thd_trx_seqno(thd));
@@ -274,7 +295,17 @@ void wsrep_replay_transaction(THD *thd)
         }
         else
         {
-          my_ok(thd);
+          if (da_status.status == Diagnostics_area::DA_OK)
+          {
+            my_ok(thd,
+                  da_status.affected_rows,
+                  da_status.last_insert_id,
+                  da_status.message);
+          }
+          else
+          {
+            my_ok(thd);
+          }
         }
         break;
       case WSREP_TRX_FAIL:
@@ -285,7 +316,6 @@ void wsrep_replay_transaction(THD *thd)
         else
         {
           WSREP_DEBUG("replay failed, rolling back");
-          //my_error(ER_LOCK_DEADLOCK, MYF(0), "wsrep aborted transaction");
         }
         thd->wsrep_conflict_state= ABORTED;
         wsrep->post_rollback(wsrep, &thd->wsrep_ws_handle);
@@ -354,7 +384,8 @@ static void wsrep_replication_process(THD *thd)
   case WSREP_TRX_MISSING:
     /* these suggests a bug in provider code */
     WSREP_WARN("bad return from recv() call: %d", rcode);
-    /* fall through to node shutdown */
+    /* Shut down this node. */
+    /* fall through */
   case WSREP_FATAL:
     /* Cluster connectivity is lost.
      *
@@ -432,7 +463,7 @@ static void wsrep_rollback_process(THD *thd)
   wsrep_aborting_thd= NULL;
 
   while (thd->killed == NOT_KILLED) {
-    thd_proc_info(thd, "wsrep aborter idle");
+    thd_proc_info(thd, "WSREP aborter idle");
     thd->mysys_var->current_mutex= &LOCK_wsrep_rollback;
     thd->mysys_var->current_cond=  &COND_wsrep_rollback;
 
@@ -441,7 +472,7 @@ static void wsrep_rollback_process(THD *thd)
     WSREP_DEBUG("WSREP rollback thread wakes for signal");
 
     mysql_mutex_lock(&thd->mysys_var->mutex);
-    thd_proc_info(thd, "wsrep aborter active");
+    thd_proc_info(thd, "WSREP aborter active");
     thd->mysys_var->current_mutex= 0;
     thd->mysys_var->current_cond=  0;
     mysql_mutex_unlock(&thd->mysys_var->mutex);

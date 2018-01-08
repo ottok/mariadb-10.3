@@ -244,7 +244,9 @@ hex(s1)
 413F
 drop table t1;
 create table t1 (a text character set utf8mb4, primary key(a(371))) engine InnoDB;
-ERROR 42000: Specified key was too long; max key length is 767 bytes
+show warnings;
+Level	Code	Message
+drop table if exists t1;
 CREATE TABLE t1 ( a varchar(10) ) CHARACTER SET utf8mb4 ENGINE InnoDB;
 INSERT INTO t1 VALUES ( 'test' );
 SELECT a.a, b.a FROM t1 a, t1 b WHERE a.a = b.a;
@@ -1425,8 +1427,6 @@ CREATE TABLE t1 (
 a varchar(255) NOT NULL default '',
 KEY a (a)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_general_ci;
-Warnings:
-Warning	1071	Specified key was too long; max key length is 767 bytes
 insert into t1 values (_utf8mb4 0xe880bd);
 insert into t1 values (_utf8mb4 0x5b);
 select hex(a) from t1;
@@ -1473,8 +1473,6 @@ DROP TABLE IF EXISTS t1;
 Warnings:
 Note	1051	Unknown table 'test.t1'
 CREATE TABLE t1(a VARCHAR(255), KEY(a)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-Warnings:
-Warning	1071	Specified key was too long; max key length is 767 bytes
 INSERT INTO t1 VALUES('uuABCDEFGHIGKLMNOPRSTUVWXYZ̈bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 INSERT INTO t1 VALUES('uu');
 check table t1;
@@ -1910,7 +1908,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FF8F'
 select convert(char(0xff,0x8f) using utf8mb4);
 convert(char(0xff,0x8f) using utf8mb4)
-NULL
+??
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF\x8F'
 set sql_mode=traditional;
@@ -1936,7 +1934,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FD'
 select convert(char(0xff,0x8f) using utf8mb4);
 convert(char(0xff,0x8f) using utf8mb4)
-NULL
+??
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF\x8F'
 select hex(convert(char(2557 using latin1) using utf8mb4));
@@ -2105,7 +2103,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FF'
 select hex(convert(0xFF using utf8mb4));
 hex(convert(0xFF using utf8mb4))
-NULL
+3F
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF'
 select hex(_utf8mb4 0x616263FF);
@@ -2124,7 +2122,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FF'
 select hex(convert(0xFF using utf8mb4));
 hex(convert(0xFF using utf8mb4))
-NULL
+3F
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF'
 select hex(_utf8mb4 0x616263FF);
@@ -2346,8 +2344,6 @@ Tape TINYTEXT,
 PRIMARY KEY (clipid),
 KEY tape(Tape(255))
 ) CHARACTER SET=utf8mb4 ENGINE InnoDB;
-Warnings:
-Note	1071	Specified key was too long; max key length is 767 bytes
 ALTER TABLE t1 ADD mos TINYINT DEFAULT 0 AFTER clipid;
 SHOW CREATE TABLE t1;
 Table	Create Table
@@ -2356,7 +2352,7 @@ t1	CREATE TABLE `t1` (
   `mos` tinyint(4) DEFAULT 0,
   `Tape` tinytext DEFAULT NULL,
   PRIMARY KEY (`clipid`),
-  KEY `tape` (`Tape`(191))
+  KEY `tape` (`Tape`(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 DROP TABLE t1;
 #

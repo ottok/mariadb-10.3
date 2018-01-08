@@ -159,12 +159,14 @@ CREATE USER 'testuser1'@'localhost';
 
 # Check just created VIEW
 SELECT * FROM information_schema.views
-WHERE table_name LIKE 't1_%';
+WHERE table_name LIKE 't1_%'
+ORDER BY table_schema, table_name;
 CREATE VIEW test.t1_view AS SELECT DISTINCT f1 FROM test.t1_table;
 CREATE ALGORITHM=MERGE VIEW test.t1_view1 AS SELECT f1 FROM test.t1_table;
 CREATE ALGORITHM=TEMPTABLE VIEW test.t1_view2 AS SELECT f1 FROM test.t1_table;
 SELECT * FROM information_schema.views
-WHERE table_name LIKE 't1_%';
+WHERE table_name LIKE 't1_%'
+ORDER BY table_schema, table_name;
 DROP VIEW test.t1_view1;
 DROP VIEW test.t1_view2;
 
@@ -278,7 +280,7 @@ SELECT * FROM information_schema.views;
 INSERT INTO information_schema.views(table_schema, table_name)
 VALUES ('db2', 'v2');
 
---error ER_DBACCESS_DENIED_ERROR
+--error ER_DBACCESS_DENIED_ERROR,ER_NON_UPDATABLE_TABLE
 UPDATE information_schema.views SET table_schema = 'test'
 WHERE table_name = 't1';
 

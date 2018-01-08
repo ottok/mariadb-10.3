@@ -15,6 +15,7 @@
 
 /* This file is included by all internal maria files */
 
+#include <my_global.h>
 #include "maria.h"				/* Structs & some defines */
 #include "ma_pagecache.h"
 #include <myisampack.h>				/* packing of keys */
@@ -734,6 +735,7 @@ struct st_maria_handler
 #define STATE_MOVED              512U /* set if base->uuid != maria_uuid */
 #define STATE_IN_REPAIR  	 1024U /* We are running repair on table */
 #define STATE_CRASHED_PRINTED	 2048U
+#define STATE_DATA_FILE_FULL     4096U
 
 #define STATE_CRASHED_FLAGS (STATE_CRASHED | STATE_CRASHED_ON_REPAIR | STATE_CRASHED_PRINTED)
 
@@ -1323,7 +1325,7 @@ ulong _ma_calc_total_blob_length(MARIA_HA *info, const uchar *record);
 ha_checksum _ma_checksum(MARIA_HA *info, const uchar *buf);
 ha_checksum _ma_static_checksum(MARIA_HA *info, const uchar *buf);
 my_bool _ma_check_unique(MARIA_HA *info, MARIA_UNIQUEDEF *def,
-                         uchar *record, ha_checksum unique_hash,
+                         const uchar *record, ha_checksum unique_hash,
                          MARIA_RECORD_POS pos);
 ha_checksum _ma_unique_hash(MARIA_UNIQUEDEF *def, const uchar *buf);
 my_bool _ma_cmp_static_unique(MARIA_HA *info, MARIA_UNIQUEDEF *def,

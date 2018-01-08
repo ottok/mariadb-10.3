@@ -1071,3 +1071,48 @@ DROP PROCEDURE p1;
 --echo #
 --echo #  End of MDEV-12461 TYPE OF and ROW TYPE OF anchored data types
 --echo #
+
+
+--echo #
+--echo # MDEV-12916 Wrong column data type for an INT field of a cursor-anchored ROW variable
+--echo #
+
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE a INT DEFAULT 10;
+  DECLARE cur1 CURSOR FOR SELECT a;
+  BEGIN
+    DECLARE rec1 ROW TYPE OF cur1;
+    CREATE TABLE t1 AS SELECT rec1.a;
+    SHOW CREATE TABLE t1;
+    DROP TABLE t1;
+  END;
+END;
+$$
+DELIMITER ;$$
+CALL p1();
+DROP PROCEDURE p1;
+
+
+--echo #
+--echo # MDEV-14139 Anchored data types for variables
+--echo #
+
+DELIMITER $$;
+BEGIN NOT ATOMIC
+  DECLARE c1 CURSOR FOR SELECT 10 AS a, 'bbb' AS b, TIME'10:20:30' AS c;
+  BEGIN
+    DECLARE row1 ROW TYPE OF c1;
+    DECLARE a_row1 TYPE OF row1;
+    DECLARE aa_row1 TYPE OF a_row1;
+    CREATE TABLE t2 AS SELECT a_row1.a AS a, a_row1.b AS b, a_row1.c AS c;
+    SHOW CREATE TABLE t2;
+    DROP TABLE t2;
+    CREATE TABLE t2 AS SELECT aa_row1.a AS a, aa_row1.b AS b, aa_row1.c AS c;
+    SHOW CREATE TABLE t2;
+    DROP TABLE t2;
+  END;
+END;
+$$
+DELIMITER ;$$

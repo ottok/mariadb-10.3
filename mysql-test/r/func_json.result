@@ -28,6 +28,9 @@ NULL
 select json_value('{"key1": [1,2,3], "key1":123}', '$.key1');
 json_value('{"key1": [1,2,3], "key1":123}', '$.key1')
 123
+select JSON_VALUE('{ "x": [0,1], "y": "[0,1]", "z": "Mon\\\"t\\\"y" }','$.z');
+JSON_VALUE('{ "x": [0,1], "y": "[0,1]", "z": "Mon\\\"t\\\"y" }','$.z')
+Mon"t"y
 select json_query('{"key1":{"a":1, "b":[1,2]}}', '$.key2');
 json_query('{"key1":{"a":1, "b":[1,2]}}', '$.key2')
 NULL
@@ -151,6 +154,9 @@ json_contains('[{"abc":"def", "def":"abc"}]', '["foo","bar"]')
 0
 select json_contains('[{"abc":"def", "def":"abc"}, "bar"]', '["bar", {}]');
 json_contains('[{"abc":"def", "def":"abc"}, "bar"]', '["bar", {}]')
+1
+select json_contains('[{"a":"b"},{"c":"d"}]','{"c":"d"}');
+json_contains('[{"a":"b"},{"c":"d"}]','{"c":"d"}')
 1
 select json_contains_path('{"key1":1, "key2":[2,3]}', "oNE", "$.key2[1]");
 json_contains_path('{"key1":1, "key2":[2,3]}', "oNE", "$.key2[1]")
@@ -356,6 +362,12 @@ json_keys('foo')
 NULL
 Warnings:
 Warning	4038	Syntax error in JSON text in argument 1 to function 'json_keys' at position 1
+select json_keys('{"a":{"c":1, "d":2}, "b":2, "c":1, "a":3, "b":1, "c":2}');
+json_keys('{"a":{"c":1, "d":2}, "b":2, "c":1, "a":3, "b":1, "c":2}')
+["a", "b", "c"]
+select json_keys('{"c1": "value 1", "c1": "value 2"}');
+json_keys('{"c1": "value 1", "c1": "value 2"}')
+["c1"]
 SET @j = '["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]';
 select json_search(@j, 'one', 'abc');
 json_search(@j, 'one', 'abc')
@@ -396,6 +408,13 @@ abc
 select json_unquote('abc');
 json_unquote('abc')
 abc
+create table t1 (c VARCHAR(8)) DEFAULT CHARSET=latin1;
+insert into t1 values ('abc'),('def');
+select json_object('foo', json_unquote(json_object('bar', c)),'qux', c) as fld from t1;
+fld
+{"foo": "{\"bar\": \"abc\"}", "qux": "abc"}
+{"foo": "{\"bar\": \"def\"}", "qux": "def"}
+drop table t1;
 select json_object("a", json_object("b", "abcd"));
 json_object("a", json_object("b", "abcd"))
 {"a": {"b": "abcd"}}
@@ -437,6 +456,11 @@ json_length('{"a": 1, "b": {"c": 30}}', '$.b')
 select json_length('{"a": 1, "b": {"c": 30}}');
 json_length('{"a": 1, "b": {"c": 30}}')
 2
+select json_length('{}{');
+json_length('{}{')
+NULL
+Warnings:
+Warning	4038	Syntax error in JSON text in argument 1 to function 'json_length' at position 3
 create table json (j INT);
 show create table json;
 Table	Create Table
@@ -629,3 +653,107 @@ j	p	json_remove(j, p)
 {"a":1,"b":2,"c":3}	$.b	{"a": 1, "c": 3}
 {"a":1,"b":2,"c":3}	$.c	{"a": 1, "b": 2}
 drop table t1;
+SET @str = 'bar', @path = '$';
+SELECT JSON_SEARCH('{"foo":"bar"}', 'all' , @str, '%', @path);
+JSON_SEARCH('{"foo":"bar"}', 'all' , @str, '%', @path)
+"$.foo"
+SELECT JSON_VALUE('[{"foo": 1},"bar"]', '$[*][0]');
+JSON_VALUE('[{"foo": 1},"bar"]', '$[*][0]')
+bar
+CREATE TABLE t1 (f INT NOT NULL);
+INSERT INTO t1 VALUES (0);
+SELECT JSON_KEYS(f) FROM t1 ORDER BY 1;
+JSON_KEYS(f)
+NULL
+DROP TABLE t1;
+SELECT JSON_EXTRACT( '{"foo":"bar"}', '$[*].*' );
+JSON_EXTRACT( '{"foo":"bar"}', '$[*].*' )
+NULL
+SELECT JSON_EXTRACT( '{"foo":"bar"}', '$[*]' );
+JSON_EXTRACT( '{"foo":"bar"}', '$[*]' )
+NULL
+select JSON_EXTRACT('{"name":"value"}', '$.name') = 'value';
+JSON_EXTRACT('{"name":"value"}', '$.name') = 'value'
+1
+select JSON_EXTRACT('{\"asdf\":true}', "$.\"asdf\"") = true;
+JSON_EXTRACT('{\"asdf\":true}', "$.\"asdf\"") = true
+1
+select JSON_EXTRACT('{\"asdf\":true}', "$.\"asdf\"") = false;
+JSON_EXTRACT('{\"asdf\":true}', "$.\"asdf\"") = false
+0
+select JSON_EXTRACT('{\"asdf\":true}', "$.\"asdf\"") = 1;
+JSON_EXTRACT('{\"asdf\":true}', "$.\"asdf\"") = 1
+1
+select JSON_EXTRACT('{\"input1\":\"\\u00f6\"}', '$.\"input1\"');
+JSON_EXTRACT('{\"input1\":\"\\u00f6\"}', '$.\"input1\"')
+"\u00f6"
+select JSON_EXTRACT('{"foo": "bar" foobar foo invalid ', '$.foo');
+JSON_EXTRACT('{"foo": "bar" foobar foo invalid ', '$.foo')
+NULL
+Warnings:
+Warning	4038	Syntax error in JSON text in argument 1 to function 'json_extract' at position 15
+SELECT JSON_OBJECT('foo', '`');
+JSON_OBJECT('foo', '`')
+{"foo": "`"}
+SELECT JSON_OBJECT("foo", "bar`bar");
+JSON_OBJECT("foo", "bar`bar")
+{"foo": "bar`bar"}
+SELECT JSON_SET('{}', '$.age', 87);
+JSON_SET('{}', '$.age', 87)
+{"age": 87}
+SELECT JSON_MERGE('[]', '{"c":"d"}');
+JSON_MERGE('[]', '{"c":"d"}')
+[{"c": "d"}]
+SET @str = "{\"\\u00e4\\u00f6\":\"yes\"}";
+SET @path = "$.\"\\u00e4\\u00f6\"";
+select @str, @path, JSON_EXTRACT(@str, @path);
+@str	@path	JSON_EXTRACT(@str, @path)
+{"\u00e4\u00f6":"yes"}	$."\u00e4\u00f6"	"yes"
+SET @str = "{\"\\u00e4\":\"yes\"}";
+SET @path = "$.\"\\u00e4\"";
+select @str, @path, JSON_EXTRACT(@str, @path);
+@str	@path	JSON_EXTRACT(@str, @path)
+{"\u00e4":"yes"}	$."\u00e4"	"yes"
+select json_array(5,json_query('[1,2]','$'));
+json_array(5,json_query('[1,2]','$'))
+[5, [1,2]]
+SELECT JSON_ARRAY('1. ě 2. š 3. č 4. ř 5. ž 6. ý 7. á 8. í 9. é 10. ů 11. ú') AS json_data;
+json_data
+["1. ě 2. š 3. č 4. ř 5. ž 6. ý 7. á 8. í 9. é 10. ů 11. ú"]
+SELECT JSON_OBJECT("user","Jožko Mrkvičká") as json_data;
+json_data
+{"user": "Jožko Mrkvičká"}
+select json_contains_path('{"foo":"bar"}', 'one', '$[]');
+json_contains_path('{"foo":"bar"}', 'one', '$[]')
+NULL
+Warnings:
+Warning	4042	Syntax error in JSON path in argument 3 to function 'json_contains_path' at position 3
+select JSON_VALID(0x36f0c8dccd83c5eac156da);
+JSON_VALID(0x36f0c8dccd83c5eac156da)
+0
+#
+# Start of 10.3 tests
+#
+#
+# MDEV-12854 Synchronize CREATE..SELECT data type and result set metadata data type for INT functions
+#
+SELECT
+JSON_VALID('{"id": 1, "name": "Monty"}') AS json_valid,
+JSON_EXISTS('{"key1":"xxxx", "key2":[1, 2, 3]}', "$.key2") AS json_exists,
+JSON_CONTAINS('{"A": 0, "B": {"C": 1}, "D": 2}', '2', '$.A') AS ison_contains,
+JSON_CONTAINS_PATH('{"A": 1, "B": [2], "C": [3, 4]}', 'one', '$.A', '$.D') AS json_contains_path;
+Catalog	Database	Table	Table_alias	Column	Column_alias	Type	Length	Max length	Is_null	Flags	Decimals	Charsetnr
+def					json_valid	3	1	1	Y	32896	0	63
+def					json_exists	3	1	1	Y	32896	0	63
+def					ison_contains	3	1	1	Y	32896	0	63
+def					json_contains_path	3	1	1	Y	32896	0	63
+json_valid	json_exists	ison_contains	json_contains_path
+1	1	0	1
+SELECT
+JSON_LENGTH('{"a": 1, "b": {"c": 30}}') AS json_length,
+JSON_DEPTH('[10, {"a": 20}]') AS json_depnth;
+Catalog	Database	Table	Table_alias	Column	Column_alias	Type	Length	Max length	Is_null	Flags	Decimals	Charsetnr
+def					json_length	3	10	1	Y	32896	0	63
+def					json_depnth	3	10	1	N	32897	0	63
+json_length	json_depnth
+2	3

@@ -19,6 +19,7 @@
   Engine defined options of tables/fields/keys in CREATE/ALTER TABLE.
 */
 
+#include "mariadb.h"
 #include "create_options.h"
 #include <my_getopt.h>
 #include "set_var.h"
@@ -119,13 +120,13 @@ static bool report_unknown_option(THD *thd, engine_option_value *val,
 #define value_ptr(STRUCT,OPT)    ((char*)(STRUCT) + (OPT)->offset)
 
 static bool set_one_value(ha_create_table_option *opt,
-                          THD *thd, const LEX_STRING *value, void *base,
+                          THD *thd, const LEX_CSTRING *value, void *base,
                           bool suppress_warning,
                           MEM_ROOT *root)
 {
   DBUG_ENTER("set_one_value");
-  DBUG_PRINT("enter", ("opt: 0x%lx type: %u name '%s' value: '%s'",
-                       (ulong) opt,
+  DBUG_PRINT("enter", ("opt: %p type: %u name '%s' value: '%s'",
+                       opt,
                        opt->type, opt->name,
                        (value->str ? value->str : "<DEFAULT>")));
   switch (opt->type)
@@ -311,7 +312,7 @@ bool parse_option_list(THD* thd, handlerton *hton, void *option_struct_arg,
     }
     if (!seen || (opt->var && !last->value.str))
     {
-      LEX_STRING default_val= null_lex_str;
+      LEX_CSTRING default_val= null_clex_str;
 
       /*
         Okay, here's the logic for sysvar options:
@@ -348,9 +349,9 @@ bool parse_option_list(THD* thd, handlerton *hton, void *option_struct_arg,
         {
           char buf[256];
           String sbuf(buf, sizeof(buf), system_charset_info), *str;
-          if ((str= sysvar->val_str(&sbuf, thd, OPT_SESSION, &null_lex_str)))
+          if ((str= sysvar->val_str(&sbuf, thd, OPT_SESSION, &null_clex_str)))
           {
-            LEX_STRING name= { const_cast<char*>(opt->name), opt->name_length };
+            LEX_CSTRING name= { opt->name, opt->name_length };
             default_val.str= strmake_root(root, str->ptr(), str->length());
             default_val.length= str->length();
             val= new (root) engine_option_value(name, default_val,
@@ -688,7 +689,7 @@ uchar *engine_option_value::frm_read(const uchar *buff, const uchar *buff_end,
                                      engine_option_value **start,
                                      engine_option_value **end, MEM_ROOT *root)
 {
-  LEX_STRING name, value;
+  LEX_CSTRING name, value;
   uint len;
 #define need_buff(N)  if (buff + (N) >= buff_end) return NULL
 

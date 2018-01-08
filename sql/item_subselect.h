@@ -32,6 +32,7 @@ class subselect_engine;
 class subselect_hash_sj_engine;
 class Item_bool_func2;
 class Comp_creator;
+class With_element;
 
 typedef class st_select_lex SELECT_LEX;
 
@@ -135,6 +136,9 @@ public:
   */
   bool with_recursive_reference; 
 
+  /* To link Item_subselects containing references to the same recursive CTE */ 
+  Item_subselect *next_with_rec_ref;
+
   enum subs_type {UNKNOWN_SUBS, SINGLEROW_SUBS,
 		  EXISTS_SUBS, IN_SUBS, ALL_SUBS, ANY_SUBS};
 
@@ -178,8 +182,9 @@ public:
     return null_value;
   }
   bool fix_fields(THD *thd, Item **ref);
+  bool with_subquery() const { DBUG_ASSERT(fixed); return true; }
   bool mark_as_dependent(THD *thd, st_select_lex *select, Item *item);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   void recalc_used_tables(st_select_lex *new_parent, bool after_pullout);
   virtual bool exec();
   /*
@@ -256,11 +261,13 @@ public:
     return TRUE;
   }
 
+  void register_as_with_rec_ref(With_element *with_elem);
   void init_expr_cache_tracker(THD *thd);
   
-  Item* build_clone(THD *thd, MEM_ROOT *mem_root) { return 0; }
-  Item* get_copy(THD *thd, MEM_ROOT *mem_root) { return 0; }
+  Item* build_clone(THD *thd) { return 0; }
+  Item* get_copy(THD *thd) { return 0; }
 
+  bool wrap_tvc_in_derived_table(THD *thd, st_select_lex *tvc_sl);
 
   friend class select_result_interceptor;
   friend class Item_in_optimizer;
@@ -298,13 +305,10 @@ public:
   my_decimal *val_decimal(my_decimal *);
   bool val_bool();
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
-  enum Item_result result_type() const;
-  enum Item_result cmp_type() const;
-  enum_field_types field_type() const;
   const Type_handler *type_handler() const;
   void fix_length_and_dec();
 
-  uint cols();
+  uint cols() const;
   Item* element_index(uint i) { return reinterpret_cast<Item*>(row[i]); }
   Item** addr(uint i) { return (Item**)row + i; }
   bool check_cols(uint c);
@@ -391,8 +395,7 @@ public:
   }
   void no_rows_in_result();
 
-  enum Item_result result_type() const { return INT_RESULT;}
-  enum_field_types field_type() const { return MYSQL_TYPE_LONGLONG; }
+  const Type_handler *type_handler() const { return &type_handler_longlong; }
   longlong val_int();
   double val_real();
   String *val_str(String*);
@@ -504,6 +507,8 @@ public:
   Item *left_expr_orig;
   /* Priority of this predicate in the convert-to-semi-join-nest process. */
   int sj_convert_priority;
+  /* May be TRUE only for the candidates to semi-join conversion */
+  bool do_not_convert_to_sj; 
   /*
     Types of left_expr and subquery's select list allow to perform subquery
     materialization. Currently, we set this to FALSE when it as well could
@@ -594,8 +599,8 @@ public:
   Item_in_subselect(THD *thd_arg):
     Item_exists_subselect(thd_arg), left_expr_cache(0), first_execution(TRUE),
     in_strategy(SUBS_NOT_TRANSFORMED),
-    pushed_cond_guards(NULL), func(NULL), is_jtbm_merged(FALSE),
-    is_jtbm_const_tab(FALSE), upper_item(0) {}
+    pushed_cond_guards(NULL), func(NULL), do_not_convert_to_sj(FALSE),
+    is_jtbm_merged(FALSE), is_jtbm_const_tab(FALSE), upper_item(0) {}
   void cleanup();
   subs_type substype() { return IN_SUBS; }
   void reset() 
@@ -621,7 +626,7 @@ public:
   enum precedence precedence() const { return CMP_PRECEDENCE; }
   bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec();
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   bool const_item() const
   {
     return Item_subselect::const_item() && left_expr->const_item();
@@ -649,6 +654,8 @@ public:
     user.
   */
   int get_identifier();
+
+  void block_conversion_to_sj () { do_not_convert_to_sj= TRUE; }
 
   bool test_strategy(uchar strategy)
   { return MY_TEST(in_strategy & strategy); }
@@ -720,6 +727,13 @@ public:
     in_strategy= (SUBS_STRATEGY_CHOSEN | strategy);
     DBUG_VOID_RETURN;
   }
+
+  bool walk(Item_processor processor, bool walk_subquery, void *arg)
+  {
+    return left_expr->walk(processor, walk_subquery, arg) ||
+           Item_subselect::walk(processor, walk_subquery, arg);
+  }
+
   bool exists2in_processor(void *opt_arg __attribute__((unused)))
   {
     return 0;
@@ -814,7 +828,7 @@ public:
           caller should call exec() again for the new engine.
   */
   virtual int exec()= 0;
-  virtual uint cols()= 0; /* return number of columns in select */
+  virtual uint cols() const= 0; /* return number of columns in select */
   virtual uint8 uncacheable()= 0; /* query is uncacheable */
   virtual void exclude()= 0;
   virtual bool may_be_null() { return maybe_null; };
@@ -831,6 +845,7 @@ public:
   virtual bool no_rows() = 0;
   virtual enum_engine_type engine_type() { return ABSTRACT_ENGINE; }
   virtual int get_identifier() { DBUG_ASSERT(0); return 0; }
+  virtual void force_reexecution() {}
 protected:
   void set_row(List<Item> &item_list, Item_cache **row);
 };
@@ -850,7 +865,7 @@ public:
   int prepare(THD *thd);
   void fix_length_and_dec(Item_cache** row);
   int exec();
-  uint cols();
+  uint cols() const;
   uint8 uncacheable();
   void exclude();
   table_map upper_select_const_tables();
@@ -864,6 +879,8 @@ public:
   bool no_rows();
   virtual enum_engine_type engine_type() { return SINGLE_SELECT_ENGINE; }
   int get_identifier();
+  void force_reexecution();
+  void change_select(st_select_lex *new_select) { select_lex= new_select; }
 
   friend class subselect_hash_sj_engine;
   friend class Item_in_subselect;
@@ -884,7 +901,7 @@ public:
   int prepare(THD *);
   void fix_length_and_dec(Item_cache** row);
   int exec();
-  uint cols();
+  uint cols() const;
   uint8 uncacheable();
   void exclude();
   table_map upper_select_const_tables();
@@ -894,6 +911,7 @@ public:
                      bool temp= FALSE);
   bool no_tables();
   bool is_executed() const;
+  void force_reexecution();
   bool no_rows();
   virtual enum_engine_type engine_type() { return UNION_ENGINE; }
 };
@@ -941,7 +959,7 @@ public:
   int prepare(THD *);
   void fix_length_and_dec(Item_cache** row);
   int exec();
-  uint cols() { return 1; }
+  uint cols() const { return 1; }
   uint8 uncacheable() { return UNCACHEABLE_DEPENDENT_INJECTED; }
   void exclude();
   table_map upper_select_const_tables() { return 0; }
@@ -1079,7 +1097,7 @@ public:
   int prepare(THD *);
   int exec();
   void print(String *str, enum_query_type query_type);
-  uint cols() { return materialize_engine->cols(); }
+  uint cols() const { return materialize_engine->cols(); }
   uint8 uncacheable() { return materialize_engine->uncacheable(); }
   table_map upper_select_const_tables() { return 0; }
   bool no_rows() { return !tmp_table->file->stats.records; }
@@ -1362,7 +1380,7 @@ public:
   int prepare(THD *thd_arg) { set_thd(thd_arg); return 0; }
   int exec();
   void fix_length_and_dec(Item_cache**) {}
-  uint cols() { /* TODO: what is the correct value? */ return 1; }
+  uint cols() const { /* TODO: what is the correct value? */ return 1; }
   uint8 uncacheable() { return UNCACHEABLE_DEPENDENT; }
   void exclude() {}
   table_map upper_select_const_tables() { return 0; }

@@ -38,6 +38,9 @@ IF(WIN32)
 ENDIF()
 
 # AUTHENTICATION
+IF(WIN32 OR WITH_SSL STREQUAL "OPENSSL")
+  REGISTER_PLUGIN("AUTH_SHA256PW" "${CC_SOURCE_DIR}/plugins/auth/sha256_pw.c" "sha256_password_client_plugin" "DYNAMIC" sha256_password 1)
+ENDIF()
 REGISTER_PLUGIN("AUTH_NATIVE" "${CC_SOURCE_DIR}/plugins/auth/my_auth.c" "native_password_client_plugin" "STATIC" "" 0)
 REGISTER_PLUGIN("AUTH_OLDPASSWORD" "${CC_SOURCE_DIR}/plugins/auth/old_password.c" "old_password_client_plugin" "STATIC" "" 1)
 SET(DIALOG_SOURCES ${CC_SOURCE_DIR}/plugins/auth/dialog.c ${CC_SOURCE_DIR}/libmariadb/get_password.c)
@@ -63,11 +66,11 @@ IF(CURL_FOUND)
 ENDIF()
 
 #Trace
-REGISTER_PLUGIN("TRACE_EXAMPLE" "${CC_SOURCE_DIR}/plugins/trace/trace_example.c" "trace_example_plugin" "DYNAMIC" "trace_example" 1)
+REGISTER_PLUGIN("TRACE_EXAMPLE" "${CC_SOURCE_DIR}/plugins/trace/trace_example.c" "trace_example_plugin" "OFF" "trace_example" 1)
 
 #Connection
-REGISTER_PLUGIN("REPLICATION" "${CC_SOURCE_DIR}/plugins/connection/replication.c" "connection_replication_plugin" "DYNAMIC" "replication" 1)
-REGISTER_PLUGIN("AURORA" "${CC_SOURCE_DIR}/plugins/connection/aurora.c" "connection_aurora_plugin" "DYNAMIC" "aurora"  1)
+REGISTER_PLUGIN("REPLICATION" "${CC_SOURCE_DIR}/plugins/connection/replication.c" "connection_replication_plugin" "OFF" "replication" 1)
+REGISTER_PLUGIN("AURORA" "${CC_SOURCE_DIR}/plugins/connection/aurora.c" "connection_aurora_plugin" "OFF" "aurora"  1)
 
 # Allow registration of additional plugins
 IF(PLUGIN_CONF_FILE)

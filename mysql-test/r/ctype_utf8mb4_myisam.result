@@ -244,7 +244,12 @@ hex(s1)
 413F
 drop table t1;
 create table t1 (a text character set utf8mb4, primary key(a(371))) engine MyISAM;
-ERROR 42000: Specified key was too long; max key length is 1000 bytes
+show warnings;
+Level	Code	Message
+Error	1071	Specified key was too long; max key length is 1000 bytes
+drop table if exists t1;
+Warnings:
+Note	1051	Unknown table 'test.t1'
 CREATE TABLE t1 ( a varchar(10) ) CHARACTER SET utf8mb4 ENGINE MyISAM;
 INSERT INTO t1 VALUES ( 'test' );
 SELECT a.a, b.a FROM t1 a, t1 b WHERE a.a = b.a;
@@ -1910,7 +1915,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FF8F'
 select convert(char(0xff,0x8f) using utf8mb4);
 convert(char(0xff,0x8f) using utf8mb4)
-NULL
+??
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF\x8F'
 set sql_mode=traditional;
@@ -1936,7 +1941,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FD'
 select convert(char(0xff,0x8f) using utf8mb4);
 convert(char(0xff,0x8f) using utf8mb4)
-NULL
+??
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF\x8F'
 select hex(convert(char(2557 using latin1) using utf8mb4));
@@ -2105,7 +2110,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FF'
 select hex(convert(0xFF using utf8mb4));
 hex(convert(0xFF using utf8mb4))
-NULL
+3F
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF'
 select hex(_utf8mb4 0x616263FF);
@@ -2124,7 +2129,7 @@ Warnings:
 Warning	1300	Invalid utf8mb4 character string: 'FF'
 select hex(convert(0xFF using utf8mb4));
 hex(convert(0xFF using utf8mb4))
-NULL
+3F
 Warnings:
 Warning	1300	Invalid utf8mb4 character string: '\xFF'
 select hex(_utf8mb4 0x616263FF);

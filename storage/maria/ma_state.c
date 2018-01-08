@@ -86,8 +86,8 @@ my_bool _ma_setup_live_state(MARIA_HA *info)
 
   mysql_mutex_lock(&share->intern_lock);
   share->in_trans++;
-  DBUG_PRINT("info", ("share: 0x%lx  in_trans: %d",
-                      (ulong) share, share->in_trans));
+  DBUG_PRINT("info", ("share: %p  in_trans: %d",
+                     share, share->in_trans));
 
   history= share->state_history;
 
@@ -524,8 +524,8 @@ my_bool _ma_trnman_end_trans_hook(TRN *trn, my_bool commit,
             /* Remove not visible states */
             share->state_history= _ma_remove_not_visible_states(history, 0, 1);
           }
-          DBUG_PRINT("info", ("share: 0x%lx  in_trans: %d",
-                              (ulong) share, share->in_trans));
+          DBUG_PRINT("info", ("share: %p in_trans: %d",
+                              share, share->in_trans));
         }
       }
       share->in_trans--;
@@ -533,7 +533,7 @@ my_bool _ma_trnman_end_trans_hook(TRN *trn, my_bool commit,
     }
     else
     {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
       /*
         We need to keep share->in_trans correct in the debug library
         because of the assert in maria_close()
@@ -750,9 +750,18 @@ void maria_versioning(MARIA_HA *info, my_bool versioning)
 
 void _ma_set_share_data_file_length(MARIA_SHARE *share, ulonglong new_length)
 {
-  mysql_mutex_lock(&share->intern_lock);
+  if (!share->internal_table)
+    mysql_mutex_lock(&share->intern_lock);
   if (share->state.state.data_file_length < new_length)
+  {
     share->state.state.data_file_length= new_length;
+    if (new_length >= share->base.max_data_file_length)
+    {
+      /* Give an error on next insert */
+      share->state.changed|= STATE_DATA_FILE_FULL;
+    }
+  }
+  if (!share->internal_table)
   mysql_mutex_unlock(&share->intern_lock);
 }
 

@@ -22,9 +22,8 @@
 #pragma comment (lib, "crypt32.lib")
 #pragma comment (lib, "secur32.lib")
 
-//#define VOID void
-
 extern my_bool ma_tls_initialized;
+char tls_library_version[] = "Schannel";
 
 #define PROT_SSL3 1
 #define PROT_TLS1_0 2
@@ -176,7 +175,6 @@ void ma_schannel_set_win_error(MYSQL *mysql);
 */
 int ma_tls_start(char *errmsg, size_t errmsg_len)
 {
-
   ma_tls_initialized = TRUE;
   return 0;
 }
@@ -235,10 +233,7 @@ void *ma_tls_init(MYSQL *mysql)
 {
   SC_CTX *sctx= NULL;
   if ((sctx= (SC_CTX *)LocalAlloc(0, sizeof(SC_CTX))))
-  {
     ZeroMemory(sctx, sizeof(SC_CTX));
-    sctx->mysql= mysql;
-  }
   return sctx;
 }
 /* }}} */
@@ -352,11 +347,11 @@ my_bool ma_tls_connect(MARIADB_TLS *ctls)
   }
   if (mysql->options.extension && mysql->options.extension->tls_version)
   {
-    if (strstr("TLSv1.0", mysql->options.extension->tls_version))
+    if (strstr(mysql->options.extension->tls_version, "TLSv1.0"))
       Cred.grbitEnabledProtocols|= SP_PROT_TLS1_0_CLIENT;
-    if (strstr("TLSv1.1", mysql->options.extension->tls_version))
+    if (strstr(mysql->options.extension->tls_version, "TLSv1.1"))
       Cred.grbitEnabledProtocols|= SP_PROT_TLS1_1_CLIENT;
-    if (strstr("TLSv1.2", mysql->options.extension->tls_version))
+    if (strstr(mysql->options.extension->tls_version, "TLSv1.2"))
       Cred.grbitEnabledProtocols|= SP_PROT_TLS1_2_CLIENT;
   }
   if (!Cred.grbitEnabledProtocols)
@@ -373,7 +368,7 @@ my_bool ma_tls_connect(MARIADB_TLS *ctls)
   if (ma_schannel_client_handshake(ctls) != SEC_E_OK)
     goto end;
   
-  if (!ma_schannel_verify_certs(sctx))
+  if (!ma_schannel_verify_certs(ctls))
     goto end;
   
   return 0;
@@ -391,7 +386,7 @@ end:
 ssize_t ma_tls_read(MARIADB_TLS *ctls, const uchar* buffer, size_t length)
 {
   SC_CTX *sctx= (SC_CTX *)ctls->ssl;
-  MARIADB_PVIO *pvio= sctx->mysql->net.pvio;
+  MARIADB_PVIO *pvio= ctls->pvio;
   DWORD dlength= 0;
   SECURITY_STATUS status = ma_schannel_read_decrypt(pvio, &sctx->CredHdl, &sctx->ctxt, &dlength, (uchar *)buffer, (DWORD)length);
   if (status == SEC_I_CONTEXT_EXPIRED)
@@ -405,7 +400,7 @@ ssize_t ma_tls_read(MARIADB_TLS *ctls, const uchar* buffer, size_t length)
 ssize_t ma_tls_write(MARIADB_TLS *ctls, const uchar* buffer, size_t length)
 { 
   SC_CTX *sctx= (SC_CTX *)ctls->ssl;
-  MARIADB_PVIO *pvio= sctx->mysql->net.pvio;
+  MARIADB_PVIO *pvio= ctls->pvio;
   ssize_t rc, wlength= 0;
   ssize_t remain= length;
 
@@ -448,10 +443,10 @@ int ma_tls_verify_server_cert(MARIADB_TLS *ctls)
   PCCERT_CONTEXT pServerCert= NULL;
 
   /* check server name */
-  if (pszServerName && (sctx->mysql->client_flag & CLIENT_SSL_VERIFY_SERVER_CERT))
+  if (pszServerName && (ctls->pvio->mysql->client_flag & CLIENT_SSL_VERIFY_SERVER_CERT))
   {
     DWORD NameSize= 0;
-    char *p1, *p2;
+    char *p1;
     SECURITY_STATUS sRet;
 
     if ((sRet= QueryContextAttributes(&sctx->ctxt, SECPKG_ATTR_REMOTE_CERT_CONTEXT, (PVOID)&pServerCert)) != SEC_E_OK)
@@ -460,42 +455,60 @@ int ma_tls_verify_server_cert(MARIADB_TLS *ctls)
       goto end;
     }
 
-    if (!(NameSize= CertNameToStr(pServerCert->dwCertEncodingType,
-      &pServerCert->pCertInfo->Subject,
-      CERT_X500_NAME_STR | CERT_NAME_STR_NO_PLUS_FLAG,
-      NULL, 0)))
+    if (!(NameSize= CertGetNameString(pServerCert,
+                                      CERT_NAME_DNS_TYPE,
+                                      CERT_NAME_SEARCH_ALL_NAMES_FLAG,
+                                      NULL, NULL, 0)))
     {
-      pvio->set_error(sctx->mysql, CR_SSL_CONNECTION_ERROR, SQLSTATE_UNKNOWN, "SSL connection error:  Can't retrieve name of server certificate");
+      pvio->set_error(ctls->pvio->mysql, CR_SSL_CONNECTION_ERROR, SQLSTATE_UNKNOWN, "SSL connection error:  Can't retrieve name of server certificate");
       goto end;
     }
 
     if (!(szName= (char *)LocalAlloc(0, NameSize + 1)))
     {
-      pvio->set_error(sctx->mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, NULL);
+      pvio->set_error(ctls->pvio->mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, NULL);
       goto end;
     }
 
-    if (!CertNameToStr(pServerCert->dwCertEncodingType,
-      &pServerCert->pCertInfo->Subject,
-      CERT_X500_NAME_STR | CERT_NAME_STR_NO_PLUS_FLAG,
-      szName, NameSize))
+    if (!CertGetNameString(pServerCert,
+                           CERT_NAME_DNS_TYPE,
+                           CERT_NAME_SEARCH_ALL_NAMES_FLAG,
+                           NULL, szName, NameSize))
+
     {
-      pvio->set_error(sctx->mysql, CR_SSL_CONNECTION_ERROR, SQLSTATE_UNKNOWN, "SSL connection error: Can't retrieve name of server certificate");
+      pvio->set_error(ctls->pvio->mysql, CR_SSL_CONNECTION_ERROR, SQLSTATE_UNKNOWN, "SSL connection error: Can't retrieve name of server certificate");
       goto end;
     }
-    if ((p1 = strstr(szName, "CN=")))
+
+    /* szName may contain multiple names: Each name is zero terminated, the last name is
+       double zero terminated */
+
+
+    p1 = szName;
+    while (p1 && *p1 != 0)
     {
-      p1+= 3;
-      if ((p2= strstr(p1, ", ")))
-        *p2= 0;
-      if (!strcmp(pszServerName, p1))
+      DWORD len = strlen(p1);
+      /* check if given name contains wildcard */
+      if (len && *p1 == '*')
       {
-        rc= 0;
+        DWORD hostlen = strlen(pszServerName);
+        if (hostlen < len)
+          break;
+        if (!stricmp(pszServerName + hostlen - len + 1, p1 + 1))
+        {
+          rc = 0;
+          goto end;
+        }
+      }
+      else if (!stricmp(pszServerName, p1))
+      {
+        rc = 0;
         goto end;
       }
-      pvio->set_error(pvio->mysql, CR_SSL_CONNECTION_ERROR, SQLSTATE_UNKNOWN,
-                     "SSL connection error: Name of server certificate didn't match");
+      p1 += (len + 1);
     }
+    pvio->set_error(pvio->mysql, CR_SSL_CONNECTION_ERROR, SQLSTATE_UNKNOWN,
+                     "SSL connection error: Name of server certificate didn't match");
   }
 end:
   if (szName)

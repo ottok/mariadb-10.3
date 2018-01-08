@@ -17,8 +17,7 @@
 #ifndef SQL_TABLE_INCLUDED
 #define SQL_TABLE_INCLUDED
 
-#include "my_global.h"                          /* my_bool */
-#include "my_sys.h"                             // pthread_mutex_t
+#include <my_sys.h>                             // pthread_mutex_t
 #include "m_string.h"                           // LEX_CUSTRING
 
 class Alter_info;
@@ -217,7 +216,7 @@ bool mysql_prepare_alter_table(THD *thd, TABLE *table,
                                Alter_table_ctx *alter_ctx);
 bool mysql_trans_prepare_alter_copy_data(THD *thd);
 bool mysql_trans_commit_alter_copy_data(THD *thd);
-bool mysql_alter_table(THD *thd, char *new_db, char *new_name,
+bool mysql_alter_table(THD *thd, const char *new_db, const char *new_name,
                        HA_CREATE_INFO *create_info,
                        TABLE_LIST *table_list,
                        Alter_info *alter_info,
@@ -253,7 +252,7 @@ bool quick_rm_table(THD *thd, handlerton *base, const char *db,
                     const char *table_path=0);
 void close_cached_table(THD *thd, TABLE *table);
 void sp_prepare_create_field(THD *thd, Column_definition *sql_field);
-CHARSET_INFO* get_sql_field_charset(Create_field *sql_field,
+CHARSET_INFO* get_sql_field_charset(Column_definition *sql_field,
                                     HA_CREATE_INFO *create_info);
 bool mysql_write_frm(ALTER_PARTITION_PARAM_TYPE *lpt, uint flags);
 int write_bin_log(THD *thd, bool clear_error,

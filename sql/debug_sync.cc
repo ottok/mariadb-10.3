@@ -15,7 +15,7 @@
 
 /* see include/mysql/service_debug_sync.h for debug sync documentation */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "debug_sync.h"
 
 #if defined(ENABLED_DEBUG_SYNC)
@@ -549,7 +549,7 @@ static void debug_sync_reset(THD *thd)
 static void debug_sync_remove_action(st_debug_sync_control *ds_control,
                                      st_debug_sync_action *action)
 {
-  uint dsp_idx= action - ds_control->ds_action;
+  uint dsp_idx= (uint)(action - ds_control->ds_action);
   DBUG_ENTER("debug_sync_remove_action");
   DBUG_ASSERT(ds_control);
   DBUG_ASSERT(ds_control == current_thd->debug_sync_control);
@@ -681,8 +681,8 @@ static st_debug_sync_action *debug_sync_get_action(THD *thd,
   }
   DBUG_ASSERT(action >= ds_control->ds_action);
   DBUG_ASSERT(action < ds_control->ds_action + ds_control->ds_active);
-  DBUG_PRINT("debug_sync", ("action: 0x%lx  array: 0x%lx  count: %u",
-                            (long) action, (long) ds_control->ds_action,
+  DBUG_PRINT("debug_sync", ("action: %p  array: %p  count: %u",
+                            action, ds_control->ds_action,
                             ds_control->ds_active));
 
   DBUG_RETURN(action);
@@ -871,7 +871,7 @@ static char *debug_sync_token(char **token_p, uint *token_length_p,
                                         ptr, ptrend, MY_SEQ_NONSPACES);
 
   /* Get token length. */
-  *token_length_p= ptr - *token_p;
+  *token_length_p= (uint)(ptr - *token_p);
 
   /* If necessary, terminate token. */
   if (*ptr)
@@ -1457,7 +1457,7 @@ static void debug_sync_execute(THD *thd, st_debug_sync_action *action)
                        ER_DEBUG_SYNC_TIMEOUT,
                        ER_THD(thd, ER_DEBUG_SYNC_TIMEOUT));
           thd->abort_on_warning= save_abort_on_warning;
-          DBUG_EXECUTE_IF("debug_sync_abort_on_timeout", DBUG_ABORT(););
+          DBUG_EXECUTE_IF("debug_sync_abort_on_timeout", DBUG_ASSERT(0););
           break;
         }
         error= 0;
@@ -1505,7 +1505,7 @@ static void debug_sync_execute(THD *thd, st_debug_sync_action *action)
   {
     if (!--action->hit_limit)
     {
-      thd->killed= KILL_QUERY;
+      thd->set_killed(KILL_QUERY);
       my_error(ER_DEBUG_SYNC_HIT_LIMIT, MYF(0));
     }
     DBUG_PRINT("debug_sync_exec", ("hit_limit: %lu  at: '%s'",

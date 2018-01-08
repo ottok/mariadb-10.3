@@ -1,11 +1,11 @@
 /*********** File AM Txt C++ Program Source Code File (.CPP) ***********/
 /* PROGRAM NAME: FILAMTXT                                              */
 /* -------------                                                       */
-/*  Version 1.6                                                        */
+/*  Version 1.7                                                        */
 /*                                                                     */
 /* COPYRIGHT:                                                          */
 /* ----------                                                          */
-/*  (C) Copyright to the author Olivier BERTRAND          2005-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          2005-2017    */
 /*                                                                     */
 /* WHAT THIS PROGRAM DOES:                                             */
 /* -----------------------                                             */
@@ -71,8 +71,23 @@ TXTFAM::TXTFAM(PDOSDEF tdp)
   {
   Tdbp = NULL;
   To_Fb = NULL;
-  To_File = tdp->Fn;
-  Lrecl = tdp->Lrecl;
+
+	if (tdp) {
+		To_File = tdp->Fn;
+		Lrecl = tdp->Lrecl;
+		Eof = tdp->Eof;
+		Ending = tdp->Ending;
+	} else {
+		To_File = NULL;
+		Lrecl = 0;
+		Eof = false;
+#if defined(__WIN__)
+		Ending = 2;
+#else
+		Ending = 1;
+#endif
+	}	// endif tdp
+
   Placed = false;
   IsRead = true;
   Blocked = false;
@@ -103,8 +118,6 @@ TXTFAM::TXTFAM(PDOSDEF tdp)
   Blksize = 0;
   Fpos = Spos = Tpos = 0;
   Padded = false;
-  Eof = tdp->Eof;
-  Ending = tdp->Ending;
   Abort = false;
   CrLf = (char*)(Ending == 1 ? "\n" : "\r\n");
   } // end of TXTFAM standard constructor
@@ -561,6 +574,7 @@ bool DOSFAM::OpenTableFile(PGLOBAL g)
 
       // Selective delete, pass thru
       Bin = true;
+      /* fall through */
     case MODE_UPDATE:
       if ((UseTemp = Tdbp->IsUsingTemp(g))) {
         strcpy(opmode, "r");
@@ -973,7 +987,7 @@ int DOSFAM::DeleteRecords(PGLOBAL g, int irc)
 
     } else {
       /*****************************************************************/
-      /*  Move of eventual preceding lines is not required here.      */
+      /*  Move of eventual preceding lines is not required here.       */
       /*  Set the target file as being the source file itself.         */
       /*  Set the future Tpos, and give Spos a value to block copying. */
       /*****************************************************************/
@@ -1161,13 +1175,13 @@ int DOSFAM::RenameTempFile(PGLOBAL g)
     if (rename(filename, filetemp)) {    // Save file for security
       sprintf(g->Message, MSG(RENAME_ERROR),
               filename, filetemp, strerror(errno));
-      longjmp(g->jumper[g->jump_level], 51);
-    } else if (rename(tempname, filename)) {
+			throw 51;
+		} else if (rename(tempname, filename)) {
       sprintf(g->Message, MSG(RENAME_ERROR),
               tempname, filename, strerror(errno));
       rc = rename(filetemp, filename);   // Restore saved file
-      longjmp(g->jumper[g->jump_level], 52);
-    } else if (remove(filetemp)) {
+			throw 52;
+		} else if (remove(filetemp)) {
       sprintf(g->Message, MSG(REMOVE_ERROR),
               filetemp, strerror(errno));
       rc = RC_INFO;                      // Acceptable
@@ -1337,7 +1351,7 @@ int BLKFAM::GetPos(void)
 /***********************************************************************/
 int BLKFAM::GetNextPos(void)
   {
-  return Fpos + NxtLine - CurLine;
+  return (int)(Fpos + NxtLine - CurLine);
   } // end of GetNextPos
 
 /***********************************************************************/
@@ -1382,7 +1396,8 @@ int BLKFAM::SkipRecord(PGLOBAL, bool header)
 /***********************************************************************/
 int BLKFAM::ReadBuffer(PGLOBAL g)
   {
-  int i, n, rc = RC_OK;
+  int i, rc = RC_OK;
+  size_t n;
 
   /*********************************************************************/
   /*  Sequential reading when Placed is not true.                      */
@@ -1444,7 +1459,7 @@ int BLKFAM::ReadBuffer(PGLOBAL g)
   // Read the entire next block
   n = fread(To_Buf, 1, (size_t)BlkLen, Stream);
 
-  if (n == BlkLen) {
+  if ((size_t) n == (size_t) BlkLen) {
 //  ReadBlks++;
     num_read++;
     Rbuf = (CurBlk == Block - 1) ? Last : Nrec;
@@ -1483,7 +1498,7 @@ int BLKFAM::ReadBuffer(PGLOBAL g)
 
  fin:
   // Store the current record file position for Delete and Update
-  Fpos = BlkPos[CurBlk] + CurLine - To_Buf;
+  Fpos = (int)(BlkPos[CurBlk] + CurLine - To_Buf);
   return rc;
   } // end of ReadBuffer
 
@@ -1510,7 +1525,7 @@ int BLKFAM::WriteBuffer(PGLOBAL g)
 
     //  Now start the writing process.
     NxtLine = CurLine + strlen(CurLine);
-    BlkLen = NxtLine - To_Buf;
+    BlkLen = (int)(NxtLine - To_Buf);
 
     if (fwrite(To_Buf, 1, BlkLen, Stream) != (size_t)BlkLen) {
       sprintf(g->Message, MSG(FWRITE_ERROR), strerror(errno));

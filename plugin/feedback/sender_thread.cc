@@ -204,7 +204,7 @@ static void send_report(const char *when)
     /*
       otherwise, prepare the THD and TABLE_LIST,
       create and fill the temporary table with data just like
-      SELECT * FROM INFORMATION_SCHEMA.feedback is doing,
+      SELECT * FROM INFORMATION_SCHEMA.FEEDBACK is doing,
       read and concatenate table data into a String.
     */
     if (!(thd= new THD(thd_thread_id)))
@@ -238,7 +238,7 @@ static void send_report(const char *when)
       Url *url= todo[i];
 
       if (thd) // for nicer SHOW PROCESSLIST
-        thd->set_query(const_cast<char*>(url->url()), url->url_length());
+        thd->set_query(const_cast<char*>(url->url()), (uint) url->url_length());
 
       if (url->send(str.ptr(), str.length()))
         i++;

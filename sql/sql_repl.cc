@@ -1,5 +1,5 @@
-/* Copyright (c) 2000, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2014, SkySQL Ab.
+/* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2008, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_base.h"
@@ -28,9 +28,9 @@
 #include "log_event.h"
 #include "rpl_filter.h"
 #include <my_dir.h>
-#include "rpl_handler.h"
 #include "debug_sync.h"
-
+#include "semisync_master.h"
+#include "semisync_slave.h"
 
 enum enum_gtid_until_state {
   GTID_UNTIL_NOT_DONE,
@@ -160,6 +160,7 @@ struct binlog_send_info {
 
   bool clear_initial_log_pos;
   bool should_stop;
+  size_t dirlen;
 
   binlog_send_info(THD *thd_arg, String *packet_arg, ushort flags_arg,
                    char *lfn)
@@ -313,14 +314,41 @@ static int reset_transmit_packet(binlog_send_info *info, ushort flags,
   packet->length(0);
   packet->set("\0", 1, &my_charset_bin);
 
-  if (RUN_HOOK(binlog_transmit, reserve_header, (info->thd, flags, packet)))
+  if (info->thd->semi_sync_slave)
   {
-    info->error= ER_UNKNOWN_ERROR;
-    *errmsg= "Failed to run hook 'reserve_header'";
-    ret= 1;
+    if (repl_semisync_master.reserve_sync_header(packet))
+    {
+      info->error= ER_UNKNOWN_ERROR;
+      *errmsg= "Failed to run hook 'reserve_header'";
+      ret= 1;
+    }
   }
+
   *ev_offset= packet->length();
   return ret;
+}
+
+int get_user_var_int(const char *name,
+                     long long int *value, int *null_value)
+{
+  bool null_val;
+  user_var_entry *entry=
+    (user_var_entry*) my_hash_search(&current_thd->user_vars,
+                                  (uchar*) name, strlen(name));
+  if (!entry)
+    return 1;
+  *value= entry->val_int(&null_val);
+  if (null_value)
+    *null_value= null_val;
+  return 0;
+}
+
+inline bool is_semi_sync_slave()
+{
+  int null_value;
+  long long val= 0;
+  get_user_var_int("rpl_semi_sync_slave", &val, &null_value);
+  return val;
 }
 
 static int send_file(THD *thd)
@@ -865,7 +893,6 @@ get_binlog_list(MEM_ROOT *memroot)
         !(e->name= strmake_root(memroot, fname, length)))
     {
       mysql_bin_log.unlock_index();
-      my_error(ER_OUTOFMEMORY, MYF(0), length + 1 + sizeof(*e));
       DBUG_RETURN(NULL);
     }
     e->next= current_list;
@@ -874,72 +901,6 @@ get_binlog_list(MEM_ROOT *memroot)
   mysql_bin_log.unlock_index();
 
   DBUG_RETURN(current_list);
-}
-
-/*
-  Find the Gtid_list_log_event at the start of a binlog.
-
-  NULL for ok, non-NULL error message for error.
-
-  If ok, then the event is returned in *out_gtid_list. This can be NULL if we
-  get back to binlogs written by old server version without GTID support. If
-  so, it means we have reached the point to start from, as no GTID events can
-  exist in earlier binlogs.
-*/
-static const char *
-get_gtid_list_event(IO_CACHE *cache, Gtid_list_log_event **out_gtid_list)
-{
-  Format_description_log_event init_fdle(BINLOG_VERSION);
-  Format_description_log_event *fdle;
-  Log_event *ev;
-  const char *errormsg = NULL;
-
-  *out_gtid_list= NULL;
-
-  if (!(ev= Log_event::read_log_event(cache, 0, &init_fdle,
-                                      opt_master_verify_checksum)) ||
-      ev->get_type_code() != FORMAT_DESCRIPTION_EVENT)
-  {
-    if (ev)
-      delete ev;
-    return "Could not read format description log event while looking for "
-      "GTID position in binlog";
-  }
-
-  fdle= static_cast<Format_description_log_event *>(ev);
-
-  for (;;)
-  {
-    Log_event_type typ;
-
-    ev= Log_event::read_log_event(cache, 0, fdle, opt_master_verify_checksum);
-    if (!ev)
-    {
-      errormsg= "Could not read GTID list event while looking for GTID "
-        "position in binlog";
-      break;
-    }
-    typ= ev->get_type_code();
-    if (typ == GTID_LIST_EVENT)
-      break;                                    /* Done, found it */
-    if (typ == START_ENCRYPTION_EVENT)
-    {
-      if (fdle->start_decryption((Start_encryption_log_event*) ev))
-        errormsg= "Could not set up decryption for binlog.";
-    }
-    delete ev;
-    if (typ == ROTATE_EVENT || typ == STOP_EVENT ||
-        typ == FORMAT_DESCRIPTION_EVENT || typ == START_ENCRYPTION_EVENT)
-      continue;                                 /* Continue looking */
-
-    /* We did not find any Gtid_list_log_event, must be old binlog. */
-    ev= NULL;
-    break;
-  }
-
-  delete fdle;
-  *out_gtid_list= static_cast<Gtid_list_log_event *>(ev);
-  return errormsg;
 }
 
 
@@ -1673,6 +1634,7 @@ send_event_to_slave(binlog_send_info *info, Log_event_type event_type,
   enum enum_binlog_checksum_alg current_checksum_alg= info->current_checksum_alg;
   slave_connection_state *gtid_state= &info->gtid_state;
   slave_connection_state *until_gtid_state= info->until_gtid_state;
+  bool need_sync= false;
 
   if (event_type == GTID_LIST_EVENT &&
       info->using_gtid_state && until_gtid_state)
@@ -1983,8 +1945,10 @@ send_event_to_slave(binlog_send_info *info, Log_event_type event_type,
   THD_STAGE_INFO(info->thd, stage_sending_binlog_event_to_slave);
 
   pos= my_b_tell(log);
-  if (RUN_HOOK(binlog_transmit, before_send_event,
-               (info->thd, info->flags, packet, info->log_file_name, pos)))
+  if (repl_semisync_master.update_sync_header(info->thd,
+                                              (uchar*) packet->c_ptr(),
+                                              info->log_file_name + info->dirlen,
+                                              pos, &need_sync))
   {
     info->error= ER_UNKNOWN_ERROR;
     return "run 'before_send_event' hook failed";
@@ -2006,8 +1970,7 @@ send_event_to_slave(binlog_send_info *info, Log_event_type event_type,
     }
   }
 
-  if (RUN_HOOK(binlog_transmit, after_send_event,
-               (info->thd, info->flags, packet)))
+  if (need_sync && repl_semisync_master.flush_net(info->thd, packet->c_ptr()))
   {
     info->error= ER_UNKNOWN_ERROR;
     return "Failed to run hook 'after_send_event'";
@@ -2437,7 +2400,7 @@ static int wait_new_events(binlog_send_info *info,         /* in */
   PSI_stage_info old_stage;
 
   mysql_bin_log.lock_binlog_end_pos();
-  info->thd->ENTER_COND(mysql_bin_log.get_log_cond(),
+  info->thd->ENTER_COND(mysql_bin_log.get_bin_log_cond(),
                         mysql_bin_log.get_binlog_end_pos_lock(),
                         &stage_master_has_sent_all_binlog_to_slave,
                         &old_stage);
@@ -2681,7 +2644,7 @@ static int send_events(binlog_send_info *info, IO_CACHE* log, LOG_INFO* linfo,
       Gtid_list_log_event glev(&info->until_binlog_state, 0);
 
       if (reset_transmit_packet(info, info->flags, &ev_offset, &info->errmsg) ||
-          fake_gtid_list_event(info, &glev, &info->errmsg, my_b_tell(log)))
+          fake_gtid_list_event(info, &glev, &info->errmsg, (uint32)my_b_tell(log)))
       {
         info->error= ER_UNKNOWN_ERROR;
         return 1;
@@ -2691,7 +2654,7 @@ static int send_events(binlog_send_info *info, IO_CACHE* log, LOG_INFO* linfo,
 
     if (info->until_gtid_state &&
         is_until_reached(info, &ev_offset, event_type, &info->errmsg,
-                         my_b_tell(log)))
+                         (uint32)my_b_tell(log)))
     {
       if (info->errmsg)
       {
@@ -2746,9 +2709,9 @@ static int send_one_binlog_file(binlog_send_info *info,
     if (end_pos <= 1)
     {
       /** end of file or error */
-      return end_pos;
+      return (int)end_pos;
     }
-
+    info->dirlen= dirname_length(info->log_file_name);
     /**
      * send events from current position up to end_pos
      */
@@ -2770,6 +2733,7 @@ void mysql_binlog_send(THD* thd, char* log_ident, my_off_t pos,
 
   binlog_send_info infoobj(thd, packet, flags, linfo.log_file_name);
   binlog_send_info *info= &infoobj;
+  bool has_transmit_started= false;
 
   int old_max_allowed_packet= thd->variables.max_allowed_packet;
   thd->variables.max_allowed_packet= MAX_MAX_ALLOWED_PACKET;
@@ -2782,11 +2746,11 @@ void mysql_binlog_send(THD* thd, char* log_ident, my_off_t pos,
   if (init_binlog_sender(info, &linfo, log_ident, &pos))
     goto err;
 
-  /*
-     run hook first when all check has been made that slave seems to
-     be requesting a reasonable position. i.e when transmit actually starts
-  */
-  if (RUN_HOOK(binlog_transmit, transmit_start, (thd, flags, log_ident, pos)))
+  has_transmit_started= true;
+
+  /* Check if the dump thread is created by a slave with semisync enabled. */
+  thd->semi_sync_slave = is_semi_sync_slave();
+  if (repl_semisync_master.dump_start(thd, log_ident, pos))
   {
     info->errmsg= "Failed to run hook 'transmit_start'";
     info->error= ER_UNKNOWN_ERROR;
@@ -2908,7 +2872,10 @@ void mysql_binlog_send(THD* thd, char* log_ident, my_off_t pos,
 
 err:
   THD_STAGE_INFO(thd, stage_waiting_to_finalize_termination);
-  RUN_HOOK(binlog_transmit, transmit_stop, (thd, flags));
+  if (has_transmit_started)
+  {
+    repl_semisync_master.dump_end(thd);
+  }
 
   if (info->thd->killed == KILL_SLAVE_SAME_ID)
   {
@@ -3045,7 +3012,7 @@ int start_slave(THD* thd , Master_info* mi,  bool net_report)
   {
     /* connection was deleted while we waited for lock_slave_threads */
     mi->unlock_slave_threads();
-    my_error(WARN_NO_MASTER_INFO, mi->connection_name.length,
+    my_error(WARN_NO_MASTER_INFO, MYF(0), (int) mi->connection_name.length,
              mi->connection_name.str);
     DBUG_RETURN(-1);
   }
@@ -3303,7 +3270,7 @@ int reset_slave(THD *thd, Master_info* mi)
   {
     /* connection was deleted while we waited for lock_slave_threads */
     mi->unlock_slave_threads();
-    my_error(WARN_NO_MASTER_INFO, mi->connection_name.length,
+    my_error(WARN_NO_MASTER_INFO, MYF(0), (int) mi->connection_name.length,
              mi->connection_name.str);
     DBUG_RETURN(-1);
   }
@@ -3342,6 +3309,7 @@ int reset_slave(THD *thd, Master_info* mi)
   // close master_info_file, relay_log_info_file, set mi->inited=rli->inited=0
   end_master_info(mi);
 
+  end_relay_log_info(&mi->rli);
   // and delete these two files
   create_logfile_name_with_suffix(master_info_file_tmp,
                                   sizeof(master_info_file_tmp),
@@ -3373,7 +3341,8 @@ int reset_slave(THD *thd, Master_info* mi)
   else if (global_system_variables.log_warnings > 1)
     sql_print_information("Deleted Master_info file '%s'.", fname);
 
-  RUN_HOOK(binlog_relay_io, after_reset_slave, (thd, mi));
+  if (rpl_semi_sync_slave_enabled)
+    repl_semisync_slave.reset_slave(mi);
 err:
   mi->unlock_slave_threads();
   if (error)
@@ -3410,7 +3379,7 @@ void kill_zombie_dump_threads(uint32 slave_server_id)
     if (tmp->get_command() == COM_BINLOG_DUMP &&
        tmp->variables.server_id == slave_server_id)
     {
-      mysql_mutex_lock(&tmp->LOCK_thd_data);    // Lock from delete
+      mysql_mutex_lock(&tmp->LOCK_thd_kill);    // Lock from delete
       break;
     }
   }
@@ -3422,8 +3391,8 @@ void kill_zombie_dump_threads(uint32 slave_server_id)
       it will be slow because it will iterate through the list
       again. We just to do kill the thread ourselves.
     */
-    tmp->awake(KILL_SLAVE_SAME_ID);
-    mysql_mutex_unlock(&tmp->LOCK_thd_data);
+    tmp->awake_no_mutex(KILL_SLAVE_SAME_ID);
+    mysql_mutex_unlock(&tmp->LOCK_thd_kill);
   }
 }
 
@@ -3445,7 +3414,7 @@ static bool get_string_parameter(char *to, const char *from, size_t length,
     uint from_numchars= cs->cset->numchars(cs, from, from + from_length);
     if (from_numchars > length / cs->mbmaxlen)
     {
-      my_error(ER_WRONG_STRING_LENGTH, MYF(0), from, name, length / cs->mbmaxlen);
+      my_error(ER_WRONG_STRING_LENGTH, MYF(0), from, name, (int) (length / cs->mbmaxlen));
       return 1;
     }
     memcpy(to, from, from_length+1);
@@ -3514,7 +3483,7 @@ bool change_master(THD* thd, Master_info* mi, bool *master_info_added)
   {
     /* connection was deleted while we waited for lock_slave_threads */
     mi->unlock_slave_threads();
-    my_error(WARN_NO_MASTER_INFO, mi->connection_name.length,
+    my_error(WARN_NO_MASTER_INFO, MYF(0), (int) mi->connection_name.length,
              mi->connection_name.str);
     DBUG_RETURN(TRUE);
   }
@@ -3875,11 +3844,13 @@ int reset_master(THD* thd, rpl_gtid *init_state, uint32 init_state_len,
     return 1;
   }
 
-  if (mysql_bin_log.reset_logs(thd, 1, init_state, init_state_len,
-                               next_log_number))
-    return 1;
-  RUN_HOOK(binlog_transmit, after_reset_master, (thd, 0 /* flags */));
-  return 0;
+  bool ret= 0;
+  /* Temporarily disable master semisync before reseting master. */
+  repl_semisync_master.before_reset_master();
+  ret= mysql_bin_log.reset_logs(thd, 1, init_state, init_state_len,
+                                next_log_number);
+  repl_semisync_master.after_reset_master();
+  return ret;
 }
 
 
@@ -3913,9 +3884,6 @@ bool mysql_show_binlog_events(THD* thd)
                             Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
     DBUG_RETURN(TRUE);
 
-  Format_description_log_event *description_event= new
-    Format_description_log_event(3); /* MySQL 4.0 by default */
-
   DBUG_ASSERT(thd->lex->sql_command == SQLCOM_SHOW_BINLOG_EVENTS ||
               thd->lex->sql_command == SQLCOM_SHOW_RELAYLOG_EVENTS);
 
@@ -3935,6 +3903,9 @@ bool mysql_show_binlog_events(THD* thd)
     }
     binary_log= &(mi->rli.relay_log);
   }
+
+  Format_description_log_event *description_event= new
+    Format_description_log_event(3); /* MySQL 4.0 by default */
 
   if (binary_log->is_open())
   {
@@ -3996,7 +3967,7 @@ bool mysql_show_binlog_events(THD* thd)
     my_off_t scan_pos = BIN_LOG_HEADER_SIZE;
     while (scan_pos < pos)
     {
-      ev= Log_event::read_log_event(&log, (mysql_mutex_t*)0, description_event,
+      ev= Log_event::read_log_event(&log, description_event,
                                     opt_master_verify_checksum);
       scan_pos = my_b_tell(&log);
       if (ev == NULL || !ev->is_valid())
@@ -4030,7 +4001,7 @@ bool mysql_show_binlog_events(THD* thd)
     my_b_seek(&log, pos);
 
     for (event_count = 0;
-         (ev = Log_event::read_log_event(&log, (mysql_mutex_t*) 0,
+         (ev = Log_event::read_log_event(&log,
                                          description_event,
                                          opt_master_verify_checksum)); )
     {

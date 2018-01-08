@@ -534,7 +534,6 @@ ibuf_init_at_db_start(void)
 
 	fseg_n_reserved_pages(header_page + IBUF_HEADER + IBUF_TREE_SEG_HEADER,
 			      &n_used, &mtr);
-	ibuf_enter(&mtr);
 
 	ut_ad(n_used >= 2);
 
@@ -556,11 +555,11 @@ ibuf_init_at_db_start(void)
 	mutex_exit(&ibuf_mutex);
 
 	ibuf->empty = page_is_empty(root);
-	ibuf_mtr_commit(&mtr);
+	mtr.commit();
 
 	ibuf->index = dict_mem_index_create(
 		"innodb_change_buffer", "CLUST_IND",
-		IBUF_SPACE_ID, DICT_CLUSTERED | DICT_UNIVERSAL | DICT_IBUF, 1);
+		IBUF_SPACE_ID, DICT_CLUSTERED | DICT_IBUF, 1);
 	ibuf->index->id = DICT_IBUF_ID_MIN + IBUF_SPACE_ID;
 	ibuf->index->table = dict_mem_table_create(
 		"innodb_change_buffer", IBUF_SPACE_ID, 1, 0, 0, 0);
@@ -1472,8 +1471,8 @@ ibuf_print_ops(
 	ut_a(UT_ARR_SIZE(op_names) == IBUF_OP_COUNT);
 
 	for (i = 0; i < IBUF_OP_COUNT; i++) {
-		fprintf(file, "%s %lu%s", op_names[i],
-			(ulong) ops[i], (i < (IBUF_OP_COUNT - 1)) ? ", " : "");
+		fprintf(file, "%s " ULINTPF "%s", op_names[i],
+			ops[i], (i < (IBUF_OP_COUNT - 1)) ? ", " : "");
 	}
 
 	putc('\n', file);
@@ -1503,6 +1502,7 @@ ibuf_dummy_index_create(
 
 	/* avoid ut_ad(index->cached) in dict_index_get_n_unique_in_tree */
 	index->cached = TRUE;
+	ut_d(index->is_dummy = true);
 
 	return(index);
 }
@@ -1624,6 +1624,8 @@ ibuf_build_entry_from_ibuf_rec_func(
 
 		ibuf_dummy_index_add_col(index, dfield_get_type(field), len);
 	}
+
+	index->n_core_null_bytes = UT_BITS_IN_BYTES(index->n_nullable);
 
 	/* Prevent an ut_ad() failure in page_zip_write_rec() by
 	adding system columns to the dummy table pointed to by the
@@ -2105,6 +2107,8 @@ ibuf_remove_free_page(void)
 	page_t*	root;
 	page_t*	bitmap_page;
 
+	log_free_check();
+
 	mtr_start(&mtr);
 	fil_space_t*		space = mtr.set_sys_modified();
 	const page_size_t	page_size(space->flags);
@@ -2212,19 +2216,7 @@ void
 ibuf_free_excess_pages(void)
 /*========================*/
 {
-	ut_ad(rw_lock_own(fil_space_get_latch(IBUF_SPACE_ID, NULL), RW_LOCK_X));
-
-	ut_ad(rw_lock_get_x_lock_count(
-		fil_space_get_latch(IBUF_SPACE_ID, NULL)) == 1);
-
-	/* NOTE: We require that the thread did not own the latch before,
-	because then we know that we can obey the correct latching order
-	for ibuf latches */
-
-	if (!ibuf) {
-		/* Not yet initialized; not sure if this is possible, but
-		does no harm to check for it. */
-
+	if (srv_force_recovery >= SRV_FORCE_NO_IBUF_MERGE) {
 		return;
 	}
 
@@ -2829,8 +2821,7 @@ ibuf_get_volume_buffered_hash(
 	fold = ut_fold_binary(data, len);
 
 	hash += (fold / (CHAR_BIT * sizeof *hash)) % size;
-	bitmask = static_cast<ulint>(
-		1 << (fold % (CHAR_BIT * sizeof(*hash))));
+	bitmask = static_cast<ulint>(1) << (fold % (CHAR_BIT * sizeof(*hash)));
 
 	if (*hash & bitmask) {
 
@@ -3602,7 +3593,7 @@ fail_exit:
 
 	if (mode == BTR_MODIFY_PREV) {
 		err = btr_cur_optimistic_insert(
-			BTR_NO_LOCKING_FLAG,
+			BTR_NO_LOCKING_FLAG | BTR_NO_UNDO_LOG_FLAG,
 			cursor, &offsets, &offsets_heap,
 			ibuf_entry, &ins_rec,
 			&dummy_big_rec, 0, thr, &mtr);
@@ -3953,7 +3944,11 @@ ibuf_insert_to_index_page(
 	ut_ad(ibuf_inside(mtr));
 	ut_ad(dtuple_check_typed(entry));
 #ifdef BTR_CUR_HASH_ADAPT
+	/* A change buffer merge must occur before users are granted
+	any access to the page. No adaptive hash index entries may
+	point to a freshly read page. */
 	ut_ad(!block->index);
+	assert_block_ahi_empty(block);
 #endif /* BTR_CUR_HASH_ADAPT */
 	ut_ad(mtr->is_named_space(block->page.id.space()));
 
@@ -4008,8 +4003,8 @@ dump:
 		row_ins_sec_index_entry_by_modify(BTR_MODIFY_LEAF). */
 		ut_ad(rec_get_deleted_flag(rec, page_is_comp(page)));
 
-		offsets = rec_get_offsets(rec, index, NULL, ULINT_UNDEFINED,
-					  &heap);
+		offsets = rec_get_offsets(rec, index, NULL, true,
+					  ULINT_UNDEFINED, &heap);
 		update = row_upd_build_sec_rec_difference_binary(
 			rec, index, offsets, entry, heap);
 
@@ -4201,7 +4196,7 @@ ibuf_delete(
 		rec_offs_init(offsets_);
 
 		offsets = rec_get_offsets(
-			rec, index, offsets, ULINT_UNDEFINED, &heap);
+			rec, index, offsets, true, ULINT_UNDEFINED, &heap);
 
 		if (page_get_n_recs(page) <= 1
 		    || !(REC_INFO_DELETED_FLAG
@@ -4217,7 +4212,7 @@ ibuf_delete(
 			fprintf(stderr, "\nspace " UINT32PF " offset " UINT32PF
 				" (%u records, index id %llu)\n"
 				"InnoDB: Submit a detailed bug report"
-				" to http://bugs.mysql.com\n",
+				" to https://jira.mariadb.org/\n",
 				block->page.id.space(),
 				block->page.id.page_no(),
 				(unsigned) page_get_n_recs(page),
@@ -4928,12 +4923,12 @@ ibuf_print(
 	mutex_enter(&ibuf_mutex);
 
 	fprintf(file,
-		"Ibuf: size %lu, free list len %lu,"
-		" seg size %lu, %lu merges\n",
-		(ulong) ibuf->size,
-		(ulong) ibuf->free_list_len,
-		(ulong) ibuf->seg_size,
-		(ulong) ibuf->n_merges);
+		"Ibuf: size " ULINTPF ", free list len " ULINTPF ","
+		" seg size " ULINTPF ", " ULINTPF " merges\n",
+		ibuf->size,
+		ibuf->free_list_len,
+		ibuf->seg_size,
+		ibuf->n_merges);
 
 	fputs("merged operations:\n ", file);
 	ibuf_print_ops(ibuf->n_merged_ops, file);
@@ -4948,9 +4943,10 @@ ibuf_print(
 
 			if (count > 0) {
 				fprintf(stderr,
-					"Ibuf count for space/page %lu/%lu"
-					" is %lu\n",
-					(ulong) i, (ulong) j, (ulong) count);
+					"Ibuf count for page "
+					ULINTPF ":" ULINTPF ""
+					" is " ULINTPF "\n",
+					i, j, count);
 			}
 		}
 	}
@@ -4968,21 +4964,36 @@ ibuf_check_bitmap_on_import(
 	const trx_t*	trx,		/*!< in: transaction */
 	ulint		space_id)	/*!< in: tablespace identifier */
 {
-	ulint	size;
 	ulint	page_no;
 
 	ut_ad(space_id);
 	ut_ad(trx->mysql_thd);
 
-	bool			found;
-	const page_size_t&	page_size
-		= fil_space_get_page_size(space_id, &found);
-
-	if (!found) {
+	FilSpace space(space_id);
+	if (!space()) {
 		return(DB_TABLE_NOT_FOUND);
 	}
 
-	size = fil_space_get_size(space_id);
+	const page_size_t	page_size(space->flags);
+	/* fil_space_t::size and fil_space_t::free_limit would still be 0
+	at this point. So, we will have to read page 0. */
+	ut_ad(!space->free_limit);
+	ut_ad(!space->size);
+
+	mtr_t	mtr;
+	ulint	size;
+	mtr.start();
+	if (buf_block_t* sp = buf_page_get(page_id_t(space_id, 0), page_size,
+					   RW_S_LATCH, &mtr)) {
+		size = std::min(
+			mach_read_from_4(FSP_HEADER_OFFSET + FSP_FREE_LIMIT
+					 + sp->frame),
+			mach_read_from_4(FSP_HEADER_OFFSET + FSP_SIZE
+					 + sp->frame));
+	} else {
+		size = 0;
+	}
+	mtr.commit();
 
 	if (size == 0) {
 		return(DB_TABLE_NOT_FOUND);
@@ -4997,7 +5008,6 @@ ibuf_check_bitmap_on_import(
 	the space, as usual. */
 
 	for (page_no = 0; page_no < size; page_no += page_size.physical()) {
-		mtr_t	mtr;
 		page_t*	bitmap_page;
 		ulint	i;
 

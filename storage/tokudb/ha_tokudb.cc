@@ -532,51 +532,6 @@ typedef struct index_read_info {
     DBT* orig_key;
 } *INDEX_READ_INFO;
 
-static int ai_poll_fun(void *extra, float progress) {
-    LOADER_CONTEXT context = (LOADER_CONTEXT)extra;
-    if (thd_kill_level(context->thd)) {
-        sprintf(context->write_status_msg, "The process has been killed, aborting add index.");
-        return ER_ABORTING_CONNECTION;
-    }
-    float percentage = progress * 100;
-    sprintf(context->write_status_msg, "Adding of indexes about %.1f%% done", percentage);
-    thd_proc_info(context->thd, context->write_status_msg);
-#ifdef HA_TOKUDB_HAS_THD_PROGRESS
-    thd_progress_report(context->thd, (unsigned long long) percentage, 100);
-#endif
-    return 0;
-}
-
-static int loader_poll_fun(void *extra, float progress) {
-    LOADER_CONTEXT context = (LOADER_CONTEXT)extra;
-    if (thd_kill_level(context->thd)) {
-        sprintf(context->write_status_msg, "The process has been killed, aborting bulk load.");
-        return ER_ABORTING_CONNECTION;
-    }
-    float percentage = progress * 100;
-    sprintf(context->write_status_msg, "Loading of data about %.1f%% done", percentage);
-    thd_proc_info(context->thd, context->write_status_msg);
-#ifdef HA_TOKUDB_HAS_THD_PROGRESS
-    thd_progress_report(context->thd, (unsigned long long) percentage, 100);
-#endif
-    return 0;
-}
-
-static void loader_ai_err_fun(DB *db, int i, int err, DBT *key, DBT *val, void *error_extra) {
-    LOADER_CONTEXT context = (LOADER_CONTEXT)error_extra;
-    assert_always(context->ha);
-    context->ha->set_loader_error(err);
-}
-
-static void loader_dup_fun(DB *db, int i, int err, DBT *key, DBT *val, void *error_extra) {
-    LOADER_CONTEXT context = (LOADER_CONTEXT)error_extra;
-    assert_always(context->ha);
-    context->ha->set_loader_error(err);
-    if (err == DB_KEYEXIST) {
-        context->ha->set_dup_value_for_pk(key);
-    }
-}
-
 //
 // smart DBT callback function for optimize
 // in optimize, we want to flatten DB by doing
@@ -1434,7 +1389,7 @@ int ha_tokudb::open_secondary_dictionary(
     char* newname = NULL;
     size_t newname_len = 0;
 
-    sprintf(dict_name, "key-%s", key_info->name);
+    sprintf(dict_name, "key-%s", key_info->name.str);
 
     newname_len = get_max_dict_name_path_length(name);
     newname =
@@ -1746,7 +1701,7 @@ int ha_tokudb::initialize_share(const char* name, int mode) {
         } else {
             share->_key_descriptors[i]._is_unique = false;
             share->_key_descriptors[i]._name =
-                tokudb::memory::strdup(table_share->key_info[i].name, 0);
+                tokudb::memory::strdup(table_share->key_info[i].name.str, 0);
         }
 
         if (table_share->key_info[i].flags & HA_NOSAME) {
@@ -3397,11 +3352,13 @@ void ha_tokudb::start_bulk_insert(ha_rows rows) {
 
                 lc.thd = thd;
                 lc.ha = this;
-                
-                error = loader->set_poll_function(loader, loader_poll_fun, &lc);
+
+                error = loader->set_poll_function(
+                    loader, ha_tokudb::bulk_insert_poll, &lc);
                 assert_always(!error);
 
-                error = loader->set_error_callback(loader, loader_dup_fun, &lc);
+                error = loader->set_error_callback(
+                    loader, ha_tokudb::loader_dup, &lc);
                 assert_always(!error);
 
                 trx->stmt_progress.using_loader = true;
@@ -3413,6 +3370,47 @@ void ha_tokudb::start_bulk_insert(ha_rows rows) {
         share->unlock();
     }
     TOKUDB_HANDLER_DBUG_VOID_RETURN;
+}
+int ha_tokudb::bulk_insert_poll(void* extra, float progress) {
+    LOADER_CONTEXT context = (LOADER_CONTEXT)extra;
+    if (thd_killed(context->thd)) {
+        sprintf(context->write_status_msg,
+                "The process has been killed, aborting bulk load.");
+        return ER_ABORTING_CONNECTION;
+    }
+    float percentage = progress * 100;
+    sprintf(context->write_status_msg,
+            "Loading of data t %s about %.1f%% done",
+            context->ha->share->full_table_name(),
+            percentage);
+    thd_proc_info(context->thd, context->write_status_msg);
+#ifdef HA_TOKUDB_HAS_THD_PROGRESS
+    thd_progress_report(context->thd, (unsigned long long)percentage, 100);
+#endif
+    return 0;
+}
+void ha_tokudb::loader_add_index_err(DB* db,
+                                     int i,
+                                     int err,
+                                     DBT* key,
+                                     DBT* val,
+                                     void* error_extra) {
+    LOADER_CONTEXT context = (LOADER_CONTEXT)error_extra;
+    assert_always(context->ha);
+    context->ha->set_loader_error(err);
+}
+void ha_tokudb::loader_dup(DB* db,
+                           int i,
+                           int err,
+                           DBT* key,
+                           DBT* val,
+                           void* error_extra) {
+    LOADER_CONTEXT context = (LOADER_CONTEXT)error_extra;
+    assert_always(context->ha);
+    context->ha->set_loader_error(err);
+    if (err == DB_KEYEXIST) {
+        context->ha->set_dup_value_for_pk(key);
+    }
 }
 
 //
@@ -3579,7 +3577,7 @@ int ha_tokudb::is_index_unique(bool* is_unique, DB_TXN* txn, DB* db, KEY* key_in
                 "Verifying index uniqueness: Checked %llu of %llu rows in key-%s.",
                 (long long unsigned) cnt,
                 share->row_count(),
-                key_info->name);
+                key_info->name.str);
             thd_proc_info(thd, status_msg);
             if (thd_kill_level(thd)) {
                 my_error(ER_QUERY_INTERRUPTED, MYF(0));
@@ -3604,7 +3602,7 @@ cleanup:
     return error;
 }
 
-int ha_tokudb::is_val_unique(bool* is_unique, uchar* record, KEY* key_info, uint dict_index, DB_TXN* txn) {
+int ha_tokudb::is_val_unique(bool* is_unique, const uchar* record, KEY* key_info, uint dict_index, DB_TXN* txn) {
     int error = 0;
     bool has_null;
     DBC* tmp_cursor = NULL;
@@ -4160,7 +4158,7 @@ bool ha_tokudb::key_changed(uint keynr, const uchar * old_row, const uchar * new
 //      0 on success
 //      error otherwise
 //
-int ha_tokudb::update_row(const uchar * old_row, uchar * new_row) {
+int ha_tokudb::update_row(const uchar * old_row, const uchar * new_row) {
     TOKUDB_HANDLER_DBUG_ENTER("");
     DBT prim_key, old_prim_key, prim_row, old_prim_row;
     int UNINIT_VAR(error);
@@ -5248,17 +5246,17 @@ int ha_tokudb::fill_range_query_buf(
             DEBUG_SYNC(ha_thd(), "tokudb_icp_asc_scan_out_of_range");
             goto cleanup;
         } else if (result == ICP_NO_MATCH) {
-            // if we are performing a DESC ICP scan and have no end_range
-            // to compare to stop using ICP filtering as there isn't much more
-            // that we can do without going through contortions with remembering
-            // and comparing key parts.
+            // Optimizer change for MyRocks also benefits us here in TokuDB as
+            // opt_range.cc QUICK_SELECT::get_next now sets end_range during
+            // descending scan. We should not ever hit this condition, but
+            // leaving this code in to prevent any possibility of a descending
+            // scan to the beginning of an index and catch any possibility
+            // in debug builds with an assertion
+            assert_debug(!(!end_range && direction < 0));
             if (!end_range &&
                 direction < 0) {
-
                 cancel_pushed_idx_cond();
-                DEBUG_SYNC(ha_thd(), "tokudb_icp_desc_scan_invalidate");
             }
-
             error = TOKUDB_CURSOR_CONTINUE;
             goto cleanup;
         }
@@ -6108,7 +6106,6 @@ int ha_tokudb::info(uint flag) {
         stats.records = share->row_count() + share->rows_from_locked_table;
         stats.deleted = 0;
         if (!(flag & HA_STATUS_NO_LOCK)) {
-            uint64_t num_rows = 0;
 
             error = txn_begin(db_env, NULL, &txn, DB_READ_UNCOMMITTED, ha_thd());
             if (error) {
@@ -6118,20 +6115,13 @@ int ha_tokudb::info(uint flag) {
             // we should always have a primary key
             assert_always(share->file != NULL);
 
-            error = estimate_num_rows(share->file, &num_rows, txn);
-            if (error == 0) {
-                share->set_row_count(num_rows, false);
-                stats.records = num_rows;
-            } else {
-                goto cleanup;
-            }
-
             DB_BTREE_STAT64 dict_stats;
             error = share->file->stat64(share->file, txn, &dict_stats);
             if (error) {
                 goto cleanup;
             }
-
+            share->set_row_count(dict_stats.bt_ndata, false);
+            stats.records = dict_stats.bt_ndata;
             stats.create_time = dict_stats.bt_create_time_sec;
             stats.update_time = dict_stats.bt_modify_time_sec;
             stats.check_time = dict_stats.bt_verify_time_sec;
@@ -6830,7 +6820,7 @@ void ha_tokudb::update_create_info(HA_CREATE_INFO* create_info) {
 // during drop table, we do not attempt to remove already dropped
 // indexes because we did not keep status.tokudb in sync with list of indexes.
 //
-int ha_tokudb::remove_key_name_from_status(DB* status_block, char* key_name, DB_TXN* txn) {
+int ha_tokudb::remove_key_name_from_status(DB* status_block, const char* key_name, DB_TXN* txn) {
     int error;
     uchar status_key_info[FN_REFLEN + sizeof(HA_METADATA_KEY)];
     HA_METADATA_KEY md_key = hatoku_key_name;
@@ -6856,7 +6846,8 @@ int ha_tokudb::remove_key_name_from_status(DB* status_block, char* key_name, DB_
 // writes the key name in status.tokudb, so that we may later delete or rename
 // the dictionary associated with key_name
 //
-int ha_tokudb::write_key_name_to_status(DB* status_block, char* key_name, DB_TXN* txn) {
+int ha_tokudb::write_key_name_to_status(DB* status_block, const char* key_name,
+ DB_TXN* txn) {
     int error;
     uchar status_key_info[FN_REFLEN + sizeof(HA_METADATA_KEY)];
     HA_METADATA_KEY md_key = hatoku_key_name;
@@ -6895,7 +6886,7 @@ void ha_tokudb::trace_create_table_info(const char *name, TABLE * form) {
             TOKUDB_HANDLER_TRACE(
                 "field:%d:%s:type=%d:flags=%x",
                 i,
-                field->field_name,
+                field->field_name.str,
                 field->type(),
                 field->flags);
         }
@@ -6904,7 +6895,7 @@ void ha_tokudb::trace_create_table_info(const char *name, TABLE * form) {
             TOKUDB_HANDLER_TRACE(
                 "key:%d:%s:%d",
                 i,
-                key->name,
+                key->name.str,
                 key->user_defined_key_parts);
             uint p;
             for (p = 0; p < key->user_defined_key_parts; p++) {
@@ -6915,7 +6906,7 @@ void ha_tokudb::trace_create_table_info(const char *name, TABLE * form) {
                     i,
                     p,
                     key_part->length,
-                    field->field_name,
+                    field->field_name.str,
                     field->type(),
                     field->flags);
             }
@@ -7025,7 +7016,7 @@ int ha_tokudb::create_secondary_dictionary(
         goto cleanup;
     }
 
-    sprintf(dict_name, "key-%s", key_info->name);
+    sprintf(dict_name, "key-%s", key_info->name.str);
     make_name(newname, newname_len, name, dict_name);
 
     prim_key = (hpk) ? NULL : &form->s->key_info[primary_key];
@@ -7247,7 +7238,7 @@ int ha_tokudb::create(
                 "This is probably due to an alter table engine=TokuDB. To load this "
                 "table, do a dump and load",
                 name,
-                field->field_name
+                field->field_name.str
                 );
             error = HA_ERR_UNSUPPORTED;
             goto cleanup;
@@ -7375,7 +7366,7 @@ int ha_tokudb::create(
 
             error = write_key_name_to_status(
                 status_block,
-                form->s->key_info[i].name,
+                form->s->key_info[i].name.str,
                 txn);
             if (error) {
                 goto cleanup;
@@ -7640,7 +7631,13 @@ static bool tokudb_check_db_dir_exist_from_table_name(const char *table_name) {
 
     memcpy(db_name, db_name_begin, db_name_size);
     db_name[db_name_size] = '\0';
-    mysql_dir_exists = (check_db_dir_existence(db_name) == 0);
+
+    // At this point, db_name contains the MySQL formatted database name.
+    // This is exactly the same format that would come into us through a
+    // CREATE TABLE. Some charaters (like ':' for example) might be expanded
+    // into hex (':' would papear as "@003a").
+    // We need to check that the MySQL destination database directory exists.
+    mysql_dir_exists = (my_access(db_name, F_OK) == 0);
 
     return mysql_dir_exists;
 }
@@ -7834,7 +7831,7 @@ ha_rows ha_tokudb::records_in_range(uint keynr, key_range* start_key, key_range*
     // As a result, equal may be 0 and greater may actually be equal+greater
     // So, we call key_range64 on the key, and the key that is after it.
     if (!start_key && !end_key) {
-        error = estimate_num_rows(kfile, &rows, transaction);
+        error = estimate_num_rows(share->file, &rows, transaction);
         if (error) {
             ret_val = HA_TOKUDB_RANGE_COUNT;
             goto cleanup;
@@ -8096,7 +8093,8 @@ int ha_tokudb::tokudb_add_index(
     //
     for (uint i = 0; i < num_of_keys; i++) {
         for (uint j = 0; j < table_arg->s->keys; j++) {
-            if (strcmp(key_info[i].name, table_arg->s->key_info[j].name) == 0) {
+            if (strcmp(key_info[i].name.str,
+                       table_arg->s->key_info[j].name.str) == 0) {
                 error = HA_ERR_WRONG_COMMAND;
                 goto cleanup;
             }
@@ -8186,12 +8184,14 @@ int ha_tokudb::tokudb_add_index(
             goto cleanup;
         }
 
-        error = indexer->set_poll_function(indexer, ai_poll_fun, &lc);
+        error = indexer->set_poll_function(
+            indexer, ha_tokudb::tokudb_add_index_poll, &lc);
         if (error) {
             goto cleanup;
         }
 
-        error = indexer->set_error_callback(indexer, loader_ai_err_fun, &lc);
+        error = indexer->set_error_callback(
+            indexer, ha_tokudb::loader_add_index_err, &lc);
         if (error) {
             goto cleanup;
         }
@@ -8246,12 +8246,14 @@ int ha_tokudb::tokudb_add_index(
             goto cleanup;
         }
 
-        error = loader->set_poll_function(loader, loader_poll_fun, &lc);
+        error =
+            loader->set_poll_function(loader, ha_tokudb::bulk_insert_poll, &lc);
         if (error) {
             goto cleanup;
         }
 
-        error = loader->set_error_callback(loader, loader_ai_err_fun, &lc);
+        error = loader->set_error_callback(
+            loader, ha_tokudb::loader_add_index_err, &lc);
         if (error) {
             goto cleanup;
         }
@@ -8417,7 +8419,7 @@ int ha_tokudb::tokudb_add_index(
     // now write stuff to status.tokudb
     //
     for (uint i = 0; i < num_of_keys; i++) {
-        write_key_name_to_status(share->status_block, key_info[i].name, txn);
+        write_key_name_to_status(share->status_block, key_info[i].name.str, txn);
     }
     share->unlock();
     
@@ -8457,6 +8459,24 @@ cleanup:
     }
     thd_proc_info(thd, orig_proc_info);
     TOKUDB_HANDLER_DBUG_RETURN(error ? error : loader_error);
+}
+int ha_tokudb::tokudb_add_index_poll(void* extra, float progress) {
+    LOADER_CONTEXT context = (LOADER_CONTEXT)extra;
+    if (thd_killed(context->thd)) {
+        sprintf(context->write_status_msg,
+                "The process has been killed, aborting add index.");
+        return ER_ABORTING_CONNECTION;
+    }
+    float percentage = progress * 100;
+    sprintf(context->write_status_msg,
+            "Adding of indexes to %s about %.1f%% done",
+            context->ha->share->full_table_name(),
+            percentage);
+    thd_proc_info(context->thd, context->write_status_msg);
+#ifdef HA_TOKUDB_HAS_THD_PROGRESS
+    thd_progress_report(context->thd, (unsigned long long)percentage, 100);
+#endif
+    return 0;
 }
 
 //
@@ -8533,7 +8553,7 @@ int ha_tokudb::drop_indexes(
 
         error = remove_key_name_from_status(
             share->status_block,
-            key_info[curr_index].name,
+            key_info[curr_index].name.str,
             txn);
         if (error) {
             goto cleanup;
@@ -8542,7 +8562,7 @@ int ha_tokudb::drop_indexes(
         error = delete_or_rename_dictionary(
             share->full_table_name(),
             NULL,
-            key_info[curr_index].name,
+            key_info[curr_index].name.str,
             true,
             txn,
             true);
@@ -8662,7 +8682,7 @@ int ha_tokudb::truncate_dictionary(uint keynr, DB_TXN* txn) {
         error = delete_or_rename_dictionary(
             share->full_table_name(),
             NULL,
-            table_share->key_info[keynr].name,
+            table_share->key_info[keynr].name.str,
             true, //is_key
             txn,
             true); // is a delete

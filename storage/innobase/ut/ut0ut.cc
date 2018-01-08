@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -36,9 +37,8 @@ Created 5/11/1994 Heikki Tuuri
 #include "trx0trx.h"
 #include <string>
 #include "log.h"
+#include "my_cpu.h"
 
-/** A constant to prevent the compiler from optimizing ut_delay() away. */
-ibool	ut_always_false	= FALSE;
 #ifdef _WIN32
 /*****************************************************************//**
 NOTE: The Windows epoch starts from 1601/01/01 whereas the Unix
@@ -214,14 +214,14 @@ ut_print_timestamp(
 
 	GetLocalTime(&cal_tm);
 
-	fprintf(file, "%d-%02d-%02d %02d:%02d:%02d %#llx",
+	fprintf(file, "%d-%02d-%02d %02d:%02d:%02d %#zx",
 		(int) cal_tm.wYear,
 		(int) cal_tm.wMonth,
 		(int) cal_tm.wDay,
 		(int) cal_tm.wHour,
 		(int) cal_tm.wMinute,
 		(int) cal_tm.wSecond,
-		static_cast<ulonglong>(thread_id));
+		thread_id);
 #else
 	struct tm* cal_tm_ptr;
 	time_t	   tm;
@@ -230,7 +230,7 @@ ut_print_timestamp(
 	time(&tm);
 	localtime_r(&tm, &cal_tm);
 	cal_tm_ptr = &cal_tm;
-	fprintf(file, "%d-%02d-%02d %02d:%02d:%02d %#lx",
+	fprintf(file, "%d-%02d-%02d %02d:%02d:%02d %#zx",
 		cal_tm_ptr->tm_year + 1900,
 		cal_tm_ptr->tm_mon + 1,
 		cal_tm_ptr->tm_mday,
@@ -284,26 +284,21 @@ ut_sprintf_timestamp(
 Runs an idle loop on CPU. The argument gives the desired delay
 in microseconds on 100 MHz Pentium + Visual C++.
 @return dummy value */
-ulint
+void
 ut_delay(
 /*=====*/
 	ulint	delay)	/*!< in: delay in microseconds on 100 MHz Pentium */
 {
-	ulint	i, j;
+	ulint	i;
 
-	UT_LOW_PRIORITY_CPU();
-
-	j = 0;
+	HMT_low();
 
 	for (i = 0; i < delay * 50; i++) {
-		j += i;
-		UT_RELAX_CPU();
+		MY_RELAX_CPU();
 		UT_COMPILER_BARRIER();
 	}
 
-	UT_RESUME_PRIORITY_CPU();
-
-	return(j);
+	HMT_medium();
 }
 
 /*************************************************************//**
@@ -323,7 +318,7 @@ ut_print_buf(
 	fprintf(file, " len " ULINTPF "; hex ", len);
 
 	for (data = (const byte*) buf, i = 0; i < len; i++) {
-		fprintf(file, "%02lx", static_cast<ulong>(*data++));
+		fprintf(file, "%02x", *data++);
 	}
 
 	fputs("; asc ", file);
@@ -528,65 +523,6 @@ ut_copy_file(
 	} while (len > 0);
 }
 
-#ifdef _WIN32
-# include <stdarg.h>
-/**********************************************************************//**
-A substitute for vsnprintf(3), formatted output conversion into
-a limited buffer. Note: this function DOES NOT return the number of
-characters that would have been printed if the buffer was unlimited because
-VC's _vsnprintf() returns -1 in this case and we would need to call
-_vscprintf() in addition to estimate that but we would need another copy
-of "ap" for that and VC does not provide va_copy(). */
-void
-ut_vsnprintf(
-/*=========*/
-	char*		str,	/*!< out: string */
-	size_t		size,	/*!< in: str size */
-	const char*	fmt,	/*!< in: format */
-	va_list		ap)	/*!< in: format values */
-{
-	_vsnprintf(str, size, fmt, ap);
-	str[size - 1] = '\0';
-}
-
-/**********************************************************************//**
-A substitute for snprintf(3), formatted output conversion into
-a limited buffer.
-@return number of characters that would have been printed if the size
-were unlimited, not including the terminating '\0'. */
-int
-ut_snprintf(
-/*========*/
-	char*		str,	/*!< out: string */
-	size_t		size,	/*!< in: str size */
-	const char*	fmt,	/*!< in: format */
-	...)			/*!< in: format values */
-{
-	int	res;
-	va_list	ap1;
-	va_list	ap2;
-
-	va_start(ap1, fmt);
-	va_start(ap2, fmt);
-
-	res = _vscprintf(fmt, ap1);
-	ut_a(res != -1);
-
-	if (size > 0) {
-		_vsnprintf(str, size, fmt, ap2);
-
-		if ((size_t) res >= size) {
-			str[size - 1] = '\0';
-		}
-	}
-
-	va_end(ap1);
-	va_end(ap2);
-
-	return(res);
-}
-#endif /* _WIN32 */
-
 /** Convert an error number to a human readable text message.
 The returned string is static and should not be freed or modified.
 @param[in]	num	InnoDB internal error number
@@ -756,6 +692,8 @@ ut_strerr(
 		       "of stored column");
 	case DB_IO_NO_PUNCH_HOLE:
 		return ("File system does not support punch hole (trim) operation.");
+	case DB_PAGE_CORRUPTED:
+		return("Page read from tablespace is corrupted.");
 
 	/* do not add default: in order to produce a warning if new code
 	is added to the enum but not added here */
@@ -838,11 +776,25 @@ error::~error()
 	sql_print_error("InnoDB: %s", m_oss.str().c_str());
 }
 
+#ifdef _MSC_VER
+/* disable warning
+  "ib::fatal::~fatal': destructor never returns, potential memory leak"
+   on Windows.
+*/
+#pragma warning (push)
+#pragma warning (disable : 4722)
+#endif
+
+ATTRIBUTE_NORETURN
 fatal::~fatal()
 {
 	sql_print_error("[FATAL] InnoDB: %s", m_oss.str().c_str());
-	ut_error;
+	abort();
 }
+
+#ifdef _MSC_VER
+#pragma warning (pop)
+#endif
 
 error_or_warn::~error_or_warn()
 {
@@ -855,8 +807,11 @@ error_or_warn::~error_or_warn()
 
 fatal_or_error::~fatal_or_error()
 {
-	sql_print_error("InnoDB: %s", m_oss.str().c_str());
-	ut_a(!m_fatal);
+	sql_print_error(m_fatal ? "[FATAL] InnoDB: %s" : "InnoDB: %s",
+			m_oss.str().c_str());
+	if (m_fatal) {
+		abort();
+	}
 }
 
 } // namespace ib

@@ -864,8 +864,8 @@ static void _ma_print_bitmap_changes(MARIA_FILE_BITMAP *bitmap)
 
   end= bitmap->map + bitmap->used_size;
   DBUG_LOCK_FILE;
-  fprintf(DBUG_FILE,"\nBitmap page changes at page: %lu  bitmap: 0x%lx\n",
-          (ulong) bitmap->page, (long) bitmap->map);
+  fprintf(DBUG_FILE,"\nBitmap page changes at page: %lu  bitmap: %p\n",
+          (ulong) bitmap->page, bitmap->map);
 
   page= (ulong) bitmap->page+1;
   for (pos= bitmap->map, org_pos= bitmap->map + bitmap->block_size ;
@@ -2926,7 +2926,7 @@ int _ma_bitmap_create_first(MARIA_SHARE *share)
 static my_bool
 flush_log_for_bitmap(PAGECACHE_IO_HOOK_ARGS *args __attribute__ ((unused)))
 {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   const MARIA_SHARE *share= (MARIA_SHARE*)args->data;
 #endif
   DBUG_ENTER("flush_log_for_bitmap");

@@ -27,6 +27,7 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "mariadb.h"
 #include "key.h"
 #include "sql_base.h"
 #include "sql_select.h"
@@ -406,7 +407,7 @@ void JOIN_CACHE::create_flag_fields()
   }
 
   /* Theoretically the new value of flag_fields can be less than the old one */   
-  flag_fields= copy-field_descr;
+  flag_fields= (uint)(copy-field_descr);
 }
 
 
@@ -695,7 +696,7 @@ void JOIN_CACHE::set_constants()
   pack_length_with_blob_ptrs= pack_length + blobs*sizeof(uchar *);
   min_buff_size= 0;
   min_records= 1;
-  buff_size= MY_MAX(join->thd->variables.join_buff_size,
+  buff_size= (size_t)MY_MAX(join->thd->variables.join_buff_size,
                  get_min_join_buffer_size());
   size_of_rec_ofs= offset_size(buff_size);
   size_of_rec_len= blobs ? size_of_rec_ofs : offset_size(len); 
@@ -840,7 +841,7 @@ ulong JOIN_CACHE::get_max_join_buffer_size(bool optimize_buff_size)
     len+= get_max_key_addon_space_per_record() + avg_aux_buffer_incr;
     space_per_record= len;
     
-    size_t limit_sz= join->thd->variables.join_buff_size;
+    size_t limit_sz= (size_t)join->thd->variables.join_buff_size;
     if (join_tab->join_buffer_size_limit)
       set_if_smaller(limit_sz, join_tab->join_buffer_size_limit);
     if (!optimize_buff_size)
@@ -1374,7 +1375,7 @@ uint JOIN_CACHE::write_record_data(uchar * link, bool *is_full)
     }
     /* Save the offset of the field to put it later at the end of the record */ 
     if (copy->referenced_field_no)
-      copy->offset= cp-curr_rec_pos;
+      copy->offset= (uint)(cp-curr_rec_pos);
 
     switch (copy->type) {
     case CACHE_BLOB:
@@ -1778,7 +1779,7 @@ uint JOIN_CACHE::read_flag_fields()
     memcpy(copy->str, pos, copy->length);
     pos+= copy->length;
   }
-  return (pos-init_pos);
+  return (uint)(pos-init_pos);
 }
 
 
@@ -2570,10 +2571,11 @@ finish:
     BNLH, BKA or BKAH) to the data structure
 
   RETURN VALUE
-    none
+   0 ok
+   1 error
 */ 
 
-void JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
+bool JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
 {
   explain->incremental= MY_TEST(prev_cache);
 
@@ -2595,6 +2597,7 @@ void JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
   default:
     DBUG_ASSERT(0);
   }
+  return 0;
 }
 
 /**
@@ -2607,7 +2610,7 @@ THD *JOIN_CACHE::thd()
 }
 
 
-static void add_mrr_explain_info(String *str, uint mrr_mode, handler *file)
+static bool add_mrr_explain_info(String *str, uint mrr_mode, handler *file)
 {
   char mrr_str_buf[128]={0};
   int len;
@@ -2616,22 +2619,30 @@ static void add_mrr_explain_info(String *str, uint mrr_mode, handler *file)
   if (len > 0)
   {
     if (str->length())
-      str->append(STRING_WITH_LEN("; "));
-    str->append(mrr_str_buf, len);
+    {
+      if (str->append(STRING_WITH_LEN("; ")))
+        return 1;
+    }
+    if (str->append(mrr_str_buf, len))
+      return 1;
   }
-}
-
-void JOIN_CACHE_BKA::save_explain_data(EXPLAIN_BKA_TYPE *explain)
-{
-  JOIN_CACHE::save_explain_data(explain); 
-  add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
+  return 0;
 }
 
 
-void JOIN_CACHE_BKAH::save_explain_data(EXPLAIN_BKA_TYPE *explain)
+bool JOIN_CACHE_BKA::save_explain_data(EXPLAIN_BKA_TYPE *explain)
 {
-  JOIN_CACHE::save_explain_data(explain); 
-  add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
+  if (JOIN_CACHE::save_explain_data(explain))
+    return 1;
+  return add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
+}
+
+
+bool JOIN_CACHE_BKAH::save_explain_data(EXPLAIN_BKA_TYPE *explain)
+{
+  if (JOIN_CACHE::save_explain_data(explain))
+    return 1;
+  return add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
 }
 
 
@@ -3372,7 +3383,7 @@ int JOIN_TAB_SCAN::next()
   if (is_first_record)
     is_first_record= FALSE;
   else
-    err= info->read_record(info);
+    err= info->read_record();
 
   if (!err)
   {
@@ -3387,7 +3398,7 @@ int JOIN_TAB_SCAN::next()
       Move to the next record if the last retrieved record does not
       meet the condition pushed to the table join_tab.
     */
-    err= info->read_record(info);
+    err= info->read_record();
     if (!err)
     {
       join_tab->tracker->r_rows++;
@@ -3828,7 +3839,7 @@ uint JOIN_TAB_SCAN_MRR::aux_buffer_incr(ulong recno)
   set_if_bigger(rec_per_key, 1);
   if (recno == 1)
     incr=  ref->key_length + tab->file->ref_length;
-  incr+= tab->file->stats.mrr_length_per_rec * rec_per_key;
+  incr+= (uint)(tab->file->stats.mrr_length_per_rec * rec_per_key);
   return incr; 
 }
 
@@ -3862,6 +3873,7 @@ int JOIN_TAB_SCAN_MRR::open()
   /* Dynamic range access is never used with BKA */
   DBUG_ASSERT(join_tab->use_quick != 2);
 
+  join_tab->tracker->r_scans++;
   save_or_restore_used_tabs(join_tab, FALSE);
 
   init_mrr_buff();
@@ -3905,6 +3917,8 @@ int JOIN_TAB_SCAN_MRR::next()
   int rc= join_tab->table->file->multi_range_read_next((range_id_t*)ptr) ? -1 : 0;
   if (!rc)
   {
+    join_tab->tracker->r_rows++;
+    join_tab->tracker->r_rows_after_where++;
     /*
       If a record in in an incremental cache contains no fields then the
       association for the last record in cache will be equal to cache->end_pos

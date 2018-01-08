@@ -110,9 +110,12 @@ void
 trx_rseg_mem_free(trx_rseg_t* rseg);
 
 /** Create a persistent rollback segment.
-@param[in]	space_id	system or undo tablespace id */
+@param[in]	space_id	system or undo tablespace id
+@return pointer to new rollback segment
+@retval	NULL	on failure */
 trx_rseg_t*
-trx_rseg_create(ulint space_id);
+trx_rseg_create(ulint space_id)
+	MY_ATTRIBUTE((warn_unused_result));
 
 /** Create the temporary rollback segments. */
 void
@@ -159,20 +162,16 @@ struct trx_rseg_t {
 	ulint				curr_size;
 
 	/*--------------------------------------------------------*/
-	/* Fields for update undo logs */
-	/** List of update undo logs */
-	UT_LIST_BASE_NODE_T(trx_undo_t)	update_undo_list;
+	/* Fields for undo logs */
+	/** List of undo logs */
+	UT_LIST_BASE_NODE_T(trx_undo_t)	undo_list;
 
-	/** List of update undo log segments cached for fast reuse */
-	UT_LIST_BASE_NODE_T(trx_undo_t)	update_undo_cached;
+	/** List of undo log segments cached for fast reuse */
+	UT_LIST_BASE_NODE_T(trx_undo_t)	undo_cached;
 
-	/*--------------------------------------------------------*/
-	/* Fields for insert undo logs */
-	/** List of insert undo logs */
-	UT_LIST_BASE_NODE_T(trx_undo_t) insert_undo_list;
-
-	/** List of insert undo log segments cached for fast reuse */
-	UT_LIST_BASE_NODE_T(trx_undo_t) insert_undo_cached;
+	/** List of recovered old insert_undo logs of incomplete
+	transactions (to roll back or XA COMMIT & purge) */
+	UT_LIST_BASE_NODE_T(trx_undo_t) old_insert_list;
 
 	/*--------------------------------------------------------*/
 
@@ -186,8 +185,8 @@ struct trx_rseg_t {
 	/** Transaction number of the last not yet purged log */
 	trx_id_t			last_trx_no;
 
-	/** TRUE if the last not yet purged log needs purging */
-	ibool				last_del_marks;
+	/** Whether the log segment needs purge */
+	bool				needs_purge;
 
 	/** Reference counter to track rseg allocated transactions. */
 	ulint				trx_ref_count;
@@ -200,7 +199,18 @@ struct trx_rseg_t {
 	bool is_persistent() const
 	{
 		ut_ad(space == SRV_TMP_SPACE_ID
-		      || space <= srv_undo_tablespaces);
+		      || space == TRX_SYS_SPACE
+		      || (srv_undo_space_id_start > 0
+			  && space >= srv_undo_space_id_start
+			  && space <= srv_undo_space_id_start
+			  + TRX_SYS_MAX_UNDO_SPACES));
+		ut_ad(space == SRV_TMP_SPACE_ID
+		      || space == TRX_SYS_SPACE
+		      || (srv_undo_space_id_start > 0
+			  && space >= srv_undo_space_id_start
+			  && space <= srv_undo_space_id_start
+			  + srv_undo_tablespaces_active)
+		      || !srv_was_started);
 		return(space != SRV_TMP_SPACE_ID);
 	}
 };

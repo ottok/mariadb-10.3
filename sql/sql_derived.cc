@@ -22,7 +22,7 @@
 */
 
 
-#include <my_global.h>                         /* NO_EMBEDDED_ACCESS_CHECKS */
+#include "mariadb.h"                         /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_derived.h"
@@ -468,7 +468,8 @@ bool mysql_derived_merge(THD *thd, LEX *lex, TABLE_LIST *derived)
     // Update used tables cache according to new table map
     if (derived->on_expr)
     {
-      derived->on_expr->fix_after_pullout(parent_lex, &derived->on_expr);
+      derived->on_expr->fix_after_pullout(parent_lex, &derived->on_expr,
+                                          TRUE);
       fix_list_after_tbl_changes(parent_lex, &derived->nested_join->join_list);
     }
   }
@@ -520,6 +521,8 @@ bool mysql_derived_merge_for_insert(THD *thd, LEX *lex, TABLE_LIST *derived)
                       derived->merge_underlying_list != 0));
   if (derived->merged_for_insert)
     DBUG_RETURN(FALSE);
+  if (derived->init_derived(thd, FALSE))
+    DBUG_RETURN(TRUE);
   if (derived->is_materialized_derived())
     DBUG_RETURN(mysql_derived_prepare(thd, lex, derived));
   if ((thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
@@ -639,12 +642,30 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
   SELECT_LEX_UNIT *unit= derived->get_unit();
   DBUG_ENTER("mysql_derived_prepare");
   bool res= FALSE;
-  DBUG_PRINT("enter", ("unit 0x%lx", (ulong) unit));
+  DBUG_PRINT("enter", ("unit: %p  table_list: %p  Alias '%s'",
+                       unit, derived, derived->alias));
 
   if (!unit)
     DBUG_RETURN(FALSE);
 
   SELECT_LEX *first_select= unit->first_select();
+
+  if (derived->is_recursive_with_table() &&
+      !derived->is_with_table_recursive_reference() &&
+      !derived->with->rec_result && derived->with->get_sq_rec_ref())
+  {
+    /*
+      This is a non-recursive reference to a recursive CTE whose
+      specification unit has not been prepared at the regular processing of
+      derived table references. This can happen  only in the case when
+      the specification unit has no recursive references at the top level. 
+      Force the preparation of the specification unit. Use a recursive
+      table reference from a subquery for this.
+    */
+    DBUG_ASSERT(derived->with->get_sq_rec_ref());
+    if (mysql_derived_prepare(lex->thd, lex, derived->with->get_sq_rec_ref()))
+      DBUG_RETURN(TRUE);
+  }
 
   if (unit->prepared && derived->is_recursive_with_table() &&
       !derived->table)
@@ -806,13 +827,14 @@ exit:
     table->derived_select_number= first_select->select_number;
     table->s->tmp_table= INTERNAL_TMP_TABLE;
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
-    if (derived->referencing_view)
+    if (derived->is_view())
       table->grant= derived->grant;
     else
     {
+      DBUG_ASSERT(derived->is_derived());
+      DBUG_ASSERT(derived->is_anonymous_derived_table());
       table->grant.privilege= SELECT_ACL;
-      if (derived->is_derived())
-        derived->grant.privilege= SELECT_ACL;
+      derived->grant.privilege= SELECT_ACL;
     }
 #endif
     /* Add new temporary table to list of open derived tables */
@@ -855,12 +877,12 @@ bool mysql_derived_optimize(THD *thd, LEX *lex, TABLE_LIST *derived)
   bool res= FALSE;
   DBUG_ENTER("mysql_derived_optimize");
 
-  if (unit->optimized)
-    DBUG_RETURN(FALSE);
   lex->current_select= first_select;
 
   if (unit->is_unit_op())
   {
+    if (unit->optimized)
+      DBUG_RETURN(FALSE);
     // optimize union without execution
     res= unit->optimize();
   }
@@ -870,7 +892,20 @@ bool mysql_derived_optimize(THD *thd, LEX *lex, TABLE_LIST *derived)
     {
       JOIN *join= first_select->join;
       unit->set_limit(unit->global_parameters());
-      unit->optimized= TRUE;
+      if (join &&
+          join->optimization_state == JOIN::OPTIMIZATION_PHASE_1_DONE &&
+          join->with_two_phase_optimization)
+      {
+        if (unit->optimized_2)
+          DBUG_RETURN(FALSE);
+        unit->optimized_2= TRUE;
+      }
+      else
+      {
+        if (unit->optimized)
+          DBUG_RETURN(FALSE);        
+	unit->optimized= TRUE;
+      }
       if ((res= join->optimize()))
         goto err;
       if (join->table_count == join->const_tables)
@@ -1024,6 +1059,22 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
   DBUG_ASSERT(derived->table && derived->table->is_created());
   select_unit *derived_result= derived->derived_result;
   SELECT_LEX *save_current_select= lex->current_select;
+
+  if (unit->executed && !derived_is_recursive &&
+      (unit->uncacheable & UNCACHEABLE_DEPENDENT))
+  {
+    if ((res= derived->table->file->ha_delete_all_rows()))
+      goto err;
+    JOIN *join= unit->first_select()->join;
+    join->first_record= false;
+    for (uint i= join->top_join_tab_count;
+         i < join->top_join_tab_count + join->aggr_tables;
+         i++)
+    { 
+      if ((res= join->join_tab[i].table->file->ha_delete_all_rows()))
+        goto err;
+    }   
+  }
   
   if (derived_is_recursive)
   {
@@ -1071,7 +1122,8 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
       res= TRUE;
     unit->executed= TRUE;
   }
-  if (res || (!lex->describe && !derived_is_recursive)) 
+err:
+  if (res || (!lex->describe && !derived_is_recursive && !unit->uncacheable)) 
     unit->cleanup();
   lex->current_select= save_current_select;
 
@@ -1148,6 +1200,9 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
   st_select_lex_unit *unit= derived->get_unit();
   st_select_lex *sl= unit->first_select();
 
+  if (derived->prohibit_cond_pushdown)
+    DBUG_RETURN(false);
+
   /* Do not push conditions into constant derived */
   if (unit->executed)
     DBUG_RETURN(false);
@@ -1192,15 +1247,51 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
   st_select_lex *save_curr_select= thd->lex->current_select;
   for (; sl; sl= sl->next_select())
   {
+    Item *extracted_cond_copy;
     if (!sl->cond_pushdown_is_allowed())
       continue;
     thd->lex->current_select= sl;
+    if (sl->have_window_funcs())
+    {
+      if (sl->join->group_list || sl->join->implicit_grouping)
+        continue;
+      ORDER *common_partition_fields= 
+	       sl->find_common_window_func_partition_fields(thd);           
+      if (!common_partition_fields)
+        continue;
+      extracted_cond_copy= !sl->next_select() ?
+                           extracted_cond :
+                           extracted_cond->build_clone(thd);
+      if (!extracted_cond_copy)
+        continue;
+
+      Item *cond_over_partition_fields;; 
+      sl->collect_grouping_fields(thd, common_partition_fields);
+      sl->check_cond_extraction_for_grouping_fields(extracted_cond_copy,
+                                                    derived);
+      cond_over_partition_fields=
+        sl->build_cond_for_grouping_fields(thd, extracted_cond_copy, true);
+      if (cond_over_partition_fields)
+        cond_over_partition_fields= cond_over_partition_fields->transform(thd,
+                         &Item::derived_grouping_field_transformer_for_where,
+                         (uchar*) sl);
+      if (cond_over_partition_fields)
+      {
+        cond_over_partition_fields->walk(
+          &Item::cleanup_excluding_const_fields_processor, 0, 0);
+        sl->cond_pushed_into_where= cond_over_partition_fields;     
+      }
+
+      continue;
+    }
+
     /*
       For each select of the unit except the last one
       create a clone of extracted_cond
     */
-    Item *extracted_cond_copy= !sl->next_select() ? extracted_cond :
-                               extracted_cond->build_clone(thd, thd->mem_root);
+    extracted_cond_copy= !sl->next_select() ?
+                         extracted_cond :
+                         extracted_cond->build_clone(thd);
     if (!extracted_cond_copy)
       continue;
 
@@ -1225,9 +1316,9 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
       that could be pushed into the where clause of sl
     */
     Item *cond_over_grouping_fields;
-    sl->collect_grouping_fields(thd);
+    sl->collect_grouping_fields(thd, sl->join->group_list);
     sl->check_cond_extraction_for_grouping_fields(extracted_cond_copy,
-              &Item::exclusive_dependence_on_grouping_fields_processor);
+                                                  derived);
     cond_over_grouping_fields=
       sl->build_cond_for_grouping_fields(thd, extracted_cond_copy, true);
   
@@ -1266,7 +1357,8 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
     if (!extracted_cond_copy)
       continue;
 
-    extracted_cond_copy->walk(&Item::cleanup_processor, 0, 0);
+    extracted_cond_copy->walk(&Item::cleanup_excluding_const_fields_processor,
+                              0, 0);
     sl->cond_pushed_into_having= extracted_cond_copy;
   }
   thd->lex->current_select= save_curr_select;

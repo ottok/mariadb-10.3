@@ -2643,8 +2643,33 @@ DROP TABLE t1;
 SET TIMESTAMP=DEFAULT;
 set time_zone= @@global.time_zone;
 
+--echo #
+--echo # MDEV-13936: Server crashes in Time_and_counter_tracker::incr_loops
+--echo #
+
+CREATE TABLE t1 (i INT);
+CREATE VIEW v1 AS SELECT * FROM t1 WHERE RAND() > 0.5;
+CREATE TABLE t2 (a int);
+CREATE TABLE t3 (a int);
+
+create trigger trg after insert on t2 for each row
+  INSERT INTO t3 SELECT MAX(i) FROM v1 UNION SELECT MAX(i) FROM v1;
+
+drop table t1;
+
+--error ER_NO_SUCH_TABLE
+insert into t2 value (2);
+CREATE TABLE t1 (i INT);
+insert into t2 value (2);
+
+DROP VIEW v1;
+DROP TABLE t1,t2,t3;
+
+
+--echo End of 10.1 tests.
+
 #
-# MDEV-10915 Count number of exceuted triggers
+# MDEV-10915 Count number of executed triggers
 #
 
 create table t1 (i int);
@@ -2676,6 +2701,30 @@ select trigger_name, action_order, created from information_schema.triggers
   where event_object_table = 't1' and trigger_schema='test';
 drop table t1;
 set time_zone= @@global.time_zone;
+
+--echo # MDEV-12992: Increasing memory consumption
+--echo               with each invocation of trigger
+--echo #
+
+--let $n= 20000
+
+CREATE TABLE t1 (a INT);
+INSERT INTO t1 VALUES (1);
+CREATE TABLE t2 (b INT);
+CREATE TRIGGER tr 
+  AFTER UPDATE ON t1 FOR EACH ROW SELECT (SELECT b FROM t2) INTO @x;
+ 
+--disable_query_log
+--echo # Running $n queries
+while ($n)
+{
+    UPDATE t1 SET a = 2;
+    --dec $n
+}
+--enable_query_log
+ 
+DROP TABLE t1,t2;
+
 
 --echo #
 --echo # Start of 10.3 tests

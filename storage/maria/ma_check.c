@@ -772,7 +772,7 @@ static
 void maria_collect_stats_nonulls_first(HA_KEYSEG *keyseg, ulonglong *notnull,
                                        const uchar *key)
 {
-  uint first_null, kp;
+  size_t first_null, kp;
   first_null= ha_find_null(keyseg, key) - keyseg;
   /*
     All prefix tuples that don't include keypart_{first_null} are not-null
@@ -814,7 +814,7 @@ int maria_collect_stats_nonulls_next(HA_KEYSEG *keyseg, ulonglong *notnull,
                                      const uchar *last_key)
 {
   uint diffs[2];
-  uint first_null_seg, kp;
+  size_t first_null_seg, kp;
   HA_KEYSEG *seg;
 
   /*
@@ -1364,6 +1364,7 @@ static int check_dynamic_record(HA_CHECK *param, MARIA_HA *info, int extend,
         pos=block_info.filepos+block_info.block_len;
         if (block_info.rec_len > (uint) share->base.max_pack_length)
         {
+          my_errno= HA_ERR_WRONG_IN_RECORD;
           _ma_check_print_error(param,"Found too long record (%lu) at %s",
                                 (ulong) block_info.rec_len,
                                 llstr(start_recpos,llbuff));
@@ -2518,8 +2519,8 @@ static int maria_drop_all_indexes(HA_CHECK *param, MARIA_HA *info,
     DBUG_PRINT("repair", ("creating missing indexes"));
     for (i= 0; i < share->base.keys; i++)
     {
-      DBUG_PRINT("repair", ("index #: %u  key_root: 0x%lx  active: %d",
-                            i, (long) state->key_root[i],
+      DBUG_PRINT("repair", ("index #: %u  key_root:%lld  active: %d",
+                            i, state->key_root[i],
                             maria_is_key_active(state->key_map, i)));
       if ((state->key_root[i] != HA_OFFSET_ERROR) &&
           !maria_is_key_active(state->key_map, i))
@@ -3174,7 +3175,7 @@ int maria_sort_index(HA_CHECK *param, register MARIA_HA *info, char *name)
   DBUG_EXECUTE_IF("maria_crash_sort_index",
                   {
                     DBUG_PRINT("maria_crash_sort_index", ("now"));
-                    DBUG_ABORT();
+                    DBUG_SUICIDE();
                   });
   DBUG_RETURN(0);
 
@@ -3912,7 +3913,7 @@ int maria_repair_by_sort(HA_CHECK *param, register MARIA_HA *info,
     DBUG_EXECUTE_IF("maria_crash_create_index_by_sort",
                     {
                       DBUG_PRINT("maria_crash_create_index_by_sort", ("now"));
-                      DBUG_ABORT();
+                      DBUG_SUICIDE();
                     });
     if (scan_inited)
     {
@@ -4123,7 +4124,7 @@ err:
     DBUG_EXECUTE_IF("maria_crash_repair",
                     {
                       DBUG_PRINT("maria_crash_repair", ("now"));
-                      DBUG_ABORT();
+                      DBUG_SUICIDE();
                     });
   }
   share->state.changed|= STATE_NOT_SORTED_PAGES;
@@ -4220,6 +4221,7 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
     printf("Data records: %s\n", llstr(start_records, llbuff));
   }
 
+  bzero(&new_data_cache, sizeof(new_data_cache));
   if (initialize_variables_for_repair(param, &sort_info, &tmp_sort_param, info,
                                       rep_quick, &backup_share))
     goto err;
@@ -4259,6 +4261,8 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
     }
   */
   DBUG_PRINT("info", ("is quick repair: %d", (int) rep_quick));
+  if (!rep_quick)
+    my_b_clear(&new_data_cache);
 
   /* Initialize pthread structures before goto err. */
   mysql_mutex_init(key_SORT_INFO_mutex, &sort_info.mutex, MY_MUTEX_INIT_FAST);
@@ -4473,8 +4477,8 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
     */
     sort_param[i].read_cache= ((rep_quick || !i) ? param->read_cache :
                                new_data_cache);
-    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: 0x%lx",
-                                  i, (long) &sort_param[i].read_cache));
+    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: %p",
+                                  i, &sort_param[i].read_cache));
 
     /*
       two approaches: the same amount of memory for each thread
@@ -4624,7 +4628,7 @@ err:
     already or they were not yet started (if the error happend before
     creating the threads).
   */
-  if (!rep_quick)
+  if (!rep_quick && my_b_inited(&new_data_cache))
     end_io_cache(&new_data_cache);
   if (!got_error)
   {
@@ -4995,6 +4999,7 @@ static int sort_get_next_record(MARIA_SORT_PARAM *sort_param)
 	  param->error_printed=1;
           param->retry_repair=1;
           param->testflag|=T_RETRY_WITHOUT_QUICK;
+          my_errno= HA_ERR_WRONG_IN_RECORD;
 	  DBUG_RETURN(1);	/* Something wrong with data */
 	}
 	b_type= _ma_get_block_info(info, &block_info,-1,pos);
@@ -5268,6 +5273,7 @@ static int sort_get_next_record(MARIA_SORT_PARAM *sort_param)
 	param->error_printed=1;
         param->retry_repair=1;
         param->testflag|=T_RETRY_WITHOUT_QUICK;
+        my_errno= HA_ERR_WRONG_IN_RECORD;
 	DBUG_RETURN(1);		/* Something wrong with data */
       }
       sort_param->start_recpos=sort_param->pos;
@@ -5665,7 +5671,7 @@ static int sort_maria_ft_key_write(MARIA_SORT_PARAM *sort_param,
       key_block++;
     sort_info->key_block=key_block;
     sort_param->keyinfo= &share->ft2_keyinfo;
-    ft_buf->count=(ft_buf->buf - p)/val_len;
+    ft_buf->count=(uint)(ft_buf->buf - p)/val_len;
 
     /* flushing buffer to second-level tree */
     for (error=0; !error && p < ft_buf->buf; p+= val_len)

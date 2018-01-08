@@ -1,7 +1,7 @@
 // Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-// This source code is licensed under the BSD-style license found in the
-// LICENSE file in the root directory of this source tree. An additional grant
-// of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 //
 // This file implements the "bridge" between Java and C++ and enables
 // calling c++ rocksdb::WriteBatchWithIndex methods from Java side.
@@ -170,6 +170,44 @@ void Java_org_rocksdb_WriteBatchWithIndex_remove__J_3BIJ(
     wbwi->Delete(cf_handle, key);
   };
   rocksdb::JniUtil::k_op(remove, env, jobj, jkey, jkey_len);
+}
+
+/*
+ * Class:     org_rocksdb_WriteBatchWithIndex
+ * Method:    deleteRange
+ * Signature: (J[BI[BI)V
+ */
+void Java_org_rocksdb_WriteBatchWithIndex_deleteRange__J_3BI_3BI(
+    JNIEnv* env, jobject jobj, jlong jwbwi_handle, jbyteArray jbegin_key,
+    jint jbegin_key_len, jbyteArray jend_key, jint jend_key_len) {
+  auto* wbwi = reinterpret_cast<rocksdb::WriteBatchWithIndex*>(jwbwi_handle);
+  assert(wbwi != nullptr);
+  auto deleteRange = [&wbwi](rocksdb::Slice beginKey, rocksdb::Slice endKey) {
+    wbwi->DeleteRange(beginKey, endKey);
+  };
+  rocksdb::JniUtil::kv_op(deleteRange, env, jobj, jbegin_key, jbegin_key_len,
+                          jend_key, jend_key_len);
+}
+
+/*
+ * Class:     org_rocksdb_WriteBatchWithIndex
+ * Method:    deleteRange
+ * Signature: (J[BI[BIJ)V
+ */
+void Java_org_rocksdb_WriteBatchWithIndex_deleteRange__J_3BI_3BIJ(
+    JNIEnv* env, jobject jobj, jlong jwbwi_handle, jbyteArray jbegin_key,
+    jint jbegin_key_len, jbyteArray jend_key, jint jend_key_len,
+    jlong jcf_handle) {
+  auto* wbwi = reinterpret_cast<rocksdb::WriteBatchWithIndex*>(jwbwi_handle);
+  assert(wbwi != nullptr);
+  auto* cf_handle = reinterpret_cast<rocksdb::ColumnFamilyHandle*>(jcf_handle);
+  assert(cf_handle != nullptr);
+  auto deleteRange = [&wbwi, &cf_handle](rocksdb::Slice beginKey,
+                                         rocksdb::Slice endKey) {
+    wbwi->DeleteRange(cf_handle, beginKey, endKey);
+  };
+  rocksdb::JniUtil::kv_op(deleteRange, env, jobj, jbegin_key, jbegin_key_len,
+                          jend_key, jend_key_len);
 }
 
 /*
@@ -449,6 +487,29 @@ void Java_org_rocksdb_WBWIRocksIterator_seek0(
       reinterpret_cast<char*>(target), jtarget_len);
 
   it->Seek(target_slice);
+
+  env->ReleaseByteArrayElements(jtarget, target, JNI_ABORT);
+}
+
+/*
+ * Class:     org_rocksdb_WBWIRocksIterator
+ * Method:    seekForPrev0
+ * Signature: (J[BI)V
+ */
+void Java_org_rocksdb_WBWIRocksIterator_seekForPrev0(
+    JNIEnv* env, jobject jobj, jlong handle, jbyteArray jtarget,
+    jint jtarget_len) {
+  auto* it = reinterpret_cast<rocksdb::WBWIIterator*>(handle);
+  jbyte* target = env->GetByteArrayElements(jtarget, nullptr);
+  if(target == nullptr) {
+    // exception thrown: OutOfMemoryError
+    return;
+  }
+
+  rocksdb::Slice target_slice(
+      reinterpret_cast<char*>(target), jtarget_len);
+
+  it->SeekForPrev(target_slice);
 
   env->ReleaseByteArrayElements(jtarget, target, JNI_ABORT);
 }

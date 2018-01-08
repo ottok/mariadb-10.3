@@ -1,7 +1,8 @@
 #ifndef SQL_PARTITION_INCLUDED
 #define SQL_PARTITION_INCLUDED
 
-/* Copyright (c) 2006, 2013, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2011, 2017, MariaDB
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -85,7 +86,7 @@ bool check_reorganise_list(partition_info *new_part_info,
                            partition_info *old_part_info,
                            List<char> list_part_names);
 handler *get_ha_partition(partition_info *part_info);
-int get_parts_for_update(const uchar *old_data, uchar *new_data,
+int get_parts_for_update(const uchar *old_data, const uchar *new_data,
                          const uchar *rec0, partition_info *part_info,
                          uint32 *old_part_id, uint32 *new_part_id,
                          longlong *func_value);
@@ -257,7 +258,7 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
                                 Alter_info *alter_info,
                                 HA_CREATE_INFO *create_info,
                                 TABLE_LIST *table_list,
-                                char *db,
+                                const char *db,
                                 const char *table_name);
 bool set_part_state(Alter_info *alter_info, partition_info *tab_part_info,
                     enum partition_state part_state);
@@ -267,11 +268,10 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
                            bool *partition_changed,
                            bool *fast_alter_table);
 char *generate_partition_syntax(THD *thd, partition_info *part_info,
-                                uint *buf_length, bool use_sql_alloc,
+                                uint *buf_length,
                                 bool show_partition_options,
                                 HA_CREATE_INFO *create_info,
-                                Alter_info *alter_info,
-                                const char *current_comment_start);
+                                Alter_info *alter_info);
 bool verify_data_with_partition(TABLE *table, TABLE *part_table,
                                 uint32 part_id);
 bool compare_partition_options(HA_CREATE_INFO *table_create_info,
@@ -281,16 +281,14 @@ bool partition_key_modified(TABLE *table, const MY_BITMAP *fields);
 #define partition_key_modified(X,Y) 0
 #endif
 
-void create_partition_name(char *out, const char *in1,
-                           const char *in2, uint name_variant,
-                           bool translate);
-void create_subpartition_name(char *out, const char *in1,
-                              const char *in2, const char *in3,
-                              uint name_variant);
+int __attribute__((warn_unused_result))
+  create_partition_name(char *out, size_t outlen, const char *in1, const char
+                        *in2, uint name_variant, bool translate);
+int __attribute__((warn_unused_result))
+  create_subpartition_name(char *out, size_t outlen, const char *in1, const
+                           char *in2, const char *in3, uint name_variant);
 
 void set_key_field_ptr(KEY *key_info, const uchar *new_buf,
                        const uchar *old_buf);
-
-extern const LEX_STRING partition_keywords[];
 
 #endif /* SQL_PARTITION_INCLUDED */

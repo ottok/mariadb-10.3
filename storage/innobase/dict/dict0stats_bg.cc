@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, MariaDB Corporation. All Rights Reserved.
+Copyright (c) 2012, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -31,13 +31,13 @@ Created Apr 25, 2012 Vasil Dimov
 #include "row0mysql.h"
 #include "srv0start.h"
 #include "ut0new.h"
+#include "fil0fil.h"
+#include "trx0trx.h"
 
 #include <vector>
 
 /** Minimum time interval between stats recalc for a given table */
 #define MIN_RECALC_INTERVAL	10 /* seconds */
-
-#define SHUTTING_DOWN()		(srv_shutdown_state != SRV_SHUTDOWN_NONE)
 
 /** Event to wake up dict_stats_thread on dict_stats_recalc_pool_add()
 or shutdown. Not protected by any mutex. */
@@ -119,6 +119,7 @@ background stats gathering thread. Only the table id is added to the
 list, so the table can be closed after being enqueued and it will be
 opened when needed. If the table does not exist later (has been DROPped),
 then it will be removed from the pool and skipped. */
+static
 void
 dict_stats_recalc_pool_add(
 /*=======================*/
@@ -144,6 +145,44 @@ dict_stats_recalc_pool_add(
 	mutex_exit(&recalc_pool_mutex);
 
 	os_event_set(dict_stats_event);
+}
+
+/** Update the table modification counter and if necessary,
+schedule new estimates for table and index statistics to be calculated.
+@param[in,out]	table	persistent or temporary table */
+void
+dict_stats_update_if_needed(dict_table_t* table)
+{
+	ut_ad(table->stat_initialized);
+	ut_ad(!mutex_own(&dict_sys->mutex));
+
+	ulonglong	counter = table->stat_modified_counter++;
+	ulonglong	n_rows = dict_table_get_n_rows(table);
+
+	if (dict_stats_is_persistent_enabled(table)) {
+		if (counter > n_rows / 10 /* 10% */
+		    && dict_stats_auto_recalc_is_enabled(table)) {
+
+			dict_stats_recalc_pool_add(table);
+			table->stat_modified_counter = 0;
+		}
+		return;
+	}
+
+	/* Calculate new statistics if 1 / 16 of table has been modified
+	since the last time a statistics batch was run.
+	We calculate statistics at most every 16th round, since we may have
+	a counter table which is very small and updated very often. */
+	ulonglong threshold = 16 + n_rows / 16; /* 6.25% */
+
+	if (srv_stats_modified_counter) {
+		threshold = std::min(srv_stats_modified_counter, threshold);
+	}
+
+	if (counter > threshold) {
+		/* this will reset table->stat_modified_counter to 0 */
+		dict_stats_update(table, DICT_STATS_RECALC_TRANSIENT, NULL);
+	}
 }
 
 /*****************************************************************//**
@@ -221,7 +260,7 @@ dict_stats_wait_bg_to_stop_using_table(
 				unlocking/locking the data dict */
 {
 	while (!dict_stats_stop_bg(table)) {
-		DICT_STATS_BG_YIELD(trx);
+		DICT_BG_YIELD(trx);
 	}
 }
 
@@ -230,7 +269,6 @@ Initialize global variables needed for the operation of dict_stats_thread()
 Must be called before dict_stats_thread() is started. */
 void
 dict_stats_thread_init()
-/*====================*/
 {
 	ut_a(!srv_read_only_mode);
 
@@ -243,10 +281,10 @@ dict_stats_thread_init()
 	1) the background stats gathering thread before any other latch
 	   and released without latching anything else in between (thus
 	   any level would do here)
-	2) from row_update_statistics_if_needed()
+	2) from dict_stats_update_if_needed()
 	   and released without latching anything else in between. We know
 	   that dict_sys->mutex (SYNC_DICT) is not acquired when
-	   row_update_statistics_if_needed() is called and it may be acquired
+	   dict_stats_update_if_needed() is called and it may be acquired
 	   inside that function (thus a level <=SYNC_DICT would do).
 	3) from row_drop_table_for_mysql() after dict_sys->mutex (SYNC_DICT)
 	   and dict_operation_lock (SYNC_DICT_OPERATION) have been locked
@@ -275,15 +313,9 @@ dict_stats_thread_deinit()
 
 	mutex_free(&recalc_pool_mutex);
 
-#ifdef UNIV_DEBUG
-	os_event_destroy(dict_stats_disabled_event);
-	dict_stats_disabled_event = NULL;
-#endif /* UNIV_DEBUG */
-
+	ut_d(os_event_destroy(dict_stats_disabled_event));
 	os_event_destroy(dict_stats_event);
 	os_event_destroy(dict_stats_shutdown_event);
-	dict_stats_event = NULL;
-	dict_stats_shutdown_event = NULL;
 	dict_stats_start_shutdown = false;
 }
 
@@ -292,8 +324,7 @@ Get the first table that has been added for auto recalc and eventually
 update its stats. */
 static
 void
-dict_stats_process_entry_from_recalc_pool()
-/*=======================================*/
+dict_stats_process_entry_from_recalc_pool(trx_t* trx)
 {
 	table_id_t	table_id;
 
@@ -318,8 +349,9 @@ dict_stats_process_entry_from_recalc_pool()
 		return;
 	}
 
-	/* Check whether table is corrupted */
-	if (table->corrupted) {
+	ut_ad(!dict_table_is_temporary(table));
+
+	if (!fil_table_accessible(table)) {
 		dict_table_close(table, TRUE, FALSE);
 		mutex_exit(&dict_sys->mutex);
 		return;
@@ -346,8 +378,12 @@ dict_stats_process_entry_from_recalc_pool()
 		dict_stats_recalc_pool_add(table);
 
 	} else {
-
-		dict_stats_update(table, DICT_STATS_RECALC_PERSISTENT);
+		trx->error_state = DB_SUCCESS;
+		++trx->will_lock;
+		dict_stats_update(table, DICT_STATS_RECALC_PERSISTENT, trx);
+		if (trx->state != TRX_STATE_NOT_STARTED) {
+			trx_commit_for_mysql(trx);
+		}
 	}
 
 	mutex_enter(&dict_sys->mutex);
@@ -399,6 +435,7 @@ extern "C"
 os_thread_ret_t
 DECLARE_THREAD(dict_stats_thread)(void*)
 {
+	my_thread_init();
 	ut_a(!srv_read_only_mode);
 
 #ifdef UNIV_PFS_THREAD
@@ -406,6 +443,9 @@ DECLARE_THREAD(dict_stats_thread)(void*)
 	pfs_register_thread(dict_stats_thread_key);
 	*/
 #endif /* UNIV_PFS_THREAD */
+
+	trx_t* trx = trx_allocate_for_background();
+	ut_d(trx->persistent_stats = true);
 
 	while (!dict_stats_start_shutdown) {
 
@@ -432,12 +472,14 @@ DECLARE_THREAD(dict_stats_thread)(void*)
 			break;
 		}
 
-		dict_stats_process_entry_from_recalc_pool();
-		dict_defrag_process_entries_from_defrag_pool();
+		dict_stats_process_entry_from_recalc_pool(trx);
+		dict_defrag_process_entries_from_defrag_pool(trx);
 
 		os_event_reset(dict_stats_event);
 	}
 
+	ut_d(trx->persistent_stats = false);
+	trx_free_for_background(trx);
 	srv_dict_stats_thread_active = false;
 
 	os_event_set(dict_stats_shutdown_event);
@@ -450,7 +492,7 @@ DECLARE_THREAD(dict_stats_thread)(void*)
 	OS_THREAD_DUMMY_RETURN;
 }
 
-/** Shutdown the dict stats thread. */
+/** Shut down the dict_stats_thread. */
 void
 dict_stats_shutdown()
 {

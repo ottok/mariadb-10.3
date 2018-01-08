@@ -1,7 +1,7 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 //
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -28,7 +28,6 @@
 #include "db/db_iter.h"
 #include "db/dbformat.h"
 #include "db/event_helpers.h"
-#include "db/filename.h"
 #include "db/log_reader.h"
 #include "db/log_writer.h"
 #include "db/memtable.h"
@@ -36,6 +35,9 @@
 #include "db/merge_context.h"
 #include "db/merge_helper.h"
 #include "db/version_set.h"
+#include "monitoring/iostats_context_imp.h"
+#include "monitoring/perf_context_imp.h"
+#include "monitoring/thread_status_util.h"
 #include "port/likely.h"
 #include "port/port.h"
 #include "rocksdb/db.h"
@@ -49,16 +51,15 @@
 #include "table/table_builder.h"
 #include "util/coding.h"
 #include "util/file_reader_writer.h"
-#include "util/iostats_context_imp.h"
+#include "util/filename.h"
 #include "util/log_buffer.h"
 #include "util/logging.h"
-#include "util/sst_file_manager_impl.h"
 #include "util/mutexlock.h"
-#include "util/perf_context_imp.h"
+#include "util/random.h"
+#include "util/sst_file_manager_impl.h"
 #include "util/stop_watch.h"
 #include "util/string_util.h"
 #include "util/sync_point.h"
-#include "util/thread_status_util.h"
 
 namespace rocksdb {
 
@@ -593,6 +594,9 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
 
   double read_write_amp = 0.0;
   double write_amp = 0.0;
+  double bytes_read_per_sec = 0;
+  double bytes_written_per_sec = 0;
+
   if (stats.bytes_read_non_output_levels > 0) {
     read_write_amp = (stats.bytes_written + stats.bytes_read_output_level +
                       stats.bytes_read_non_output_levels) /
@@ -600,17 +604,22 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
     write_amp = stats.bytes_written /
                 static_cast<double>(stats.bytes_read_non_output_levels);
   }
-  LogToBuffer(
+  if (stats.micros > 0) {
+    bytes_read_per_sec =
+        (stats.bytes_read_non_output_levels + stats.bytes_read_output_level) /
+        static_cast<double>(stats.micros);
+    bytes_written_per_sec =
+        stats.bytes_written / static_cast<double>(stats.micros);
+  }
+
+  ROCKS_LOG_BUFFER(
       log_buffer_,
       "[%s] compacted to: %s, MB/sec: %.1f rd, %.1f wr, level %d, "
       "files in(%d, %d) out(%d) "
       "MB in(%.1f, %.1f) out(%.1f), read-write-amplify(%.1f) "
       "write-amplify(%.1f) %s, records in: %d, records dropped: %d\n",
-      cfd->GetName().c_str(), vstorage->LevelSummary(&tmp),
-      (stats.bytes_read_non_output_levels + stats.bytes_read_output_level) /
-          static_cast<double>(stats.micros),
-      stats.bytes_written / static_cast<double>(stats.micros),
-      compact_->compaction->output_level(),
+      cfd->GetName().c_str(), vstorage->LevelSummary(&tmp), bytes_read_per_sec,
+      bytes_written_per_sec, compact_->compaction->output_level(),
       stats.num_input_files_in_non_output_levels,
       stats.num_input_files_in_output_level, stats.num_output_files,
       stats.bytes_read_non_output_levels / 1048576.0,
@@ -733,17 +742,28 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   if (start != nullptr) {
     IterKey start_iter;
     start_iter.SetInternalKey(*start, kMaxSequenceNumber, kValueTypeForSeek);
-    input->Seek(start_iter.GetKey());
+    input->Seek(start_iter.GetInternalKey());
   } else {
     input->SeekToFirst();
   }
+
+  // we allow only 1 compaction event listener. Used by blob storage
+  CompactionEventListener* comp_event_listener = nullptr;
+#ifndef ROCKSDB_LITE
+  for (auto& celitr : cfd->ioptions()->listeners) {
+    comp_event_listener = celitr->GetCompactionEventListener();
+    if (comp_event_listener != nullptr) {
+      break;
+    }
+  }
+#endif  // ROCKSDB_LITE
 
   Status status;
   sub_compact->c_iter.reset(new CompactionIterator(
       input.get(), cfd->user_comparator(), &merge, versions_->LastSequence(),
       &existing_snapshots_, earliest_write_conflict_snapshot_, env_, false,
       range_del_agg.get(), sub_compact->compaction, compaction_filter,
-      shutting_down_));
+      comp_event_listener, shutting_down_));
   auto c_iter = sub_compact->c_iter.get();
   c_iter->SeekToFirst();
   if (c_iter->Valid() &&
@@ -994,6 +1014,10 @@ void CompactionJob::RecordDroppedKeys(
     RecordTick(stats_, COMPACTION_RANGE_DEL_DROP_OBSOLETE,
                c_iter_stats.num_range_del_drop_obsolete);
   }
+  if (c_iter_stats.num_optimized_del_drop_obsolete > 0) {
+    RecordTick(stats_, COMPACTION_OPTIMIZED_DEL_DROP_OBSOLETE,
+               c_iter_stats.num_optimized_del_drop_obsolete);
+  }
 }
 
 Status CompactionJob::FinishCompactionOutputFile(
@@ -1011,7 +1035,6 @@ Status CompactionJob::FinishCompactionOutputFile(
   uint64_t output_number = sub_compact->current_output()->meta.fd.GetNumber();
   assert(output_number != 0);
 
-  TableProperties table_properties;
   // Check for iterator errors
   Status s = input_status;
   auto meta = &sub_compact->current_output()->meta;
@@ -1044,16 +1067,18 @@ Status CompactionJob::FinishCompactionOutputFile(
     range_del_agg->AddToBuilder(sub_compact->builder.get(), lower_bound,
                                 upper_bound, meta, range_del_out_stats,
                                 bottommost_level_);
+    meta->marked_for_compaction = sub_compact->builder->NeedCompact();
   }
   const uint64_t current_entries = sub_compact->builder->NumEntries();
-  meta->marked_for_compaction = sub_compact->builder->NeedCompact();
   if (s.ok()) {
     s = sub_compact->builder->Finish();
   } else {
     sub_compact->builder->Abandon();
   }
   const uint64_t current_bytes = sub_compact->builder->FileSize();
-  meta->fd.file_size = current_bytes;
+  if (s.ok()) {
+    meta->fd.file_size = current_bytes;
+  }
   sub_compact->current_output()->finished = true;
   sub_compact->total_bytes += current_bytes;
 
@@ -1067,10 +1092,32 @@ Status CompactionJob::FinishCompactionOutputFile(
   }
   sub_compact->outfile.reset();
 
+  if (s.ok() && current_entries == 0) {
+    // If there is nothing to output, no necessary to generate a sst file.
+    // This happens when the output level is bottom level, at the same time
+    // the sub_compact output nothing.
+    std::string fname = TableFileName(
+        db_options_.db_paths, meta->fd.GetNumber(), meta->fd.GetPathId());
+    env_->DeleteFile(fname);
+
+    // Also need to remove the file from outputs, or it will be added to the
+    // VersionEdit.
+    assert(!sub_compact->outputs.empty());
+    sub_compact->outputs.pop_back();
+    sub_compact->builder.reset();
+    sub_compact->current_output_file_size = 0;
+    return s;
+  }
+
   ColumnFamilyData* cfd = sub_compact->compaction->column_family_data();
   TableProperties tp;
   if (s.ok() && current_entries > 0) {
     // Verify that the table is usable
+    // We set for_compaction to false and don't OptimizeForCompactionTableRead
+    // here because this is a special case after we finish the table building
+    // No matter whether use_direct_io_for_flush_and_compaction is true,
+    // we will regrad this verification as user reads since the goal is
+    // to cache it here for further user reads
     InternalIterator* iter = cfd->table_cache()->NewIterator(
         ReadOptions(), env_options_, cfd->internal_comparator(), meta->fd,
         nullptr /* range_del_agg */, nullptr,
@@ -1091,35 +1138,52 @@ Status CompactionJob::FinishCompactionOutputFile(
       tp = sub_compact->builder->GetTableProperties();
       sub_compact->current_output()->table_properties =
           std::make_shared<TableProperties>(tp);
-      Log(InfoLogLevel::INFO_LEVEL, db_options_.info_log,
-          "[%s] [JOB %d] Generated table #%" PRIu64 ": %" PRIu64
-          " keys, %" PRIu64 " bytes%s",
-          cfd->GetName().c_str(), job_id_, output_number, current_entries,
-          current_bytes,
-          meta->marked_for_compaction ? " (need compaction)" : "");
+      ROCKS_LOG_INFO(db_options_.info_log,
+                     "[%s] [JOB %d] Generated table #%" PRIu64 ": %" PRIu64
+                     " keys, %" PRIu64 " bytes%s",
+                     cfd->GetName().c_str(), job_id_, output_number,
+                     current_entries, current_bytes,
+                     meta->marked_for_compaction ? " (need compaction)" : "");
     }
   }
-  std::string fname = TableFileName(db_options_.db_paths, meta->fd.GetNumber(),
-                                    meta->fd.GetPathId());
+  std::string fname;
+  FileDescriptor output_fd;
+  if (meta != nullptr) {
+    fname = TableFileName(db_options_.db_paths, meta->fd.GetNumber(),
+                          meta->fd.GetPathId());
+    output_fd = meta->fd;
+  } else {
+    fname = "(nil)";
+  }
   EventHelpers::LogAndNotifyTableFileCreationFinished(
       event_logger_, cfd->ioptions()->listeners, dbname_, cfd->GetName(), fname,
-      job_id_, meta->fd, tp, TableFileCreationReason::kCompaction, s);
+      job_id_, output_fd, tp, TableFileCreationReason::kCompaction, s);
 
 #ifndef ROCKSDB_LITE
   // Report new file to SstFileManagerImpl
   auto sfm =
       static_cast<SstFileManagerImpl*>(db_options_.sst_file_manager.get());
-  if (sfm && meta->fd.GetPathId() == 0) {
+  if (sfm && meta != nullptr && meta->fd.GetPathId() == 0) {
     auto fn = TableFileName(cfd->ioptions()->db_paths, meta->fd.GetNumber(),
                             meta->fd.GetPathId());
     sfm->OnAddFile(fn);
     if (sfm->IsMaxAllowedSpaceReached()) {
+      // TODO(ajkr): should we return OK() if max space was reached by the final
+      // compaction output file (similarly to how flush works when full)?
+      s = Status::IOError("Max allowed space was reached");
+      TEST_SYNC_POINT(
+          "CompactionJob::FinishCompactionOutputFile:"
+          "MaxAllowedSpaceReached");
       InstrumentedMutexLock l(db_mutex_);
       if (db_bg_error_->ok()) {
-        s = Status::IOError("Max allowed space was reached");
-        *db_bg_error_ = s;
-        TEST_SYNC_POINT(
-            "CompactionJob::FinishCompactionOutputFile:MaxAllowedSpaceReached");
+        Status new_bg_error = s;
+        // may temporarily unlock and lock the mutex.
+        EventHelpers::NotifyOnBackgroundError(
+            cfd->ioptions()->listeners, BackgroundErrorReason::kCompaction,
+            &new_bg_error, db_mutex_);
+        if (!new_bg_error.ok()) {
+          *db_bg_error_ = new_bg_error;
+        }
       }
     }
   }
@@ -1142,17 +1206,16 @@ Status CompactionJob::InstallCompactionResults(
   if (!versions_->VerifyCompactionFileConsistency(compaction)) {
     Compaction::InputLevelSummaryBuffer inputs_summary;
 
-    Log(InfoLogLevel::ERROR_LEVEL, db_options_.info_log,
-        "[%s] [JOB %d] Compaction %s aborted",
-        compaction->column_family_data()->GetName().c_str(), job_id_,
-        compaction->InputLevelSummary(&inputs_summary));
+    ROCKS_LOG_ERROR(db_options_.info_log, "[%s] [JOB %d] Compaction %s aborted",
+                    compaction->column_family_data()->GetName().c_str(),
+                    job_id_, compaction->InputLevelSummary(&inputs_summary));
     return Status::Corruption("Compaction input files inconsistent");
   }
 
   {
     Compaction::InputLevelSummaryBuffer inputs_summary;
-    Log(InfoLogLevel::INFO_LEVEL, db_options_.info_log,
-        "[%s] [JOB %d] Compacted %s => %" PRIu64 " bytes",
+    ROCKS_LOG_INFO(
+        db_options_.info_log, "[%s] [JOB %d] Compacted %s => %" PRIu64 " bytes",
         compaction->column_family_data()->GetName().c_str(), job_id_,
         compaction->InputLevelSummary(&inputs_summary), compact_->total_bytes);
   }
@@ -1198,9 +1261,14 @@ Status CompactionJob::OpenCompactionOutputFile(
 #endif  // !ROCKSDB_LITE
   // Make the output file
   unique_ptr<WritableFile> writable_file;
-  Status s = NewWritableFile(env_, fname, &writable_file, env_options_);
+  EnvOptions opt_env_opts =
+      env_->OptimizeForCompactionTableWrite(env_options_, db_options_);
+  TEST_SYNC_POINT_CALLBACK("CompactionJob::OpenCompactionOutputFile",
+                           &opt_env_opts.use_direct_writes);
+  Status s = NewWritableFile(env_, fname, &writable_file, opt_env_opts);
   if (!s.ok()) {
-    Log(InfoLogLevel::ERROR_LEVEL, db_options_.info_log,
+    ROCKS_LOG_ERROR(
+        db_options_.info_log,
         "[%s] [JOB %d] OpenCompactionOutputFiles for table #%" PRIu64
         " fails at NewWritableFile with status %s",
         sub_compact->compaction->column_family_data()->GetName().c_str(),
@@ -1222,22 +1290,30 @@ Status CompactionJob::OpenCompactionOutputFile(
   writable_file->SetIOPriority(Env::IO_LOW);
   writable_file->SetPreallocationBlockSize(static_cast<size_t>(
       sub_compact->compaction->OutputFilePreallocationSize()));
-  sub_compact->outfile.reset(
-      new WritableFileWriter(std::move(writable_file), env_options_));
+  sub_compact->outfile.reset(new WritableFileWriter(
+      std::move(writable_file), env_options_, db_options_.statistics.get()));
 
   // If the Column family flag is to only optimize filters for hits,
   // we can skip creating filters if this is the bottommost_level where
   // data is going to be found
   bool skip_filters =
       cfd->ioptions()->optimize_filters_for_hits && bottommost_level_;
+
+  uint64_t output_file_creation_time =
+      sub_compact->compaction->MaxInputFileCreationTime();
+  if (output_file_creation_time == 0) {
+    int64_t _current_time = 0;
+    db_options_.env->GetCurrentTime(&_current_time);  // ignore error
+    output_file_creation_time = static_cast<uint64_t>(_current_time);
+  }
+
   sub_compact->builder.reset(NewTableBuilder(
       *cfd->ioptions(), cfd->internal_comparator(),
       cfd->int_tbl_prop_collector_factories(), cfd->GetID(), cfd->GetName(),
       sub_compact->outfile.get(), sub_compact->compaction->output_compression(),
       cfd->ioptions()->compression_opts,
-      sub_compact->compaction->output_level(),
-      &sub_compact->compression_dict,
-      skip_filters));
+      sub_compact->compaction->output_level(), &sub_compact->compression_dict,
+      skip_filters, output_file_creation_time));
   LogFlush(db_options_.info_log);
   return s;
 }
@@ -1376,14 +1452,14 @@ void CompactionJob::LogCompaction() {
   // we're not logging
   if (db_options_.info_log_level <= InfoLogLevel::INFO_LEVEL) {
     Compaction::InputLevelSummaryBuffer inputs_summary;
-    Log(InfoLogLevel::INFO_LEVEL, db_options_.info_log,
-        "[%s] [JOB %d] Compacting %s, score %.2f", cfd->GetName().c_str(),
-        job_id_, compaction->InputLevelSummary(&inputs_summary),
-        compaction->score());
+    ROCKS_LOG_INFO(
+        db_options_.info_log, "[%s] [JOB %d] Compacting %s, score %.2f",
+        cfd->GetName().c_str(), job_id_,
+        compaction->InputLevelSummary(&inputs_summary), compaction->score());
     char scratch[2345];
     compaction->Summary(scratch, sizeof(scratch));
-    Log(InfoLogLevel::INFO_LEVEL, db_options_.info_log,
-        "[%s] Compaction start summary: %s\n", cfd->GetName().c_str(), scratch);
+    ROCKS_LOG_INFO(db_options_.info_log, "[%s] Compaction start summary: %s\n",
+                   cfd->GetName().c_str(), scratch);
     // build event logger report
     auto stream = event_logger_->Log();
     stream << "job" << job_id_ << "event"

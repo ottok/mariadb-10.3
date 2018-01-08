@@ -393,7 +393,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 10) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 10) VIRTUAL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 insert into t1 values (1,default);
 insert ignore into t1 values (11,default);
@@ -410,7 +410,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 10) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 10) VIRTUAL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 insert into t1 values (1,default);
 insert ignore into t1 values (11,default);
@@ -915,7 +915,7 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` varchar(10) DEFAULT NULL,
   `b` varchar(10) DEFAULT NULL,
-  `c` varchar(20) GENERATED ALWAYS AS (insert(`a`,length(`a`),length(`b`),`b`)) VIRTUAL
+  `c` varchar(20) GENERATED ALWAYS AS (insert(`a`,octet_length(`a`),octet_length(`b`),`b`)) VIRTUAL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 insert into t1 values ('start,','end',default);
 select * from t1;
@@ -978,7 +978,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` varchar(10) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (length(`a`)) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (octet_length(`a`)) VIRTUAL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 insert into t1 values ('text',default);
 select * from t1;
@@ -1142,7 +1142,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` varchar(10) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (length(`a`)) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (octet_length(`a`)) VIRTUAL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 insert into t1 values ('text',default);
 select * from t1;
@@ -2894,6 +2894,21 @@ a	b
 2012-12-12	Wednesday Wed December Dec
 drop table t1;
 set sql_warnings = 0;
+# DATE_FORMAT() STORED
+set sql_warnings = 1;
+create table t1 (a date, b varchar(100) as (date_format(a, '%W %a %M %b', 'de_DE')) STORED);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` date DEFAULT NULL,
+  `b` varchar(100) GENERATED ALWAYS AS (date_format(`a`,'%W %a %M %b','de_DE')) STORED
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+insert into t1 values ('2012-12-12',default);
+select * from t1;
+a	b
+2012-12-12	Mittwoch Mi Dezember Dez
+drop table t1;
+set sql_warnings = 0;
 # CURRENT_USER()
 set sql_warnings = 1;
 create table t1 (a char, b varchar(32) as (current_user()));
@@ -2911,16 +2926,31 @@ drop table t1;
 set sql_warnings = 0;
 # TIME_FORMAT()
 set sql_warnings = 1;
-create table t1 (a datetime, b varchar(10) as (time_format(a,"%d.%m.%Y")));
+create table t1 (a datetime, b varchar(10) as (time_format(a,"%H.%i.%S")));
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` datetime DEFAULT NULL,
-  `b` varchar(10) GENERATED ALWAYS AS (time_format(`a`,'%d.%m.%Y')) VIRTUAL
+  `b` varchar(10) GENERATED ALWAYS AS (time_format(`a`,'%H.%i.%S')) VIRTUAL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
-insert into t1 values ('2001-01-01 02:02:02',default);
+insert into t1 values ('2001-01-01 02:03:04',default);
 select * from t1;
 a	b
-2001-01-01 02:02:02	01.01.2001
+2001-01-01 02:03:04	02.03.04
+drop table t1;
+set sql_warnings = 0;
+# TIME_FORMAT() STORED
+set sql_warnings = 1;
+create table t1 (a datetime, b varchar(10) as (time_format(a,"%H.%i.%S")) STORED);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` datetime DEFAULT NULL,
+  `b` varchar(10) GENERATED ALWAYS AS (time_format(`a`,'%H.%i.%S')) STORED
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+insert into t1 values ('2001-01-01 02:03:04',default);
+select * from t1;
+a	b
+2001-01-01 02:03:04	02.03.04
 drop table t1;
 set sql_warnings = 0;

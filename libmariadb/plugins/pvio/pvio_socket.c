@@ -227,7 +227,7 @@ my_bool pvio_socket_set_timeout(MARIADB_PVIO *pvio, enum enum_pvio_timeout type,
   csock= (struct st_pvio_socket *)pvio->data;
   pvio->timeout[type]= (timeout > 0) ? timeout * 1000 : -1;
   if (csock)
-    return pvio_socket_change_timeout(pvio, type, timeout);
+    return pvio_socket_change_timeout(pvio, type, timeout * 1000);
   return 0;
 }
 /* }}} */
@@ -497,7 +497,7 @@ int pvio_socket_wait_io_or_timeout(MARIADB_PVIO *pvio, my_bool is_read, int time
 
     do {
       rc= poll(&p_fd, 1, timeout);
-    } while (rc == -1 || errno == EINTR);
+    } while (rc == -1 && errno == EINTR);
 
     if (rc == 0)
       errno= ETIMEDOUT;
@@ -796,7 +796,7 @@ my_bool pvio_socket_connect(MARIADB_PVIO *pvio, MA_PVIO_CINFO *cinfo)
       {
         unsigned int timeout= mysql->options.connect_timeout ?
                               mysql->options.connect_timeout : DNS_TIMEOUT;
-        if (time(NULL) - start_t > timeout)
+        if (time(NULL) - start_t > (time_t)timeout)
           break;
 #ifndef _WIN32
         usleep(wait_gai);
@@ -815,11 +815,11 @@ my_bool pvio_socket_connect(MARIADB_PVIO *pvio, MA_PVIO_CINFO *cinfo)
     /* Get the address information for the server using getaddrinfo() */
     wait_gai= 1;
     while ((gai_rc= getaddrinfo(cinfo->host, server_port,
-                                &hints, &res) == EAI_AGAIN))
+                                &hints, &res)) == EAI_AGAIN)
     {
       unsigned int timeout= mysql->options.connect_timeout ?
                             mysql->options.connect_timeout : DNS_TIMEOUT;
-      if (time(NULL) - start_t > timeout)
+      if (time(NULL) - start_t > (time_t)timeout)
         break;
 #ifndef _WIN32
       usleep(wait_gai);

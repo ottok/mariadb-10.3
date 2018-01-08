@@ -78,7 +78,7 @@ struct Query_cache_tls;
 struct LEX;
 class THD;
 
-typedef my_bool (*qc_engine_callback)(THD *thd, char *table_key,
+typedef my_bool (*qc_engine_callback)(THD *thd, const char *table_key,
                                       uint key_length,
                                       ulonglong *engine_data);
 
@@ -159,6 +159,7 @@ struct Query_cache_query
   unsigned int last_pkt_nr;
   uint8 tbls_type;
   uint8 ready;
+  ulonglong hit_count;
 
   Query_cache_query() {}                      /* Remove gcc warning */
   inline void init_n_lock();
@@ -184,6 +185,8 @@ struct Query_cache_query
   */
   inline void set_results_ready()          { ready= 1; }
   inline bool is_results_ready()           { return ready; }
+  inline void increment_hits() { hit_count++; }
+  inline ulonglong hits() { return hit_count; }
   void lock_writing();
   void lock_reading();
   bool try_lock_writing();
@@ -482,7 +485,7 @@ protected:
 		  my_bool using_transactions);
 
   /* Remove all queries that uses any of the tables in following database */
-  void invalidate(THD *thd, char *db);
+  void invalidate(THD *thd, const char *db);
 
   /* Remove all queries that uses any of the listed following table */
   void invalidate_by_MyISAM_filename(const char *filename);
@@ -545,6 +548,7 @@ struct Query_cache_query_flags
 {
   unsigned int client_long_flag:1;
   unsigned int client_protocol_41:1;
+  unsigned int client_depr_eof:1;
   unsigned int protocol_type:2;
   unsigned int more_results_exists:1;
   unsigned int in_trans:1;
@@ -556,8 +560,8 @@ struct Query_cache_query_flags
   ha_rows limit;
   Time_zone *time_zone;
   sql_mode_t sql_mode;
-  ulong max_sort_length;
-  ulong group_concat_max_len;
+  ulonglong max_sort_length;
+  ulonglong group_concat_max_len;
   ulong default_week_format;
   ulong div_precision_increment;
   MY_LOCALE *lc_time_names;

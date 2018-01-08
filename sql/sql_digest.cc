@@ -1,4 +1,5 @@
 /* Copyright (c) 2008, 2015, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2017, MariaDB Corporation.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -17,7 +18,7 @@
   This code needs extra visibility in the lexer structures
 */
 
-#include "my_global.h"
+#include "mariadb.h"
 #include "my_md5.h"
 #include "mysqld_error.h"
 
@@ -29,11 +30,6 @@
 #include "sql_digest_stream.h"
 
 #include "sql_get_diagnostics.h"
-
-#ifdef NEVER
-#include "my_sys.h"
-#include "sql_signal.h"
-#endif
 
 /* Generated code */
 #include "sql_yacc.h"
@@ -454,7 +450,8 @@ sql_digest_state* digest_add_token(sql_digest_state *state,
         }
       } while (found_unary);
     }
-    /* fall through, for case NULL_SYM below */
+    /* for case NULL_SYM below */
+    /* fall through */
     case LEX_HOSTNAME:
     case TEXT_STRING:
     case NCHAR_STRING:
@@ -570,7 +567,7 @@ sql_digest_state* digest_add_token(sql_digest_state *state,
     case IDENT_QUOTED:
     {
       YYSTYPE *lex_token= yylval;
-      char *yytext= lex_token->lex_str.str;
+      const char *yytext= lex_token->lex_str.str;
       size_t yylen= lex_token->lex_str.length;
 
       /*

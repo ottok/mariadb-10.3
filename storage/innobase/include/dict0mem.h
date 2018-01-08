@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
 Copyright (c) 2013, 2017, MariaDB Corporation.
 
@@ -66,8 +66,6 @@ combination of types */
 				auto-generated clustered indexes,
 				also DICT_UNIQUE will be set */
 #define DICT_UNIQUE	2	/*!< unique index */
-#define	DICT_UNIVERSAL	4	/*!< index which can contain records from any
-				other index */
 #define	DICT_IBUF	8	/*!< insert buffer tree */
 #define	DICT_CORRUPT	16	/*!< bit to store the corrupted flag
 				in SYS_INDEXES.TYPE */
@@ -124,9 +122,10 @@ the Compact page format is used, i.e ROW_FORMAT != REDUNDANT */
 /** Width of the ZIP_SSIZE flag */
 #define DICT_TF_WIDTH_ZIP_SSIZE		4
 
-/** Width of the ATOMIC_BLOBS flag.  The Antelope file formats broke up
-BLOB and TEXT fields, storing the first 768 bytes in the clustered index.
-Barracuda row formats store the whole blob or text field off-page atomically.
+/** Width of the ATOMIC_BLOBS flag.  The ROW_FORMAT=REDUNDANT and
+ROW_FORMAT=COMPACT broke up BLOB and TEXT fields, storing the first 768 bytes
+in the clustered index. ROW_FORMAT=DYNAMIC and ROW_FORMAT=COMPRESSED
+store the whole blob or text field off-page atomically.
 Secondary indexes are created from this external data using row_ext_t
 to cache the BLOB prefixes. */
 #define DICT_TF_WIDTH_ATOMIC_BLOBS	1
@@ -137,10 +136,6 @@ This flag prevents older engines from attempting to open the table and
 allows InnoDB to update_create_info() accordingly. */
 #define DICT_TF_WIDTH_DATA_DIR		1
 
-/** Width of the SHARED tablespace flag (Oracle MYSQL 5.7).
-Not supported by MariaDB. */
-#define DICT_TF_WIDTH_SHARED_SPACE	1
-
 /**
 Width of the page compression flag
 */
@@ -148,35 +143,19 @@ Width of the page compression flag
 #define DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL 4
 
 /**
-Width of atomic writes flag
-DEFAULT=0, ON = 1, OFF = 2
+The NO_ROLLBACK flag (3=yes; the values 1,2 used stand for
+ATOMIC_WRITES=ON and ATOMIC_WRITES=OFF between MariaDB 10.1.0 and 10.2.3)
 */
-#define DICT_TF_WIDTH_ATOMIC_WRITES 2
-
-/**
-Width of the page encryption flag
-*/
-#define DICT_TF_WIDTH_PAGE_ENCRYPTION  1
-#define DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY 8
-
-/** Width of the NO_ROLLBACK flag */
-#define DICT_TF_WIDTH_NO_ROLLBACK 1
+#define DICT_TF_WIDTH_NO_ROLLBACK 2
 
 /** Width of all the currently known table flags */
 #define DICT_TF_BITS	(DICT_TF_WIDTH_COMPACT			\
 			+ DICT_TF_WIDTH_ZIP_SSIZE		\
 			+ DICT_TF_WIDTH_ATOMIC_BLOBS		\
 			+ DICT_TF_WIDTH_DATA_DIR		\
-			+ DICT_TF_WIDTH_SHARED_SPACE		\
 			+ DICT_TF_WIDTH_PAGE_COMPRESSION	\
 			+ DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL	\
-			+ DICT_TF_WIDTH_ATOMIC_WRITES		\
-			+ DICT_TF_WIDTH_PAGE_ENCRYPTION		\
-			+ DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY	\
 			+ DICT_TF_WIDTH_NO_ROLLBACK)
-
-/** A mask of all the known/used bits in table flags */
-#define DICT_TF_BIT_MASK	(~(~0U << DICT_TF_BITS))
 
 /** Zero relative shift position of the COMPACT field */
 #define DICT_TF_POS_COMPACT		0
@@ -189,29 +168,18 @@ Width of the page encryption flag
 /** Zero relative shift position of the DATA_DIR field */
 #define DICT_TF_POS_DATA_DIR		(DICT_TF_POS_ATOMIC_BLOBS	\
 					+ DICT_TF_WIDTH_ATOMIC_BLOBS)
-/** Zero relative shift position of the SHARED TABLESPACE field */
-#define DICT_TF_POS_SHARED_SPACE	(DICT_TF_POS_DATA_DIR		\
-					+ DICT_TF_WIDTH_DATA_DIR)
 /** Zero relative shift position of the PAGE_COMPRESSION field */
-#define DICT_TF_POS_PAGE_COMPRESSION	(DICT_TF_POS_SHARED_SPACE	\
-					+ DICT_TF_WIDTH_SHARED_SPACE)
+#define DICT_TF_POS_PAGE_COMPRESSION	(DICT_TF_POS_DATA_DIR		\
+					+ DICT_TF_WIDTH_DATA_DIR)
 /** Zero relative shift position of the PAGE_COMPRESSION_LEVEL field */
 #define DICT_TF_POS_PAGE_COMPRESSION_LEVEL	(DICT_TF_POS_PAGE_COMPRESSION	\
 					+ DICT_TF_WIDTH_PAGE_COMPRESSION)
-/** Zero relative shift position of the ATOMIC_WRITES field */
-#define DICT_TF_POS_ATOMIC_WRITES	(DICT_TF_POS_PAGE_COMPRESSION_LEVEL \
-					+ DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL)
-/** Zero relative shift position of the PAGE_ENCRYPTION field */
-#define DICT_TF_POS_PAGE_ENCRYPTION	(DICT_TF_POS_ATOMIC_WRITES	\
-					+ DICT_TF_WIDTH_ATOMIC_WRITES)
-/** Zero relative shift position of the PAGE_ENCRYPTION_KEY field */
-#define DICT_TF_POS_PAGE_ENCRYPTION_KEY	(DICT_TF_POS_PAGE_ENCRYPTION	\
-					+ DICT_TF_WIDTH_PAGE_ENCRYPTION)
 /** Zero relative shift position of the NO_ROLLBACK field */
-#define DICT_TF_POS_NO_ROLLBACK		(DICT_TF_POS_PAGE_ENCRYPTION_KEY     \
-					+ DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY)
-#define DICT_TF_POS_UNUSED		(DICT_TF_POS_NO_ROLLBACK	\
+#define DICT_TF_POS_NO_ROLLBACK		(DICT_TF_POS_PAGE_COMPRESSION_LEVEL \
+					+ DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL)
+#define DICT_TF_POS_UNUSED		(DICT_TF_POS_NO_ROLLBACK     \
 					+ DICT_TF_WIDTH_NO_ROLLBACK)
+
 /** Bit mask of the COMPACT field */
 #define DICT_TF_MASK_COMPACT				\
 		((~(~0U << DICT_TF_WIDTH_COMPACT))	\
@@ -236,18 +204,10 @@ Width of the page encryption flag
 #define DICT_TF_MASK_PAGE_COMPRESSION_LEVEL		\
 		((~(~0U << DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL)) \
 		<< DICT_TF_POS_PAGE_COMPRESSION_LEVEL)
-/** Bit mask of the ATOMIC_WRITES field */
-#define DICT_TF_MASK_ATOMIC_WRITES		\
-		((~(~0U << DICT_TF_WIDTH_ATOMIC_WRITES)) \
-		<< DICT_TF_POS_ATOMIC_WRITES)
-/** Bit mask of the PAGE_ENCRYPTION field */
-#define DICT_TF_MASK_PAGE_ENCRYPTION			\
-		((~(~0U << DICT_TF_WIDTH_PAGE_ENCRYPTION))	\
-		<< DICT_TF_POS_PAGE_ENCRYPTION)
-/** Bit mask of the PAGE_ENCRYPTION_KEY field */
-#define DICT_TF_MASK_PAGE_ENCRYPTION_KEY		\
-		((~(~0U << DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY)) \
-		<< DICT_TF_POS_PAGE_ENCRYPTION_KEY)
+/** Bit mask of the NO_ROLLBACK field */
+#define DICT_TF_MASK_NO_ROLLBACK		\
+		((~(~0U << DICT_TF_WIDTH_NO_ROLLBACK)) \
+		<< DICT_TF_POS_NO_ROLLBACK)
 
 /** Return the value of the COMPACT field */
 #define DICT_TF_GET_COMPACT(flags)			\
@@ -273,22 +233,7 @@ Width of the page encryption flag
 #define DICT_TF_GET_PAGE_COMPRESSION_LEVEL(flags)       \
 		((flags & DICT_TF_MASK_PAGE_COMPRESSION_LEVEL)	\
 		>> DICT_TF_POS_PAGE_COMPRESSION_LEVEL)
-/** Return the value of the ATOMIC_WRITES field */
-#define DICT_TF_GET_ATOMIC_WRITES(flags)       \
-		((flags & DICT_TF_MASK_ATOMIC_WRITES)	\
-		>> DICT_TF_POS_ATOMIC_WRITES)
-/** Return the contents of the PAGE_ENCRYPTION field */
-#define DICT_TF_GET_PAGE_ENCRYPTION(flags)			\
-		((flags & DICT_TF_MASK_PAGE_ENCRYPTION) \
-		>> DICT_TF_POS_PAGE_ENCRYPTION)
-/** Return the contents of the PAGE_ENCRYPTION KEY field */
-#define DICT_TF_GET_PAGE_ENCRYPTION_KEY(flags)			\
-		((flags & DICT_TF_MASK_PAGE_ENCRYPTION_KEY) \
-		>> DICT_TF_POS_PAGE_ENCRYPTION_KEY)
 
-/** Return the contents of the UNUSED bits */
-#define DICT_TF_GET_UNUSED(flags)			\
-		(flags >> DICT_TF_POS_UNUSED)
 /* @} */
 
 /** @brief Table Flags set number 2.
@@ -300,9 +245,8 @@ ROW_FORMAT=REDUNDANT.  InnoDB engines do not check these flags
 for unknown bits in order to protect backward incompatibility. */
 /* @{ */
 /** Total number of bits in table->flags2. */
-#define DICT_TF2_BITS			9
-#define DICT_TF2_UNUSED_BIT_MASK	(~0U << DICT_TF2_BITS | \
-					 1U << DICT_TF_POS_SHARED_SPACE)
+#define DICT_TF2_BITS			7
+#define DICT_TF2_UNUSED_BIT_MASK	(~0U << DICT_TF2_BITS)
 #define DICT_TF2_BIT_MASK		~DICT_TF2_UNUSED_BIT_MASK
 
 /** TEMPORARY; TRUE for tables from CREATE TEMPORARY TABLE. */
@@ -622,6 +566,29 @@ struct table_name_t
 {
 	/** The name in internal representation */
 	char*	m_name;
+
+	/** @return the end of the schema name */
+	const char* dbend() const
+	{
+		const char* sep = strchr(m_name, '/');
+		ut_ad(sep);
+		return sep;
+	}
+
+	/** @return the length of the schema name, in bytes */
+	size_t dblen() const { return dbend() - m_name; }
+
+	/** Determine the filename-safe encoded table name.
+	@return	the filename-safe encoded table name */
+	const char* basename() const { return dbend() + 1; }
+
+	/** The start of the table basename suffix for partitioned tables */
+	static const char part_suffix[4];
+
+	/** Determine the partition or subpartition name suffix.
+	@return the partition name
+	@retval	NULL	if the table is not partitioned */
+	const char* part() const { return strstr(basename(), part_suffix); }
 };
 
 /** Data structure for a column in a table */
@@ -666,7 +633,49 @@ struct dict_col_t{
 					of an index */
 	unsigned	max_prefix:12;	/*!< maximum index prefix length on
 					this column. Our current max limit is
-					3072 for Barracuda table */
+					3072 (REC_VERSION_56_MAX_INDEX_COL_LEN)
+					bytes. */
+
+	/** Data for instantly added columns */
+	struct {
+		/** original default value of instantly added column */
+		const void*	data;
+		/** len of data, or UNIV_SQL_DEFAULT if unavailable */
+		ulint		len;
+	} def_val;
+
+	/** Retrieve the column name.
+	@param[in]	table	table name */
+	const char* name(const dict_table_t& table) const;
+
+	/** @return whether this is a virtual column */
+	bool is_virtual() const { return prtype & DATA_VIRTUAL; }
+	/** @return whether NULL is an allowed value for this column */
+	bool is_nullable() const { return !(prtype & DATA_NOT_NULL); }
+	/** @return whether this is an instantly-added column */
+	bool is_instant() const
+	{
+		DBUG_ASSERT(def_val.len != UNIV_SQL_DEFAULT || !def_val.data);
+		return def_val.len != UNIV_SQL_DEFAULT;
+	}
+	/** Get the default value of an instantly-added column.
+	@param[out]	len	value length (in bytes), or UNIV_SQL_NULL
+	@return	default value
+	@retval	NULL	if the default value is SQL NULL (len=UNIV_SQL_NULL) */
+	const byte* instant_value(ulint* len) const
+	{
+		DBUG_ASSERT(is_instant());
+		*len = def_val.len;
+		return static_cast<const byte*>(def_val.data);
+	}
+
+	/** Remove the 'instant ADD' status of the column */
+	void remove_instant()
+	{
+		DBUG_ASSERT(is_instant());
+		def_val.len = UNIV_SQL_DEFAULT;
+		def_val.data = NULL;
+	}
 };
 
 /** Index information put in a list of virtual column structure. Index
@@ -678,6 +687,9 @@ struct dict_v_idx_t {
 
 	/** position in this index */
 	ulint		nth_field;
+
+	dict_v_idx_t(dict_index_t* index, ulint nth_field)
+		: index(index), nth_field(nth_field) {}
 };
 
 /** Index list to put in dict_v_col_t */
@@ -747,17 +759,17 @@ files would be at risk! */
 /** Find out maximum indexed column length by its table format.
 For ROW_FORMAT=REDUNDANT and ROW_FORMAT=COMPACT, the maximum
 field length is REC_ANTELOPE_MAX_INDEX_COL_LEN - 1 (767). For
-Barracuda row formats COMPRESSED and DYNAMIC, the length could
+ROW_FORMAT=COMPRESSED and ROW_FORMAT=DYNAMIC, the length could
 be REC_VERSION_56_MAX_INDEX_COL_LEN (3072) bytes */
-#define DICT_MAX_FIELD_LEN_BY_FORMAT(table)				\
-		((dict_table_get_format(table) < UNIV_FORMAT_B)		\
-			? (REC_ANTELOPE_MAX_INDEX_COL_LEN - 1)		\
-			: REC_VERSION_56_MAX_INDEX_COL_LEN)
+#define DICT_MAX_FIELD_LEN_BY_FORMAT(table)	\
+	(dict_table_has_atomic_blobs(table)	\
+	 ? REC_VERSION_56_MAX_INDEX_COL_LEN	\
+	 : REC_ANTELOPE_MAX_INDEX_COL_LEN - 1)
 
-#define DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(flags)			\
-		((DICT_TF_HAS_ATOMIC_BLOBS(flags) < UNIV_FORMAT_B)	\
-			? (REC_ANTELOPE_MAX_INDEX_COL_LEN - 1)		\
-			: REC_VERSION_56_MAX_INDEX_COL_LEN)
+#define DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(flags)	\
+	(DICT_TF_HAS_ATOMIC_BLOBS(flags)		\
+	 ? REC_VERSION_56_MAX_INDEX_COL_LEN		\
+	 : REC_ANTELOPE_MAX_INDEX_COL_LEN - 1)
 
 /** Defines the maximum fixed length column size */
 #define DICT_MAX_FIXED_COL_LEN		DICT_ANTELOPE_MAX_INDEX_COL_LEN
@@ -781,6 +793,15 @@ struct dict_field_t{
 	unsigned	fixed_len:10;	/*!< 0 or the fixed length of the
 					column if smaller than
 					DICT_ANTELOPE_MAX_INDEX_COL_LEN */
+
+	/** Check whether two index fields are equivalent.
+	@param[in]	old	the other index field
+	@return	whether the index fields are equivalent */
+	bool same(const dict_field_t& other) const
+	{
+		return(prefix_len == other.prefix_len
+		       && fixed_len == other.fixed_len);
+	}
 };
 
 /**********************************************************************//**
@@ -899,6 +920,17 @@ struct dict_index_t{
 	unsigned	n_def:10;/*!< number of fields defined so far */
 	unsigned	n_fields:10;/*!< number of fields in the index */
 	unsigned	n_nullable:10;/*!< number of nullable fields */
+	unsigned	n_core_fields:10;/*!< number of fields in the index
+				(before the first time of instant add columns) */
+	/** number of bytes of null bits in ROW_FORMAT!=REDUNDANT node pointer
+	records; usually equal to UT_BITS_IN_BYTES(n_nullable), but
+	can be less in clustered indexes with instant ADD COLUMN */
+	unsigned	n_core_null_bytes:8;
+	/** magic value signalling that n_core_null_bytes was not
+	initialized yet */
+	static const unsigned NO_CORE_NULL_BYTES = 0xff;
+	/** The clustered index ID of the hard-coded SYS_INDEXES table. */
+	static const unsigned DICT_INDEXES_ID = 3;
 	unsigned	cached:1;/*!< TRUE if the index object is in the
 				dictionary cache */
 	unsigned	to_be_dropped:1;
@@ -917,6 +949,8 @@ struct dict_index_t{
 				data dictionary yet */
 
 #ifdef UNIV_DEBUG
+	/** whether this is a dummy index object */
+	bool		is_dummy;
 	uint32_t	magic_n;/*!< magic number */
 /** Value of dict_index_t::magic_n */
 # define DICT_INDEX_MAGIC_N	76789786
@@ -924,11 +958,12 @@ struct dict_index_t{
 	dict_field_t*	fields;	/*!< array of field descriptions */
 	st_mysql_ftparser*
 			parser;	/*!< fulltext parser plugin */
-	bool		is_ngram;
-				/*!< true if it's ngram parser */
 	bool		has_new_v_col;
 				/*!< whether it has a newly added virtual
 				column in ALTER */
+	bool            index_fts_syncing;/*!< Whether the fts index is
+					still syncing in the background;
+					FIXME: remove this and use MDL */
 	UT_LIST_NODE_T(dict_index_t)
 			indexes;/*!< list of indexes of the table */
 #ifdef BTR_CUR_ADAPT
@@ -1017,6 +1052,70 @@ struct dict_index_t{
 		ut_ad(!to_be_dropped);
 		ut_ad(committed || !(type & DICT_CLUSTERED));
 		uncommitted = !committed;
+	}
+
+	/** @return whether this index is readable
+	@retval	true	normally
+	@retval	false	if this is a single-table tablespace
+			and the .ibd file is missing, or a
+			page cannot be read or decrypted */
+	inline bool is_readable() const;
+
+	/** @return whether instant ADD COLUMN is in effect */
+	inline bool is_instant() const;
+
+	/** @return whether the index is the clustered index */
+	bool is_clust() const { return type & DICT_CLUSTERED; }
+
+	/** Determine how many fields of a given prefix can be set NULL.
+	@param[in]	n_prefix	number of fields in the prefix
+	@return	number of fields 0..n_prefix-1 that can be set NULL */
+	unsigned get_n_nullable(ulint n_prefix) const
+	{
+		DBUG_ASSERT(is_instant());
+		DBUG_ASSERT(n_prefix > 0);
+		DBUG_ASSERT(n_prefix <= n_fields);
+		unsigned n = n_nullable;
+		for (; n_prefix < n_fields; n_prefix++) {
+			const dict_col_t* col = fields[n_prefix].col;
+			DBUG_ASSERT(is_dummy || col->is_instant());
+			DBUG_ASSERT(!col->is_virtual());
+			n -= col->is_nullable();
+		}
+		DBUG_ASSERT(n < n_def);
+		return n;
+	}
+
+	/** Get the default value of an instantly-added clustered index field.
+	@param[in]	n	instantly added field position
+	@param[out]	len	value length (in bytes), or UNIV_SQL_NULL
+	@return	default value
+	@retval	NULL	if the default value is SQL NULL (len=UNIV_SQL_NULL) */
+	const byte* instant_field_value(uint n, ulint* len) const
+	{
+		DBUG_ASSERT(is_instant() || id == DICT_INDEXES_ID);
+		DBUG_ASSERT(n + (id == DICT_INDEXES_ID) >= n_core_fields);
+		DBUG_ASSERT(n < n_fields);
+		return fields[n].col->instant_value(len);
+	}
+
+	/** Adjust clustered index metadata for instant ADD COLUMN.
+	@param[in]	clustered index definition after instant ADD COLUMN */
+	void instant_add_field(const dict_index_t& instant);
+
+	/** Remove the 'instant ADD' status of a clustered index.
+	Protected by index root page x-latch or table X-lock. */
+	void remove_instant()
+	{
+		DBUG_ASSERT(is_clust());
+		if (!is_instant()) {
+			return;
+		}
+		for (unsigned i = n_core_fields; i < n_fields; i++) {
+			fields[i].col->remove_instant();
+		}
+		n_core_fields = n_fields;
+		n_core_null_bytes = UT_BITS_IN_BYTES(n_nullable);
 	}
 };
 
@@ -1355,19 +1454,63 @@ struct dict_table_t {
 	/** Acquire the table handle. */
 	inline void acquire();
 
-	void*		thd;		/*!< thd */
-	bool		page_0_read; /*!< true if page 0 has
-				     been already read */
-	fil_space_crypt_t *crypt_data; /*!< crypt data if present */
-
-	/** Release the table handle. */
-	inline void release();
+	/** Release the table handle.
+	@return	whether the last handle was released */
+	inline bool release();
 
 	/** @return whether the table supports transactions */
 	bool no_rollback() const
 	{
-		return flags & (1U << DICT_TF_POS_NO_ROLLBACK);
+		return !(~flags & DICT_TF_MASK_NO_ROLLBACK);
+        }
+	/** @return whether this is a temporary table */
+	bool is_temporary() const
+	{
+		return flags2 & DICT_TF2_TEMPORARY;
 	}
+
+	/** @return whether this table is readable
+	@retval	true	normally
+	@retval	false	if this is a single-table tablespace
+			and the .ibd file is missing, or a
+			page cannot be read or decrypted */
+	bool is_readable() const
+	{
+		return(UNIV_LIKELY(!file_unreadable));
+	}
+
+	/** @return whether instant ADD COLUMN is in effect */
+	bool is_instant() const
+	{
+		return(UT_LIST_GET_FIRST(indexes)->is_instant());
+	}
+
+	/** @return whether the table supports instant ADD COLUMN */
+	bool supports_instant() const
+	{
+		return(!(flags & DICT_TF_MASK_ZIP_SSIZE));
+	}
+
+	/** Adjust metadata for instant ADD COLUMN.
+	@param[in]	table	table definition after instant ADD COLUMN */
+	void instant_add_column(const dict_table_t& table);
+
+	/** Roll back instant_add_column().
+	@param[in]	old_n_cols	original n_cols
+	@param[in]	old_cols	original cols
+	@param[in]	old_col_names	original col_names */
+	void rollback_instant(
+		unsigned	old_n_cols,
+		dict_col_t*	old_cols,
+		const char*	old_col_names);
+
+	/** Trim the instantly added columns when an insert into SYS_COLUMNS
+	is rolled back during ALTER TABLE or recovery.
+	@param[in]	n	number of surviving non-system columns */
+	void rollback_instant(unsigned n);
+
+	/** Add the table definition to the data dictionary cache */
+	void add_to_cache();
 
 	/** Id of the table. */
 	table_id_t				id;
@@ -1410,15 +1553,12 @@ struct dict_table_t {
 	5 whether the table is being created its own tablespace,
 	6 whether the table has been DISCARDed,
 	7 whether the aux FTS tables names are in hex.
-	8 whether the table is instinc table.
-	9 whether the table has encryption setting.
 	Use DICT_TF2_FLAG_IS_SET() to parse this flag. */
 	unsigned				flags2:DICT_TF2_BITS;
 
-	/** TRUE if this is in a single-table tablespace and the .ibd file is
-	missing. Then we must return in ha_innodb.cc an error if the user
-	tries to query such an orphaned table. */
-	unsigned				ibd_file_missing:1;
+	/*!< whether this is in a single-table tablespace and the .ibd
+	file is missing or page decryption failed and page is corrupted */
+	unsigned				file_unreadable:1;
 
 	/** TRUE if the table object has been added to the dictionary cache. */
 	unsigned				cached:1;
@@ -1544,10 +1684,6 @@ struct dict_table_t {
 	/*!< set of foreign key constraints which refer to this table */
 	dict_foreign_set			referenced_set;
 
-	/** TRUE if the maximum length of a single row exceeds BIG_ROW_SIZE.
-	Initialized in dict_table_add_to_cache(). */
-	unsigned				big_rows:1;
-
 	/** Statistics for query optimization. @{ */
 
 	/** Creation state of 'stats_latch'. */
@@ -1626,7 +1762,7 @@ struct dict_table_t {
 	/** How many rows are modified since last stats recalc. When a row is
 	inserted, updated, or deleted, we add 1 to this number; we calculate
 	new estimates for the table and the indexes if the table has changed
-	too much, see row_update_statistics_if_needed(). The counter is reset
+	too much, see dict_stats_update_if_needed(). The counter is reset
 	to zero at statistics calculation. This counter is not protected by
 	any latch, because this is only used for heuristics. */
 	ib_uint64_t				stat_modified_counter;
@@ -1724,7 +1860,7 @@ struct dict_table_t {
 	It is protected by lock_sys->mutex. */
 	ulint					n_rec_locks;
 
-#ifndef UNIV_DEBUG
+#ifndef DBUG_ASSERT_EXISTS
 private:
 #endif
 	/** Count of how many handles are opened to this table. Dropping of the
@@ -1739,8 +1875,6 @@ public:
 	/** Timestamp of the last modification of this table. */
 	time_t					update_time;
 
-	bool					is_encrypted;
-
 #ifdef UNIV_DEBUG
 	/** Value of 'magic_n'. */
 	#define DICT_TABLE_MAGIC_N		76333786
@@ -1752,6 +1886,22 @@ public:
 	columns */
 	dict_vcol_templ_t*			vc_templ;
 };
+
+inline bool dict_index_t::is_readable() const
+{
+	return(UNIV_LIKELY(!table->file_unreadable));
+}
+
+inline bool dict_index_t::is_instant() const
+{
+	ut_ad(n_core_fields > 0);
+	ut_ad(n_core_fields <= n_fields);
+	ut_ad(n_core_fields == n_fields
+	      || (type & ~(DICT_UNIQUE | DICT_CORRUPT)) == DICT_CLUSTERED);
+	ut_ad(n_core_fields == n_fields || table->supports_instant());
+	ut_ad(n_core_fields == n_fields || !table->is_temporary());
+	return(n_core_fields != n_fields);
+}
 
 /*******************************************************************//**
 Initialise the table lock list. */
@@ -1880,6 +2030,19 @@ dict_col_get_spatial_status(
 	}
 
 	return(spatial_status);
+}
+
+/** Clear defragmentation summary. */
+inline void dict_stats_empty_defrag_summary(dict_index_t* index)
+{
+	index->stat_defrag_n_pages_freed = 0;
+}
+
+/** Clear defragmentation related index stats. */
+inline void dict_stats_empty_defrag_stats(dict_index_t* index)
+{
+	index->stat_defrag_modified_counter = 0;
+	index->stat_defrag_n_page_split = 0;
 }
 
 #include "dict0mem.ic"

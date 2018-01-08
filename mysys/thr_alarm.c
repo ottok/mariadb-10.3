@@ -261,7 +261,8 @@ void thr_end_alarm(thr_alarm_t *alarmed)
   alarm_data= (ALARM*) ((uchar*) *alarmed - offsetof(ALARM,alarmed));
   mysql_mutex_lock(&LOCK_alarm);
   DBUG_ASSERT(alarm_data->index_in_queue != 0);
-  DBUG_ASSERT(queue_element(&alarm_queue, alarm_data->index_in_queue) ==
+  DBUG_ASSERT((ALARM*) queue_element(&alarm_queue,
+                                     alarm_data->index_in_queue) ==
               alarm_data);
   queue_remove(&alarm_queue, alarm_data->index_in_queue);
   mysql_mutex_unlock(&LOCK_alarm);
@@ -273,7 +274,7 @@ void thr_end_alarm(thr_alarm_t *alarmed)
 /*
   Come here when some alarm in queue is due.
   Mark all alarms with are finnished in list.
-  Shedule alarms to be sent again after 1-10 sec (many alarms at once)
+  Schedule alarms to be sent again after 1-10 sec (many alarms at once)
   If alarm_aborted is set then all alarms are given and resent
   every second.
 */
@@ -425,7 +426,7 @@ void end_thr_alarm(my_bool free_structures)
   if (alarm_aborted != 1)			/* If memory not freed */
   {
     mysql_mutex_lock(&LOCK_alarm);
-    DBUG_PRINT("info",("Resheduling %d waiting alarms",alarm_queue.elements));
+    DBUG_PRINT("info",("Rescheduling %d waiting alarms",alarm_queue.elements));
     alarm_aborted= -1;				/* mark aborted */
     if (alarm_queue.elements || (alarm_thread_running && free_structures))
     {

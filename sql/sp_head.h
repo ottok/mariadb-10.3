@@ -27,7 +27,6 @@
   are dependencies on include order for set_var.h and item.h. This
   will be resolved later.
 */
-#include "my_global.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_class.h"                          // THD, set_var.h: THD
 #include "set_var.h"                            // Item
 #include "sp_pcontext.h"                        // sp_pcontext
@@ -40,13 +39,8 @@
   @{
 */
 
-// Values for the type enum. This reflects the order of the enum declaration
-// in the CREATE TABLE command.
-//#define TYPE_ENUM_FUNCTION  1 #define TYPE_ENUM_PROCEDURE 2 #define
-//TYPE_ENUM_TRIGGER   3 #define TYPE_ENUM_PROXY     4
-
 Item::Type
-sp_map_item_type(enum enum_field_types type);
+sp_map_item_type(const Type_handler *handler);
 
 uint
 sp_get_flags_for_command(LEX *lex);
@@ -113,14 +107,15 @@ class sp_name : public Sql_alloc,
 public:
   bool       m_explicit_name;                   /**< Prepend the db name? */
 
-  sp_name(LEX_STRING db, LEX_STRING name, bool use_explicit_name)
+  sp_name(const LEX_CSTRING *db, const LEX_CSTRING *name,
+          bool use_explicit_name)
     : Database_qualified_name(db, name), m_explicit_name(use_explicit_name)
   {
     if (lower_case_table_names && m_db.str)
-      m_db.length= my_casedn_str(files_charset_info, m_db.str);
+      m_db.length= my_casedn_str(files_charset_info, (char*) m_db.str);
   }
 
-  /** Create temporary sp_name object from MDL key. */
+  /** Create temporary sp_name object from MDL key. Store in qname_buff */
   sp_name(const MDL_key *key, char *qname_buff);
 
   ~sp_name()
@@ -129,7 +124,7 @@ public:
 
 
 bool
-check_routine_name(LEX_STRING *ident);
+check_routine_name(const LEX_CSTRING *ident);
 
 class sp_head :private Query_arena,
                public Database_qualified_name
@@ -169,26 +164,43 @@ public:
     /*
       Marks routines that have column type references: DECLARE a t1.a%TYPE;
     */
-    HAS_COLUMN_TYPE_REFS= 8192
+    HAS_COLUMN_TYPE_REFS= 8192,
+    /* Set if has FETCH GROUP NEXT ROW instr. Used to ensure that only
+       functions with AGGREGATE keyword use the instr. */
+    HAS_AGGREGATE_INSTR= 16384
   };
 
-  stored_procedure_type m_type;
+  const Sp_handler *m_handler;
   uint m_flags;                 // Boolean attributes of a stored routine
 
   Column_definition m_return_field_def; /**< This is used for FUNCTIONs only. */
 
   const char *m_tmp_query;	///< Temporary pointer to sub query string
-  st_sp_chistics *m_chistics;
+private:
+  /*
+    Private to guarantee that m_chistics.comment is properly set to:
+    - a string which is alloced on this->mem_root
+    - or (NULL,0)
+    set_chistics() makes sure this.
+  */
+  Sp_chistics m_chistics;
+public:
   sql_mode_t m_sql_mode;		///< For SHOW CREATE and execution
-  LEX_STRING m_qname;		///< db.name
-  bool m_explicit_name;         ///< Prepend the db name? */
-  LEX_STRING m_params;
-  LEX_STRING m_body;
-  LEX_STRING m_body_utf8;
-  LEX_STRING m_defstr;
-  LEX_STRING m_definer_user;
-  LEX_STRING m_definer_host;
+  bool       m_explicit_name;                   /**< Prepend the db name? */
+  LEX_CSTRING m_qname;		///< db.name
+  LEX_CSTRING m_params;
+  LEX_CSTRING m_body;
+  LEX_CSTRING m_body_utf8;
+  LEX_CSTRING m_defstr;
+  AUTHID      m_definer;
 
+  const st_sp_chistics &chistics() const { return m_chistics; }
+  const LEX_CSTRING &comment() const { return m_chistics.comment; }
+  void set_suid(enum_sp_suid_behaviour suid) { m_chistics.suid= suid; }
+  enum_sp_suid_behaviour suid() const { return m_chistics.suid; }
+  bool detistic() const { return m_chistics.detistic; }
+  enum_sp_data_access daccess() const { return m_chistics.daccess; }
+  enum_sp_aggregate_type agg_type() const { return m_chistics.agg_type; }
   /**
     Is this routine being executed?
   */
@@ -206,8 +218,12 @@ public:
     m_sp_cache_version= version_arg;
   }
 
-  sp_rcontext *rcontext_create(THD *thd, bool is_proc, Field *ret_value);
-
+  sp_rcontext *rcontext_create(THD *thd, Field *retval, List<Item> *args);
+  sp_rcontext *rcontext_create(THD *thd, Field *retval,
+                               Item **args, uint arg_count);
+  sp_rcontext *rcontext_create(THD *thd, Field *retval,
+                               Row_definition_list *list,
+                               bool switch_security_ctx);
 private:
   /**
     Version of the stored routine cache at the moment when the
@@ -227,6 +243,7 @@ private:
   */
   uint32 unsafe_flags;
 
+  uint m_select_number;
 public:
   inline Stored_program_creation_ctx *get_creation_ctx()
   {
@@ -303,7 +320,7 @@ public:
   static void
   operator delete(void *ptr, size_t size) throw ();
 
-  sp_head();
+  sp_head(const Sp_handler *handler);
 
   /// Initialize after we have reset mem_root
   void
@@ -311,7 +328,7 @@ public:
 
   /** Copy sp name from parser. */
   void
-  init_sp_name(THD *thd, sp_name *spname);
+  init_sp_name(const sp_name *spname);
 
   /** Set the body-definition start position. */
   void
@@ -325,21 +342,23 @@ public:
 
   bool
   execute_trigger(THD *thd,
-                  const LEX_STRING *db_name,
-                  const LEX_STRING *table_name,
+                  const LEX_CSTRING *db_name,
+                  const LEX_CSTRING *table_name,
                   GRANT_INFO *grant_info);
 
   bool
-  execute_function(THD *thd, Item **args, uint argcount, Field *return_fld);
+  execute_function(THD *thd, Item **args, uint argcount, Field *return_fld,
+                   sp_rcontext **nctx, Query_arena *call_arena);
 
   bool
   execute_procedure(THD *thd, List<Item> *args);
 
   static void
-  show_create_routine_get_fields(THD *thd, int type, List<Item> *fields);
+  show_create_routine_get_fields(THD *thd, const Sp_handler *sph,
+                                 List<Item> *fields);
 
   bool
-  show_create_routine(THD *thd, int type);
+  show_create_routine(THD *thd, const Sp_handler *sph);
 
   MEM_ROOT *get_main_mem_root() { return &main_mem_root; }
 
@@ -362,6 +381,12 @@ public:
                                                  spcont->last_label());
   }
 
+  bool
+  add_instr_freturn(THD *thd, sp_pcontext *spcont, Item *item, LEX *lex);
+
+  bool
+  add_instr_preturn(THD *thd, sp_pcontext *spcont);
+
   Item *adjust_assignment_source(THD *thd, Item *val, Item *val2);
   /**
     @param thd                     - the current thd
@@ -382,7 +407,7 @@ public:
                                     Item *val, LEX *lex);
   bool set_local_variable_row_field_by_name(THD *thd, sp_pcontext *spcont,
                                             sp_variable *spv,
-                                            const LEX_STRING &field_name,
+                                            const LEX_CSTRING *field_name,
                                             Item *val, LEX *lex);
 private:
   /**
@@ -602,17 +627,13 @@ public:
   /// Add cpush instructions for all cursors declared in the current frame
   bool sp_add_instr_cpush_for_cursors(THD *thd, sp_pcontext *pcontext);
 
-  char *name(uint *lenp = 0) const
-  {
-    if (lenp)
-      *lenp= (uint) m_name.length;
-    return m_name.str;
-  }
+  const LEX_CSTRING *name() const
+  { return &m_name; }
 
   char *create_string(THD *thd, ulong *lenp);
 
-  Field *create_result_field(uint field_max_length, const char *field_name,
-                             TABLE *table);
+  Field *create_result_field(uint field_max_length, const LEX_CSTRING *field_name,
+                             TABLE *table) const;
 
 
   /**
@@ -629,7 +650,8 @@ public:
   */
   bool fill_field_definition(THD *thd, Column_definition *field_def)
   {
-    return field_def->check(thd) ||
+    const Type_handler *h= field_def->type_handler();
+    return h->Column_definition_fix_attributes(field_def) ||
            field_def->sp_prepare_create_field(thd, mem_root);
   }
   bool row_fill_field_definitions(THD *thd, Row_definition_list *row)
@@ -657,11 +679,14 @@ public:
     def->pack_flag|= FIELDFLAG_MAYBE_NULL;
     return false;
   }
-  bool fill_spvar_definition(THD *thd, Column_definition *def, const char *name)
+  bool fill_spvar_definition(THD *thd, Column_definition *def,
+                             LEX_CSTRING *name)
   {
-    def->field_name= name;
+    def->field_name= *name;
     return fill_spvar_definition(thd, def);
   }
+
+private:
   /**
     Set a column type reference for a parameter definition
   */
@@ -669,15 +694,53 @@ public:
                                        Qualified_column_ident *ref)
   {
     spvar->field_def.set_column_type_ref(ref);
-    spvar->field_def.field_name= spvar->name.str;
+    spvar->field_def.field_name= spvar->name;
     m_flags|= sp_head::HAS_COLUMN_TYPE_REFS;
   }
 
-  void set_info(longlong created, longlong modified,
-		st_sp_chistics *chistics, sql_mode_t sql_mode);
+  void fill_spvar_using_table_rowtype_reference(THD *thd,
+                                                sp_variable *spvar,
+                                                Table_ident *ref)
+  {
+    spvar->field_def.set_table_rowtype_ref(ref);
+    spvar->field_def.field_name= spvar->name;
+    fill_spvar_definition(thd, &spvar->field_def);
+    m_flags|= sp_head::HAS_COLUMN_TYPE_REFS;
+  }
 
-  void set_definer(const char *definer, uint definerlen);
-  void set_definer(const LEX_STRING *user_name, const LEX_STRING *host_name);
+public:
+  bool spvar_fill_row(THD *thd, sp_variable *spvar, Row_definition_list *def);
+  bool spvar_fill_type_reference(THD *thd, sp_variable *spvar,
+                                 const LEX_CSTRING &table,
+                                 const LEX_CSTRING &column);
+  bool spvar_fill_type_reference(THD *thd, sp_variable *spvar,
+                                 const LEX_CSTRING &db,
+                                 const LEX_CSTRING &table,
+                                 const LEX_CSTRING &column);
+  bool spvar_fill_table_rowtype_reference(THD *thd, sp_variable *spvar,
+                                          const LEX_CSTRING &table);
+  bool spvar_fill_table_rowtype_reference(THD *thd, sp_variable *spvar,
+                                          const LEX_CSTRING &db,
+                                          const LEX_CSTRING &table);
+
+  void set_chistics(const st_sp_chistics &chistics);
+  inline void set_chistics_agg_type(enum enum_sp_aggregate_type type)
+  {
+    m_chistics.agg_type= type;
+  }
+  void set_info(longlong created, longlong modified,
+		const st_sp_chistics &chistics, sql_mode_t sql_mode);
+
+  void set_definer(const char *definer, uint definerlen)
+  {
+    AUTHID tmp;
+    tmp.parse(definer, definerlen);
+    m_definer.copy(mem_root, &tmp.user, &tmp.host);
+  }
+  void set_definer(const LEX_CSTRING *user_name, const LEX_CSTRING *host_name)
+  {
+    m_definer.copy(mem_root, user_name, host_name);
+  }
 
   void reset_thd_mem_root(THD *thd);
 
@@ -696,8 +759,6 @@ public:
     represents the code, during flow analysis.
   */
   void add_mark_lead(uint ip, List<sp_instr> *leads);
-
-  void recursion_level_error(THD *thd);
 
   inline sp_instr *
   get_instr(uint i)
@@ -763,12 +824,16 @@ public:
     DBUG_PRINT("info", ("lex->get_stmt_unsafe_flags(): 0x%x",
                         prelocking_ctx->get_stmt_unsafe_flags()));
     DBUG_PRINT("info", ("sp_head(0x%p=%s)->unsafe_flags: 0x%x",
-                        this, name(), unsafe_flags));
+                        this, name()->str, unsafe_flags));
     prelocking_ctx->set_stmt_unsafe_flags(unsafe_flags);
     DBUG_VOID_RETURN;
   }
 
   sp_pcontext *get_parse_context() { return m_pcont; }
+
+  void set_select_number(uint num) { m_select_number= num; }
+
+  bool check_execute_access(THD *thd) const;
 
 private:
 
@@ -837,12 +902,12 @@ private:
 
 class sp_lex_cursor: public sp_lex_local, public Query_arena
 {
-  LEX_STRING m_cursor_name;
+  LEX_CSTRING m_cursor_name;
 public:
   sp_lex_cursor(THD *thd, const LEX *oldlex, MEM_ROOT *mem_root_arg)
    :sp_lex_local(thd, oldlex),
     Query_arena(mem_root_arg, STMT_INITIALIZED_FOR_SP),
-    m_cursor_name(null_lex_str)
+    m_cursor_name(null_clex_str)
   { }
   sp_lex_cursor(THD *thd, const LEX *oldlex)
    :sp_lex_local(thd, oldlex),
@@ -870,8 +935,8 @@ public:
     thd->free_list= NULL;
     return false;
   }
-  const LEX_STRING *cursor_name() const { return &m_cursor_name; }
-  void set_cursor_name(const LEX_STRING &name) { m_cursor_name= name; }
+  const LEX_CSTRING *cursor_name() const { return &m_cursor_name; }
+  void set_cursor_name(const LEX_CSTRING *name) { m_cursor_name= *name; }
 };
 
 
@@ -889,6 +954,7 @@ public:
   uint marked;
   uint m_ip;			///< My index
   sp_pcontext *m_ctx;		///< My parse context
+  uint m_lineno;
 
   /// Should give each a name or type code for debugging purposes?
   sp_instr(uint ip, sp_pcontext *ctx)
@@ -1045,7 +1111,7 @@ public:
     m_lex->safe_to_cache_query= 0;
   }
 
-  const LEX_STRING *cursor_name() const
+  const LEX_CSTRING *cursor_name() const
   {
     return m_lex->cursor_name();
   }
@@ -1197,12 +1263,12 @@ class sp_instr_set_row_field_by_name : public sp_instr_set
   // Prevent use of this
   sp_instr_set_row_field_by_name(const sp_instr_set_row_field &);
   void operator=(sp_instr_set_row_field_by_name &);
-  const LEX_STRING m_field_name;
+  const LEX_CSTRING m_field_name;
 
 public:
 
   sp_instr_set_row_field_by_name(uint ip, sp_pcontext *ctx,
-                                 uint offset, const LEX_STRING &field_name,
+                                 uint offset, const LEX_CSTRING &field_name,
                                  Item *val,
                                  LEX *lex, bool lex_resp)
     : sp_instr_set(ip, ctx, offset, val, lex, lex_resp),
@@ -1432,8 +1498,8 @@ class sp_instr_freturn : public sp_instr
 public:
 
   sp_instr_freturn(uint ip, sp_pcontext *ctx,
-		   Item *val, enum enum_field_types type_arg, LEX *lex)
-    : sp_instr(ip, ctx), m_value(val), m_type(type_arg),
+		   Item *val, const Type_handler *handler, LEX *lex)
+    : sp_instr(ip, ctx), m_value(val), m_type_handler(handler),
       m_lex_keeper(lex, TRUE)
   {}
 
@@ -1455,7 +1521,7 @@ public:
 protected:
 
   Item *m_value;
-  enum enum_field_types m_type;
+  const Type_handler *m_type_handler;
   sp_lex_keeper m_lex_keeper;
 
 }; // class sp_instr_freturn : public sp_instr
@@ -1738,8 +1804,8 @@ class sp_instr_cfetch : public sp_instr
 
 public:
 
-  sp_instr_cfetch(uint ip, sp_pcontext *ctx, uint c)
-    : sp_instr(ip, ctx), m_cursor(c)
+  sp_instr_cfetch(uint ip, sp_pcontext *ctx, uint c, bool error_on_no_data)
+    : sp_instr(ip, ctx), m_cursor(c), m_error_on_no_data(error_on_no_data)
   {
     m_varlist.empty();
   }
@@ -1760,8 +1826,35 @@ private:
 
   uint m_cursor;
   List<sp_variable> m_varlist;
+  bool m_error_on_no_data;
 
 }; // class sp_instr_cfetch : public sp_instr
+
+/*
+This class is created for the special fetch instruction
+FETCH GROUP NEXT ROW, used in the user-defined aggregate
+functions
+*/
+
+class sp_instr_agg_cfetch : public sp_instr
+{
+  sp_instr_agg_cfetch(const sp_instr_cfetch &); /**< Prevent use of these */
+  void operator=(sp_instr_cfetch &);
+
+public:
+
+  sp_instr_agg_cfetch(uint ip, sp_pcontext *ctx)
+    : sp_instr(ip, ctx){}
+
+  virtual ~sp_instr_agg_cfetch()
+  {}
+
+  virtual int execute(THD *thd, uint *nextp);
+
+  virtual void print(String *str){};
+}; // class sp_instr_agg_cfetch : public sp_instr
+
+
 
 
 class sp_instr_error : public sp_instr
@@ -1842,8 +1935,7 @@ void
 sp_restore_security_context(THD *thd, Security_context *backup);
 
 bool
-set_routine_security_ctx(THD *thd, sp_head *sp, bool is_proc,
-                         Security_context **save_ctx);
+set_routine_security_ctx(THD *thd, sp_head *sp, Security_context **save_ctx);
 #endif /* NO_EMBEDDED_ACCESS_CHECKS */
 
 TABLE_LIST *

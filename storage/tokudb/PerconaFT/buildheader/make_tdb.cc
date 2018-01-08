@@ -231,6 +231,8 @@ static void print_defines (void) {
     printf("#define DB_SET_RANGE_REVERSE 252\n"); // private tokudb
     //printf("#define DB_GET_BOTH_RANGE_REVERSE 251\n"); // private tokudb.  No longer supported #2862.
     dodefine(DB_RMW);
+    
+    printf("#define DB_LOCKING_READ 0x80000000\n");
     printf("#define DB_IS_RESETTING_OP 0x01000000\n"); // private tokudb
     printf("#define DB_PRELOCKED 0x00800000\n"); // private tokudb
     printf("#define DB_PRELOCKED_WRITE 0x00400000\n"); // private tokudb
@@ -426,6 +428,9 @@ static void print_db_env_struct (void) {
                              "bool (*set_dir_per_db)(DB_ENV *, bool new_val)",
                              "bool (*get_dir_per_db)(DB_ENV *)",
                              "const char *(*get_data_dir)(DB_ENV *env)",
+                             "int (*dirtool_attach)(DB_ENV *, DB_TXN *, const char *, const char *)",
+                             "int (*dirtool_detach)(DB_ENV *, DB_TXN *, const char *)",
+                             "int (*dirtool_move)(DB_ENV *, DB_TXN *, const char *, const char *)",
                              "void (*kill_waiter)(DB_ENV *, void *extra)",
                              NULL};
 

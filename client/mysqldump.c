@@ -92,8 +92,7 @@
 
 static void add_load_option(DYNAMIC_STRING *str, const char *option,
                              const char *option_value);
-static ulong find_set(TYPELIB *lib, const char *x, size_t length,
-                      char **err_pos, uint *err_len);
+static ulong find_set(TYPELIB *, const char *, size_t, char **, uint *);
 static char *alloc_query_str(ulong size);
 
 static void field_escape(DYNAMIC_STRING* in, const char *from);
@@ -114,11 +113,13 @@ static my_bool  verbose= 0, opt_no_create_info= 0, opt_no_data= 0, opt_no_data_m
                 opt_slave_apply= 0, 
                 opt_include_master_host_port= 0,
                 opt_events= 0, opt_comments_used= 0,
-                opt_alltspcs=0, opt_notspcs= 0, opt_logging;
-static my_bool insert_pat_inited= 0, debug_info_flag= 0, debug_check_flag= 0;
+                opt_alltspcs=0, opt_notspcs= 0, opt_logging,
+                opt_drop_trigger= 0 ;
+static my_bool insert_pat_inited= 0, debug_info_flag= 0, debug_check_flag= 0,
+               select_field_names_inited= 0;
 static ulong opt_max_allowed_packet, opt_net_buffer_length;
 static MYSQL mysql_connection,*mysql=0;
-static DYNAMIC_STRING insert_pat;
+static DYNAMIC_STRING insert_pat, select_field_names;
 static char  *opt_password=0,*current_user=0,
              *current_host=0,*path=0,*fields_terminated=0,
              *lines_terminated=0, *enclosed=0, *opt_enclosed=0, *escaped=0,
@@ -233,6 +234,9 @@ static struct my_option my_long_options[] =
   {"add-drop-table", OPT_DROP, "Add a DROP TABLE before each create.",
    &opt_drop, &opt_drop, 0, GET_BOOL, NO_ARG, 1, 0, 0, 0, 0,
    0},
+  {"add-drop-trigger", 0, "Add a DROP TRIGGER before each create.",
+   &opt_drop_trigger, &opt_drop_trigger, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0,
+   0},
   {"add-locks", OPT_LOCKS, "Add locks around INSERT statements.",
    &opt_lock, &opt_lock, 0, GET_BOOL, NO_ARG, 1, 0, 0, 0, 0,
    0},
@@ -244,8 +248,8 @@ static struct my_option my_long_options[] =
    &opt_slave_apply, &opt_slave_apply, 0, GET_BOOL, NO_ARG,
    0, 0, 0, 0, 0, 0},
   {"character-sets-dir", OPT_CHARSETS_DIR,
-   "Directory for character set files.", &charsets_dir,
-   &charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+   "Directory for character set files.", (char **)&charsets_dir,
+   (char **)&charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"comments", 'i', "Write additional information.",
    &opt_comments, &opt_comments, 0, GET_BOOL, NO_ARG,
    1, 0, 0, 0, 0, 0},
@@ -282,8 +286,8 @@ static struct my_option my_long_options[] =
   {"debug", '#', "This is a non-debug version. Catch this and exit.",
    0,0, 0, GET_DISABLED, OPT_ARG, 0, 0, 0, 0, 0, 0},
 #else
-  {"debug", '#', "Output debug log.", &default_dbug_option,
-   &default_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
+  {"debug", '#', "Output debug log.", (char *)&default_dbug_option,
+   (char *)&default_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
 #endif
   {"debug-check", OPT_DEBUG_CHECK, "Check memory and open file usage at exit.",
    &debug_check_flag, &debug_check_flag, 0,
@@ -1638,6 +1642,7 @@ static void free_resources()
   dynstr_free(&extended_row);
   dynstr_free(&dynamic_where);
   dynstr_free(&insert_pat);
+  dynstr_free(&select_field_names);
   if (defaults_argv)
     free_defaults(defaults_argv);
   mysql_library_end();
@@ -2170,6 +2175,7 @@ static void print_xml_comment(FILE *xml_file, size_t len,
     case '-':
       if (*(comment_string + 1) == '-')         /* Only one hyphen allowed. */
         break;
+      /* fall through */
     default:
       fputc(*comment_string, xml_file);
       break;
@@ -2206,7 +2212,6 @@ static void print_comment(FILE *sql_file, my_bool is_error, const char *format,
 
   print_xml_comment(sql_file, strlen(comment_buff), comment_buff);
 }
-
 
 /*
  create_delimiter
@@ -2552,7 +2557,7 @@ static uint dump_routines_for_db(char *db)
                           query_buff);
             print_comment(sql_file, 1,
                           "-- does %s have permissions on mysql.proc?\n\n",
-                          current_user);
+                          fix_for_comment(current_user));
             maybe_die(EX_MYSQLERR,"%s has insufficent privileges to %s!",
                       current_user, query_buff);
           }
@@ -2732,7 +2737,13 @@ static uint get_table_structure(char *table, char *db, char *table_type,
     else
       dynstr_set_checked(&insert_pat, "");
   }
-
+  if (!select_field_names_inited)
+  {
+    select_field_names_inited= 1;
+    init_dynamic_string_checked(&select_field_names, "", 1024, 1024);
+  }
+  else
+    dynstr_set_checked(&select_field_names, "");
   insert_option= ((delayed && opt_ignore) ? " DELAYED IGNORE " :
                   delayed ? " DELAYED " : opt_ignore ? " IGNORE " : "");
 
@@ -2847,6 +2858,8 @@ static uint get_table_structure(char *table, char *db, char *table_type,
 
           my_free(scv_buff);
 
+          if (path)
+            my_fclose(sql_file, MYF(MY_WME));
           DBUG_RETURN(0);
         }
         else
@@ -2966,6 +2979,19 @@ static uint get_table_structure(char *table, char *db, char *table_type,
       DBUG_RETURN(0);
     }
 
+    while ((row= mysql_fetch_row(result)))
+    {
+      if (strlen(row[SHOW_EXTRA]) && strstr(row[SHOW_EXTRA],"INVISIBLE"))
+        complete_insert= 1;
+      if (init)
+      {
+        dynstr_append_checked(&select_field_names, ", ");
+      }
+      init=1;
+      dynstr_append_checked(&select_field_names,
+              quote_name(row[SHOW_FIELDNAME], name_buff, 0));
+    }
+    init=0;
     /*
       If write_data is true, then we build up insert statements for
       the table's data. Note: in subsequent lines of code, this test
@@ -2993,19 +3019,8 @@ static uint get_table_structure(char *table, char *db, char *table_type,
       }
     }
 
-    while ((row= mysql_fetch_row(result)))
-    {
-      if (complete_insert)
-      {
-        if (init)
-        {
-          dynstr_append_checked(&insert_pat, ", ");
-        }
-        init=1;
-        dynstr_append_checked(&insert_pat,
-                      quote_name(row[SHOW_FIELDNAME], name_buff, 0));
-      }
-    }
+    if (complete_insert)
+      dynstr_append_checked(&insert_pat, select_field_names.str);
     num_fields= mysql_num_rows(result);
     mysql_free_result(result);
   }
@@ -3062,6 +3077,21 @@ static uint get_table_structure(char *table, char *db, char *table_type,
           dynstr_append_checked(&insert_pat, "(");
       }
     }
+
+    while ((row= mysql_fetch_row(result)))
+    {
+      if (strlen(row[SHOW_EXTRA]) && strstr(row[SHOW_EXTRA],"INVISIBLE"))
+        complete_insert= 1;
+      if (init)
+      {
+        dynstr_append_checked(&select_field_names, ", ");
+      }
+      dynstr_append_checked(&select_field_names,
+              quote_name(row[SHOW_FIELDNAME], name_buff, 0));
+      init=1;
+    }
+    init=0;
+    mysql_data_seek(result, 0);
 
     while ((row= mysql_fetch_row(result)))
     {
@@ -3281,6 +3311,10 @@ static void dump_trigger_old(FILE *sql_file, MYSQL_RES *show_triggers_rs,
   if (opt_compact)
     fprintf(sql_file, "/*!50003 SET @OLD_SQL_MODE=@@SQL_MODE*/;\n");
 
+  if (opt_drop_trigger)
+    fprintf(sql_file, "/*!50032 DROP TRIGGER IF EXISTS %s */;\n",
+    (*show_trigger_row)[0]);
+
   fprintf(sql_file,
           "DELIMITER ;;\n"
           "/*!50003 SET SESSION SQL_MODE=\"%s\" */;;\n"
@@ -3360,6 +3394,10 @@ static int dump_trigger(FILE *sql_file, MYSQL_RES *show_create_trigger_rs,
                         row[4]);  /* collation_connection */
 
     switch_sql_mode(sql_file, ";", row[1]);
+
+    if (opt_drop_trigger)
+      fprintf(sql_file, "/*!50032 DROP TRIGGER IF EXISTS %s */;\n",
+          row[0]);
 
     query_str= cover_definer_clause(row[2], strlen(row[2]),
                                     C_STRING_WITH_LEN("50017"),
@@ -3695,7 +3733,9 @@ static void dump_table(char *table, char *db)
 
     /* now build the query string */
 
-    dynstr_append_checked(&query_string, "SELECT /*!40001 SQL_NO_CACHE */ * INTO OUTFILE '");
+    dynstr_append_checked(&query_string, "SELECT /*!40001 SQL_NO_CACHE */ ");
+    dynstr_append_checked(&query_string, select_field_names.str);
+    dynstr_append_checked(&query_string, " INTO OUTFILE '");
     dynstr_append_checked(&query_string, filename);
     dynstr_append_checked(&query_string, "'");
 
@@ -3744,7 +3784,9 @@ static void dump_table(char *table, char *db)
                   "\n--\n-- Dumping data for table %s\n--\n",
                   fix_for_comment(result_table));
     
-    dynstr_append_checked(&query_string, "SELECT /*!40001 SQL_NO_CACHE */ * FROM ");
+    dynstr_append_checked(&query_string, "SELECT /*!40001 SQL_NO_CACHE */ ");
+    dynstr_append_checked(&query_string, select_field_names.str);
+    dynstr_append_checked(&query_string, " FROM ");
     dynstr_append_checked(&query_string, result_table);
 
     if (where)
@@ -5471,7 +5513,7 @@ static ulong find_set(TYPELIB *lib, const char *x, size_t length,
       var_len= (uint) (pos - start);
       strmake(buff, start, MY_MIN(sizeof(buff) - 1, var_len));
       find= find_type(buff, lib, FIND_TYPE_BASIC);
-      if (!find)
+      if (find <= 0)
       {
         *err_pos= (char*) start;
         *err_len= var_len;
@@ -5720,7 +5762,7 @@ static int replace(DYNAMIC_STRING *ds_str,
     return 1;
   init_dynamic_string_checked(&ds_tmp, "",
                       ds_str->length + replace_len, 256);
-  dynstr_append_mem_checked(&ds_tmp, ds_str->str, start - ds_str->str);
+  dynstr_append_mem_checked(&ds_tmp, ds_str->str, (uint)(start - ds_str->str));
   dynstr_append_mem_checked(&ds_tmp, replace_str, replace_len);
   dynstr_append_checked(&ds_tmp, start + search_len);
   dynstr_set_checked(ds_str, ds_tmp.str);
@@ -5929,8 +5971,7 @@ static my_bool get_view_structure(char *table, char* db)
     dynstr_free(&ds_view);
   }
 
-  if (switch_character_set_results(mysql, default_charset))
-    DBUG_RETURN(1);
+  switch_character_set_results(mysql, default_charset);
 
   /* If a separate .sql file was opened, close it now */
   if (sql_file != md_result_file)

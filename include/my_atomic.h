@@ -110,137 +110,23 @@
 #include "atomic/generic-msvc.h"
 #elif defined(HAVE_SOLARIS_ATOMIC)
 #include "atomic/solaris.h"
-#elif defined(HAVE_GCC_ATOMIC_BUILTINS) || defined(HAVE_GCC_C11_ATOMICS)
+#elif defined(HAVE_GCC_C11_ATOMICS)
 #include "atomic/gcc_builtins.h"
-#endif
-
-
-#ifndef HAVE_GCC_C11_ATOMICS
-#ifndef make_atomic_cas_body
-/* nolock.h was not able to generate even a CAS function, fall back */
-#error atomic ops for this platform are not implemented
-#endif
-
-#define intptr         void *
-
-/* define missing functions by using the already generated ones */
-#ifndef make_atomic_add_body
-#define make_atomic_add_body(S)                                 \
-  int ## S tmp=*a;                                              \
-  while (!my_atomic_cas ## S(a, &tmp, tmp+v)) ;                 \
-  v=tmp;
-#endif
-#ifndef make_atomic_fas_body
-#define make_atomic_fas_body(S)                                 \
-  int ## S tmp=*a;                                              \
-  while (!my_atomic_cas ## S(a, &tmp, v)) ;                     \
-  v=tmp;
-#endif
-#ifndef make_atomic_load_body
-#define make_atomic_load_body(S)                                \
-  ret= 0; /* avoid compiler warning */                          \
-  (void)(my_atomic_cas ## S(a, &ret, ret));
-#endif
-#ifndef make_atomic_store_body
-#define make_atomic_store_body(S)                               \
-  (void)(my_atomic_fas ## S (a, v));
-#endif
-
-#define make_atomic_cas(S)                                      \
-static inline int my_atomic_cas ## S(int ## S volatile *a,      \
-                            int ## S *cmp, int ## S set)        \
-{                                                               \
-  int8 ret;                                                     \
-  make_atomic_cas_body(S);                                      \
-  return ret;                                                   \
-}
-
-#define make_atomic_add(S)                                      \
-static inline int ## S my_atomic_add ## S(                      \
-                        int ## S volatile *a, int ## S v)       \
-{                                                               \
-  make_atomic_add_body(S);                                      \
-  return v;                                                     \
-}
-
-#define make_atomic_fas(S)                                      \
-static inline int ## S my_atomic_fas ## S(                      \
-                         int ## S volatile *a, int ## S v)      \
-{                                                               \
-  make_atomic_fas_body(S);                                      \
-  return v;                                                     \
-}
-
-#define make_atomic_load(S)                                     \
-static inline int ## S my_atomic_load ## S(int ## S volatile *a)\
-{                                                               \
-  int ## S ret;                                                 \
-  make_atomic_load_body(S);                                     \
-  return ret;                                                   \
-}
-
-#define make_atomic_store(S)                                    \
-static inline void my_atomic_store ## S(                        \
-                     int ## S volatile *a, int ## S v)          \
-{                                                               \
-  make_atomic_store_body(S);                                    \
-}
-
-make_atomic_cas(32)
-make_atomic_cas(64)
-make_atomic_cas(ptr)
-
-make_atomic_add(32)
-make_atomic_add(64)
-
-make_atomic_load(32)
-make_atomic_load(64)
-make_atomic_load(ptr)
-
-make_atomic_fas(32)
-make_atomic_fas(64)
-make_atomic_fas(ptr)
-
-make_atomic_store(32)
-make_atomic_store(64)
-make_atomic_store(ptr)
-
-#ifdef _atomic_h_cleanup_
-#include _atomic_h_cleanup_
-#undef _atomic_h_cleanup_
-#endif
-
-#undef make_atomic_add
-#undef make_atomic_cas
-#undef make_atomic_load
-#undef make_atomic_store
-#undef make_atomic_fas
-#undef make_atomic_add_body
-#undef make_atomic_cas_body
-#undef make_atomic_load_body
-#undef make_atomic_store_body
-#undef make_atomic_fas_body
-#undef intptr
-#endif
-
-/*
-  the macro below defines (as an expression) the code that
-  will be run in spin-loops. Intel manuals recummend to have PAUSE there.
-  It is expected to be defined in include/atomic/ *.h files
-*/
-#ifndef LF_BACKOFF
-#define LF_BACKOFF (1)
+#elif defined(HAVE_GCC_ATOMIC_BUILTINS)
+#include "atomic/gcc_sync.h"
 #endif
 
 #if SIZEOF_LONG == 4
 #define my_atomic_addlong(A,B) my_atomic_add32((int32*) (A), (B))
 #define my_atomic_loadlong(A) my_atomic_load32((int32*) (A))
+#define my_atomic_loadlong_explicit(A,O) my_atomic_load32_explicit((int32*) (A), (O))
 #define my_atomic_storelong(A,B) my_atomic_store32((int32*) (A), (B))
 #define my_atomic_faslong(A,B) my_atomic_fas32((int32*) (A), (B))
 #define my_atomic_caslong(A,B,C) my_atomic_cas32((int32*) (A), (int32*) (B), (C))
 #else
 #define my_atomic_addlong(A,B) my_atomic_add64((int64*) (A), (B))
 #define my_atomic_loadlong(A) my_atomic_load64((int64*) (A))
+#define my_atomic_loadlong_explicit(A,O) my_atomic_load64_explicit((int64*) (A), (O))
 #define my_atomic_storelong(A,B) my_atomic_store64((int64*) (A), (B))
 #define my_atomic_faslong(A,B) my_atomic_fas64((int64*) (A), (B))
 #define my_atomic_caslong(A,B,C) my_atomic_cas64((int64*) (A), (int64*) (B), (C))

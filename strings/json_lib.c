@@ -1,8 +1,6 @@
 #include <my_global.h>
 #include <string.h>
 #include <m_ctype.h>
-
-
 #include "json_lib.h"
 
 /*
@@ -253,7 +251,7 @@ static int read_4_hexdigits(json_string_t *s, uchar *dest)
     if ((c_len= json_next_char(s)) <= 0)
       return s->error= json_eos(s) ? JE_EOS : JE_BAD_CHR;
 
-    if (s->c_next >= 128 || (t= json_instr_chr_map[s->c_next]) >= S_F)
+    if (s->c_next >= 128 || (t= json_instr_chr_map[s->c_next]) > S_F)
       return s->error= JE_SYN;
 
     s->c_str+= c_len;
@@ -401,7 +399,7 @@ static int read_strn(json_engine_t *j)
     return 1;
 
   j->state= j->stack[j->stack_p];
-  j->value_len= (j->s.c_str - j->value) - 1;
+  j->value_len= (int)(j->s.c_str - j->value) - 1;
   return 0;
 }
 
@@ -503,7 +501,7 @@ static int skip_num_constant(json_engine_t *j)
   for (;;)
   {
     j->num_flags|= json_num_state_flags[state];
-    if ((c_len= json_next_char(&j->s)) > 0)
+    if ((c_len= json_next_char(&j->s)) > 0 && j->s.c_next < 128)
     {
       if ((state= json_num_states[state][json_num_chr_map[j->s.c_next]]) > 0)
       {
@@ -539,7 +537,7 @@ static int read_num(json_engine_t *j)
   if (skip_num_constant(j) == 0)
   {
     j->value_type= JSON_VALUE_NUMBER;
-    j->value_len= j->s.c_str - j->value_begin;
+    j->value_len= (int)(j->s.c_str - j->value_begin);
     return 0;
   }
   return 1;
@@ -1043,7 +1041,7 @@ static int json_path_transitions[N_PATH_STATES][N_PATH_CLASSES]=
 /* PT */  { PS_OK,  JE_SYN, PS_AST, PS_AR,  JE_SYN, PS_KEY, JE_SYN, JE_SYN,
             JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN, JE_SYN,
             JE_NOT_JSON_CHR, JE_BAD_CHR},
-/* AR */  { JE_EOS, JE_SYN, PS_AWD, JE_SYN, PS_PT,  JE_SYN, PS_Z,
+/* AR */  { JE_EOS, JE_SYN, PS_AWD, JE_SYN, JE_SYN, JE_SYN, PS_Z,
             PS_INT, JE_SYN, JE_SYN, PS_SAR, JE_SYN, JE_SYN, JE_SYN,
             JE_NOT_JSON_CHR, JE_BAD_CHR},
 /* SAR */ { JE_EOS, JE_SYN, PS_AWD, JE_SYN, PS_PT,  JE_SYN, PS_Z,
@@ -1139,21 +1137,21 @@ int json_path_setup(json_path_t *p,
     case PS_EKY:
       p->last_step->key_end= p->s.c_str - c_len;
       state= PS_KEY;
-      /* Note no 'continue' here. */
+      /* fall through */
     case PS_KEY:
       p->last_step++;
       if (p->last_step - p->steps >= JSON_DEPTH_LIMIT)
         return p->s.error= JE_DEPTH;
       p->types_used|= p->last_step->type= JSON_PATH_KEY | double_wildcard;
       double_wildcard= JSON_PATH_KEY_NULL;
-      /* Note no 'continue' here. */
+      /* fall through */
     case PS_KEYX:
       p->last_step->key= p->s.c_str;
       continue;
     case PS_EAR:
       p->last_step->key_end= p->s.c_str - c_len;
       state= PS_AR;
-      /* Note no 'continue' here. */
+      /* fall through */
     case PS_AR:
       p->last_step++;
       if (p->last_step - p->steps >= JSON_DEPTH_LIMIT)
@@ -1248,6 +1246,7 @@ static int handle_match(json_engine_t *je, json_path_t *p,
       if (++next_step > p->last_step)
       {
         je->s.c_str= je->value_begin;
+        je->stack_p--;
         return 1;
       }
     } while (next_step->type == JSON_PATH_ARRAY && next_step->n_item == 0);
@@ -1387,7 +1386,7 @@ int json_find_paths_next(json_engine_t *je, json_find_paths_t *state)
           if (!json_key_matches(je, &key_name))
             continue;
         }
-        if (cur_step - state->paths[p_c].last_step == state->cur_depth)
+        if ((uint) (cur_step - state->paths[p_c].last_step) == state->cur_depth)
           path_found= TRUE;
         else
         {
@@ -1420,7 +1419,7 @@ int json_find_paths_next(json_engine_t *je, json_find_paths_t *state)
             cur_step->n_item == state->array_counters[state->cur_depth])
         {
           /* Array item matches. */
-          if (cur_step - state->paths[p_c].last_step == state->cur_depth)
+          if ((uint) (cur_step - state->paths[p_c].last_step) == state->cur_depth)
             path_found= TRUE;
           else
           {
@@ -1446,7 +1445,7 @@ int json_find_paths_next(json_engine_t *je, json_find_paths_t *state)
           /* Path already failed. */
           continue;
         if (state->paths[p_c].steps[state->cur_depth].type &
-            (je->state == JST_OBJ_START) ? JSON_PATH_KEY : JSON_PATH_ARRAY)
+            ((je->state == JST_OBJ_START) ? JSON_PATH_KEY : JSON_PATH_ARRAY))
           state->path_depths[p_c]++;
       }
       state->cur_depth++;
@@ -1495,7 +1494,7 @@ int json_append_ascii(CHARSET_INFO *json_cs,
     return c_len;
   }
 
-  return json - json_start;
+  return (int)(json - json_start);
 }
 
 
@@ -1531,7 +1530,7 @@ int json_unescape(CHARSET_INFO *json_cs,
     return -1;
   }
 
-  return s.error==JE_EOS ? res - res_b : -1;
+  return s.error==JE_EOS ? (int)(res - res_b) : -1;
 }
 
 
@@ -1585,7 +1584,7 @@ int json_escape(CHARSET_INFO *str_cs,
       enum json_esc_char_classes c_class;
       
       str+= c_len;
-      if (c_chr > 0x60 || (c_class= json_escape_chr_map[c_chr]) == ESC_)
+      if (c_chr >= 0x60 || (c_class= json_escape_chr_map[c_chr]) == ESC_)
       {
         if ((c_len= json_cs->cset->wc_mb(json_cs, c_chr, json, json_end)) > 0)
         {
@@ -1646,7 +1645,7 @@ int json_escape(CHARSET_INFO *str_cs,
     }
   }
 
-  return json - json_start;
+  return (int)(json - json_start);
 }
 
 
@@ -1704,6 +1703,7 @@ int json_get_path_next(json_engine_t *je, json_path_t *p)
         return 1;
       /* Now we have je.state == JST_VALUE, so let's handle it. */
 
+      /* fall through */
     case JST_VALUE:
       if (json_read_value(je))
         return 1;
@@ -1755,7 +1755,7 @@ int json_path_parts_compare(
           goto step_fits;
         goto step_failed;
       }
-      if (a->n_item == 0)
+      if ((a->type & JSON_PATH_WILD) == 0 && a->n_item == 0)
         goto step_fits_autowrap;
       goto step_failed;
     }

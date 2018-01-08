@@ -1,7 +1,7 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 //
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -78,10 +78,18 @@ struct ParsedInternalKey {
   SequenceNumber sequence;
   ValueType type;
 
-  ParsedInternalKey() { }  // Intentionally left uninitialized (for speed)
+  ParsedInternalKey()
+      : sequence(kMaxSequenceNumber)  // Make code analyzer happy
+  {}  // Intentionally left uninitialized (for speed)
   ParsedInternalKey(const Slice& u, const SequenceNumber& seq, ValueType t)
       : user_key(u), sequence(seq), type(t) { }
   std::string DebugString(bool hex = false) const;
+
+  void clear() {
+    user_key.clear();
+    sequence = 0;
+    type = kTypeDeletion;
+  }
 };
 
 // Return the length of the encoding of "key".
@@ -128,7 +136,11 @@ inline ValueType ExtractValueType(const Slice& internal_key) {
 
 // A comparator for internal keys that uses a specified comparator for
 // the user key portion and breaks ties by decreasing sequence number.
-class InternalKeyComparator : public Comparator {
+class InternalKeyComparator
+#ifdef NDEBUG
+    final
+#endif
+    : public Comparator {
  private:
   const Comparator* user_comparator_;
   std::string name_;
@@ -149,6 +161,9 @@ class InternalKeyComparator : public Comparator {
 
   int Compare(const InternalKey& a, const InternalKey& b) const;
   int Compare(const ParsedInternalKey& a, const ParsedInternalKey& b) const;
+  virtual const Comparator* GetRootComparator() const override {
+    return user_comparator_->GetRootComparator();
+  }
 };
 
 // Modules in this directory should keep internal keys wrapped inside
@@ -166,15 +181,15 @@ class InternalKey {
   // sets the internal key to be bigger or equal to all internal keys with this
   // user key
   void SetMaxPossibleForUserKey(const Slice& _user_key) {
-    AppendInternalKey(&rep_, ParsedInternalKey(_user_key, kMaxSequenceNumber,
-                                               kValueTypeForSeek));
+    AppendInternalKey(
+        &rep_, ParsedInternalKey(_user_key, 0, static_cast<ValueType>(0)));
   }
 
   // sets the internal key to be smaller or equal to all internal keys with this
   // user key
   void SetMinPossibleForUserKey(const Slice& _user_key) {
-    AppendInternalKey(
-        &rep_, ParsedInternalKey(_user_key, 0, static_cast<ValueType>(0)));
+    AppendInternalKey(&rep_, ParsedInternalKey(_user_key, kMaxSequenceNumber,
+                                               kValueTypeForSeek));
   }
 
   bool Valid() const {
@@ -303,15 +318,26 @@ inline LookupKey::~LookupKey() {
 class IterKey {
  public:
   IterKey()
-      : buf_(space_), buf_size_(sizeof(space_)), key_(buf_), key_size_(0) {}
+      : buf_(space_),
+        buf_size_(sizeof(space_)),
+        key_(buf_),
+        key_size_(0),
+        is_user_key_(true) {}
 
   ~IterKey() { ResetBuffer(); }
 
-  Slice GetKey() const { return Slice(key_, key_size_); }
+  Slice GetInternalKey() const {
+    assert(!IsUserKey());
+    return Slice(key_, key_size_);
+  }
 
   Slice GetUserKey() const {
-    assert(key_size_ >= 8);
-    return Slice(key_, key_size_ - 8);
+    if (IsUserKey()) {
+      return Slice(key_, key_size_);
+    } else {
+      assert(key_size_ >= 8);
+      return Slice(key_, key_size_ - 8);
+    }
   }
 
   size_t Size() const { return key_size_; }
@@ -349,27 +375,22 @@ class IterKey {
     key_size_ = total_size;
   }
 
-  Slice SetKey(const Slice& key, bool copy = true) {
-    size_t size = key.size();
-    if (copy) {
-      // Copy key to buf_
-      EnlargeBufferIfNeeded(size);
-      memcpy(buf_, key.data(), size);
-      key_ = buf_;
-    } else {
-      // Update key_ to point to external memory
-      key_ = key.data();
-    }
-    key_size_ = size;
-    return Slice(key_, key_size_);
+  Slice SetUserKey(const Slice& key, bool copy = true) {
+    is_user_key_ = true;
+    return SetKeyImpl(key, copy);
+  }
+
+  Slice SetInternalKey(const Slice& key, bool copy = true) {
+    is_user_key_ = false;
+    return SetKeyImpl(key, copy);
   }
 
   // Copies the content of key, updates the reference to the user key in ikey
   // and returns a Slice referencing the new copy.
-  Slice SetKey(const Slice& key, ParsedInternalKey* ikey) {
+  Slice SetInternalKey(const Slice& key, ParsedInternalKey* ikey) {
     size_t key_n = key.size();
     assert(key_n >= 8);
-    SetKey(key);
+    SetInternalKey(key);
     ikey->user_key = Slice(key_, key_n - 8);
     return Slice(key_, key_n);
   }
@@ -408,6 +429,7 @@ class IterKey {
 
     key_ = buf_;
     key_size_ = psize + usize + sizeof(uint64_t);
+    is_user_key_ = false;
   }
 
   void SetInternalKey(const Slice& user_key, SequenceNumber s,
@@ -436,7 +458,10 @@ class IterKey {
     char* ptr = EncodeVarint32(buf_, static_cast<uint32_t>(size));
     memcpy(ptr, key.data(), size);
     key_ = buf_;
+    is_user_key_ = true;
   }
+
+  bool IsUserKey() const { return is_user_key_; }
 
  private:
   char* buf_;
@@ -444,6 +469,22 @@ class IterKey {
   const char* key_;
   size_t key_size_;
   char space_[32];  // Avoid allocation for short keys
+  bool is_user_key_;
+
+  Slice SetKeyImpl(const Slice& key, bool copy) {
+    size_t size = key.size();
+    if (copy) {
+      // Copy key to buf_
+      EnlargeBufferIfNeeded(size);
+      memcpy(buf_, key.data(), size);
+      key_ = buf_;
+    } else {
+      // Update key_ to point to external memory
+      key_ = key.data();
+    }
+    key_size_ = size;
+    return Slice(key_, key_size_);
+  }
 
   void ResetBuffer() {
     if (buf_ != space_) {

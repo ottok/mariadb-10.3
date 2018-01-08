@@ -43,7 +43,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql-common/my_user.c ../sql-common/pack.c
            ../sql-common/client_plugin.c ../sql-common/mysql_async.c
            ../sql/password.c ../sql/discover.cc ../sql/derror.cc 
-           ../sql/field.cc ../sql/field_conv.cc
+           ../sql/field.cc ../sql/field_conv.cc ../sql/field_comp.cc
            ../sql/filesort_utils.cc ../sql/sql_digest.cc
            ../sql/filesort.cc ../sql/gstream.cc ../sql/slave.cc
            ../sql/signal_handler.cc
@@ -90,7 +90,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/scheduler.cc ../sql/sql_audit.cc
            ../sql/sql_alter.cc ../sql/sql_partition_admin.cc
            ../sql/event_parse_data.cc
-           ../sql/sql_signal.cc ../sql/rpl_handler.cc
+           ../sql/sql_signal.cc
            ../sql/sys_vars.cc
            ${CMAKE_BINARY_DIR}/sql/sql_builtin.cc
            ../sql/mdl.cc ../sql/transaction.cc
@@ -117,6 +117,8 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/ha_sequence.cc ../sql/ha_sequence.h
            ../sql/temporary_tables.cc
            ../sql/session_tracker.cc
+           ../sql/proxy_protocol.cc
+           ../sql/sql_tvc.cc ../sql/sql_tvc.h
            ${GEN_SOURCES}
            ${MYSYS_LIBWRAP_SOURCE}
 )
@@ -162,17 +164,8 @@ ENDFOREACH()
 MERGE_LIBRARIES(mysqlserver STATIC ${EMBEDDED_LIBS} 
   OUTPUT_NAME ${MYSQLSERVER_OUTPUT_NAME} COMPONENT ${COMPONENT_MYSQLSERVER})
 
-INSTALL(FILES embedded_priv.h DESTINATION ${INSTALL_INCLUDEDIR}/private COMPONENT  ${COMPONENT_MYSQLSERVER})
+INSTALL(FILES embedded_priv.h DESTINATION ${INSTALL_INCLUDEDIR}/server/private COMPONENT  ${COMPONENT_MYSQLSERVER})
 
-# Visual Studio users need debug  static library 
-IF(MSVC)
- INSTALL_DEBUG_TARGET(mysqlserver DESTINATION ${INSTALL_LIBDIR}/debug)
-ENDIF()
-
-IF(UNIX)
- INSTALL_DEBUG_TARGET(mysqlserver DESTINATION ${INSTALL_LIBDIR} RENAME
-  ${CMAKE_STATIC_LIBRARY_PREFIX}mysqld-debug)
-ENDIF()
 
 SET(CLIENT_API_FUNCTIONS_5_1
 get_tty_password

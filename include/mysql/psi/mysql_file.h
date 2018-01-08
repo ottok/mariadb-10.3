@@ -16,8 +16,6 @@
 #ifndef MYSQL_FILE_H
 #define MYSQL_FILE_H
 
-#include <my_global.h>
-
 /* For strlen() */
 #include <string.h>
 /* For MY_STAT */
@@ -1423,4 +1421,3 @@ inline_mysql_file_sync(
 /** @} (end of group File_instrumentation) */
 
 #endif
-

@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -45,7 +46,7 @@ tab_create_graph_create(
 					a memory data structure */
 	mem_heap_t*	heap,		/*!< in: heap where created */
 	fil_encryption_t mode,		/*!< in: encryption mode */
-	ulint		key_id);	/*!< in: encryption key_id */
+	uint32_t	key_id);	/*!< in: encryption key_id */
 
 /** Creates an index create graph.
 @param[in]	index	index to create, built as a memory data structure
@@ -242,7 +243,6 @@ replacing what was there previously.
 @param[in]	flags	Tablespace flags
 @param[in]	path	Tablespace path
 @param[in]	trx	Transaction
-@param[in]	commit	If true, commit the transaction
 @return error code or DB_SUCCESS */
 dberr_t
 dict_replace_tablespace_in_dictionary(
@@ -250,8 +250,7 @@ dict_replace_tablespace_in_dictionary(
 	const char*	name,
 	ulint		flags,
 	const char*	path,
-	trx_t*		trx,
-	bool		commit);
+	trx_t*		trx);
 
 /** Delete records from SYS_TABLESPACES and SYS_DATAFILES associated
 with a particular tablespace ID.
@@ -305,7 +304,7 @@ struct tab_node_t{
 	/* Local storage for this graph node */
 	ulint		state;		/*!< node execution state */
 	ulint		col_no;		/*!< next column definition to insert */
-	ulint		key_id;	/*!< encryption key_id */
+	uint		key_id;	/*!< encryption key_id */
 	fil_encryption_t mode;	/*!< encryption mode */
 	ulint		base_col_no;	/*!< next base column to insert */
 	mem_heap_t*	heap;		/*!< memory heap used as auxiliary

@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include <my_global.h>
 #include <my_sys.h>
 #include <my_crypt.h>
 #include <tap.h>
@@ -93,7 +94,7 @@ IO_CACHE info;
 #define CACHE_SIZE 16384
 
 #define INFO_TAIL ", pos_in_file = %llu, pos_in_mem = %lu", \
-    info.pos_in_file, (ulong) (*info.current_pos - info.request_pos)
+    info.pos_in_file, (ulong) ((info.type == READ_CACHE ? info.read_pos : info.write_pos) - info.request_pos)
 
 #define FILL 0x5A
 

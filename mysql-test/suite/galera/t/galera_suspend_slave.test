@@ -25,7 +25,7 @@ CREATE TABLE t1 (f1 INTEGER PRIMARY KEY) ENGINE=InnoDB;
 	my $pid_filename = $ENV{'NODE_2_PIDFILE'};
 	my $mysqld_pid = `cat $pid_filename`;
         chomp($mysqld_pid);
-	system("kill -19 $mysqld_pid");
+	system("kill -SIGSTOP $mysqld_pid");
 	exit(0);
 EOF
 
@@ -37,10 +37,11 @@ INSERT INTO t1 VALUES (1);
 	my $pid_filename = $ENV{'NODE_2_PIDFILE'};
 	my $mysqld_pid = `cat $pid_filename`;
         chomp($mysqld_pid);
-	system("kill -18 $mysqld_pid");
+	system("kill -SIGCONT $mysqld_pid");
 	exit(0);
 EOF
 
+SET SESSION wsrep_sync_wait = 1;
 --sleep 10
 --source include/wait_until_ready.inc
 INSERT INTO t1 VALUES (1);
@@ -50,9 +51,11 @@ INSERT INTO t1 VALUES (1);
 --source include/galera_connect.inc
 --connection node_2a
 
+SET SESSION wsrep_sync_wait = 1;
 --source include/wait_until_ready.inc
 SELECT COUNT(*) = 1 FROM t1;
 
+SET SESSION wsrep_sync_wait = 15;
 DROP TABLE t1;
 
 # Restore original auto_increment_offset values.

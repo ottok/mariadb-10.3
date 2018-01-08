@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, MariaDB Corporation. All Rights Reserved.
+Copyright (c) 1995, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -38,36 +38,38 @@ extern buf_dblwr_t*	buf_dblwr;
 /** Set to TRUE when the doublewrite buffer is being created */
 extern ibool		buf_dblwr_being_created;
 
-/****************************************************************//**
-Creates the doublewrite buffer to a new InnoDB installation. The header of the
-doublewrite buffer is placed on the trx system header page.
-@return true if successful, false if not. */
+/** Create the doublewrite buffer if the doublewrite buffer header
+is not present in the TRX_SYS page.
+@return	whether the operation succeeded
+@retval	true	if the doublewrite buffer exists or was created
+@retval	false	if the creation failed (too small first data file) */
 MY_ATTRIBUTE((warn_unused_result))
 bool
-buf_dblwr_create(void);
-/*==================*/
+buf_dblwr_create();
 
-/****************************************************************//**
-At a database startup initializes the doublewrite buffer memory structure if
+/**
+At database startup initializes the doublewrite buffer memory structure if
 we already have a doublewrite buffer created in the data files. If we are
 upgrading to an InnoDB version which supports multiple tablespaces, then this
 function performs the necessary update operations. If we are in a crash
 recovery, this function loads the pages from double write buffer into memory.
+@param[in]	file		File handle
+@param[in]	path		Path name of file
 @return DB_SUCCESS or error code */
 dberr_t
 buf_dblwr_init_or_load_pages(
-	os_file_t	file,
+	pfs_os_file_t	file,
 	const char*	path);
 
 /** Process and remove the double write buffer pages for all tablespaces. */
 void
-buf_dblwr_process(void);
+buf_dblwr_process();
 
 /****************************************************************//**
 frees doublewrite buffer. */
 void
-buf_dblwr_free(void);
-/*================*/
+buf_dblwr_free();
+
 /********************************************************************//**
 Updates the doublewrite buffer when an IO request is completed. */
 void
@@ -105,8 +107,8 @@ important to call this function after a batch of writes has been posted,
 and also when we may have to wait for a page latch! Otherwise a deadlock
 of threads can occur. */
 void
-buf_dblwr_flush_buffered_writes(void);
-/*=================================*/
+buf_dblwr_flush_buffered_writes();
+
 /********************************************************************//**
 Writes a page to the doublewrite buffer on disk, sync it, then write
 the page to the datafile and sync the datafile. This function is used

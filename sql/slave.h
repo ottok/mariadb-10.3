@@ -48,6 +48,7 @@
 #include "my_list.h"
 #include "rpl_filter.h"
 #include "rpl_tblmap.h"
+#include "rpl_gtid.h"
 
 #define SLAVE_NET_TIMEOUT  60
 
@@ -131,6 +132,9 @@ extern ulong master_retry_count;
 extern MY_BITMAP slave_error_mask;
 extern char slave_skip_error_names[];
 extern bool use_slave_mask;
+extern char slave_transaction_retry_error_names[];
+extern uint *slave_transaction_retry_errors;
+extern uint slave_transaction_retry_error_length;
 extern char *slave_load_tmpdir;
 extern char *master_info_file;
 extern MYSQL_PLUGIN_IMPORT char *relay_log_info_file;
@@ -138,6 +142,7 @@ extern char *opt_relay_logname, *opt_relaylog_index_name;
 extern my_bool opt_skip_slave_start, opt_reckless_slave;
 extern my_bool opt_log_slave_updates;
 extern char *opt_slave_skip_errors;
+extern char *opt_slave_transaction_retry_errors;
 extern my_bool opt_replicate_annotate_row_events;
 extern ulonglong relay_log_space_limit;
 extern ulonglong opt_read_binlog_speed_limit;
@@ -183,7 +188,8 @@ extern const char *relay_log_basename;
 
 int init_slave();
 int init_recovery(Master_info* mi, const char** errmsg);
-void init_slave_skip_errors(const char* arg);
+bool init_slave_skip_errors(const char* arg);
+bool init_slave_transaction_retry_errors(const char* arg);
 int register_slave_on_master(MYSQL* mysql);
 int terminate_slave_threads(Master_info* mi, int thread_mask,
 			     bool skip_lock = 0);
@@ -268,12 +274,14 @@ void slave_output_error_info(rpl_group_info *rgi, THD *thd);
 pthread_handler_t handle_slave_sql(void *arg);
 bool net_request_file(NET* net, const char* fname);
 void slave_background_kill_request(THD *to_kill);
+void slave_background_gtid_pos_create_request
+        (rpl_slave_state::gtid_pos_table *table_entry);
 
 extern bool volatile abort_loop;
 extern Master_info *active_mi; /* active_mi for multi-master */
 extern Master_info *default_master_info; /* To replace active_mi */
 extern Master_info_index *master_info_index;
-extern LEX_STRING default_master_connection_name;
+extern LEX_CSTRING default_master_connection_name;
 extern my_bool replicate_same_server_id;
 
 extern int disconnect_slave_event_count, abort_slave_event_count ;

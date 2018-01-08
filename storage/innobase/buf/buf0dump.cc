@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, MariaDB Corporation. All Rights Reserved.
+Copyright (c) 2011, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -44,8 +44,9 @@ Created April 08, 2011 Vasil Dimov
 
 #include <algorithm>
 
+#include "mysql/service_wsrep.h" /* wsrep_recovery */
+
 enum status_severity {
-	STATUS_VERBOSE,
 	STATUS_INFO,
 	STATUS_ERR
 };
@@ -118,7 +119,7 @@ buf_dump_status(
 
 	va_start(ap, fmt);
 
-	ut_vsnprintf(
+	vsnprintf(
 		export_vars.innodb_buffer_pool_dump_status,
 		sizeof(export_vars.innodb_buffer_pool_dump_status),
 		fmt, ap);
@@ -130,9 +131,6 @@ buf_dump_status(
 
 	case STATUS_ERR:
 		ib::error() << export_vars.innodb_buffer_pool_dump_status;
-		break;
-
-	case STATUS_VERBOSE:
 		break;
 	}
 
@@ -160,7 +158,7 @@ buf_load_status(
 
 	va_start(ap, fmt);
 
-	ut_vsnprintf(
+	vsnprintf(
 		export_vars.innodb_buffer_pool_load_status,
 		sizeof(export_vars.innodb_buffer_pool_load_status),
 		fmt, ap);
@@ -172,9 +170,6 @@ buf_load_status(
 
 	case STATUS_ERR:
 		ib::error() << export_vars.innodb_buffer_pool_load_status;
-		break;
-
-	case STATUS_VERBOSE:
 		break;
 	}
 
@@ -211,8 +206,8 @@ buf_dump_generate_path(
 {
 	char	buf[FN_REFLEN];
 
-	ut_snprintf(buf, sizeof(buf), "%s%c%s", get_buf_dump_dir(),
-		    OS_PATH_SEPARATOR, srv_buf_dump_filename);
+	snprintf(buf, sizeof(buf), "%s%c%s", get_buf_dump_dir(),
+		 OS_PATH_SEPARATOR, srv_buf_dump_filename);
 
 	os_file_type_t	type;
 	bool		exists = false;
@@ -238,14 +233,14 @@ buf_dump_generate_path(
 		if (srv_data_home_full[strlen(srv_data_home_full) - 1]
 		    == OS_PATH_SEPARATOR) {
 
-			ut_snprintf(path, path_size, "%s%s",
-				    srv_data_home_full,
-				    srv_buf_dump_filename);
+			snprintf(path, path_size, "%s%s",
+				 srv_data_home_full,
+				 srv_buf_dump_filename);
 		} else {
-			ut_snprintf(path, path_size, "%s%c%s",
-				    srv_data_home_full,
-				    OS_PATH_SEPARATOR,
-				    srv_buf_dump_filename);
+			snprintf(path, path_size, "%s%c%s",
+				 srv_data_home_full,
+				 OS_PATH_SEPARATOR,
+				 srv_buf_dump_filename);
 		}
 	}
 }
@@ -274,8 +269,8 @@ buf_dump(
 
 	buf_dump_generate_path(full_filename, sizeof(full_filename));
 
-	ut_snprintf(tmp_filename, sizeof(tmp_filename),
-		    "%s.incomplete", full_filename);
+	snprintf(tmp_filename, sizeof(tmp_filename),
+		 "%s.incomplete", full_filename);
 
 	buf_dump_status(STATUS_INFO, "Dumping buffer pool(s) to %s",
 			full_filename);
@@ -296,8 +291,6 @@ buf_dump(
 		buf_dump_t*		dump;
 		ulint			n_pages;
 		ulint			j;
-		ulint			limit;
-		ulint			counter;
 
 		buf_pool = buf_pool_from_array(i);
 
@@ -366,9 +359,6 @@ buf_dump(
 
 		buf_pool_mutex_exit(buf_pool);
 
-		limit = (ulint)((double)n_pages * ((double)srv_buf_dump_status_frequency / (double)100));
-		counter = 0;
-
 		for (j = 0; j < n_pages && !SHOULD_QUIT(); j++) {
 			ret = fprintf(f, ULINTPF "," ULINTPF "\n",
 				      BUF_DUMP_SPACE(dump[j]),
@@ -381,23 +371,6 @@ buf_dump(
 						tmp_filename, strerror(errno));
 				/* leave tmp_filename to exist */
 				return;
-			}
-
-			counter++;
-
-			/* Print buffer pool dump status only if
-			srv_buf_dump_status_frequency is > 0 and
-			we have processed that amount of pages. */
-			if (srv_buf_dump_status_frequency &&
-			    counter == limit) {
-				counter = 0;
-				buf_dump_status(
-					STATUS_VERBOSE,
-					"Dumping buffer pool"
-					" " ULINTPF "/" ULINTPF ","
-					" page " ULINTPF "/" ULINTPF,
-					i + 1, srv_buf_pool_instances,
-					j + 1, n_pages);
 			}
 		}
 
@@ -595,8 +568,8 @@ buf_load()
 	if (dump == NULL) {
 		fclose(f);
 		buf_load_status(STATUS_ERR,
-				"Cannot allocate %lu bytes: %s",
-				(ulint) (dump_n * sizeof(*dump)),
+				"Cannot allocate " ULINTPF " bytes: %s",
+				dump_n * sizeof(*dump),
 				strerror(errno));
 		return;
 	}
@@ -716,21 +689,6 @@ buf_load()
 			os_aio_simulated_wake_handler_threads();
 		}
 
-		/* Update the progress every 32 MiB, which is every Nth page,
-		where N = 32*1024^2 / page_size. */
-		static const ulint	update_status_every_n_mb = 32;
-		static const ulint	update_status_every_n_pages
-			= update_status_every_n_mb * 1024 * 1024
-			/ page_size.physical();
-
-		if (i % update_status_every_n_pages == 0) {
-			buf_load_status(STATUS_VERBOSE,
-					"Loaded " ULINTPF "/" ULINTPF " pages",
-					i + 1, dump_n);
-			/* mysql_stage_set_work_completed(pfs_stage_progress,
-			i); */
-		}
-
 		if (buf_load_abort_flag) {
 			if (space != NULL) {
 				fil_space_release(space);
@@ -796,17 +754,22 @@ extern "C"
 os_thread_ret_t
 DECLARE_THREAD(buf_dump_thread)(void*)
 {
+	my_thread_init();
 	ut_ad(!srv_read_only_mode);
 	/* JAN: TODO: MySQL 5.7 PSI
 #ifdef UNIV_PFS_THREAD
 	pfs_register_thread(buf_dump_thread_key);
 	#endif */ /* UNIV_PFS_THREAD */
 
-	buf_dump_status(STATUS_VERBOSE, "Dumping of buffer pool not started");
-	buf_load_status(STATUS_VERBOSE, "Loading of buffer pool not started");
-
 	if (srv_buffer_pool_load_at_startup) {
-		buf_load();
+
+#ifdef WITH_WSREP
+		if (!wsrep_recovery) {
+#endif /* WITH_WSREP */
+			buf_load();
+#ifdef WITH_WSREP
+		}
+#endif /* WITH_WSREP */
 	}
 
 	while (!SHUTTING_DOWN()) {
@@ -830,12 +793,20 @@ DECLARE_THREAD(buf_dump_thread)(void*)
 	}
 
 	if (srv_buffer_pool_dump_at_shutdown && srv_fast_shutdown != 2) {
+#ifdef WITH_WSREP
+		if (!wsrep_recovery) {
+#endif /* WITH_WSREP */
+
 		buf_dump(FALSE /* ignore shutdown down flag,
 		keep going even if we are in a shutdown state */);
+#ifdef WITH_WSREP
+		}
+#endif /* WITH_WSREP */
 	}
 
 	srv_buf_dump_thread_active = false;
 
+	my_thread_end();
 	/* We count the number of threads in os_thread_exit(). A created
 	thread should always use that to exit and not use return() to exit. */
 	os_thread_exit();

@@ -2,9 +2,8 @@
 #include <gssapi/gssapi.h>
 #include <stdio.h>
 #include <mysql/plugin_auth.h>
-#include <my_sys.h>
 #include <mysqld_error.h>
-#include <log.h>
+#include <string.h>
 #include "server_plugin.h"
 #include "gssapi_errmsg.h"
 
@@ -18,11 +17,11 @@ static void log_error( OM_uint32 major, OM_uint32 minor, const char *msg)
     char sysmsg[1024];
     gssapi_errmsg(major, minor, sysmsg, sizeof(sysmsg));
     my_printf_error(ER_UNKNOWN_ERROR,"Server GSSAPI error (major %u, minor %u) : %s -%s",
-      MYF(0), major, minor, msg, sysmsg);
+      0, major, minor, msg, sysmsg);
   }
   else
   {
-    my_printf_error(ER_UNKNOWN_ERROR, "Server GSSAPI error : %s", MYF(0), msg);
+    my_printf_error(ER_UNKNOWN_ERROR, "Server GSSAPI error : %s", 0, msg);
   }
 }
 
@@ -44,26 +43,30 @@ static char* get_default_principal_name()
 
   if(krb5_init_context(&context))
   {
-    sql_print_warning("GSSAPI plugin : krb5_init_context failed");
+    my_printf_error(0, "GSSAPI plugin : krb5_init_context failed",
+                    ME_ERROR_LOG | ME_WARNING);
     goto cleanup;
   }
 
   if (krb5_sname_to_principal(context, NULL, "mariadb", KRB5_NT_SRV_HST, &principal))
   {
-    sql_print_warning("GSSAPI plugin :  krb5_sname_to_principal failed");
+    my_printf_error(0, "GSSAPI plugin :  krb5_sname_to_principal failed",
+                    ME_ERROR_LOG | ME_WARNING);
     goto cleanup;
   }
 
   if (krb5_unparse_name(context, principal, &unparsed_name))
   {
-    sql_print_warning("GSSAPI plugin :  krb5_unparse_name failed");
+    my_printf_error(0, "GSSAPI plugin :  krb5_unparse_name failed",
+                    ME_ERROR_LOG | ME_WARNING);
     goto cleanup;
   }
 
   /* Check for entry in keytab */
   if (krb5_kt_read_service_key(context, NULL, principal, 0, (krb5_enctype)0, &key))
   {
-    sql_print_warning("GSSAPI plugin : default principal '%s' not found in keytab", unparsed_name);
+    my_printf_error(0, "GSSAPI plugin : default principal '%s' not found in keytab",
+                    ME_ERROR_LOG | ME_WARNING, unparsed_name);
     goto cleanup;
   }
 
@@ -100,7 +103,8 @@ int plugin_init()
   /* import service principal from plain text */
   if(srv_principal_name && srv_principal_name[0])
   {
-    sql_print_information("GSSAPI plugin : using principal name '%s'", srv_principal_name);
+    my_printf_error(0, "GSSAPI plugin : using principal name '%s'",
+                    ME_ERROR_LOG | ME_NOTE, srv_principal_name);
     principal_name_buf.length= strlen(srv_principal_name);
     principal_name_buf.value= srv_principal_name;
     major= gss_import_name(&minor, &principal_name_buf, GSS_C_NT_USER_NAME, &service_name);
@@ -114,8 +118,6 @@ int plugin_init()
   {
     service_name=  GSS_C_NO_NAME;
   }
-
-
 
   /* Check if SPN configuration is OK */
   major= gss_acquire_cred(&minor, service_name, GSS_C_INDEFINITE,
@@ -194,7 +196,7 @@ int auth_server(MYSQL_PLUGIN_VIO *vio,const char *user, size_t userlen, int use_
     /* send token to peer */
     if (output.length)
     {
-      if (vio->write_packet(vio, (const uchar *) output.value, output.length))
+      if (vio->write_packet(vio, (const unsigned char *) output.value, output.length))
       {
         gss_release_buffer(&minor, &output);
         log_error(major, minor, "communication error(write)");
@@ -234,7 +236,7 @@ int auth_server(MYSQL_PLUGIN_VIO *vio,const char *user, size_t userlen, int use_
   {
     my_printf_error(ER_ACCESS_DENIED_ERROR,
       "GSSAPI name mismatch, requested '%s', actual name '%.*s'",
-      MYF(0), user, (int)client_name_buf.length, client_name_str);
+      0, user, (int)client_name_buf.length, client_name_str);
   }
 
   gss_release_buffer(&minor, &client_name_buf);

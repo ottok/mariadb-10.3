@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -189,6 +190,12 @@ ha_clear(
 }
 
 #ifdef BTR_CUR_HASH_ADAPT
+# if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
+/** Maximum number of records in a page */
+static const lint MAX_N_POINTERS
+	= UNIV_PAGE_SIZE_MAX / REC_N_NEW_EXTRA_BYTES;
+# endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
+
 /*************************************************************//**
 Inserts an entry into a hash table. If an entry with the same fold number
 is found, its node is updated to point to the new data, and no new node
@@ -235,9 +242,11 @@ ha_insert_for_fold_func(
 				buf_block_t* prev_block = prev_node->block;
 				ut_a(prev_block->frame
 				     == page_align(prev_node->data));
-				ut_a(prev_block->n_pointers > 0);
-				prev_block->n_pointers--;
-				block->n_pointers++;
+				ut_a(my_atomic_addlint(
+					     &prev_block->n_pointers, -1)
+				     < MAX_N_POINTERS);
+				ut_a(my_atomic_addlint(&block->n_pointers, 1)
+				     < MAX_N_POINTERS);
 			}
 
 			prev_node->block = block;
@@ -268,7 +277,8 @@ ha_insert_for_fold_func(
 
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
 	if (table->adaptive) {
-		block->n_pointers++;
+		ut_a(my_atomic_addlint(&block->n_pointers, 1)
+		     < MAX_N_POINTERS);
 	}
 #endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
 
@@ -329,8 +339,8 @@ ha_delete_hash_node(
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
 	if (table->adaptive) {
 		ut_a(del_node->block->frame = page_align(del_node->data));
-		ut_a(del_node->block->n_pointers > 0);
-		del_node->block->n_pointers--;
+		ut_a(my_atomic_addlint(&del_node->block->n_pointers, -1)
+		     < MAX_N_POINTERS);
 	}
 #endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
 
@@ -372,9 +382,10 @@ ha_search_and_update_if_found_func(
 	if (node) {
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
 		if (table->adaptive) {
-			ut_a(node->block->n_pointers > 0);
-			node->block->n_pointers--;
-			new_block->n_pointers++;
+			ut_a(my_atomic_addlint(&node->block->n_pointers, -1)
+			     < MAX_N_POINTERS);
+			ut_a(my_atomic_addlint(&new_block->n_pointers, 1)
+			     < MAX_N_POINTERS);
 		}
 
 		node->block = new_block;
@@ -478,62 +489,4 @@ ha_validate(
 	return(ok);
 }
 #endif /* defined UNIV_AHI_DEBUG || defined UNIV_DEBUG */
-
-/*************************************************************//**
-Prints info of a hash table. */
-void
-ha_print_info(
-/*==========*/
-	FILE*		file,	/*!< in: file where to print */
-	hash_table_t*	table)	/*!< in: hash table */
-{
-#ifdef UNIV_DEBUG
-/* Some of the code here is disabled for performance reasons in production
-builds, see http://bugs.mysql.com/36941 */
-#define PRINT_USED_CELLS
-#endif /* UNIV_DEBUG */
-
-#ifdef PRINT_USED_CELLS
-	hash_cell_t*	cell;
-	ulint		cells	= 0;
-	ulint		i;
-#endif /* PRINT_USED_CELLS */
-	ulint		n_bufs;
-
-	ut_ad(table);
-	ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
-#ifdef PRINT_USED_CELLS
-	for (i = 0; i < hash_get_n_cells(table); i++) {
-
-		cell = hash_get_nth_cell(table, i);
-
-		if (cell->node) {
-
-			cells++;
-		}
-	}
-#endif /* PRINT_USED_CELLS */
-
-	fprintf(file, "Hash table size %lu",
-		(ulong) hash_get_n_cells(table));
-
-#ifdef PRINT_USED_CELLS
-	fprintf(file, ", used cells %lu", (ulong) cells);
-#endif /* PRINT_USED_CELLS */
-
-	if (table->heaps == NULL && table->heap != NULL) {
-
-		/* This calculation is intended for the adaptive hash
-		index: how many buffer frames we have reserved? */
-
-		n_bufs = UT_LIST_GET_LEN(table->heap->base) - 1;
-
-		if (table->heap->free_block) {
-			n_bufs++;
-		}
-
-		fprintf(file, ", node heap has %lu buffer(s)\n",
-			(ulong) n_bufs);
-	}
-}
 #endif /* BTR_CUR_HASH_ADAPT */

@@ -57,7 +57,6 @@ extern mysql_pfs_key_t	buf_pool_zip_mutex_key;
 extern mysql_pfs_key_t	cache_last_read_mutex_key;
 extern mysql_pfs_key_t	dict_foreign_err_mutex_key;
 extern mysql_pfs_key_t	dict_sys_mutex_key;
-extern mysql_pfs_key_t	file_format_max_mutex_key;
 extern mysql_pfs_key_t	fil_system_mutex_key;
 extern mysql_pfs_key_t	flush_list_mutex_key;
 extern mysql_pfs_key_t	fts_bg_threads_mutex_key;
@@ -91,7 +90,6 @@ extern mysql_pfs_key_t	rw_lock_debug_mutex_key;
 # endif /* UNIV_DEBUG */
 extern mysql_pfs_key_t	rw_lock_list_mutex_key;
 extern mysql_pfs_key_t	rw_lock_mutex_key;
-extern mysql_pfs_key_t	srv_dict_tmpfile_mutex_key;
 extern mysql_pfs_key_t	srv_innodb_monitor_mutex_key;
 extern mysql_pfs_key_t	srv_misc_tmpfile_mutex_key;
 extern mysql_pfs_key_t	srv_monitor_file_mutex_key;

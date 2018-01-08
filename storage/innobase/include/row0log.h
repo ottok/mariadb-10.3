@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2011, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -48,6 +49,7 @@ for online creation.
 bool
 row_log_allocate(
 /*=============*/
+	const trx_t*	trx,	/*!< in: the ALTER TABLE transaction */
 	dict_index_t*	index,	/*!< in/out: index */
 	dict_table_t*	table,	/*!< in/out: new table being rebuilt,
 				or NULL when creating a secondary index */
@@ -101,7 +103,7 @@ row_log_online_op(
 	const dtuple_t*	tuple,	/*!< in: index tuple */
 	trx_id_t	trx_id)	/*!< in: transaction ID for insert,
 				or 0 for delete */
-	UNIV_COLD MY_ATTRIBUTE((nonnull));
+	ATTRIBUTE_COLD __attribute__((nonnull));
 
 /******************************************************//**
 Gets the error status of the online index rebuild log.
@@ -131,13 +133,12 @@ row_log_table_delete(
 /*=================*/
 	const rec_t*	rec,	/*!< in: clustered index leaf page record,
 				page X-latched */
-	const dtuple_t*	ventry,	/*!< in: dtuple holding virtual column info */
 	dict_index_t*	index,	/*!< in/out: clustered index, S-latched
 				or X-latched */
 	const ulint*	offsets,/*!< in: rec_get_offsets(rec,index) */
 	const byte*	sys)	/*!< in: DB_TRX_ID,DB_ROLL_PTR that should
 				be logged, or NULL to use those in rec */
-	UNIV_COLD MY_ATTRIBUTE((nonnull(1,2,3)));
+	ATTRIBUTE_COLD __attribute__((nonnull(1,2,3)));
 
 /******************************************************//**
 Logs an update operation to a table that is being rebuilt.
@@ -150,12 +151,8 @@ row_log_table_update(
 	dict_index_t*	index,	/*!< in/out: clustered index, S-latched
 				or X-latched */
 	const ulint*	offsets,/*!< in: rec_get_offsets(rec,index) */
-	const dtuple_t*	old_pk,	/*!< in: row_log_table_get_pk()
+	const dtuple_t*	old_pk);/*!< in: row_log_table_get_pk()
 				before the update */
-	const dtuple_t*	new_v_row,/*!< in: dtuple contains the new virtual
-				columns */
-	const dtuple_t*	old_v_row);/*!< in: dtuple contains the old virtual
-				columns */
 
 /******************************************************//**
 Constructs the old PRIMARY KEY and DB_TRX_ID,DB_ROLL_PTR
@@ -174,7 +171,7 @@ row_log_table_get_pk(
 	byte*		sys,	/*!< out: DB_TRX_ID,DB_ROLL_PTR for
 				row_log_table_delete(), or NULL */
 	mem_heap_t**	heap)	/*!< in/out: memory heap where allocated */
-	UNIV_COLD MY_ATTRIBUTE((nonnull(1,2,5), warn_unused_result));
+	ATTRIBUTE_COLD __attribute__((nonnull(1,2,5), warn_unused_result));
 
 /******************************************************//**
 Logs an insert to a table that is being rebuilt.
@@ -184,7 +181,6 @@ row_log_table_insert(
 /*=================*/
 	const rec_t*	rec,	/*!< in: clustered index leaf page record,
 				page X-latched */
-	const dtuple_t*	ventry,	/*!< in: dtuple holding virtual column info */
 	dict_index_t*	index,	/*!< in/out: clustered index, S-latched
 				or X-latched */
 	const ulint*	offsets);/*!< in: rec_get_offsets(rec,index) */
@@ -195,7 +191,7 @@ row_log_table_blob_free(
 /*====================*/
 	dict_index_t*	index,	/*!< in/out: clustered index, X-latched */
 	ulint		page_no)/*!< in: starting page number of the BLOB */
-	UNIV_COLD MY_ATTRIBUTE((nonnull));
+	ATTRIBUTE_COLD __attribute__((nonnull));
 /******************************************************//**
 Notes that a BLOB is being allocated during online ALTER TABLE. */
 void
@@ -203,7 +199,7 @@ row_log_table_blob_alloc(
 /*=====================*/
 	dict_index_t*	index,	/*!< in/out: clustered index, X-latched */
 	ulint		page_no)/*!< in: starting page number of the BLOB */
-	UNIV_COLD MY_ATTRIBUTE((nonnull));
+	ATTRIBUTE_COLD __attribute__((nonnull));
 
 /** Apply the row_log_table log to a table upon completing rebuild.
 @param[in]	thr		query graph

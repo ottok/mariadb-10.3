@@ -1,7 +1,7 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 //
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -210,7 +210,9 @@ TEST_F(DBSSTTest, DeleteObsoleteFilesPendingOutputs) {
   blocking_thread.WakeUp();
   blocking_thread.WaitUntilDone();
   dbfull()->TEST_WaitForFlushMemTable();
-  ASSERT_EQ("1,0,0,0,1", FilesPerLevel(0));
+  // File just flushed is too big for L0 and L1 so gets moved to L2.
+  dbfull()->TEST_WaitForCompact();
+  ASSERT_EQ("0,0,1,0,1", FilesPerLevel(0));
 
   metadata.clear();
   db_->GetLiveFilesMetaData(&metadata);
@@ -295,7 +297,7 @@ TEST_F(DBSSTTest, RateLimitedDelete) {
   std::vector<uint64_t> penalties;
   rocksdb::SyncPoint::GetInstance()->SetCallBack(
       "DeleteScheduler::BackgroundEmptyTrash:Wait",
-      [&](void* arg) { penalties.push_back(*(static_cast<int*>(arg))); });
+      [&](void* arg) { penalties.push_back(*(static_cast<uint64_t*>(arg))); });
   rocksdb::SyncPoint::GetInstance()->SetCallBack(
       "InstrumentedCondVar::TimedWaitInternal", [&](void* arg) {
         // Turn timed wait into a simulated sleep
@@ -328,10 +330,12 @@ TEST_F(DBSSTTest, RateLimitedDelete) {
   std::string trash_dir = test::TmpDir(env_) + "/trash";
   int64_t rate_bytes_per_sec = 1024 * 10;  // 10 Kbs / Sec
   Status s;
-  options.sst_file_manager.reset(NewSstFileManager(
-      env_, nullptr, trash_dir, rate_bytes_per_sec, false, &s));
+  options.sst_file_manager.reset(
+      NewSstFileManager(env_, nullptr, trash_dir, 0, false, &s));
   ASSERT_OK(s);
+  options.sst_file_manager->SetDeleteRateBytesPerSecond(rate_bytes_per_sec);
   auto sfm = static_cast<SstFileManagerImpl*>(options.sst_file_manager.get());
+  sfm->delete_scheduler()->TEST_SetMaxTrashDBRatio(1.1);
 
   ASSERT_OK(TryReopen(options));
   // Create 4 files in L0
@@ -397,6 +401,7 @@ TEST_F(DBSSTTest, DeleteSchedulerMultipleDBPaths) {
       env_, nullptr, trash_dir, rate_bytes_per_sec, false, &s));
   ASSERT_OK(s);
   auto sfm = static_cast<SstFileManagerImpl*>(options.sst_file_manager.get());
+  sfm->delete_scheduler()->TEST_SetMaxTrashDBRatio(1.1);
 
   DestroyAndReopen(options);
 
@@ -451,9 +456,14 @@ TEST_F(DBSSTTest, DestroyDBWithRateLimitedDelete) {
       [&](void* arg) { bg_delete_file++; });
   rocksdb::SyncPoint::GetInstance()->EnableProcessing();
 
+  Status s;
   Options options = CurrentOptions();
   options.disable_auto_compactions = true;
   options.env = env_;
+  std::string trash_dir = test::TmpDir(env_) + "/trash";
+  options.sst_file_manager.reset(
+      NewSstFileManager(env_, nullptr, trash_dir, 0, false, &s));
+  ASSERT_OK(s);
   DestroyAndReopen(options);
 
   // Create 4 files in L0
@@ -466,15 +476,12 @@ TEST_F(DBSSTTest, DestroyDBWithRateLimitedDelete) {
 
   // Close DB and destroy it using DeleteScheduler
   Close();
-  std::string trash_dir = test::TmpDir(env_) + "/trash";
-  int64_t rate_bytes_per_sec = 1024 * 1024;  // 1 Mb / Sec
-  Status s;
-  options.sst_file_manager.reset(NewSstFileManager(
-      env_, nullptr, trash_dir, rate_bytes_per_sec, false, &s));
-  ASSERT_OK(s);
-  ASSERT_OK(DestroyDB(dbname_, options));
 
   auto sfm = static_cast<SstFileManagerImpl*>(options.sst_file_manager.get());
+
+  sfm->SetDeleteRateBytesPerSecond(1024 * 1024);
+  sfm->delete_scheduler()->TEST_SetMaxTrashDBRatio(1.1);
+  ASSERT_OK(DestroyDB(dbname_, options));
   sfm->WaitForEmptyTrash();
   // We have deleted the 4 sst files in the delete_scheduler
   ASSERT_EQ(bg_delete_file, 4);
@@ -516,18 +523,25 @@ TEST_F(DBSSTTest, DBWithMaxSpaceAllowedRandomized) {
   // than the limit.
 
   std::vector<int> max_space_limits_mbs = {1, 2, 4, 8, 10};
-
+  decltype(max_space_limits_mbs)::value_type limit_mb_cb;
   bool bg_error_set = false;
   uint64_t total_sst_files_size = 0;
 
+  std::atomic<int> estimate_multiplier(1);
   int reached_max_space_on_flush = 0;
   int reached_max_space_on_compaction = 0;
   rocksdb::SyncPoint::GetInstance()->SetCallBack(
       "DBImpl::FlushMemTableToOutputFile:MaxAllowedSpaceReached",
       [&](void* arg) {
+        Status* bg_error = static_cast<Status*>(arg);
         bg_error_set = true;
         GetAllSSTFiles(&total_sst_files_size);
         reached_max_space_on_flush++;
+        // low limit for size calculated using sst files
+        ASSERT_GE(total_sst_files_size, limit_mb_cb * 1024 * 1024);
+        // clear error to ensure compaction callback is called
+        *bg_error = Status::OK();
+        estimate_multiplier++;  // used in the main loop assert
       });
 
   rocksdb::SyncPoint::GetInstance()->SetCallBack(
@@ -541,6 +555,8 @@ TEST_F(DBSSTTest, DBWithMaxSpaceAllowedRandomized) {
   for (auto limit_mb : max_space_limits_mbs) {
     bg_error_set = false;
     total_sst_files_size = 0;
+    estimate_multiplier = 1;
+    limit_mb_cb = limit_mb;
     rocksdb::SyncPoint::GetInstance()->ClearTrace();
     rocksdb::SyncPoint::GetInstance()->EnableProcessing();
     std::shared_ptr<SstFileManager> sst_file_manager(NewSstFileManager(env_));
@@ -565,7 +581,8 @@ TEST_F(DBSSTTest, DBWithMaxSpaceAllowedRandomized) {
       // Check the estimated db size vs the db limit just to make sure we
       // dont run into an infinite loop
       estimated_db_size = keys_written * 60;  // ~60 bytes per key
-      ASSERT_LT(estimated_db_size, limit_mb * 1024 * 1024 * 2);
+      ASSERT_LT(estimated_db_size,
+                estimate_multiplier * limit_mb * 1024 * 1024 * 2);
     }
     ASSERT_TRUE(bg_error_set);
     ASSERT_GE(total_sst_files_size, limit_mb * 1024 * 1024);

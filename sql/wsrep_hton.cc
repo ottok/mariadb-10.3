@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include "mariadb.h"
 #include <mysqld.h>
 #include "sql_base.h"
 #include "rpl_filter.h"
@@ -42,6 +43,7 @@ void wsrep_cleanup_transaction(THD *thd)
   thd->wsrep_trx_meta.depends_on= WSREP_SEQNO_UNDEFINED;
   thd->wsrep_exec_mode= LOCAL_STATE;
   thd->wsrep_affected_rows= 0;
+  thd->wsrep_skip_wsrep_GTID= false;
   return;
 }
 
@@ -323,7 +325,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
   DBUG_ENTER("wsrep_run_wsrep_commit");
 
   if (thd->get_stmt_da()->is_error()) {
-    WSREP_ERROR("commit issue, error: %d %s",
+    WSREP_DEBUG("commit issue, error: %d %s",
                 thd->get_stmt_da()->sql_errno(), thd->get_stmt_da()->message());
   }
 
@@ -382,7 +384,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
 
     mysql_mutex_lock(&thd->mysys_var->mutex);
-    thd_proc_info(thd, "wsrep waiting on replaying");
+    thd_proc_info(thd, "WSREP waiting on replaying");
     thd->mysys_var->current_mutex= &LOCK_wsrep_replaying;
     thd->mysys_var->current_cond=  &COND_wsrep_replaying;
     mysql_mutex_unlock(&thd->mysys_var->mutex);
@@ -507,6 +509,9 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
   }
 
   mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+
+  DEBUG_SYNC(thd, "wsrep_after_replication");
+
   switch(rcode) {
   case 0:
     /*
@@ -538,6 +543,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     break;
   case WSREP_BF_ABORT:
     DBUG_ASSERT(thd->wsrep_trx_meta.gtid.seqno != WSREP_SEQNO_UNDEFINED);
+    /* fall through */
   case WSREP_TRX_FAIL:
     WSREP_DEBUG("commit failed for reason: %d", rcode);
     DBUG_PRINT("wsrep", ("replicating commit fail"));

@@ -330,6 +330,40 @@ namespace open_query {
   };
 
   template <typename P, typename D>
+  struct GRAPHCORE_INTERNAL oqgraph_visit_leaves
+    : public base_visitor< oqgraph_visit_leaves<P,D> >
+  {
+    typedef on_finish_vertex event_filter;
+
+    oqgraph_visit_leaves(const P& p, const D& d,
+                       stack_cursor *cursor)
+      : seq(0), m_cursor(*cursor), m_p(p), m_d(d)
+    { assert(cursor); }
+
+    template<class T, class Graph>
+    void operator()(T u, Graph &g)
+    {
+      typename graph_traits<Graph>::out_edge_iterator ei, ei_end;
+      boost::tuples::tie(ei, ei_end) = out_edges(u, g);
+      if (ei == ei_end)
+      {
+        m_cursor.results.push(reference(++seq, u, m_d[ u ]));
+      }
+    }
+  private:
+    int seq;
+    stack_cursor &m_cursor;
+    P m_p;
+    D m_d;
+  };
+
+  template <typename P, typename D>
+  oqgraph_visit_leaves<P,D>
+    make_oqgraph_visit_leaves(const P& p, const D& d, stack_cursor *cursor)
+  { return oqgraph_visit_leaves<P,D>(p, d, cursor); }
+
+
+  template <typename P, typename D>
   struct GRAPHCORE_INTERNAL oqgraph_visit_dist
     : public base_visitor< oqgraph_visit_dist<P,D> >
   {
@@ -829,6 +863,7 @@ namespace open_query
 
       case DIJKSTRAS | HAVE_ORIG:
       case BREADTH_FIRST | HAVE_ORIG:
+      case LEAVES | HAVE_ORIG:
         if ((cursor= new (std::nothrow) stack_cursor(share)) && (orig || dest))
         {
           boost::unordered_map<Vertex, Vertex> p;
@@ -879,6 +914,28 @@ namespace open_query
                 ),
                 make_two_bit_judy_map(get(vertex_index, share->g)));
             break;
+          case LEAVES:
+            breadth_first_visit(share->g, *orig, Q,
+                make_bfs_visitor(
+                    std::make_pair(
+                        record_predecessors(
+                            boost::make_assoc_property_map(p),
+                            on_tree_edge()
+                        ),
+                    std::make_pair(
+                        record_distances(
+                            boost::make_assoc_property_map(d),
+                            on_tree_edge()
+                        ),
+                        make_oqgraph_visit_leaves(
+                            boost::make_assoc_property_map(p),
+                            boost::make_assoc_property_map(d),
+                            static_cast<stack_cursor*>(cursor)
+                        )
+                    ))
+                ),
+                make_two_bit_judy_map(get(vertex_index, share->g)));
+            break;
           default:
             abort();
           }
@@ -886,23 +943,24 @@ namespace open_query
         break;
       case BREADTH_FIRST | HAVE_DEST:
       case DIJKSTRAS | HAVE_DEST:
+      case LEAVES | HAVE_DEST:
         if ((cursor= new (std::nothrow) stack_cursor(share)) && (orig || dest))
         {
           boost::unordered_map<Vertex, Vertex> p;
           boost::unordered_map<Vertex, EdgeWeight> d;
           boost::queue<Vertex> Q;
-          reverse_graph<Graph> r(share->g);
+          const reverse_graph<Graph> r(share->g);
           p[ *dest ]= *dest;
           d[ *dest ] = EdgeWeight();
           switch (ALGORITHM & op)
           {
           case DIJKSTRAS:
-            dijkstra_shortest_paths_no_init(share->g, *dest,
+            dijkstra_shortest_paths_no_init(r, *dest,
                 make_lazy_property_map(p, identity_initializer<Vertex>()),
                 make_lazy_property_map(d, value_initializer<EdgeWeight>(
                     (std::numeric_limits<EdgeWeight>::max)())),
-                get(edge_weight, share->g),
-                get(vertex_index, share->g),
+                get(edge_weight, r),
+                get(vertex_index, r),
                 std::less<EdgeWeight>(),
                 closed_plus<EdgeWeight>(),
                 EdgeWeight(),
@@ -913,10 +971,10 @@ namespace open_query
                             static_cast<stack_cursor*>(cursor)
                         )
                 ),
-                make_two_bit_judy_map(get(vertex_index, share->g)));
+                make_two_bit_judy_map(get(vertex_index, r)));
             break;
           case BREADTH_FIRST:
-            breadth_first_visit(share->g, *dest, Q,
+            breadth_first_visit(r, *dest, Q,
                 make_bfs_visitor(
                     std::make_pair(
                         record_predecessors(
@@ -935,7 +993,29 @@ namespace open_query
                         )
                     ))
                 ),
-                make_two_bit_judy_map(get(vertex_index, share->g)));
+                make_two_bit_judy_map(get(vertex_index, r)));
+            break;
+          case LEAVES:
+            breadth_first_visit(r, *dest, Q,
+                make_bfs_visitor(
+                    std::make_pair(
+                        record_predecessors(
+                            boost::make_assoc_property_map(p),
+                            on_tree_edge()
+                        ),
+                    std::make_pair(
+                        record_distances(
+                            boost::make_assoc_property_map(d),
+                            on_tree_edge()
+                        ),
+                        make_oqgraph_visit_leaves(
+                            boost::make_assoc_property_map(p),
+                            boost::make_assoc_property_map(d),
+                            static_cast<stack_cursor*>(cursor)
+                        )
+                    ))
+                ),
+                make_two_bit_judy_map(get(vertex_index, r)));
             break;
           default:
             abort();

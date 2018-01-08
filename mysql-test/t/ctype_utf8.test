@@ -1723,6 +1723,24 @@ SET sql_mode=DEFAULT;
 DROP TABLE t1;
 
 --echo #
+--echo # MDEV-13530 VARBINARY doesn't convert to to BLOB for sizes 65533, 65534 and 65535
+--echo #
+
+SET sql_mode='';
+CREATE TABLE t1 (c1 VARCHAR(21844) CHARACTER SET utf8);
+DESCRIBE t1;
+DROP TABLE t1;
+
+CREATE TABLE t1 (c1 VARCHAR(21845) CHARACTER SET utf8);
+DESCRIBE t1;
+DROP TABLE t1;
+
+CREATE TABLE t1 (c1 VARCHAR(21846) CHARACTER SET utf8);
+DESCRIBE t1;
+DROP TABLE t1;
+SET sql_mode=default;
+
+--echo #
 --echo # End of 5.5 tests
 --echo #
 
@@ -1861,6 +1879,18 @@ let $ctype_unescape_combinations=selected;
 --source include/ctype_unescape.inc
 
 --echo #
+--echo # MDEV-12681 Wrong VIEW results for CHAR(0xDF USING latin1)
+--echo #
+
+SET NAMES utf8;
+SELECT CHAR(0xDF USING latin1);
+CREATE OR REPLACE VIEW v1 AS SELECT CHAR(0xDF USING latin1) AS c;
+SHOW CREATE VIEW v1;
+SELECT * FROM v1;
+DROP VIEW v1;
+
+
+--echo #
 --echo # End of 10.0 tests
 --echo #
 
@@ -1990,6 +2020,18 @@ SET @@SQL_MODE=default;
 #DROP FUNCTION f1;
 #SET NAMES utf8;
 
+--echo #
+--echo # MDEV-10191 non convertible chars convert() resulted in Null instead "?" on Windows
+--echo #
+
+SET sql_mode='STRICT_TRANS_TABLES';
+SELECT CONVERT(_utf8 0xC499 USING latin1);
+SELECT CAST(_utf8 0xC499 AS CHAR CHARACTER SET latin1);
+
+SET sql_mode=default;
+SELECT CONVERT(_utf8 0xC499 USING latin1);
+SELECT CAST(_utf8 0xC499 AS CHAR CHARACTER SET latin1);
+
 
 --echo #
 --echo # End of 10.1 tests
@@ -2108,6 +2150,18 @@ let $coll_pad='utf8_bin';
 SET NAMES utf8;
 --error ER_ILLEGAL_VALUE_FOR_TYPE
 CREATE TABLE t1 (a SET('a,bü'));
+
+--echo #
+--echo # MDEV-12607 Hybrid functions create wrong VARBINARY length when mixing character and binary data
+--echo #
+SET sql_mode='';
+SET NAMES utf8;
+CREATE OR REPLACE TABLE t1 AS SELECT COALESCE('ßa',_binary 'a');
+SELECT * FROM t1;
+SHOW CREATE TABLE t1;
+DROP TABLE t1;
+SET sql_mode=DEFAULT;
+
 
 --echo #
 --echo # End of 10.3 tests

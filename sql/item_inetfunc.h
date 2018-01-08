@@ -24,10 +24,12 @@
   Item_func_inet_aton implements INET_ATON() SQL-function.
 *************************************************************************/
 
-class Item_func_inet_aton : public Item_int_func
+class Item_func_inet_aton : public Item_longlong_func
 {
+  bool check_arguments() const
+  { return check_argument_types_can_return_text(0, arg_count); }
 public:
-  Item_func_inet_aton(THD *thd, Item *a): Item_int_func(thd, a) {}
+  Item_func_inet_aton(THD *thd, Item *a): Item_longlong_func(thd, a) {}
   longlong val_int();
   const char *func_name() const { return "inet_aton"; }
   void fix_length_and_dec()
@@ -37,8 +39,8 @@ public:
     maybe_null= 1;
     unsigned_flag= 1;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_inet_aton>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_inet_aton>(thd, this); }
 };
 
 
@@ -59,8 +61,8 @@ public:
     fix_length_and_charset(3 * 8 + 7, default_charset());
     maybe_null= 1;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_inet_ntoa>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_inet_ntoa>(thd, this); }
 };
 
 
@@ -103,7 +105,7 @@ public:
   virtual String *val_str_ascii(String *buffer);
 
 protected:
-  virtual bool calc_value(String *arg, String *buffer) = 0;
+  virtual bool calc_value(const String *arg, String *buffer) = 0;
 };
 
 
@@ -128,11 +130,11 @@ public:
     fix_length_and_charset(16, &my_charset_bin);
     maybe_null= 1;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_inet6_aton>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_inet6_aton>(thd, this); }
 
 protected:
-  virtual bool calc_value(String *arg, String *buffer);
+  virtual bool calc_value(const String *arg, String *buffer);
 };
 
 
@@ -162,11 +164,11 @@ public:
 
     maybe_null= 1;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_inet6_ntoa>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_inet6_ntoa>(thd, this); }
 
 protected:
-  virtual bool calc_value(String *arg, String *buffer);
+  virtual bool calc_value(const String *arg, String *buffer);
 };
 
 
@@ -184,8 +186,8 @@ public:
 public:
   virtual const char *func_name() const
   { return "is_ipv4"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_is_ipv4>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_is_ipv4>(thd, this); }
 
 protected:
   virtual bool calc_value(const String *arg);
@@ -206,8 +208,8 @@ public:
 public:
   virtual const char *func_name() const
   { return "is_ipv6"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_is_ipv6>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_is_ipv6>(thd, this); }
 
 protected:
   virtual bool calc_value(const String *arg);
@@ -228,8 +230,8 @@ public:
 public:
   virtual const char *func_name() const
   { return "is_ipv4_compat"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_is_ipv4_compat>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_is_ipv4_compat>(thd, this); }
 
 protected:
   virtual bool calc_value(const String *arg);
@@ -250,8 +252,8 @@ public:
 public:
   virtual const char *func_name() const
   { return "is_ipv4_mapped"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_is_ipv4_mapped>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_is_ipv4_mapped>(thd, this); }
 
 protected:
   virtual bool calc_value(const String *arg);

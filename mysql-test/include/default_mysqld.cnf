@@ -17,7 +17,7 @@
 # Default values that applies to all MySQL Servers
 [mysqld]
 disable-getopt-prefix-matching
-
+plugin-maturity=unknown
 open-files-limit=           1024
 local-infile
 character-set-server=      latin1
@@ -107,6 +107,10 @@ loose-performance-schema-consumer-thread-instrumentation=ON
 binlog-direct-non-transactional-updates
 
 default-storage-engine=myisam
+
+loose-ssl-ca=@ENV.MYSQL_TEST_DIR/std_data/cacert.pem
+loose-ssl-cert=@ENV.MYSQL_TEST_DIR/std_data/server-cert.pem
+loose-ssl-key=@ENV.MYSQL_TEST_DIR/std_data/server-key.pem
 
 # here, at the end of [mysqld] group mtr will automatically disable
 # all optional plugins.

@@ -1422,3 +1422,61 @@ DELIMITER ;$$
 CALL p1();
 DROP PROCEDURE p1;
 DROP TABLE t1;
+
+
+--echo #
+--echo # MDEV-14139 Anchored data types for variables
+--echo #
+
+DELIMITER $$;
+DECLARE
+  CURSOR c1 IS SELECT 10 AS a, 'bbb' AS b, TIME'10:20:30' AS c;
+  row1 c1%ROWTYPE;
+  a_row1 row1%TYPE;
+  aa_row1 a_row1%TYPE;
+BEGIN
+  CREATE TABLE t2 AS SELECT a_row1.a AS a, a_row1.b AS b, a_row1.c AS c;
+  SHOW CREATE TABLE t2;
+  DROP TABLE t2;
+  CREATE TABLE t2 AS SELECT aa_row1.a AS a, aa_row1.b AS b, aa_row1.c AS c;
+  SHOW CREATE TABLE t2;
+  DROP TABLE t2;
+END;
+$$
+DELIMITER ;$$
+
+--echo #
+--echo # MDEV-14388 Server crashes in handle_select / val_uint in ORACLE mode
+--echo #
+
+CREATE TABLE t1 (id INT);
+INSERT INTO t1 VALUES (0),(1),(2),(3);
+DELIMITER $$;
+CREATE FUNCTION f1() RETURN INT is
+BEGIN
+  FOR v1 in (SELECT id FROM t1)
+  LOOP
+    NULL;
+  END LOOP;
+  RETURN 1;
+END;
+$$
+DELIMITER ;$$
+SELECT f1();
+DROP FUNCTION f1;
+DROP TABLE t1;
+
+CREATE TABLE t1 (id INT);
+INSERT INTO t1 VALUES (1),(2),(3),(4);
+DELIMITER $$;
+CREATE FUNCTION f1() RETURN INT IS
+  CURSOR cur IS SELECT id FROM t1;
+  rec cur%ROWTYPE;
+BEGIN
+  RETURN 1;
+END;
+$$
+DELIMITER ;$$
+SELECT f1();
+DROP FUNCTION f1;
+DROP TABLE t1;

@@ -30,6 +30,15 @@
 #include <openssl/conf.h>
 #include <openssl/md4.h>
 
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L && !defined(LIBRESSL_VERSION_NUMBER)
+#include <openssl/x509v3.h>
+#define HAVE_OPENSSL_CHECK_HOST 1
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)
+#define HAVE_OPENSSL_1_1_API
+#endif
+
 #ifdef HAVE_TLS_SESSION_CACHE
 #undef HAVE_TLS_SESSION_CACHE
 #endif
@@ -51,9 +60,10 @@ extern my_bool ma_tls_initialized;
 extern unsigned int mariadb_deinitialize_ssl;
 
 #define MAX_SSL_ERR_LEN 100
+char tls_library_version[TLS_VERSION_LENGTH];
 
 static pthread_mutex_t LOCK_openssl_config;
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+#ifndef HAVE_OPENSSL_1_1_API
 static pthread_mutex_t *LOCK_crypto= NULL;
 #endif
 #if OPENSSL_USE_BIOMETHOD
@@ -61,6 +71,30 @@ static int ma_bio_read(BIO *h, char *buf, int size);
 static int ma_bio_write(BIO *h, const char *buf, int size);
 static BIO_METHOD ma_BIO_method;
 #endif
+
+
+static long ma_tls_version_options(const char *version)
+{
+  long protocol_options,
+       disable_all_protocols;
+
+  protocol_options= disable_all_protocols=
+    SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2;
+
+  if (!version)
+    return 0;
+
+  if (strstr(version, "TLSv1.0"))
+    protocol_options&= ~SSL_OP_NO_TLSv1;
+  if (strstr(version, "TLSv1.1"))
+    protocol_options&= ~SSL_OP_NO_TLSv1_1;
+  if (strstr(version, "TLSv1.2"))
+    protocol_options&= ~SSL_OP_NO_TLSv1_2;
+
+  if (protocol_options != disable_all_protocols)
+    return protocol_options;
+  return 0;
+}
 
 static void ma_tls_set_error(MYSQL *mysql)
 {
@@ -85,7 +119,7 @@ static void ma_tls_set_error(MYSQL *mysql)
   return;
 }
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+#ifndef HAVE_OPENSSL_1_1_API
 /*
    thread safe callbacks for OpenSSL
    Crypto call back functions will be
@@ -208,7 +242,7 @@ static void ma_tls_remove_session_cb(SSL_CTX* ctx __attribute__((unused)),
 }
 #endif
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+#ifndef HAVE_OPENSSL_1_1_API
 static void my_cb_locking(int mode, int n,
                           const char *file __attribute__((unused)),
                           int line __attribute__((unused)))
@@ -221,25 +255,22 @@ static void my_cb_locking(int mode, int n,
 
 static int ssl_thread_init()
 {
-  int i, max= CRYPTO_num_locks();
-
-  if (LOCK_crypto == NULL)
+  if (!CRYPTO_get_id_callback())
   {
-    if (!(LOCK_crypto=
-          (pthread_mutex_t *)ma_malloc(sizeof(pthread_mutex_t) * max, MYF(0))))
-      return 1;
+    int i, max= CRYPTO_num_locks();
 
-    for (i=0; i < max; i++)
-      pthread_mutex_init(&LOCK_crypto[i], NULL);
+    if (LOCK_crypto == NULL)
+    {
+      if (!(LOCK_crypto=
+            (pthread_mutex_t *)ma_malloc(sizeof(pthread_mutex_t) * max, MYF(0))))
+        return 1;
+
+      for (i=0; i < max; i++)
+        pthread_mutex_init(&LOCK_crypto[i], NULL);
+    }
+    CRYPTO_set_locking_callback(my_cb_locking);
+    CRYPTO_THREADID_set_callback(my_cb_threadid);
   }
-
-#if OPENSSL_VERSION_NUMBER < 0x10000000L
-  CRYPTO_set_id_callback(my_cb_threadid);
-#else
-  CRYPTO_THREADID_set_callback(my_cb_threadid);
-#endif
-  CRYPTO_set_locking_callback(my_cb_locking);
-
   return 0;
 }
 #endif
@@ -280,13 +311,14 @@ static void disable_sigpipe()
 int ma_tls_start(char *errmsg __attribute__((unused)), size_t errmsg_len __attribute__((unused)))
 {
   int rc= 1;
+  char *p;
   if (ma_tls_initialized)
     return 0;
 
   /* lock mutex to prevent multiple initialization */
   pthread_mutex_init(&LOCK_openssl_config, NULL);
   pthread_mutex_lock(&LOCK_openssl_config);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(LIBRESSL_VERSION_NUMBER)
+#ifdef HAVE_OPENSSL_1_1_API
   if (!OPENSSL_init_ssl(OPENSSL_INIT_LOAD_CONFIG, NULL))
     goto end;
 #else
@@ -300,17 +332,27 @@ int ma_tls_start(char *errmsg __attribute__((unused)), size_t errmsg_len __attri
   OPENSSL_config(NULL);
 #endif
 #endif
+#ifndef HAVE_OPENSSL_1_1_API
   /* load errors */
   SSL_load_error_strings();
   /* digests and ciphers */
   OpenSSL_add_all_algorithms();
-
+#endif
   disable_sigpipe();
 #if OPENSSL_USE_BIOMETHOD
   memcpy(&ma_BIO_method, BIO_s_socket(), sizeof(BIO_METHOD));
   ma_BIO_method.bread= ma_bio_read;
   ma_BIO_method.bwrite= ma_bio_write;
 #endif
+  snprintf(tls_library_version, TLS_VERSION_LENGTH - 1, "%s",
+#if defined(LIBRESSL_VERSION_NUMBER) || !defined(HAVE_OPENSSL_1_1_API)
+           SSLeay_version(SSLEAY_VERSION));
+#else
+           OpenSSL_version(OPENSSL_VERSION));
+#endif
+  /* remove date from version */
+  if ((p= strstr(tls_library_version, "  ")))
+    *p= 0;
   rc= 0;
   ma_tls_initialized= TRUE;
 end:
@@ -335,19 +377,21 @@ void ma_tls_end()
   if (ma_tls_initialized)
   {
     pthread_mutex_lock(&LOCK_openssl_config);
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    CRYPTO_set_locking_callback(NULL);
-    CRYPTO_set_id_callback(NULL);
+#ifndef HAVE_OPENSSL_1_1_API
+    if (LOCK_crypto)
     {
       int i;
+      CRYPTO_set_locking_callback(NULL);
+      CRYPTO_set_id_callback(NULL);
       for (i=0; i < CRYPTO_num_locks(); i++)
         pthread_mutex_destroy(&LOCK_crypto[i]);
+      ma_free((gptr)LOCK_crypto);
+      LOCK_crypto= NULL;
     }
-    ma_free((gptr)LOCK_crypto);
-    LOCK_crypto= NULL;
 #endif
     if (mariadb_deinitialize_ssl)
     {
+#ifndef HAVE_OPENSSL_1_1_API
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
       ERR_remove_state(0);
 #endif
@@ -356,6 +400,7 @@ void ma_tls_end()
       ERR_free_strings();
       CONF_modules_free();
       CONF_modules_unload(1);
+#endif
     }
     ma_tls_initialized= FALSE;
     pthread_mutex_unlock(&LOCK_openssl_config);
@@ -467,6 +512,7 @@ void *ma_tls_init(MYSQL *mysql)
 {
   SSL *ssl= NULL;
   SSL_CTX *ctx= NULL;
+  long options= SSL_OP_ALL;
 #ifdef HAVE_TLS_SESSION_CACHE
   MA_SSL_SESSION *session= ma_tls_get_session(mysql);
 #endif
@@ -478,7 +524,9 @@ void *ma_tls_init(MYSQL *mysql)
   if (!(ctx= SSL_CTX_new(SSLv23_client_method())))
 #endif
     goto error;
-  SSL_CTX_set_options(ctx, SSL_OP_ALL);
+  if (mysql->options.extension)
+    options|= ma_tls_version_options(mysql->options.extension->tls_version);
+  SSL_CTX_set_options(ctx, options);
 #ifdef HAVE_TLS_SESSION_CACHE
   SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
   ma_tls_sessions= (MA_SSL_SESSION *)calloc(1, sizeof(struct st_ma_tls_session) * ma_tls_session_cache_size);
@@ -627,13 +675,15 @@ int ma_tls_verify_server_cert(MARIADB_TLS *ctls)
 {
   X509 *cert;
   MYSQL *mysql;
+  SSL *ssl;
+  MARIADB_PVIO *pvio;
+#if !defined(HAVE_OPENSSL_CHECK_HOST)
   X509_NAME *x509sn;
   int cn_pos;
   X509_NAME_ENTRY *cn_entry;
   ASN1_STRING *cn_asn1;
   const char *cn_str;
-  SSL *ssl;
-  MARIADB_PVIO *pvio;
+#endif
 
   if (!ctls || !ctls->ssl)
     return 1;
@@ -655,7 +705,10 @@ int ma_tls_verify_server_cert(MARIADB_TLS *ctls)
                     ER(CR_SSL_CONNECTION_ERROR), "Unable to get server certificate");
     return 1;
   }
-
+#ifdef HAVE_OPENSSL_CHECK_HOST
+  if (X509_check_host(cert, mysql->host, 0, 0, 0) != 1)
+    goto error;
+#else
   x509sn= X509_get_subject_name(cert);
 
   if ((cn_pos= X509_NAME_get_index_by_NID(x509sn, NID_commonName, -1)) < 0)
@@ -667,11 +720,7 @@ int ma_tls_verify_server_cert(MARIADB_TLS *ctls)
   if (!(cn_asn1 = X509_NAME_ENTRY_get_data(cn_entry)))
     goto error;
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
   cn_str = (char *)ASN1_STRING_data(cn_asn1);
-#else
-  cn_str = (char *)ASN1_STRING_get0_data(cn_asn1);
-#endif
 
   /* Make sure there is no embedded \0 in the CN */
   if ((size_t)ASN1_STRING_length(cn_asn1) != strlen(cn_str))
@@ -679,7 +728,7 @@ int ma_tls_verify_server_cert(MARIADB_TLS *ctls)
 
   if (strcmp(cn_str, mysql->host))
     goto error;
-
+#endif
   X509_free(cert);
 
   return 0;
@@ -740,18 +789,11 @@ end:
 }
 
 
-extern char *ssl_protocol_version[5];
-
-my_bool ma_tls_get_protocol_version(MARIADB_TLS *ctls, struct st_ssl_version *version)
+int ma_tls_get_protocol_version(MARIADB_TLS *ctls)
 {
-  SSL *ssl;
-
   if (!ctls || !ctls->ssl)
-    return 1;
+    return -1;
 
-  ssl = (SSL *)ctls->ssl;
-  version->iversion= SSL_version(ssl) - TLS1_VERSION;
-  version->cversion= ssl_protocol_version[version->iversion];
-  return 0;  
+  return SSL_version(ctls->ssl) & 0xFF;
 }
 

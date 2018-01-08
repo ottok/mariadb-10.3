@@ -1,7 +1,7 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 
 #pragma once
 
@@ -12,8 +12,8 @@
 #include <string>
 #include <thread>
 
+#include "monitoring/instrumented_mutex.h"
 #include "port/port.h"
-#include "util/instrumented_mutex.h"
 
 #include "rocksdb/status.h"
 
@@ -39,7 +39,12 @@ class DeleteScheduler {
   ~DeleteScheduler();
 
   // Return delete rate limit in bytes per second
-  int64_t GetRateBytesPerSecond() { return rate_bytes_per_sec_; }
+  int64_t GetRateBytesPerSecond() { return rate_bytes_per_sec_.load(); }
+
+  // Set delete rate limit in bytes per second
+  void SetRateBytesPerSecond(int64_t bytes_per_sec) {
+    return rate_bytes_per_sec_.store(bytes_per_sec);
+  }
 
   // Move file to trash directory and schedule it's deletion
   Status DeleteFile(const std::string& fname);
@@ -52,6 +57,13 @@ class DeleteScheduler {
   // file_path => error status
   std::map<std::string, Status> GetBackgroundErrors();
 
+  uint64_t GetTotalTrashSize() { return total_trash_size_.load(); }
+
+  void TEST_SetMaxTrashDBRatio(double r) {
+    assert(r >= 0);
+    max_trash_db_ratio_ = r;
+  }
+
  private:
   Status MoveToTrash(const std::string& file_path, std::string* path_in_trash);
 
@@ -63,8 +75,10 @@ class DeleteScheduler {
   Env* env_;
   // Path to the trash directory
   std::string trash_dir_;
+  // total size of trash directory
+  std::atomic<uint64_t> total_trash_size_;
   // Maximum number of bytes that should be deleted per second
-  int64_t rate_bytes_per_sec_;
+  std::atomic<int64_t> rate_bytes_per_sec_;
   // Mutex to protect queue_, pending_files_, bg_errors_, closing_
   InstrumentedMutex mu_;
   // Queue of files in trash that need to be deleted
@@ -86,6 +100,9 @@ class DeleteScheduler {
   InstrumentedMutex file_move_mu_;
   Logger* info_log_;
   SstFileManagerImpl* sst_file_manager_;
+  // If the trash size constitutes for more than 25% of the total DB size
+  // we will start deleting new files passed to DeleteScheduler immediately
+  double max_trash_db_ratio_ = 0.25;
   static const uint64_t kMicrosInSecond = 1000 * 1000LL;
 };
 

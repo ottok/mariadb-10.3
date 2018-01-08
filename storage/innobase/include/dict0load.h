@@ -119,7 +119,7 @@ a foreign key references columns in this table.
 @param[in]	ignore_err	Error to be ignored when loading
 				table and its index definition
 @return table, NULL if does not exist; if the table is stored in an
-.ibd file, but the file does not exist, then we set the ibd_file_missing
+.ibd file, but the file does not exist, then we set the file_unreadable
 flag in the table object we return. */
 dict_table_t*
 dict_load_table(
@@ -193,8 +193,7 @@ dict_getnext_system(
 	mtr_t*		mtr);		/*!< in: the mini-transaction */
 /********************************************************************//**
 This function processes one SYS_TABLES record and populate the dict_table_t
-struct for the table. Extracted out of dict_print() to be used by
-both monitor table output and information schema innodb_sys_tables output.
+struct for the table.
 @return error message, or NULL on success */
 const char*
 dict_process_sys_tables_rec_and_mtr_commit(

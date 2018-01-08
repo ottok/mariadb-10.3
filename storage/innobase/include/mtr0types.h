@@ -100,21 +100,6 @@ enum mlog_id_t {
 	/** Create an index page */
 	MLOG_PAGE_CREATE = 19,
 
-	/** Insert entry in an undo log */
-	MLOG_UNDO_INSERT = 20,
-
-	/** erase an undo log page end */
-	MLOG_UNDO_ERASE_END = 21,
-
-	/** initialize a page in an undo log */
-	MLOG_UNDO_INIT = 22,
-
-	/** discard an update undo log header */
-	MLOG_UNDO_HDR_DISCARD = 23,
-
-	/** reuse an insert undo log header */
-	MLOG_UNDO_HDR_REUSE = 24,
-
 	/** create an undo log header */
 	MLOG_UNDO_HDR_CREATE = 25,
 
@@ -128,14 +113,6 @@ enum mlog_id_t {
 	/** Current LSN */
 	MLOG_LSN = 28,
 #endif /* UNIV_LOG_LSN_DEBUG */
-
-	/** this means that a file page is taken into use and the prior
-	contents of the page should be ignored: in recovery we must not
-	trust the lsn values stored to the file page.
-	Note: it's deprecated because it causes crash recovery problem
-	in bulk create index, and actually we don't need to reset page
-	lsn in recv_recover_page_func() now. */
-	MLOG_INIT_FILE_PAGE = 29,
 
 	/** write a string to a page */
 	MLOG_WRITE_STRING = 30,
@@ -224,8 +201,7 @@ enum mlog_id_t {
 	/** create a R-tree compact page */
 	MLOG_COMP_PAGE_CREATE_RTREE = 58,
 
-	/** this means that a file page is taken into use.
-	We use it to replace MLOG_INIT_FILE_PAGE. */
+	/** initialize a file page */
 	MLOG_INIT_FILE_PAGE2 = 59,
 
 	/** Table is being truncated. (Marked only for file-per-table) */
@@ -235,8 +211,12 @@ enum mlog_id_t {
 	redo log about individual pages */
 	MLOG_INDEX_LOAD = 61,
 
+	/** write DB_TRX_ID,DB_ROLL_PTR to a clustered index leaf page
+	of a ROW_FORMAT=COMPRESSED table */
+	MLOG_ZIP_WRITE_TRX_ID = 62,
+
 	/** biggest value (used in assertions) */
-	MLOG_BIGGEST_TYPE = MLOG_INDEX_LOAD,
+	MLOG_BIGGEST_TYPE = MLOG_ZIP_WRITE_TRX_ID,
 
 	/** log record for writing/updating crypt data of
 	a tablespace */

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2013, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2013, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -293,13 +293,13 @@ public:
 			log_file_name_len = strlen(m_log_file_name);
 		}
 
-		ut_snprintf(m_log_file_name + log_file_name_len,
-			    log_file_name_buf_sz - log_file_name_len,
-			    "%s%lu_%lu_%s",
-			    TruncateLogger::s_log_prefix,
-			    (ulong) m_table->space,
-			    (ulong) m_table->id,
-			    TruncateLogger::s_log_ext);
+		snprintf(m_log_file_name + log_file_name_len,
+			 log_file_name_buf_sz - log_file_name_len,
+			 "%s%lu_%lu_%s",
+			 TruncateLogger::s_log_prefix,
+			 (ulong) m_table->space,
+			 (ulong) m_table->id,
+			 TruncateLogger::s_log_ext);
 
 		return(DB_SUCCESS);
 
@@ -1271,10 +1271,6 @@ row_truncate_complete(
 		}
 	}
 
-	if (err == DB_SUCCESS) {
-		dict_stats_update(table, DICT_STATS_EMPTY_TABLE);
-	}
-
 	trx->op_info = "";
 
 	/* For temporary tables or if there was an error, we need to reset
@@ -1681,10 +1677,13 @@ row_truncate_sanity_checks(
 
 		return(DB_TABLESPACE_DELETED);
 
-	} else if (table->ibd_file_missing) {
+	} else if (!table->is_readable()) {
+		if (fil_space_get(table->space) == NULL) {
+			return(DB_TABLESPACE_NOT_FOUND);
 
-		return(DB_TABLESPACE_NOT_FOUND);
-
+		} else {
+			return(DB_DECRYPTION_FAILED);
+		}
 	} else if (dict_table_is_corrupted(table)) {
 
 		return(DB_TABLE_CORRUPT);
@@ -1838,11 +1837,8 @@ row_truncate_table_for_mysql(
 	till some point. Associate rollback segment to record undo log. */
 	if (!dict_table_is_temporary(table)) {
 		mutex_enter(&trx->undo_mutex);
-
-		trx_undo_t**	pundo = &trx->rsegs.m_redo.update_undo;
-		err = trx_undo_assign_undo(
-			trx, trx->rsegs.m_redo.rseg, pundo, TRX_UNDO_UPDATE);
-
+		err = trx_undo_assign_undo(trx, trx->rsegs.m_redo.rseg,
+					   &trx->rsegs.m_redo.undo);
 		mutex_exit(&trx->undo_mutex);
 
 		DBUG_EXECUTE_IF("ib_err_trunc_assigning_undo_log",
@@ -1950,16 +1946,11 @@ row_truncate_table_for_mysql(
 			return(row_truncate_complete(
 				table, trx, fsp_flags, logger, DB_ERROR));
 		}
-	}
 
-	DBUG_EXECUTE_IF("ib_trunc_crash_after_redo_log_write_complete",
-			log_buffer_flush_to_disk();
-			os_thread_sleep(3000000);
-			DBUG_SUICIDE(););
-
-	/* Step-9: Drop all indexes (free index pages associated with these
-	indexes) */
-	if (!dict_table_is_temporary(table)) {
+		DBUG_EXECUTE_IF("ib_trunc_crash_after_redo_log_write_complete",
+				log_buffer_flush_to_disk();
+				os_thread_sleep(3000000);
+				DBUG_SUICIDE(););
 
 		DropIndex	dropIndex(table, no_redo);
 
@@ -1974,7 +1965,10 @@ row_truncate_table_for_mysql(
 			return(row_truncate_complete(
 				table, trx, fsp_flags, logger, err));
 		}
+
+		dict_table_get_first_index(table)->remove_instant();
 	} else {
+		ut_ad(!table->is_instant());
 		/* For temporary tables we don't have entries in SYSTEM TABLES*/
 		ut_ad(fsp_is_system_temporary(table->space));
 		for (dict_index_t* index = UT_LIST_GET_FIRST(table->indexes);
@@ -2000,9 +1994,22 @@ row_truncate_table_for_mysql(
 	}
 
 	if (is_file_per_table && fsp_flags != ULINT_UNDEFINED) {
-		fil_reinit_space_header(
-			table->space,
-			table->indexes.count + FIL_IBD_FILE_INITIAL_SIZE + 1);
+		/* A single-table tablespace has initially
+		FIL_IBD_FILE_INITIAL_SIZE number of pages allocated and an
+		extra page is allocated for each of the indexes present. But in
+		the case of clust index 2 pages are allocated and as one is
+		covered in the calculation as part of table->indexes.count we
+		take care of the other page by adding 1. */
+		ulint	space_size = table->indexes.count +
+				FIL_IBD_FILE_INITIAL_SIZE + 1;
+
+		if (has_internal_doc_id) {
+			/* Since aux tables are created for fts indexes and
+			they use seperate tablespaces. */
+			space_size -= ib_vector_size(table->fts->indexes);
+		}
+
+		fil_reinit_space_header_for_table(table, space_size, trx);
 	}
 
 	DBUG_EXECUTE_IF("ib_trunc_crash_with_intermediate_log_checkpoint",
@@ -2091,9 +2098,20 @@ row_truncate_table_for_mysql(
 	dict_table_autoinc_unlock(table);
 
 	if (trx_is_started(trx)) {
+		char	errstr[1024];
+		if (dict_stats_drop_table(table->name.m_name, errstr,
+					  sizeof errstr, trx) != DB_SUCCESS) {
+			ib::warn() << "Deleting persistent "
+				"statistics for table " << table->name
+				   << " failed: " << errstr;
+		}
 
 		trx_commit_for_mysql(trx);
+
+		dict_stats_empty_table(table);
 	}
+
+	ut_ad(!table->is_instant());
 
 	return(row_truncate_complete(table, trx, fsp_flags, logger, err));
 }

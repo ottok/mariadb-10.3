@@ -14,6 +14,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #define MYSQL_SERVER
+#include <my_global.h>
 #include <sql_class.h>
 #include <table.h>
 #include <sql_show.h>
@@ -134,6 +135,6 @@ maria_declare_plugin(user_variables)
   NULL,
   NULL,
   "1.0",
-  MariaDB_PLUGIN_MATURITY_ALPHA
+  MariaDB_PLUGIN_MATURITY_GAMMA
 }
 maria_declare_plugin_end;

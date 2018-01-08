@@ -131,18 +131,18 @@ show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
   `a` datetime(4) DEFAULT NULL,
-  `a+0` decimal(25,4) DEFAULT NULL,
-  `a-1` decimal(25,4) DEFAULT NULL,
-  `a*1` decimal(25,4) DEFAULT NULL,
-  `a/2` decimal(28,8) DEFAULT NULL
+  `a+0` decimal(19,4) DEFAULT NULL,
+  `a-1` decimal(19,4) DEFAULT NULL,
+  `a*1` decimal(19,4) DEFAULT NULL,
+  `a/2` decimal(22,8) DEFAULT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 show create table t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
   `max(a)` datetime(4) DEFAULT NULL,
   `min(a)` datetime(4) DEFAULT NULL,
-  `sum(a)` decimal(46,4) DEFAULT NULL,
-  `avg(a)` decimal(28,8) DEFAULT NULL
+  `sum(a)` decimal(40,4) DEFAULT NULL,
+  `avg(a)` decimal(22,8) DEFAULT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 drop table t1, t2, t3;
 create table t1 (f0_datetime datetime(0), f1_datetime datetime(1), f2_datetime datetime(2), f3_datetime datetime(3), f4_datetime datetime(4), f5_datetime datetime(5), f6_datetime datetime(6));
@@ -322,12 +322,12 @@ INSERT INTO t2 VALUES
 ('2006-10-02 21:50:01.5678',9);
 select table_name,partition_name,partition_method,partition_expression,partition_description,table_rows from information_schema.partitions where table_name in ('t1', 't2');
 table_name	partition_name	partition_method	partition_expression	partition_description	table_rows
-t1	p01	RANGE	to_days(taken)	732920	0
-t1	p02	RANGE	to_days(taken)	732950	7
-t1	p03	RANGE	to_days(taken)	MAXVALUE	3
-t2	p01	RANGE	extract(microsecond from taken)	123000	3
-t2	p02	RANGE	extract(microsecond from taken)	500000	4
-t2	p03	RANGE	extract(microsecond from taken)	MAXVALUE	3
+t1	p01	RANGE	to_days(`taken`)	732920	0
+t1	p02	RANGE	to_days(`taken`)	732950	7
+t1	p03	RANGE	to_days(`taken`)	MAXVALUE	3
+t2	p01	RANGE	extract(microsecond from `taken`)	123000	3
+t2	p02	RANGE	extract(microsecond from `taken`)	500000	4
+t2	p03	RANGE	extract(microsecond from `taken`)	MAXVALUE	3
 drop table t1, t2;
 create table t1 (a datetime, b datetime(6));
 insert t1 values ('2010-01-02 03:04:05.678912', '2010-01-02 03:04:05.678912');

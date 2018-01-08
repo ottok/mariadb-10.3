@@ -38,8 +38,18 @@ Created 9/20/1997 Heikki Tuuri
 #include <list>
 #include <vector>
 
+/** Is recv_writer_thread active? */
+extern bool	recv_writer_thread_active;
+
 /** @return whether recovery is currently running. */
 #define recv_recovery_is_on() recv_recovery_on
+
+/** Find the latest checkpoint in the log header.
+@param[out]	max_field	LOG_CHECKPOINT_1 or LOG_CHECKPOINT_2
+@return error code or DB_SUCCESS */
+dberr_t
+recv_find_max_checkpoint(ulint* max_field)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /** Apply the hashed log records to the page, if the page lsn is less than the
 lsn of a log record.
@@ -74,32 +84,32 @@ recv_reset_logs(
 					OS_FILE_LOG_BLOCK_SIZE, after
 					which we add
 					LOG_BLOCK_HDR_SIZE */
-/********************************************************//**
-Creates the recovery system. */
+/** Clean up after recv_sys_init() */
 void
-recv_sys_create(void);
-/*=================*/
-/**********************************************************//**
-Release recovery system mutexes. */
+recv_sys_close();
+/** Initialize the redo log recovery subsystem. */
 void
-recv_sys_close(void);
-/*================*/
-/********************************************************//**
-Frees the recovery system memory. */
-void
-recv_sys_mem_free(void);
-/*===================*/
-/********************************************************//**
-Inits the recovery system for a recovery operation. */
-void
-recv_sys_init(
-/*==========*/
-	ulint	available_memory);	/*!< in: available memory in bytes */
+recv_sys_init();
 /********************************************************//**
 Frees the recovery system. */
 void
 recv_sys_debug_free(void);
 /*=====================*/
+
+/** Read a log segment to a buffer.
+@param[out]	buf		buffer
+@param[in]	group		redo log files
+@param[in, out]	start_lsn	in : read area start, out: the last read valid lsn
+@param[in]	end_lsn		read area end
+@param[out] invalid_block - invalid, (maybe incompletely written) block encountered
+@return	false, if invalid block encountered (e.g checksum mismatch), true otherwise */
+bool
+log_group_read_log_seg(
+	byte*			buf,
+	const log_group_t*	group,
+	lsn_t*			start_lsn,
+	lsn_t			end_lsn);
+
 /********************************************************//**
 Reset the state of the recovery system variables. */
 void
@@ -191,7 +201,7 @@ struct recv_sys_t{
 	ib_mutex_t		writer_mutex;/*!< mutex coordinating
 				flushing between recv_writer_thread and
 				the recovery thread. */
-	os_event_t		flush_start;/*!< event to acticate
+	os_event_t		flush_start;/*!< event to activate
 				page cleaner threads */
 	os_event_t		flush_end;/*!< event to signal that the page
 				cleaner has finished the request */

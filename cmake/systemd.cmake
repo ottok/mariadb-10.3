@@ -13,11 +13,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
-INCLUDE(FindPkgConfig)
-# http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
-
 MACRO(CHECK_SYSTEMD)
   IF(UNIX)
+    INCLUDE(FindPkgConfig)
+    # http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
     SET(WITH_SYSTEMD "auto" CACHE STRING "Enable systemd scripts and notification support")
     IF(WITH_SYSTEMD STREQUAL "yes" OR WITH_SYSTEMD STREQUAL "auto")
       IF(PKG_CONFIG_FOUND)
@@ -70,9 +69,11 @@ MACRO(CHECK_SYSTEMD)
         UNSET(HAVE_SYSTEMD_SD_NOTIFYF)
         MESSAGE_ONCE(systemd "Systemd features not enabled")
         IF(WITH_SYSTEMD STREQUAL "yes")
-          MESSAGE(FATAL_ERROR "Requested WITH_SYSTEMD=YES however no dependencies installed/found")
+          MESSAGE(FATAL_ERROR "Requested WITH_SYSTEMD=yes however no dependencies installed/found")
         ENDIF()
       ENDIF()
+    ELSEIF(NOT WITH_SYSTEMD STREQUAL "no")
+      MESSAGE(FATAL_ERROR "Invalid value for WITH_SYSTEMD. Must be 'yes', 'no', or 'auto'.")
     ENDIF()
   ENDIF()
 ENDMACRO()

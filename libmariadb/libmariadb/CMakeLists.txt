@@ -1,5 +1,4 @@
 INCLUDE_DIRECTORIES(${CC_SOURCE_DIR}/include
-                    ${ZLIB_INC}
                     ${CC_SOURCE_DIR}/libmariadb)
 
 ADD_DEFINITIONS(-D ENABLED_LOCAL_INFILE)
@@ -19,6 +18,17 @@ SET(MARIADB_LIB_SYMBOLS
  mariadb_get_charset_by_nr
  mariadb_get_info
  mariadb_get_infov
+ mysql_get_timeout_value
+ mysql_get_timeout_value_ms
+ mysql_optionsv
+ mysql_ps_fetch_functions
+ mariadb_reconnect
+ mysql_stmt_warning_count)
+IF(WITH_SSL)
+  SET(MARIADB_LIB_SYMBOLS ${MARIADB_LIB_SYMBOLS} mariadb_deinitialize_ssl)
+ENDIF()
+
+SET(MYSQL_LIB_SYMBOLS
  mysql_affected_rows
  mysql_autocommit
  mysql_change_user
@@ -80,11 +90,8 @@ SET(MARIADB_LIB_SYMBOLS
  mysql_num_rows
  mysql_options
  mysql_options4
- mysql_optionsv
  mysql_ping
- mysql_ps_fetch_functions
  mysql_query
- mariadb_reconnect
  mysql_read_query_result
  mysql_real_connect
  mysql_real_escape_string
@@ -137,7 +144,6 @@ SET(MARIADB_LIB_SYMBOLS
  mysql_stmt_send_long_data
  mysql_stmt_sqlstate
  mysql_stmt_store_result
- mysql_stmt_warning_count
  mysql_store_result
  mysql_thread_end
  mysql_thread_id
@@ -145,9 +151,6 @@ SET(MARIADB_LIB_SYMBOLS
  mysql_thread_safe
  mysql_use_result
  mysql_warning_count)
-IF(WITH_SSL)
-  SET(MARIADB_LIB_SYMBOLS ${MARIADB_LIB_SYMBOLS} mariadb_deinitialize_ssl)
-ENDIF()
 
 # some gcc versions fail to compile asm parts of my_context.c,
 # if build type is "Release" (see CONC-133), so we need to add -g flag
@@ -250,9 +253,8 @@ SET(MARIADB_NONBLOCK_SYMBOLS
  mysql_store_result_start
 )
 
-
 SET(LIBMARIADB_SOURCES ${LIBMARIADB_SOURCES}
-ma_array.c 
+ma_array.c
 ma_charset.c
 ma_hash.c
 ma_net.c
@@ -267,7 +269,7 @@ ma_tls.c
 ma_alloc.c
 ma_compress.c
 ma_init.c
-ma_password.c 
+ma_password.c
 ma_ll2str.c
 ma_sha1.c
 mariadb_stmt.c
@@ -288,13 +290,12 @@ IF(WIN32)
 ELSE()
   IF(ICONV_INCLUDE_DIR)
      INCLUDE_DIRECTORIES(BEFORE ${ICONV_INCLUDE_DIR}) 
-  ENDIF()  
+  ENDIF()
   ADD_DEFINITIONS(-DLIBICONV_PLUG)
 ENDIF()
 
-IF(ZLIB_FOUND)
+IF(ZLIB_FOUND AND WITH_EXTERNAL_ZLIB)
   INCLUDE_DIRECTORIES(${ZLIB_INCLUDE_DIR})
-  LINK_LIBRARIES(${ZLIB_LIBRARY})
 ELSE()
   SET(ZLIB_SOURCES
     ../zlib/adler32.c 
@@ -313,7 +314,7 @@ ELSE()
     ../zlib/uncompr.c
     ../zlib/zutil.c
   )
-SET(LIBMARIADB_SOURCES ${LIBMARIADB_SOURCES} ${ZLIB_SOURCES})
+  SET(LIBMARIADB_SOURCES ${LIBMARIADB_SOURCES} ${ZLIB_SOURCES})
   INCLUDE_DIRECTORIES(${CC_SOURCE_DIR}/zlib)
 ENDIF()
 
@@ -327,12 +328,24 @@ SET(LIBMARIADB_SOURCES ${LIBMARIADB_SOURCES} mariadb_async.c ma_context.c)
 SET(MARIADB_LIB_SYMBOLS ${MARIADB_LIB_SYMBOLS} ${MARIADB_NONBLOCK_SYMBOLS})
 
 INCLUDE(${CC_SOURCE_DIR}/cmake/export.cmake)
-CREATE_EXPORT_FILE(mariadbclient
-                   ${CMAKE_CURRENT_BINARY_DIR}
-                   "${MARIADB_LIB_SYMBOLS}")
+IF(NOT WIN32)
+  CREATE_EXPORT_FILE(WRITE mariadbclient.def
+                   "libmysqlclient_18"
+                   "${MYSQL_LIB_SYMBOLS}"
+                   "libmariadbclient_18")
+  CREATE_EXPORT_FILE(APPEND mariadbclient.def
+                   "libmariadb_3"
+                   "${MARIADB_LIB_SYMBOLS}"
+                   "")
+ELSE()
+  CREATE_EXPORT_FILE(WRITE mariadbclient.def
+                   "libmariadb_3"
+                   "${MARIADB_LIB_SYMBOLS};${MYSQL_LIB_SYMBOLS}"
+                   "")
+ENDIF()
 
 
-IF(CMAKE_VERSION VERSION_GREATER 2.8.7)
+IF((NOT WIN32) AND (CMAKE_VERSION VERSION_GREATER 2.8.7))
   # CREATE OBJECT LIBRARY 
   ADD_LIBRARY(mariadb_obj OBJECT ${LIBMARIADB_SOURCES})
   IF(UNIX)
@@ -346,8 +359,8 @@ ENDIF()
 # Xcode doesn't support targets that have only object files,
 # so let's add an empty file to keep Xcode happy
 IF(CMAKE_GENERATOR MATCHES Xcode)
-  FILE(WRITE ${CC_SOURCE_DIR}/libmariadb/empty.c "")
-  SET(EMPTY_FILE ${CC_SOURCE_DIR}/libmariadb/empty.c)
+  FILE(WRITE ${CC_BINARY_DIR}/libmariadb/empty.c "")
+  SET(EMPTY_FILE ${CC_BINARY_DIR}/libmariadb/empty.c)
 ENDIF()
 
 IF(WIN32)
@@ -358,14 +371,20 @@ IF(WIN32)
                    "FILE_DESCRIPTION:Dynamic lib for client/server communication")
 ENDIF()
 
-ADD_LIBRARY(mariadbclient STATIC ${mariadbclient_RC} ${MARIADB_OBJECTS} ${EMPTY_FILE} mariadbclient.def)
+ADD_LIBRARY(mariadbclient STATIC  ${MARIADB_OBJECTS} ${EMPTY_FILE})
 TARGET_LINK_LIBRARIES(mariadbclient ${SYSTEM_LIBS})
-ADD_LIBRARY(libmariadb SHARED ${libmariadb_RC} ${MARIADB_OBJECTS} ${EMPTY_FILE} mariadbclient.def)
-TARGET_LINK_LIBRARIES(libmariadb ${SYSTEM_LIBS})
 
 IF(UNIX)
+  ADD_LIBRARY(libmariadb SHARED ${libmariadb_RC} ${MARIADB_OBJECTS} ${EMPTY_FILE} mariadbclient.def)
   SET_TARGET_PROPERTIES(libmariadb PROPERTIES COMPILE_FLAGS "${CMAKE_SHARED_LIBRARY_C_FLAGS}")
+ELSE()
+  ADD_LIBRARY(libmariadb SHARED ${libmariadb_RC} mariadbclient.def)
+  TARGET_LINK_LIBRARIES(libmariadb  mariadbclient)
+  SET_TARGET_PROPERTIES(libmariadb PROPERTIES LINKER_LANGUAGE C)
 ENDIF()
+
+TARGET_LINK_LIBRARIES(libmariadb ${SYSTEM_LIBS})
+
 SIGN_TARGET(libmariadb)
 
 IF(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MSVC)
@@ -376,7 +395,7 @@ IF(CMAKE_SYSTEM_NAME MATCHES "Linux")
   IF (NOT WITH_ASAN)
     TARGET_LINK_LIBRARIES (libmariadb "-Wl,--no-undefined")
   ENDIF()
-  TARGET_LINK_LIBRARIES (libmariadb "-Wl,--version-script=${CC_BINARY_DIR}/libmariadb/mariadbclient.def")
+  TARGET_LINK_LIBRARIES (libmariadb "${CC_BINARY_DIR}/libmariadb/mariadbclient.def")
 ENDIF()
 
 SET_TARGET_PROPERTIES(mariadbclient PROPERTIES IMPORTED_INTERFACE_LINK_LIBRARIES "${SYSTEM_LIBS}")
@@ -389,10 +408,17 @@ SET_TARGET_PROPERTIES(libmariadb PROPERTIES PREFIX "")
 #
 INCLUDE(${CC_SOURCE_DIR}/cmake/symlink.cmake)
 
-
 # There are still several projects which don't make use
 # of the config program. To make sure these programs can
 # use mariadb client library we provide libmysql symlinks
+
+IF(WITH_MYSQLCOMPAT)
+  create_symlink(libmysqlclient${CMAKE_SHARED_LIBRARY_SUFFIX} libmariadb ${INSTALL_LIBDIR})
+  create_symlink(libmysqlclient_r${CMAKE_SHARED_LIBRARY_SUFFIX} libmariadb ${INSTALL_LIBDIR})
+  create_symlink(libmysqlclient${CMAKE_STATIC_LIBRARY_SUFFIX} mariadbclient ${INSTALL_LIBDIR})
+  create_symlink(libmysqlclient_r${CMAKE_STATIC_LIBRARY_SUFFIX} mariadbclient ${INSTALL_LIBDIR})
+ENDIF()
+
 
 SET_TARGET_PROPERTIES(libmariadb PROPERTIES VERSION
  ${CPACK_PACKAGE_VERSION_MAJOR}

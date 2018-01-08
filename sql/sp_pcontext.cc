@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #ifdef USE_PRAGMA_IMPLEMENTATION
@@ -132,8 +132,8 @@ sp_pcontext *sp_pcontext::push_context(THD *thd, sp_pcontext::enum_scope scope)
 
 bool cmp_labels(sp_label *a, sp_label *b)
 {
-  return (my_strcasecmp(system_charset_info, a->name.str, b->name.str) == 0
-          && a->type == b->type);
+  return (lex_string_cmp(system_charset_info, &a->name, &b->name) == 0 &&
+          a->type == b->type);
 }
 
 sp_pcontext *sp_pcontext::pop_context()
@@ -199,7 +199,7 @@ uint sp_pcontext::diff_cursors(const sp_pcontext *ctx, bool exclusive) const
 }
 
 
-sp_variable *sp_pcontext::find_variable(LEX_STRING name,
+sp_variable *sp_pcontext::find_variable(const LEX_CSTRING *name,
                                         bool current_scope_only) const
 {
   uint i= m_vars.elements() - m_pboundary;
@@ -209,7 +209,7 @@ sp_variable *sp_pcontext::find_variable(LEX_STRING name,
     sp_variable *p= m_vars.at(i);
 
     if (my_strnncoll(system_charset_info,
-		     (const uchar *)name.str, name.length,
+		     (const uchar *)name->str, name->length,
 		     (const uchar *)p->name.str, p->name.length) == 0)
     {
       return p;
@@ -269,7 +269,7 @@ sp_variable *sp_pcontext::find_variable(uint offset) const
 }
 
 
-sp_variable *sp_pcontext::add_variable(THD *thd, LEX_STRING name)
+sp_variable *sp_pcontext::add_variable(THD *thd, const LEX_CSTRING *name)
 {
   sp_variable *p=
     new (thd->mem_root) sp_variable(name, m_var_offset + m_max_var_index);
@@ -282,7 +282,7 @@ sp_variable *sp_pcontext::add_variable(THD *thd, LEX_STRING name)
   return m_vars.append(p) ? NULL : p;
 }
 
-sp_label *sp_pcontext::push_label(THD *thd, LEX_STRING name, uint ip,
+sp_label *sp_pcontext::push_label(THD *thd, const LEX_CSTRING *name, uint ip,
                                   sp_label::enum_type type,
                                   List<sp_label> *list)
 {
@@ -297,14 +297,14 @@ sp_label *sp_pcontext::push_label(THD *thd, LEX_STRING name, uint ip,
   return label;
 }
 
-sp_label *sp_pcontext::find_goto_label(const LEX_STRING name, bool recusive)
+sp_label *sp_pcontext::find_goto_label(const LEX_CSTRING *name, bool recusive)
 {
   List_iterator_fast<sp_label> li(m_goto_labels);
   sp_label *lab;
 
   while ((lab= li++))
   {
-    if (my_strcasecmp(system_charset_info, name.str, lab->name.str) == 0)
+    if (lex_string_cmp(system_charset_info, name, &lab->name) == 0)
       return lab;
   }
 
@@ -334,14 +334,14 @@ sp_label *sp_pcontext::find_goto_label(const LEX_STRING name, bool recusive)
 }
 
 
-sp_label *sp_pcontext::find_label(const LEX_STRING name)
+sp_label *sp_pcontext::find_label(const LEX_CSTRING *name)
 {
   List_iterator_fast<sp_label> li(m_labels);
   sp_label *lab;
 
   while ((lab= li++))
   {
-    if (my_strcasecmp(system_charset_info, name.str, lab->name.str) == 0)
+    if (lex_string_cmp(system_charset_info, name, &lab->name) == 0)
       return lab;
   }
 
@@ -377,7 +377,7 @@ sp_label *sp_pcontext::find_label_current_loop_start()
 
 
 bool sp_pcontext::add_condition(THD *thd,
-                                LEX_STRING name,
+                                const LEX_CSTRING *name,
                                 sp_condition_value *value)
 {
   sp_condition *p= new (thd->mem_root) sp_condition(name, value);
@@ -389,7 +389,7 @@ bool sp_pcontext::add_condition(THD *thd,
 }
 
 
-sp_condition_value *sp_pcontext::find_condition(const LEX_STRING name,
+sp_condition_value *sp_pcontext::find_condition(const LEX_CSTRING *name,
                                                 bool current_scope_only) const
 {
   uint i= m_conditions.elements();
@@ -416,6 +416,7 @@ static sp_condition_value
   // Errors
   cond_invalid_cursor(ER_SP_CURSOR_NOT_OPEN, "24000"),
   cond_dup_val_on_index(ER_DUP_ENTRY, "23000"),
+  cond_dup_val_on_index2(ER_DUP_ENTRY_WITH_KEY_NAME, "23000"),
   cond_too_many_rows(ER_TOO_MANY_ROWS, "42000");
 
 
@@ -426,12 +427,13 @@ static sp_condition sp_predefined_conditions[]=
   // Errors
   sp_condition(C_STRING_WITH_LEN("INVALID_CURSOR"), &cond_invalid_cursor),
   sp_condition(C_STRING_WITH_LEN("DUP_VAL_ON_INDEX"), &cond_dup_val_on_index),
+  sp_condition(C_STRING_WITH_LEN("DUP_VAL_ON_INDEX"), &cond_dup_val_on_index2),
   sp_condition(C_STRING_WITH_LEN("TOO_MANY_ROWS"), &cond_too_many_rows)
 };
 
 
 sp_condition_value *
-sp_pcontext::find_predefined_condition(const LEX_STRING name) const
+sp_pcontext::find_predefined_condition(const LEX_CSTRING *name) const
 {
   for (uint i= 0; i < array_elements(sp_predefined_conditions) ; i++)
   {
@@ -589,7 +591,7 @@ sp_pcontext::find_handler(const Sql_condition_identity &value) const
 }
 
 
-bool sp_pcontext::add_cursor(const LEX_STRING name, sp_pcontext *param_ctx,
+bool sp_pcontext::add_cursor(const LEX_CSTRING *name, sp_pcontext *param_ctx,
                              sp_lex_cursor *lex)
 {
   if (m_cursors.elements() == m_max_cursor_index)
@@ -599,7 +601,7 @@ bool sp_pcontext::add_cursor(const LEX_STRING name, sp_pcontext *param_ctx,
 }
 
 
-const sp_pcursor *sp_pcontext::find_cursor(const LEX_STRING name,
+const sp_pcursor *sp_pcontext::find_cursor(const LEX_CSTRING *name,
                                            uint *poff,
                                            bool current_scope_only) const
 {
@@ -607,10 +609,10 @@ const sp_pcursor *sp_pcontext::find_cursor(const LEX_STRING name,
 
   while (i--)
   {
-    LEX_STRING n= m_cursors.at(i);
+    LEX_CSTRING n= m_cursors.at(i);
 
     if (my_strnncoll(system_charset_info,
-		     (const uchar *) name.str, name.length,
+		     (const uchar *) name->str, name->length,
 		     (const uchar *) n.str, n.length) == 0)
     {
       *poff= m_cursor_offset + i;
@@ -695,7 +697,7 @@ bool sp_pcursor::check_param_count_with_error(uint param_count) const
   if (param_count != (m_param_context ?
                       m_param_context->context_var_count() : 0))
   {
-    my_error(ER_WRONG_PARAMCOUNT_TO_CURSOR, MYF(0), LEX_STRING::str);
+    my_error(ER_WRONG_PARAMCOUNT_TO_CURSOR, MYF(0), LEX_CSTRING::str);
     return true;
   }
   return false;
@@ -703,20 +705,20 @@ bool sp_pcursor::check_param_count_with_error(uint param_count) const
 
 
 const Spvar_definition *
-sp_variable::find_row_field(const LEX_STRING &var_name,
-                            const LEX_STRING &field_name,
+sp_variable::find_row_field(const LEX_CSTRING *var_name,
+                            const LEX_CSTRING *field_name,
                             uint *row_field_offset)
 {
   if (!field_def.is_row())
   {
     my_printf_error(ER_UNKNOWN_ERROR,
-                    "'%s' is not a row variable", MYF(0), var_name.str);
+                    "'%s' is not a row variable", MYF(0), var_name->str);
     return NULL;
   }
   const Spvar_definition *def;
-  if ((def= field_def.find_row_field_by_name(field_name.str, row_field_offset)))
+  if ((def= field_def.find_row_field_by_name(field_name, row_field_offset)))
     return def;
   my_error(ER_ROW_VARIABLE_DOES_NOT_HAVE_FIELD, MYF(0),
-           var_name.str, field_name.str);
+           var_name->str, field_name->str);
   return NULL;
 }

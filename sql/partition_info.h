@@ -43,8 +43,8 @@ public:
   List<partition_element> partitions;
   List<partition_element> temp_partitions;
 
-  List<char> part_field_list;
-  List<char> subpart_field_list;
+  List<const char> part_field_list;
+  List<const char> subpart_field_list;
   
   /* 
     If there is no subpartitioning, use only this func to get partition ids.
@@ -165,9 +165,6 @@ public:
   longlong err_value;
   char* part_info_string;
 
-  char *part_func_string;
-  char *subpart_func_string;
-
   partition_element *curr_part_elem;     // part or sub part
   partition_element *current_partition;  // partition
   part_elem_value *curr_list_val;
@@ -188,8 +185,6 @@ public:
   partition_type subpart_type;
 
   uint part_info_len;
-  uint part_func_len;
-  uint subpart_func_len;
 
   uint num_parts;
   uint num_subparts;
@@ -257,13 +252,11 @@ public:
     bitmaps_are_initialized(FALSE),
     list_array(NULL), err_value(0),
     part_info_string(NULL),
-    part_func_string(NULL), subpart_func_string(NULL),
     curr_part_elem(NULL), current_partition(NULL),
     curr_list_object(0), num_columns(0), table(NULL),
     default_engine_type(NULL),
     part_type(NOT_A_PARTITION), subpart_type(NOT_A_PARTITION),
     part_info_len(0),
-    part_func_len(0), subpart_func_len(0),
     num_parts(0), num_subparts(0),
     count_curr_subparts(0),
     num_list_values(0), num_part_fields(0), num_subpart_fields(0),
@@ -306,7 +299,7 @@ public:
   bool set_up_defaults_for_partitioning(THD *thd, handler *file,
                                         HA_CREATE_INFO *info,
                                         uint start_no);
-  char *find_duplicate_field();
+  const char *find_duplicate_field();
   char *find_duplicate_name();
   bool check_engine_mix(handlerton *engine_type, bool default_engine);
   bool check_range_constants(THD *thd);
@@ -335,9 +328,8 @@ public:
   bool check_partition_field_length();
   bool init_column_part(THD *thd);
   bool add_column_list_value(THD *thd, Item *item);
-  partition_element *get_part_elem(const char *partition_name,
-                                   char *file_name,
-                                   uint32 *part_id);
+  partition_element *get_part_elem(const char *partition_name, char *file_name,
+                                   size_t file_name_size, uint32 *part_id);
   void report_part_expr_error(bool use_subpart_expr);
   bool has_same_partitioning(partition_info *new_part_info);
 private:

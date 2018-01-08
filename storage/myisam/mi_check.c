@@ -42,7 +42,6 @@
 
 #include "ftdefs.h"
 #include <m_ctype.h>
-#include <stdarg.h>
 #include <my_getopt.h>
 #ifdef HAVE_SYS_VADVISE_H
 #include <sys/vadvise.h>
@@ -2677,6 +2676,8 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
   */
   DBUG_PRINT("info", ("is quick repair: %d", rep_quick));
   bzero((char*)&sort_info,sizeof(sort_info));
+  if (!rep_quick)
+    my_b_clear(&new_data_cache);
   /* Initialize pthread structures before goto err. */
   mysql_mutex_init(mi_key_mutex_MI_SORT_INFO_mutex,
                    &sort_info.mutex, MY_MUTEX_INIT_FAST);
@@ -2914,8 +2915,8 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
     */
     sort_param[i].read_cache= ((rep_quick || !i) ? param->read_cache :
                                new_data_cache);
-    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: 0x%lx",
-                                  i, (long) &sort_param[i].read_cache));
+    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: %p",
+                                  i, &sort_param[i].read_cache));
 
     /*
       two approaches: the same amount of memory for each thread
@@ -3056,7 +3057,7 @@ err:
     already or they were not yet started (if the error happend before
     creating the threads).
   */
-  if (!rep_quick)
+  if (!rep_quick && my_b_inited(&new_data_cache))
     (void) end_io_cache(&new_data_cache);
   if (!got_error)
   {
@@ -3126,6 +3127,7 @@ static int sort_key_read(MI_SORT_PARAM *sort_param, void *key)
   }
   if (info->state->records == sort_info->max_records)
   {
+    my_errno= HA_ERR_WRONG_IN_RECORD;
     mi_check_print_error(sort_info->param,
 			 "Key %d - Found too many records; Can't continue",
                          sort_param->key+1);
@@ -3332,6 +3334,7 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 	  param->error_printed=1;
           param->retry_repair=1;
           param->testflag|=T_RETRY_WITHOUT_QUICK;
+          my_errno= HA_ERR_WRONG_IN_RECORD;
 	  DBUG_RETURN(1);	/* Something wrong with data */
 	}
 	b_type=_mi_get_block_info(&block_info,-1,pos);
@@ -3590,6 +3593,7 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 	param->error_printed=1;
         param->retry_repair=1;
         param->testflag|=T_RETRY_WITHOUT_QUICK;
+        my_errno= HA_ERR_WRONG_IN_RECORD;
 	DBUG_RETURN(1);		/* Something wrong with data */
       }
       sort_param->start_recpos=sort_param->pos;
@@ -3963,7 +3967,7 @@ static int sort_ft_key_write(MI_SORT_PARAM *sort_param, const void *a)
       key_block++;
     sort_info->key_block=key_block;
     sort_param->keyinfo=& sort_info->info->s->ft2_keyinfo;
-    ft_buf->count=((uchar*) ft_buf->buf - p)/val_len;
+    ft_buf->count=(int)((uchar*) ft_buf->buf - p)/val_len;
 
     /* flushing buffer to second-level tree */
     for (error=0; !error && p < (uchar*) ft_buf->buf; p+= val_len)

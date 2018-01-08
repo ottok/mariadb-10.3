@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -191,23 +192,6 @@ trx_write_trx_id(
 	mach_write_to_6(ptr, id);
 }
 
-/*****************************************************************//**
-Reads a trx id from an index page. In case that the id size changes in
-some future version, this function should be used instead of
-mach_read_...
-@return id */
-UNIV_INLINE
-trx_id_t
-trx_read_trx_id(
-/*============*/
-	const byte*	ptr)	/*!< in: pointer to memory from where to read */
-{
-#if DATA_TRX_ID_LEN != 6
-# error "DATA_TRX_ID_LEN != 6"
-#endif
-	return(mach_read_from_6(ptr));
-}
-
 /****************************************************************//**
 Looks for the trx handle with the given id in rw_trx_list.
 The caller must be holding trx_sys->mutex.
@@ -360,6 +344,15 @@ trx_rw_is_active(
 	bool		do_ref_count)	/*!< in: if true then increment the
 					trx_t::n_ref_count */
 {
+	if (!trx_id) {
+		/* In MariaDB 10.3, purge will reset DB_TRX_ID to 0
+		when the history is lost. Read/write transactions will
+		always have a nonzero trx_t::id; there the value 0 is
+		reserved for transactions that did not write or lock
+		anything yet. */
+		return NULL;
+	}
+
 	trx_t*		trx;
 
 	trx_sys_mutex_enter();

@@ -405,7 +405,7 @@ static void _ma_check_print_msg(HA_CHECK *param, const char *msg_type,
 {
   THD *thd= (THD *) param->thd;
   Protocol *protocol= thd->protocol;
-  uint length, msg_length;
+  size_t length, msg_length;
   char msgbuf[MYSQL_ERRMSG_SIZE];
   char name[NAME_LEN * 2 + 2];
 
@@ -442,10 +442,10 @@ static void _ma_check_print_msg(HA_CHECK *param, const char *msg_type,
     push_warning).
   */
   protocol->prepare_for_resend();
-  protocol->store(name, length, system_charset_info);
+  protocol->store(name, (uint)length, system_charset_info);
   protocol->store(param->op_name, system_charset_info);
   protocol->store(msg_type, system_charset_info);
-  protocol->store(msgbuf, msg_length, system_charset_info);
+  protocol->store(msgbuf, (uint)msg_length, system_charset_info);
   if (protocol->write())
     sql_print_error("Failed on my_net_write, writing to stderr instead: %s.%s: %s\n",
                     param->db_name, param->table_name, msgbuf);
@@ -620,8 +620,8 @@ static int table2maria(TABLE *table_arg, data_file_type row_type,
         }
       }
     }
-    DBUG_PRINT("loop", ("found: 0x%lx  recpos: %d  minpos: %d  length: %d",
-                        (long) found, recpos, minpos, length));
+    DBUG_PRINT("loop", ("found: %p  recpos: %d  minpos: %d  length: %d",
+                        found, recpos, minpos, length));
     if (!found)
       break;
 
@@ -834,7 +834,10 @@ extern "C" {
 
 int _ma_killed_ptr(HA_CHECK *param)
 {
-  return thd_killed((THD*)param->thd);
+  if (likely(thd_killed((THD*)param->thd)) == 0)
+    return 0;
+  my_errno= HA_ERR_ABORTED_BY_USER;
+  return 1;
 }
 
 
@@ -986,7 +989,7 @@ int_table_flags(HA_NULL_IN_KEY | HA_CAN_FULLTEXT | HA_CAN_SQL_HANDLER |
                 HA_DUPLICATE_POS | HA_CAN_INDEX_BLOBS | HA_AUTO_PART_KEY |
                 HA_FILE_BASED | HA_CAN_GEOMETRY | CANNOT_ROLLBACK_FLAG |
                 HA_CAN_BIT_FIELD | HA_CAN_RTREEKEYS | HA_CAN_REPAIR |
-                HA_CAN_VIRTUAL_COLUMNS |
+                HA_CAN_VIRTUAL_COLUMNS | HA_CAN_EXPORT |
                 HA_HAS_RECORDS | HA_STATS_RECORDS_IS_EXACT |
                 HA_CAN_TABLES_WITHOUT_ROLLBACK),
 can_enable_indexes(1), bulk_insert_single_undo(BULK_INSERT_NONE)
@@ -1669,8 +1672,11 @@ int ha_maria::repair(THD *thd, HA_CHECK *param, bool do_optimize)
       }
       if (error && file->create_unique_index_by_sort && 
           share->state.dupp_key != MAX_KEY)
+      {
+        my_errno= HA_ERR_FOUND_DUPP_KEY;
         print_keydup_error(table, &table->key_info[share->state.dupp_key], 
                            MYF(0));
+      }
     }
     else
     {
@@ -2052,7 +2058,7 @@ int ha_maria::enable_indexes(uint mode)
   DBUG_EXECUTE_IF("maria_crash_enable_index",
                   {
                     DBUG_PRINT("maria_crash_enable_index", ("now"));
-                    DBUG_ABORT();
+                    DBUG_SUICIDE();
                   });
   return error;
 }
@@ -2207,14 +2213,23 @@ void ha_maria::start_bulk_insert(ha_rows rows, uint flags)
 
 int ha_maria::end_bulk_insert()
 {
-  int err;
+  int first_error, error;
+  my_bool abort= file->s->deleting;
   DBUG_ENTER("ha_maria::end_bulk_insert");
-  maria_end_bulk_insert(file);
-  if ((err= maria_extra(file, HA_EXTRA_NO_CACHE, 0)))
-    goto end;
-  if (can_enable_indexes && !file->s->deleting)
-    err= enable_indexes(HA_KEY_SWITCH_NONUNIQ_SAVE);
-end:
+
+  if ((first_error= maria_end_bulk_insert(file, abort)))
+    abort= 1;
+
+  if ((error= maria_extra(file, HA_EXTRA_NO_CACHE, 0)))
+  {
+    first_error= first_error ? first_error : error;
+    abort= 1;
+  }
+
+  if (!abort && can_enable_indexes)
+    if ((error= enable_indexes(HA_KEY_SWITCH_NONUNIQ_SAVE)))
+      first_error= first_error ? first_error : error;
+
   if (bulk_insert_single_undo != BULK_INSERT_NONE)
   {
     DBUG_ASSERT(can_enable_indexes);
@@ -2222,12 +2237,12 @@ end:
       Table was transactional just before start_bulk_insert().
       No need to flush pages if we did a repair (which already flushed).
     */
-    err|=
-      _ma_reenable_logging_for_table(file,
-                                     bulk_insert_single_undo ==
-                                     BULK_INSERT_SINGLE_UNDO_AND_NO_REPAIR);
+    if ((error= _ma_reenable_logging_for_table(file,
+                                               bulk_insert_single_undo ==
+                                               BULK_INSERT_SINGLE_UNDO_AND_NO_REPAIR)))
+      first_error= first_error ? first_error : error;
   }
-  DBUG_RETURN(err);
+  DBUG_RETURN(first_error);
 }
 
 
@@ -2268,7 +2283,7 @@ bool ha_maria::check_and_repair(THD *thd)
   if (!file->state->del && (maria_recover_options & HA_RECOVER_QUICK))
     check_opt.flags |= T_QUICK;
 
-  thd->set_query(table->s->table_name.str,
+  thd->set_query((char*) table->s->table_name.str,
                  (uint) table->s->table_name.length, system_charset_info);
 
   if (!(crashed= maria_is_crashed(file)))
@@ -2304,14 +2319,14 @@ bool ha_maria::is_crashed() const
 
 #define CHECK_UNTIL_WE_FULLY_IMPLEMENTED_VERSIONING(msg) \
   do { \
-    if (file->lock.type == TL_WRITE_CONCURRENT_INSERT) \
+    if (file->lock.type == TL_WRITE_CONCURRENT_INSERT && !table->s->sequence) \
     { \
       my_error(ER_CHECK_NOT_IMPLEMENTED, MYF(0), msg); \
       return 1; \
     } \
   } while(0)
 
-int ha_maria::update_row(const uchar * old_data, uchar * new_data)
+int ha_maria::update_row(const uchar * old_data, const uchar * new_data)
 {
   CHECK_UNTIL_WE_FULLY_IMPLEMENTED_VERSIONING("UPDATE in WRITE CONCURRENT");
   return maria_update(file, old_data, new_data);
@@ -3403,7 +3418,7 @@ bool maria_show_status(handlerton *hton,
                        stat_print_fn *print,
                        enum ha_stat_type stat)
 {
-  const LEX_STRING *engine_name= hton_name(hton);
+  const LEX_CSTRING *engine_name= hton_name(hton);
   switch (stat) {
   case HA_ENGINE_LOGS:
   {
@@ -3429,7 +3444,7 @@ bool maria_show_status(handlerton *hton,
     {
       char *file;
       const char *status;
-      uint length, status_len;
+      size_t length, status_len;
       MY_STAT stat_buff, *stat;
       const char error[]= "can't stat";
       char object[SHOW_MSG_LEN];
@@ -3457,8 +3472,8 @@ bool maria_show_status(handlerton *hton,
           status= needed;
           status_len= sizeof(needed) - 1;
         }
-        length= my_snprintf(object, SHOW_MSG_LEN, "Size %12lu ; %s",
-                            (ulong) stat->st_size, file);
+        length= my_snprintf(object, SHOW_MSG_LEN, "Size %12llu ; %s",
+                            (ulonglong) stat->st_size, file);
       }
 
       print(thd, engine_name->str, engine_name->length,
@@ -3643,7 +3658,7 @@ static int ha_maria_init(void *p)
     @retval FALSE An error occurred
 */
 
-my_bool ha_maria::register_query_cache_table(THD *thd, char *table_name,
+my_bool ha_maria::register_query_cache_table(THD *thd, const char *table_name,
 					     uint table_name_len,
 					     qc_engine_callback
 					     *engine_callback,

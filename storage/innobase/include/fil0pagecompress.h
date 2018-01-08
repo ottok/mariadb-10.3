@@ -30,34 +30,6 @@ atomic writes information to table space.
 Created 11/12/2013 Jan Lindström jan.lindstrom@skysql.com
 ***********************************************************************/
 
-/*******************************************************************//**
-Returns the page compression level flag of the space, or 0 if the space
-is not compressed. The tablespace must be cached in the memory cache.
-@return	page compression level if page compressed, ULINT_UNDEFINED if space not found */
-UNIV_INLINE
-ulint
-fil_space_get_page_compression_level(
-/*=================================*/
-	ulint	id);	/*!< in: space id */
-/*******************************************************************//**
-Returns the page compression flag of the space, or false if the space
-is not compressed. The tablespace must be cached in the memory cache.
-@return	true if page compressed, false if not or space not found */
-UNIV_INLINE
-bool
-fil_space_is_page_compressed(
-/*=========================*/
-	ulint	id);	/*!< in: space id */
-/*******************************************************************//**
-Returns the atomic writes flag of the space, or false if the space
-is not using atomic writes. The tablespace must be cached in the memory cache.
-@return	atomic write table option value */
-UNIV_INLINE
-bool
-fil_space_get_atomic_writes(
-/*=========================*/
-	ulint	id);	/*!< in: space id */
-
 /****************************************************************//**
 For page compressed pages compress the page before actual write
 operation.
@@ -66,8 +38,7 @@ UNIV_INTERN
 byte*
 fil_compress_page(
 /*==============*/
-	ulint	space_id,	/*!< in: tablespace id of the
-				table. */
+	fil_space_t*	space,	/*!< in,out: tablespace (NULL during IMPORT) */
 	byte*	buf,		/*!< in: buffer from which to write; in aio
 				this must be appropriately aligned */
 	byte*	out_buf,	/*!< out: compressed buffer */
@@ -75,9 +46,8 @@ fil_compress_page(
 	ulint	level,		/* in: compression level */
 	ulint	block_size,	/*!< in: block size */
 	bool	encrypted,	/*!< in: is page also encrypted */
-	ulint*	out_len,	/*!< out: actual length of compressed
+	ulint*	out_len);	/*!< out: actual length of compressed
 				page */
-	byte*	lzo_mem);	/*!< in: temporal memory used by LZO */
 
 /****************************************************************//**
 For page compressed pages decompress the page after actual read
@@ -96,23 +66,4 @@ fil_decompress_page(
 				/*!< in: true if only an error should
 				be produced when decompression fails.
 				By default this parameter is false. */
-
-/****************************************************************//**
-Get space id from fil node
-@return space id*/
-UNIV_INTERN
-ulint
-fil_node_get_space_id(
-/*==================*/
-        fil_node_t*	node);	/*!< in: Node where to get space id*/
-
-/****************************************************************//**
-Get block size from fil node
-@return block size*/
-UNIV_INLINE
-ulint
-fil_node_get_block_size(
-/*====================*/
-	fil_node_t*	node);	/*!< in: Node where to get block
-				size */
 #endif

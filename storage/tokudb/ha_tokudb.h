@@ -681,8 +681,8 @@ private:
     int remove_metadata(DB* db, void* key_data, uint key_size, DB_TXN* transaction);
 
     int update_max_auto_inc(DB* db, ulonglong val);
-    int remove_key_name_from_status(DB* status_block, char* key_name, DB_TXN* txn);
-    int write_key_name_to_status(DB* status_block, char* key_name, DB_TXN* txn);
+    int remove_key_name_from_status(DB* status_block, const char* key_name, DB_TXN* txn);
+    int write_key_name_to_status(DB* status_block, const char* key_name, DB_TXN* txn);
     int write_auto_inc_create(DB* db, ulonglong val, DB_TXN* txn);
     void init_auto_increment();
     bool can_replace_into_be_fast(TABLE_SHARE* table_share, KEY_AND_COL_INFO* kc_info, uint pk);
@@ -708,7 +708,7 @@ private:
     int create_main_dictionary(const char* name, TABLE* form, DB_TXN* txn, KEY_AND_COL_INFO* kc_info, toku_compression_method compression_method);
     void trace_create_table_info(const char *name, TABLE * form);
     int is_index_unique(bool* is_unique, DB_TXN* txn, DB* db, KEY* key_info, int lock_flags);
-    int is_val_unique(bool* is_unique, uchar* record, KEY* key_info, uint dict_index, DB_TXN* txn);
+    int is_val_unique(bool* is_unique, const uchar* record, KEY* key_info, uint dict_index, DB_TXN* txn);
     int do_uniqueness_checks(uchar* record, DB_TXN* txn, THD* thd);
     void set_main_dict_put_flags(THD* thd, bool opt_eligible, uint32_t* put_flags);
     int insert_row_to_main_dictionary(uchar* record, DBT* pk_key, DBT* pk_val, DB_TXN* txn);
@@ -792,13 +792,26 @@ public:
     int optimize(THD * thd, HA_CHECK_OPT * check_opt);
     int analyze(THD * thd, HA_CHECK_OPT * check_opt);
     int write_row(uchar * buf);
-    int update_row(const uchar * old_data, uchar * new_data);
+    int update_row(const uchar * old_data, const uchar * new_data);
     int delete_row(const uchar * buf);
 #if MYSQL_VERSION_ID >= 100000
     void start_bulk_insert(ha_rows rows, uint flags);
 #else
     void start_bulk_insert(ha_rows rows);
 #endif
+    static int bulk_insert_poll(void* extra, float progress);
+    static void loader_add_index_err(DB* db,
+                                     int i,
+                                     int err,
+                                     DBT* key,
+                                     DBT* val,
+                                     void* error_extra);
+    static void loader_dup(DB* db,
+                           int i,
+                           int err,
+                           DBT* key,
+                           DBT* val,
+                           void* error_extra);
     int end_bulk_insert();
     int end_bulk_insert(bool abort);
 
@@ -938,17 +951,23 @@ public:
 #endif
 
  private:
-    int tokudb_add_index(
-        TABLE *table_arg, 
-        KEY *key_info, 
-        uint num_of_keys, 
-        DB_TXN* txn, 
-        bool* inc_num_DBs,
-        bool* modified_DB
-        ); 
-    void restore_add_index(TABLE* table_arg, uint num_of_keys, bool incremented_numDBs, bool modified_DBs);
-    int drop_indexes(TABLE *table_arg, uint *key_num, uint num_of_keys, KEY *key_info, DB_TXN* txn);
-    void restore_drop_indexes(TABLE *table_arg, uint *key_num, uint num_of_keys);
+  int tokudb_add_index(TABLE* table_arg,
+                       KEY* key_info,
+                       uint num_of_keys,
+                       DB_TXN* txn,
+                       bool* inc_num_DBs,
+                       bool* modified_DB);
+  static int tokudb_add_index_poll(void *extra, float progress);
+  void restore_add_index(TABLE* table_arg,
+                         uint num_of_keys,
+                         bool incremented_numDBs,
+                         bool modified_DBs);
+  int drop_indexes(TABLE* table_arg,
+                   uint* key_num,
+                   uint num_of_keys,
+                   KEY* key_info,
+                   DB_TXN* txn);
+  void restore_drop_indexes(TABLE* table_arg, uint* key_num, uint num_of_keys);
 
  public:
     // delete all rows from the table

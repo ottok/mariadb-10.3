@@ -423,7 +423,7 @@ create table t1 (
 SHOW CREATE TABLE t1;
 DROP TABLE t1;
 
-# Test for Bug#93 4.1 protocl crash on corupted frm and SHOW TABLE STATUS
+# Test for Bug#93 4.1 protocol crash on corrupted frm and SHOW TABLE STATUS
 
 flush tables;
 
@@ -437,7 +437,7 @@ show create table t1;
 --disable_warnings
 drop table if exists t1;
 --enable_warnings
---error 1,0
+--error 0,1
 --remove_file $MYSQLD_DATADIR/test/t1.frm
 
 #
@@ -890,62 +890,62 @@ DROP FUNCTION f1;
 # Part 2: check that table with non-latin1 characters are dumped/restored
 # correctly.
 #
-
+# See MDEV-14651 for details
 # Ensure that all needed objects are dropped.
 
-set names koi8r;
+#set names koi8r;
 
---disable_warnings
-DROP DATABASE IF EXISTS mysqltest1;
---enable_warnings
+#--disable_warnings
+#DROP DATABASE IF EXISTS mysqltest1;
+#--enable_warnings
 
 # Create objects.
 
-CREATE DATABASE mysqltest1;
+#CREATE DATABASE mysqltest1;
 
-use mysqltest1;
+#use mysqltest1;
 
-CREATE TABLE t1(колонка1 INT);
+#CREATE TABLE t1(колонка1 INT);
 
 # Check:
 #   - Dump mysqltest1;
 
---let $outfile1=$MYSQLTEST_VARDIR/tmp/show_check.mysqltest1.sql
+#--let $outfile1=$MYSQLTEST_VARDIR/tmp/show_check.mysqltest1.sql
 
---source include/count_sessions.inc
---echo
---echo ---> Dumping mysqltest1 to outfile1
---exec $MYSQL_DUMP --default-character-set=latin1 --character-sets-dir=$MYSQL_SHAREDIR/charsets --databases mysqltest1 > $outfile1
+#--source include/count_sessions.inc
+#--echo
+#--echo ---> Dumping mysqltest1 to outfile1
+#--exec $MYSQL_DUMP --default-character-set=latin1 --character-sets-dir=$MYSQL_SHAREDIR/charsets --databases mysqltest1 > $outfile1
 # Take care that the additional session caused by MYSQL_DUMP has disappeared.
---source include/wait_until_count_sessions.inc
+#--source include/wait_until_count_sessions.inc
 
 #   - Clean mysqltest1;
 
---echo
---echo
+#--echo
+#--echo
 
-DROP DATABASE mysqltest1;
+#DROP DATABASE mysqltest1;
 
 #   - Restore mysqltest1;
 
---echo
---echo
+#--echo
+#--echo
 
---source include/count_sessions.inc
---echo ---> Restoring mysqltest1...
---exec $MYSQL test < $outfile1
---remove_file $outfile1
+#--source include/count_sessions.inc
+#--echo ---> Restoring mysqltest1...
+#--exec $MYSQL test < $outfile1
+#--remove_file $outfile1
 # Take care that the additional session caused by MYSQL has disappeared.
---source include/wait_until_count_sessions.inc
+#--source include/wait_until_count_sessions.inc
 
 #   - Check definition of the table.
 
-SHOW CREATE TABLE mysqltest1.t1;
+#SHOW CREATE TABLE mysqltest1.t1;
 
 # Cleanup.
 
-DROP DATABASE mysqltest1;
-use test;
+#DROP DATABASE mysqltest1;
+#use test;
 
 #
 # Bug#28808 log_queries_not_using_indexes variable dynamic change is ignored
@@ -954,11 +954,11 @@ flush status;
 show variables like "log_queries_not_using_indexes";
 select 1 from information_schema.tables limit 1;
 show status like 'slow_queries';
-set global log_queries_not_using_indexes=OFF;
+set session log_queries_not_using_indexes=OFF;
 show variables like "log_queries_not_using_indexes";
 select 1 from information_schema.tables limit 1;
 show status like 'slow_queries';
-set global log_queries_not_using_indexes=ON;
+set session log_queries_not_using_indexes=ON;
 show variables like "log_queries_not_using_indexes";
 select 1 from information_schema.tables limit 1;
 show status like 'slow_queries';

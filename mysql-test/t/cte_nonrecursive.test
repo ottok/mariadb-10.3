@@ -644,7 +644,7 @@ show create view v1;
 drop view v1;
 
 --echo #
---echo # MDEV-12440: the same CTE table is used in twice
+--echo # MDEV-12440: the same CTE table is used twice
 --echo #
 
 create table t1 (a int, b  varchar(32));
@@ -666,3 +666,127 @@ cte3 as (select * from cte2 where a > 1 union select * from cte2 where a > 1)
 select * from cte3;
 
 drop table t1;
+
+--echo #
+--echo # MDEV-12558: CTE with the same name as temporary table
+--echo #
+
+CREATE TABLE t ENGINE=MyISAM AS SELECT 1 AS i;
+CREATE TEMPORARY TABLE cte ENGINE=MyISAM AS SELECT 2 AS f;
+
+WITH cte AS ( SELECT i FROM t ) SELECT * FROM cte;
+WITH cte AS ( SELECT i FROM t GROUP BY i) SELECT * FROM cte;
+
+SELECT * FROM cte;
+
+DROP TABLE cte;
+DROP TABLE t;
+
+--echo #
+--echo # MDEV-13107: SHOW TABLE STATUS, SHOW CREATE VIEW 
+--echo #             for CTEs that use derived tables
+--echo #
+
+create table t1(a int) engine=myisam;
+insert into t1 values (3), (1), (2);
+create table t2 (b int) engine=myisam;
+insert into t2 values (2), (10);
+
+create view v1 as
+with t as (select s.a from (select t1.a from t1) s),
+     r as(select t.a from t2, t where t2.b=t.a)
+ select a from r;
+
+create view v2 as
+with t as (select s.a from (select t1.a from t1) s),
+     r as(select t.a from t2, t where t2.b=t.a)
+ select a from t1;
+
+--disable_result_log
+show table status;
+--enable_result_log
+
+show create view v1;
+show create view v2;
+
+select * from v1;
+select * from v2;
+
+prepare stmt1 from "select * from v1";
+execute stmt1;
+execute stmt1;
+prepare stmt2 from "select * from v2";
+execute stmt2;
+execute stmt2;
+
+deallocate prepare stmt1;
+deallocate prepare stmt2;
+
+drop view v1,v2;
+drop table t1,t2;
+
+--echo #
+--echo # MDEV-13796: UNION of two materialized CTEs
+--echo #
+
+CREATE TABLE t1 (id int, k int);
+CREATE TABLE t2 (id int);
+INSERT INTO t1 VALUES (3,5), (1,7), (4,3);
+INSERT INTO t2 VALUES (4), (3), (2);
+
+let $q=
+WITH d1 AS (SELECT SUM(k) FROM t1, t2 as t2 WHERE t1.id = t2.id),
+     d2 AS (SELECT SUM(k) FROM t1, t2 as t2 WHERE t1.id = t2.id)
+SELECT * FROM d1 UNION  SELECT * FROM d2;
+
+eval $q;
+eval explain $q;
+
+DROP TABLE t1,t2;
+
+--echo #
+--echo # MDEV-13780: tower of embedding CTEs with multiple usage of them
+--echo #
+
+create table t1 (a int);
+insert into t1 values (3), (2), (4), (7), (1), (2), (5);
+
+let $q=
+with cte_e as
+(
+  with cte_o as
+  (
+    with cte_i as (select * from t1 where a < 7)
+    select * from cte_i where a > 1
+  )
+  select * from cte_o as cto_o1 where a < 3
+  union
+  select * from cte_o as cto_o2 where a > 4
+)
+select * from cte_e as cte_e1 where a > 1
+union
+select * from cte_e as cte_e2;
+
+eval $q;
+eval explain extended $q;
+
+drop table t1;
+
+--echo #
+--echo # MDEV-13753: embedded CTE in a VIEW created in prepared statement
+--echo #
+
+SET @sql_query = "
+  CREATE OR REPLACE VIEW cte_test AS
+   WITH  cte1  AS ( SELECT 1 as a from dual )
+    ,    cte2  AS ( SELECT * FROM cte1 )
+    SELECT * FROM cte2;
+";
+PREPARE stmt FROM @sql_query;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SHOW CREATE VIEW cte_test;
+SELECT * FROM cte_test;
+
+DROP VIEW cte_test;

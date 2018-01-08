@@ -1,7 +1,7 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 
 #include "util/sst_file_manager_impl.h"
 
@@ -49,9 +49,13 @@ Status SstFileManagerImpl::OnDeleteFile(const std::string& file_path) {
 }
 
 Status SstFileManagerImpl::OnMoveFile(const std::string& old_path,
-                                      const std::string& new_path) {
+                                      const std::string& new_path,
+                                      uint64_t* file_size) {
   {
     MutexLock l(&mu_);
+    if (file_size != nullptr) {
+      *file_size = tracked_files_[old_path];
+    }
     OnAddFileImpl(new_path, tracked_files_[old_path]);
     OnDeleteFileImpl(old_path);
   }
@@ -85,6 +89,10 @@ SstFileManagerImpl::GetTrackedFiles() {
 
 int64_t SstFileManagerImpl::GetDeleteRateBytesPerSecond() {
   return delete_scheduler_.GetRateBytesPerSecond();
+}
+
+void SstFileManagerImpl::SetDeleteRateBytesPerSecond(int64_t delete_rate) {
+  return delete_scheduler_.SetRateBytesPerSecond(delete_rate);
 }
 
 Status SstFileManagerImpl::ScheduleFileDeletion(const std::string& file_path) {
@@ -127,7 +135,7 @@ SstFileManager* NewSstFileManager(Env* env, std::shared_ptr<Logger> info_log,
       new SstFileManagerImpl(env, info_log, trash_dir, rate_bytes_per_sec);
 
   Status s;
-  if (trash_dir != "" && rate_bytes_per_sec > 0) {
+  if (trash_dir != "") {
     s = env->CreateDirIfMissing(trash_dir);
     if (s.ok() && delete_existing_trash) {
       std::vector<std::string> files_in_trash;

@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2017, MariaDB Corporation.
+Copyright (c) 2015, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -57,15 +57,6 @@ class FlushObserver;
 
 /** Dummy session used currently in MySQL interface */
 extern sess_t*	trx_dummy_sess;
-
-#ifdef BTR_CUR_HASH_ADAPT
-/** Assert that the transaction is not holding the adaptive hash index latch.
-@param[in] trx		transaction */
-# define trx_assert_no_search_latch(trx) \
-	ut_ad(!trx->has_search_latch)
-#else /* BTR_CUR_HASH_ADAPT */
-# define trx_assert_no_search_latch(trx)
-#endif
 
 /** Set flush observer for the transaction
 @param[in/out]	trx		transaction struct
@@ -386,6 +377,22 @@ trx_print_latched(
 	ulint		max_query_len);	/*!< in: max query length to print,
 					or 0 to use the default max length */
 
+#ifdef WITH_WSREP
+/**********************************************************************//**
+Prints info about a transaction.
+Transaction information may be retrieved without having trx_sys->mutex acquired
+so it may not be completely accurate. The caller must own lock_sys->mutex
+and the trx must have some locks to make sure that it does not escape
+without locking lock_sys->mutex. */
+UNIV_INTERN
+void
+wsrep_trx_print_locking(
+	FILE*		f,		/*!< in: output stream */
+	const trx_t*	trx,		/*!< in: transaction */
+	ulint		max_query_len)	/*!< in: max query length to print,
+					or 0 to use the default max length */
+	MY_ATTRIBUTE((nonnull));
+#endif /* WITH_WSREP */
 /**********************************************************************//**
 Prints info about a transaction.
 Acquires and releases lock_sys->mutex and trx_sys->mutex. */
@@ -772,14 +779,19 @@ struct trx_lock_t {
 	bool		start_stmt;
 };
 
-/** Type used to store the list of tables that are modified by a given
-transaction. We store pointers to the table objects in memory because
+/** The first modification time of a table in a transaction */
+typedef undo_no_t trx_mod_table_time_t;
+
+/** Collection of persistent tables and their first modification
+in a transaction.
+We store pointers to the table objects in memory because
 we know that a table object will not be destroyed while a transaction
 that modified it is running. */
-typedef std::set<
-	dict_table_t*,
+typedef std::map<
+	dict_table_t*, trx_mod_table_time_t,
 	std::less<dict_table_t*>,
-	ut_allocator<dict_table_t*> >	trx_mod_tables_t;
+	ut_allocator<std::pair<dict_table_t*, trx_mod_table_time_t> > >
+	trx_mod_tables_t;
 
 /** The transaction handle
 
@@ -835,10 +847,12 @@ struct trx_undo_ptr_t {
 	trx_rseg_t*	rseg;		/*!< rollback segment assigned to the
 					transaction, or NULL if not assigned
 					yet */
-	trx_undo_t*	insert_undo;	/*!< pointer to the insert undo log, or
-					NULL if no inserts performed yet */
-	trx_undo_t*	update_undo;	/*!< pointer to the update undo log, or
-					NULL if no update performed yet */
+	trx_undo_t*	undo;		/*!< pointer to the undo log, or
+					NULL if nothing logged yet */
+	trx_undo_t*     old_insert;	/*!< pointer to recovered
+					insert undo log, or NULL if no
+					INSERT transactions were
+					recovered from old-format undo logs */
 };
 
 /** An instance of temporary rollback segment. */
@@ -1056,11 +1070,6 @@ struct trx_t {
 					flush the log in
 					trx_commit_complete_for_mysql() */
 	ulint		duplicates;	/*!< TRX_DUP_IGNORE | TRX_DUP_REPLACE */
-#ifdef BTR_CUR_HASH_ADAPT
-	bool		has_search_latch;
-					/*!< TRUE if this trx has latched the
-					search system latch in S-mode */
-#endif /* BTR_CUR_HASH_ADAPT */
 	trx_dict_op_t	dict_operation;	/**< @see enum trx_dict_op_t */
 
 	/* Fields protected by the srv_conc_mutex. */
@@ -1121,6 +1130,9 @@ struct trx_t {
 			mysql_trx_list;	/*!< list of transactions created for
 					MySQL; protected by trx_sys->mutex */
 #ifdef UNIV_DEBUG
+	/** whether this transaction is updating persistent statistics
+	(used for silencing a debug assertion at shutdown) */
+	bool		persistent_stats;
 	bool		in_mysql_trx_list;
 					/*!< true if in
 					trx_sys->mysql_trx_list */
@@ -1173,10 +1185,8 @@ struct trx_t {
 	trx_rsegs_t	rsegs;		/* rollback segments for undo logging */
 	undo_no_t	roll_limit;	/*!< least undo number to undo during
 					a partial rollback; 0 otherwise */
-#ifdef UNIV_DEBUG
 	bool		in_rollback;	/*!< true when the transaction is
 					executing a partial or full rollback */
-#endif /* UNIV_DEBUG */
 	ulint		pages_undone;	/*!< number of undo log pages undone
 					since the last undo log truncation */
 	/*------------------------------*/
@@ -1272,13 +1282,20 @@ struct trx_t {
 	/** @return whether any persistent undo log has been generated */
 	bool has_logged_persistent() const
 	{
-		return(rsegs.m_redo.insert_undo || rsegs.m_redo.update_undo);
+		return(rsegs.m_redo.undo);
 	}
 
 	/** @return whether any undo log has been generated */
 	bool has_logged() const
 	{
 		return(has_logged_persistent() || rsegs.m_noredo.undo);
+	}
+
+	/** @return whether any undo log has been generated or
+	recovered */
+	bool has_logged_or_recovered() const
+	{
+		return(has_logged() || rsegs.m_redo.old_insert);
 	}
 
 	/** @return rollback segment for modifying temporary tables */
@@ -1468,46 +1485,40 @@ private:
 			return;
 		}
 
-		/* Avoid excessive mutex acquire/release */
-
 		ut_ad(!is_async_rollback(trx));
 
-		++trx->in_depth;
+		/* If it hasn't already been marked for async rollback.
+		and it will be committed/rolled back. */
+		if (disable) {
 
-		/* If trx->in_depth is greater than 1 then
-		transaction is already in InnoDB. */
-		if (trx->in_depth > 1) {
+			trx_mutex_enter(trx);
+			if (!is_forced_rollback(trx)
+			    && is_started(trx)
+			    && !trx_is_autocommit_non_locking(trx)) {
 
-			return;
+				ut_ad(trx->killed_by == 0);
+
+				/* This transaction has crossed the point of
+				no return and cannot be rolled back
+				asynchronously now. It must commit or rollback
+				synhronously. */
+
+				trx->in_innodb |= TRX_FORCE_ROLLBACK_DISABLE;
+			}
+			trx_mutex_exit(trx);
 		}
 
-		/* Only the owning thread should release the latch. */
-
-		trx_assert_no_search_latch(trx);
+		/* Avoid excessive mutex acquire/release */
+		if (trx->in_depth++) {
+			/* The transaction is already inside InnoDB. */
+			return;
+		}
 
 		trx_mutex_enter(trx);
 
 		wait(trx);
 
-		ut_ad((trx->in_innodb & TRX_FORCE_ROLLBACK_MASK)
-		      < (TRX_FORCE_ROLLBACK_MASK - 1));
-
-		/* If it hasn't already been marked for async rollback.
-		and it will be committed/rolled back. */
-
-		if (!is_forced_rollback(trx)
-		    && disable
-		    && is_started(trx)
-		    && !trx_is_autocommit_non_locking(trx)) {
-
-			ut_ad(trx->killed_by == 0);
-
-			/* This transaction has crossed the point of no
-			return and cannot be rolled back asynchronously
-			now. It must commit or rollback synhronously. */
-
-			trx->in_innodb |= TRX_FORCE_ROLLBACK_DISABLE;
-		}
+		ut_ad((trx->in_innodb & TRX_FORCE_ROLLBACK_MASK) == 0);
 
 		++trx->in_innodb;
 
@@ -1527,16 +1538,9 @@ private:
 
 		ut_ad(trx->in_depth > 0);
 
-		--trx->in_depth;
-
-		if (trx->in_depth > 0) {
-
+		if (--trx->in_depth) {
 			return;
 		}
-
-		/* Only the owning thread should release the latch. */
-
-		trx_assert_no_search_latch(trx);
 
 		trx_mutex_enter(trx);
 

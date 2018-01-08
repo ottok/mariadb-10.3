@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2016, MariaDB
+   Copyright (c) 2010, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@
 
 */
 
-#include <my_global.h>                 /* NO_EMBEDDED_ACCESS_CHECKS */
+#include "mariadb.h"                 /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include "sql_insert.h"
 #include "sql_update.h"                         // compare_record
@@ -222,7 +222,7 @@ static int check_insert_fields(THD *thd, TABLE_LIST *table_list,
                table_list->view_db.str, table_list->view_name.str);
       DBUG_RETURN(-1);
     }
-    if (values.elements != table->s->fields)
+    if (values.elements != table->s->visible_fields)
     {
       my_error(ER_WRONG_VALUE_COUNT_ON_ROW, MYF(0), 1L);
       DBUG_RETURN(-1);
@@ -268,7 +268,8 @@ static int check_insert_fields(THD *thd, TABLE_LIST *table_list,
     if (table_list->is_view())
       unfix_fields(fields);
 
-    res= setup_fields(thd, Ref_ptr_array(), fields, MARK_COLUMNS_WRITE, 0, 0);
+    res= setup_fields(thd, Ref_ptr_array(),
+                      fields, MARK_COLUMNS_WRITE, 0, NULL, 0);
 
     /* Restore the current context. */
     ctx_state.restore_state(context, table_list);
@@ -289,7 +290,8 @@ static int check_insert_fields(THD *thd, TABLE_LIST *table_list,
 
     if (check_unique && thd->dup_field)
     {
-      my_error(ER_FIELD_SPECIFIED_TWICE, MYF(0), thd->dup_field->field_name);
+      my_error(ER_FIELD_SPECIFIED_TWICE, MYF(0),
+               thd->dup_field->field_name.str);
       DBUG_RETURN(-1);
     }
   }
@@ -328,7 +330,8 @@ static bool has_no_default_value(THD *thd, Field *field, TABLE_LIST *table_list)
     else
     {
       push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN, ER_NO_DEFAULT_FOR_FIELD,
-                          ER_THD(thd, ER_NO_DEFAULT_FOR_FIELD), field->field_name);
+                          ER_THD(thd, ER_NO_DEFAULT_FOR_FIELD),
+                          field->field_name.str);
     }
     return thd->really_abort_on_warning();
   }
@@ -378,7 +381,7 @@ static int check_update_fields(THD *thd, TABLE_LIST *insert_table_list,
 
   /* Check the fields we are going to modify */
   if (setup_fields(thd, Ref_ptr_array(),
-                   update_fields, MARK_COLUMNS_WRITE, 0, 0))
+                   update_fields, MARK_COLUMNS_WRITE, 0, NULL, 0))
     return -1;
 
   if (insert_table_list->is_view() &&
@@ -697,9 +700,9 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   bool using_bulk_insert= 0;
   uint value_count;
   ulong counter = 1;
-  ulong iteration= 0;
+  /* counter of iteration in bulk PS operation*/
+  ulonglong iteration= 0;
   ulonglong id;
-  ulong bulk_iterations= bulk_parameters_iterations(thd);
   COPY_INFO info;
   TABLE *table= 0;
   List_iterator_fast<List_item> its(values_list);
@@ -758,16 +761,14 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
       DBUG_RETURN(TRUE);
   }
 
+  THD_STAGE_INFO(thd, stage_init_update);
   lock_type= table_list->lock_type;
-
-  THD_STAGE_INFO(thd, stage_init);
   thd->lex->used_tables=0;
   values= its++;
   if (bulk_parameters_set(thd))
     DBUG_RETURN(TRUE);
   value_count= values->elements;
 
-  DBUG_ASSERT(bulk_iterations > 0);
   if (mysql_prepare_insert(thd, table_list, table, fields, values,
 			   update_fields, update_values, duplic, &unused_conds,
                            FALSE))
@@ -805,7 +806,8 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
       my_error(ER_WRONG_VALUE_COUNT_ON_ROW, MYF(0), counter);
       goto abort;
     }
-    if (setup_fields(thd, Ref_ptr_array(), *values, MARK_COLUMNS_READ, 0, 0))
+    if (setup_fields(thd, Ref_ptr_array(),
+                     *values, MARK_COLUMNS_READ, 0, NULL, 0))
       goto abort;
     switch_to_nullable_trigger_fields(*values, table);
   }
@@ -857,7 +859,6 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
 #endif
 
   error=0;
-  THD_STAGE_INFO(thd, stage_update);
   if (duplic == DUP_REPLACE &&
       (!table->triggers || !table->triggers->has_delete_triggers()))
     table->file->extra(HA_EXTRA_WRITE_CAN_REPLACE);
@@ -937,8 +938,11 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
       goto values_loop_end;
     }
   }
+
+  THD_STAGE_INFO(thd, stage_update);
   do
   {
+    DBUG_PRINT("info", ("iteration %llu", iteration));
     if (iteration && bulk_parameters_set(thd))
       goto abort;
 
@@ -976,7 +980,8 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
           No field list, all fields are set explicitly:
           INSERT INTO t1 VALUES (values)
         */
-        if (thd->lex->used_tables)		      // Column used in values()
+        if (thd->lex->used_tables || // Column used in values()
+                table->s->visible_fields != table->s->fields)
 	  restore_record(table,s->default_values);	// Get empty record
         else
         {
@@ -1059,7 +1064,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
     }
     its.rewind();
     iteration++;
-  } while (iteration < bulk_iterations);
+  } while (bulk_parameters_iterations(thd));
 
 values_loop_end:
   free_underlaid_joins(thd, &thd->lex->select_lex);
@@ -1206,7 +1211,7 @@ values_loop_end:
     retval= thd->lex->explain->send_explain(thd);
     goto abort;
   }
-  if ((bulk_iterations * values_list.elements) == 1 && (!(thd->variables.option_bits & OPTION_WARNINGS) ||
+  if ((iteration * values_list.elements) == 1 && (!(thd->variables.option_bits & OPTION_WARNINGS) ||
 				    !thd->cuted_fields))
   {
     my_ok(thd, info.copied + info.deleted +
@@ -1470,8 +1475,8 @@ bool mysql_prepare_insert(THD *thd, TABLE_LIST *table_list,
   bool res= 0;
   table_map map= 0;
   DBUG_ENTER("mysql_prepare_insert");
-  DBUG_PRINT("enter", ("table_list: 0x%lx  table: 0x%lx  view: %d",
-		       (ulong)table_list, (ulong)table,
+  DBUG_PRINT("enter", ("table_list: %p  table: %p  view: %d",
+		       table_list, table,
 		       (int)insert_into_view));
   /* INSERT should have a SELECT or VALUES clause */
   DBUG_ASSERT (!select_insert || !values);
@@ -1529,13 +1534,13 @@ bool mysql_prepare_insert(THD *thd, TABLE_LIST *table_list,
     context->resolve_in_table_list_only(table_list);
 
     res= (setup_fields(thd, Ref_ptr_array(),
-                       *values, MARK_COLUMNS_READ, 0, 0) ||
+                       *values, MARK_COLUMNS_READ, 0, NULL, 0) ||
           check_insert_fields(thd, context->table_list, fields, *values,
                               !insert_into_view, 0, &map));
 
     if (!res)
       res= setup_fields(thd, Ref_ptr_array(),
-                        update_values, MARK_COLUMNS_READ, 0, 0);
+                        update_values, MARK_COLUMNS_READ, 0, NULL, 0);
 
     if (!res && duplic == DUP_UPDATE)
     {
@@ -2419,8 +2424,7 @@ TABLE *Delayed_insert::get_local_table(THD* client_thd)
         The thread could be killed with an error message if
         di->handle_inserts() or di->open_and_lock_table() fails.
         The thread could be killed without an error message if
-        killed using mysql_notify_thread_having_shared_lock() or
-        kill_delayed_threads_for_table().
+        killed using kill_delayed_threads_for_table().
       */
       if (!thd.is_error())
         my_message(ER_QUERY_INTERRUPTED, ER_THD(&thd, ER_QUERY_INTERRUPTED),
@@ -2698,9 +2702,9 @@ void kill_delayed_threads(void)
   Delayed_insert *di;
   while ((di= it++))
   {
-    mysql_mutex_lock(&di->thd.LOCK_thd_data);
+    mysql_mutex_lock(&di->thd.LOCK_thd_kill);
     if (di->thd.killed < KILL_CONNECTION)
-      di->thd.killed= KILL_CONNECTION;
+      di->thd.set_killed_no_mutex(KILL_CONNECTION);
     if (di->thd.mysys_var)
     {
       mysql_mutex_lock(&di->thd.mysys_var->mutex);
@@ -2718,7 +2722,7 @@ void kill_delayed_threads(void)
       }
       mysql_mutex_unlock(&di->thd.mysys_var->mutex);
     }
-    mysql_mutex_unlock(&di->thd.LOCK_thd_data);
+    mysql_mutex_unlock(&di->thd.LOCK_thd_kill);
   }
   mysql_mutex_unlock(&LOCK_delayed_insert); // For unlink from list
   DBUG_VOID_RETURN;
@@ -2844,7 +2848,7 @@ pthread_handler_t handle_delayed_insert(void *arg)
   thd->set_current_time();
   add_to_active_threads(thd);
   if (abort_loop)
-    thd->killed= KILL_CONNECTION;
+    thd->set_killed(KILL_CONNECTION);
   else
     thd->reset_killed();
 
@@ -2990,7 +2994,7 @@ pthread_handler_t handle_delayed_insert(void *arg)
           }
 #endif
           if (error == ETIMEDOUT || error == ETIME)
-            thd->killed= KILL_CONNECTION;
+            thd->set_killed(KILL_CONNECTION);
         }
         /* We can't lock di->mutex and mysys_var->mutex at the same time */
         mysql_mutex_unlock(&di->mutex);
@@ -3019,7 +3023,7 @@ pthread_handler_t handle_delayed_insert(void *arg)
         if (! (thd->lock= mysql_lock_tables(thd, &di->table, 1, 0)))
         {
           /* Fatal error */
-          thd->killed= KILL_CONNECTION;
+          thd->set_killed(KILL_CONNECTION);
         }
         mysql_cond_broadcast(&di->cond_client);
       }
@@ -3028,7 +3032,7 @@ pthread_handler_t handle_delayed_insert(void *arg)
         if (di->handle_inserts())
         {
           /* Some fatal error */
-          thd->killed= KILL_CONNECTION;
+          thd->set_killed(KILL_CONNECTION);
         }
       }
       di->status=0;
@@ -3072,9 +3076,9 @@ pthread_handler_t handle_delayed_insert(void *arg)
       this.
     */
     mysql_mutex_lock(&thd->LOCK_thd_data);
-    thd->killed= KILL_CONNECTION_HARD;	        // If error
     thd->mdl_context.set_needs_thr_lock_abort(0);
     mysql_mutex_unlock(&thd->LOCK_thd_data);
+    thd->set_killed(KILL_CONNECTION_HARD);	        // If error
 
     close_thread_tables(thd);			// Free the table
     thd->mdl_context.release_transactional_locks();
@@ -3173,7 +3177,7 @@ bool Delayed_insert::handle_inserts(void)
   max_rows= delayed_insert_limit;
   if (thd.killed || table->s->tdc->flushed)
   {
-    thd.killed= KILL_SYSTEM_THREAD;
+    thd.set_killed(KILL_SYSTEM_THREAD);
     max_rows= ULONG_MAX;                     // Do as much as possible
   }
 
@@ -3353,7 +3357,7 @@ bool Delayed_insert::handle_inserts(void)
   }
 
   if (WSREP((&thd)))
-    thd_proc_info(&thd, "insert done");
+    thd_proc_info(&thd, "Insert done");
   else
     thd_proc_info(&thd, 0);
   mysql_mutex_unlock(&mutex);
@@ -3525,7 +3529,8 @@ select_insert::prepare(List<Item> &values, SELECT_LEX_UNIT *u)
   */
   lex->current_select= &lex->select_lex;
 
-  res= (setup_fields(thd, Ref_ptr_array(), values, MARK_COLUMNS_READ, 0, 0) ||
+  res= (setup_fields(thd, Ref_ptr_array(),
+                     values, MARK_COLUMNS_READ, 0, NULL, 0) ||
         check_insert_fields(thd, table_list, *fields, values,
                             !insert_into_view, 1, &map));
 
@@ -3578,7 +3583,7 @@ select_insert::prepare(List<Item> &values, SELECT_LEX_UNIT *u)
         ctx_state.get_first_name_resolution_table();
 
     res= res || setup_fields(thd, Ref_ptr_array(), *info.update_values,
-                             MARK_COLUMNS_READ, 0, 0);
+                             MARK_COLUMNS_READ, 0, NULL, 0);
     if (!res)
     {
       /*
@@ -3750,9 +3755,6 @@ int select_insert::send_data(List<Item> &values)
       DBUG_RETURN(1);
     }
   }
-
-  // Release latches in case bulk insert takes a long time
-  ha_release_temporary_latches(thd);
 
   error= write_record(thd, table, &info);
   table->auto_increment_field_not_null= FALSE;
@@ -4422,6 +4424,15 @@ void select_create::store_values(List<Item> &values)
 bool select_create::send_eof()
 {
   DBUG_ENTER("select_create::send_eof");
+
+  /*
+    The routine that writes the statement in the binary log
+    is in select_insert::prepare_eof(). For that reason, we
+    mark the flag at this point.
+  */
+  if (table->s->tmp_table)
+    thd->transaction.stmt.mark_created_temp_table();
+
   if (prepare_eof())
   {
     abort_result_set();

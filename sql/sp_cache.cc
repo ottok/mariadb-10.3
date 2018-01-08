@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #ifdef USE_PRAGMA_IMPLEMENTATION
@@ -189,7 +189,7 @@ void sp_cache_insert(sp_cache **cp, sp_head *sp)
     NULL if the routine not found.
 */
 
-sp_head *sp_cache_lookup(sp_cache **cp, const sp_name *name)
+sp_head *sp_cache_lookup(sp_cache **cp, const Database_qualified_name *name)
 {
   char buf[NAME_LEN * 2 + 2];
   sp_cache *c= *cp;

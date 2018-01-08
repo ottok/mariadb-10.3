@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, MariaDB Corporation. All Rights reserved.
+Copyright (c) 2011, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2016, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -28,6 +28,7 @@ Full Text Search interface
 #include "row0mysql.h"
 #include "row0upd.h"
 #include "dict0types.h"
+#include "dict0stats_bg.h"
 #include "row0sel.h"
 #include "fts0fts.h"
 #include "fts0priv.h"
@@ -93,6 +94,7 @@ static const ulint FTS_DEADLOCK_RETRY_WAIT = 100000;
 /** variable to record innodb_fts_internal_tbl_name for information
 schema table INNODB_FTS_INSERTED etc. */
 char* fts_internal_tbl_name		= NULL;
+char* fts_internal_tbl_name2		= NULL;
 
 /** InnoDB default stopword list:
 There are different versions of stopwords, the stop words listed
@@ -859,18 +861,37 @@ fts_drop_index(
 
 			err = fts_drop_index_tables(trx, index);
 
-			fts_free(table);
-
+			for(;;) {
+				bool retry = false;
+				if (index->index_fts_syncing) {
+					retry = true;
+				}
+				if (!retry){
+					fts_free(table);
+					break;
+				}
+				DICT_BG_YIELD(trx);
+			}
 			return(err);
 		}
 
-		current_doc_id = table->fts->cache->next_doc_id;
-		first_doc_id = table->fts->cache->first_doc_id;
-		fts_cache_clear(table->fts->cache);
-		fts_cache_destroy(table->fts->cache);
-		table->fts->cache = fts_cache_create(table);
-		table->fts->cache->next_doc_id = current_doc_id;
-		table->fts->cache->first_doc_id = first_doc_id;
+		for(;;) {
+			bool retry = false;
+			if (index->index_fts_syncing) {
+				retry = true;
+			}
+			if (!retry){
+				current_doc_id = table->fts->cache->next_doc_id;
+				first_doc_id = table->fts->cache->first_doc_id;
+				fts_cache_clear(table->fts->cache);
+				fts_cache_destroy(table->fts->cache);
+				table->fts->cache = fts_cache_create(table);
+				table->fts->cache->next_doc_id = current_doc_id;
+				table->fts->cache->first_doc_id = first_doc_id;
+				break;
+			}
+			DICT_BG_YIELD(trx);
+		}
 	} else {
 		fts_cache_t*            cache = table->fts->cache;
 		fts_index_cache_t*      index_cache;
@@ -880,9 +901,17 @@ fts_drop_index(
 		index_cache = fts_find_index_cache(cache, index);
 
 		if (index_cache != NULL) {
-			if (index_cache->words) {
-				fts_words_free(index_cache->words);
-				rbt_free(index_cache->words);
+			for(;;) {
+				bool retry = false;
+				if (index->index_fts_syncing) {
+					retry = true;
+				}
+				if (!retry && index_cache->words) {
+					fts_words_free(index_cache->words);
+					rbt_free(index_cache->words);
+					break;
+				}
+				DICT_BG_YIELD(trx);
 			}
 
 			ib_vector_remove(cache->indexes, *(void**) index_cache);
@@ -1199,7 +1228,6 @@ fts_tokenizer_word_get(
 	/* If it is a stopword, do not index it */
 	if (!fts_check_token(text,
 		    cache->stopword_info.cached_stopword,
-		    index_cache->index->is_ngram,
 		    index_cache->charset)) {
 
 		return(NULL);
@@ -1715,21 +1743,6 @@ fts_drop_tables(
 	return(error);
 }
 
-/** Extract only the required flags from table->flags2 for FTS Aux
-tables.
-@param[in]	in_flags2	Table flags2
-@return extracted flags2 for FTS aux tables */
-static inline
-ulint
-fts_get_table_flags2_for_aux_tables(
-	ulint	flags2)
-{
-	/* Extract the file_per_table flag & temporary file flag
-	from the main FTS table flags2 */
-	return((flags2 & DICT_TF2_USE_FILE_PER_TABLE) |
-	       (flags2 & DICT_TF2_TEMPORARY));
-}
-
 /** Create dict_table_t object for FTS Aux tables.
 @param[in]	aux_table_name	FTS Aux table name
 @param[in]	table		table object of FTS Index
@@ -1744,7 +1757,9 @@ fts_create_in_mem_aux_table(
 {
 	dict_table_t*	new_table = dict_mem_table_create(
 		aux_table_name, table->space, n_cols, 0, table->flags,
-		fts_get_table_flags2_for_aux_tables(table->flags2));
+		table->space == TRX_SYS_SPACE
+		? 0 : table->space == SRV_TMP_SPACE_ID
+		? DICT_TF2_TEMPORARY : DICT_TF2_USE_FILE_PER_TABLE);
 
 	if (DICT_TF_HAS_DATA_DIR(table->flags)) {
 		ut_ad(table->data_dir_path != NULL);
@@ -1760,7 +1775,7 @@ fts_create_in_mem_aux_table(
 @param[in]	table		Table that has FTS Index
 @param[in]	fts_table_name	FTS AUX table name
 @param[in]	fts_suffix	FTS AUX table suffix
-@param[in]	heap		heap
+@param[in,out]	heap		temporary memory heap
 @return table object if created, else NULL */
 static
 dict_table_t*
@@ -1797,7 +1812,8 @@ fts_create_one_common_table(
 			FTS_CONFIG_TABLE_VALUE_COL_LEN);
 	}
 
-	error = row_create_table_for_mysql(new_table, trx, false,
+	dict_table_add_system_columns(new_table, heap);
+	error = row_create_table_for_mysql(new_table, trx,
 		FIL_ENCRYPTION_DEFAULT, FIL_DEFAULT_ENCRYPTION_KEY);
 
 	if (error == DB_SUCCESS) {
@@ -1891,12 +1907,14 @@ fts_create_common_tables(
 		dict_table_t*	common_table = fts_create_one_common_table(
 			trx, table, full_name[i], fts_table.suffix, heap);
 
-		 if (common_table == NULL) {
+		if (common_table == NULL) {
 			error = DB_ERROR;
 			goto func_exit;
 		} else {
 			common_tables.push_back(common_table);
 		}
+
+		mem_heap_empty(heap);
 
 		DBUG_EXECUTE_IF("ib_fts_aux_table_error",
 			/* Return error after creating FTS_AUX_CONFIG table. */
@@ -1957,7 +1975,7 @@ func_exit:
 @param[in,out]	trx		transaction
 @param[in]	index		the index instance
 @param[in]	fts_table	fts_table structure
-@param[in,out]	heap		memory heap
+@param[in,out]	heap		temporary memory heap
 @see row_merge_create_fts_sort_index()
 @return DB_SUCCESS or error code */
 static
@@ -2014,7 +2032,8 @@ fts_create_one_index_table(
 		(DATA_MTYPE_MAX << 16) | DATA_UNSIGNED | DATA_NOT_NULL,
 		FTS_INDEX_ILIST_LEN);
 
-	error = row_create_table_for_mysql(new_table, trx, false,
+	dict_table_add_system_columns(new_table, heap);
+	error = row_create_table_for_mysql(new_table, trx,
 		FIL_ENCRYPTION_DEFAULT, FIL_DEFAULT_ENCRYPTION_KEY);
 
 	if (error == DB_SUCCESS) {
@@ -2088,6 +2107,8 @@ fts_create_index_tables_low(
 		} else {
 			aux_idx_tables.push_back(new_table);
 		}
+
+		mem_heap_empty(heap);
 
 		DBUG_EXECUTE_IF("ib_fts_index_table_error",
 			/* Return error after creating FTS_INDEX_5
@@ -2542,7 +2563,7 @@ fts_get_max_cache_size(
 {
 	dberr_t		error;
 	fts_string_t	value;
-	ulint		cache_size_in_mb;
+	ulong		cache_size_in_mb;
 
 	/* Set to the default value. */
 	cache_size_in_mb = FTS_CACHE_SIZE_LOWER_LIMIT_IN_MB;
@@ -2642,8 +2663,9 @@ fts_get_next_doc_id(
 		return(DB_SUCCESS);
 	}
 
+	DEBUG_SYNC_C("get_next_FTS_DOC_ID");
 	mutex_enter(&cache->doc_id_lock);
-	*doc_id = ++cache->next_doc_id;
+	*doc_id = cache->next_doc_id++;
 	mutex_exit(&cache->doc_id_lock);
 
 	return(DB_SUCCESS);
@@ -2811,7 +2833,7 @@ fts_update_sync_doc_id(
 
 	info = pars_info_create();
 
-	id_len = ut_snprintf(
+	id_len = snprintf(
 		(char*) id, sizeof(id), FTS_DOC_ID_FORMAT, doc_id + 1);
 
 	pars_info_bind_varchar_literal(info, "doc_id", id, id_len);
@@ -3026,52 +3048,6 @@ fts_modify(
 }
 
 /*********************************************************************//**
-Create a new document id.
-@return DB_SUCCESS if all went well else error */
-dberr_t
-fts_create_doc_id(
-/*==============*/
-	dict_table_t*	table,		/*!< in: row is of this table. */
-	dtuple_t*	row,		/* in/out: add doc id value to this
-					row. This is the current row that is
-					being inserted. */
-	mem_heap_t*	heap)		/*!< in: heap */
-{
-	doc_id_t	doc_id;
-	dberr_t		error = DB_SUCCESS;
-
-	ut_a(table->fts->doc_col != ULINT_UNDEFINED);
-
-	if (!DICT_TF2_FLAG_IS_SET(table, DICT_TF2_FTS_HAS_DOC_ID)) {
-		if (table->fts->cache->first_doc_id == FTS_NULL_DOC_ID) {
-			error = fts_get_next_doc_id(table, &doc_id);
-		}
-		return(error);
-	}
-
-	error = fts_get_next_doc_id(table, &doc_id);
-
-	if (error == DB_SUCCESS) {
-		dfield_t*	dfield;
-		doc_id_t*	write_doc_id;
-
-		ut_a(doc_id > 0);
-
-		dfield = dtuple_get_nth_field(row, table->fts->doc_col);
-		write_doc_id = static_cast<doc_id_t*>(
-			mem_heap_alloc(heap, sizeof(*write_doc_id)));
-
-		ut_a(doc_id != FTS_NULL_DOC_ID);
-		ut_a(sizeof(doc_id) == dfield->type.len);
-		fts_write_doc_id((byte*) write_doc_id, doc_id);
-
-		dfield_set_data(dfield, write_doc_id, sizeof(*write_doc_id));
-	}
-
-	return(error);
-}
-
-/*********************************************************************//**
 The given transaction is about to be committed; do whatever is necessary
 from the FTS system's POV.
 @return DB_SUCCESS or error code */
@@ -3240,7 +3216,6 @@ fts_query_expansion_fetch_doc(
 		}
 
 		doc.charset = doc_charset;
-		doc.is_ngram = result_doc->is_ngram;
 
 		if (dfield_is_ext(dfield)) {
 			/* We ignore columns that are stored externally, this
@@ -3317,6 +3292,8 @@ fts_fetch_doc_from_rec(
 	parser = get_doc->index_cache->index->parser;
 
 	clust_rec = btr_pcur_get_rec(pcur);
+	ut_ad(!page_rec_is_comp(clust_rec)
+	      || rec_get_status(clust_rec) == REC_STATUS_ORDINARY);
 
 	num_field = dict_index_get_n_fields(index);
 
@@ -3346,7 +3323,6 @@ fts_fetch_doc_from_rec(
 
 		doc->found = TRUE;
 		doc->charset = get_doc->index_cache->charset;
-		doc->is_ngram = index->is_ngram;
 
 		/* Null Field */
 		if (doc->text.f_len == UNIV_SQL_NULL || doc->text.f_len == 0) {
@@ -3475,10 +3451,10 @@ fts_add_doc_by_id(
 
 		}
 
-		offsets = rec_get_offsets(clust_rec, clust_index,
-					  NULL, ULINT_UNDEFINED, &heap);
+		offsets = rec_get_offsets(clust_rec, clust_index, NULL, true,
+					  ULINT_UNDEFINED, &heap);
 
-		 for (ulint i = 0; i < num_idx; ++i) {
+		for (ulint i = 0; i < num_idx; ++i) {
 			fts_doc_t       doc;
 			dict_table_t*   table;
 			fts_get_doc_t*  get_doc;
@@ -3613,6 +3589,8 @@ fts_get_max_doc_id(
 		return(0);
 	}
 
+	ut_ad(!index->is_instant());
+
 	dfield = dict_index_get_nth_field(index, 0);
 
 #if 0 /* This can fail when renaming a column to FTS_DOC_ID_COL_NAME. */
@@ -3647,8 +3625,9 @@ fts_get_max_doc_id(
 			goto func_exit;
 		}
 
+		ut_ad(!rec_is_default_row(rec, index));
 		offsets = rec_get_offsets(
-			rec, index, offsets, ULINT_UNDEFINED, &heap);
+			rec, index, offsets, true, ULINT_UNDEFINED, &heap);
 
 		data = rec_get_nth_field(rec, offsets, 0, &len);
 
@@ -4295,6 +4274,16 @@ begin_sync:
 		index_cache = static_cast<fts_index_cache_t*>(
 			ib_vector_get(cache->indexes, i));
 
+		if (index_cache->index->to_be_dropped
+		   || index_cache->index->table->to_be_dropped) {
+			continue;
+		}
+
+		index_cache->index->index_fts_syncing = true;
+		DBUG_EXECUTE_IF("fts_instrument_sync_sleep_drop_waits",
+				os_thread_sleep(10000000);
+				);
+
 		error = fts_sync_index(sync, index_cache);
 
 		if (error != DB_SUCCESS && !sync->interrupted) {
@@ -4332,6 +4321,15 @@ end_sync:
 	}
 
 	rw_lock_x_lock(&cache->lock);
+	/* Clear fts syncing flags of any indexes incase sync is
+	interrupeted */
+	for (i = 0; i < ib_vector_size(cache->indexes); ++i) {
+		fts_index_cache_t*      index_cache;
+		index_cache = static_cast<fts_index_cache_t*>(
+                      ib_vector_get(cache->indexes, i));
+		index_cache->index->index_fts_syncing = false;
+	}
+
 	sync->interrupted = false;
 	sync->in_progress = false;
 	os_event_set(sync->event);
@@ -4378,13 +4376,10 @@ fts_sync_table(
 	return(err);
 }
 
-/** Check fts token
-1. for ngram token, check whether the token contains any words in stopwords
-2. for non-ngram token, check if it's stopword or less than fts_min_token_size
+/** Check if a fts token is a stopword or less than fts_min_token_size
 or greater than fts_max_token_size.
 @param[in]	token		token string
 @param[in]	stopwords	stopwords rb tree
-@param[in]	is_ngram	is ngram parser
 @param[in]	cs		token charset
 @retval	true	if it is not stopword and length in range
 @retval	false	if it is stopword or lenght not in range */
@@ -4392,96 +4387,16 @@ bool
 fts_check_token(
 	const fts_string_t*		token,
 	const ib_rbt_t*			stopwords,
-	bool				is_ngram,
 	const CHARSET_INFO*		cs)
 {
 	ut_ad(cs != NULL || stopwords == NULL);
 
-	if (!is_ngram) {
-		ib_rbt_bound_t  parent;
+	ib_rbt_bound_t  parent;
 
-		if (token->f_n_char < fts_min_token_size
-		    || token->f_n_char > fts_max_token_size
-		    || (stopwords != NULL
-			&& rbt_search(stopwords, &parent, token) == 0)) {
-			return(false);
-		} else {
-			return(true);
-		}
-	}
-
-	/* Check token for ngram. */
-	DBUG_EXECUTE_IF(
-		"fts_instrument_ignore_ngram_check",
-		return(true);
-	);
-
-	/* We ignore fts_min_token_size when ngram */
-	ut_ad(token->f_n_char > 0
-	      && token->f_n_char <= fts_max_token_size);
-
-	if (stopwords == NULL) {
-		return(true);
-	}
-
-	/*Ngram checks whether the token contains any words in stopwords.
-	We can't simply use CONTAIN to search in stopwords, because it's
-	built on COMPARE. So we need to tokenize the token into words
-	from unigram to f_n_char, and check them separately. */
-	for (ulint ngram_token_size = 1; ngram_token_size <= token->f_n_char;
-	     ngram_token_size ++) {
-		const char*	start;
-		const char*	next;
-		const char*	end;
-		ulint		char_len;
-		ulint		n_chars;
-
-		start = reinterpret_cast<char*>(token->f_str);
-		next = start;
-		end = start + token->f_len;
-		n_chars = 0;
-
-		while (next < end) {
-			char_len = my_charlen(cs, next, end);
-
-			if (next + char_len > end || char_len == 0) {
-				break;
-			} else {
-				/* Skip SPACE */
-				if (char_len == 1 && *next == ' ') {
-					start = next + 1;
-					next = start;
-					n_chars = 0;
-
-					continue;
-				}
-
-				next += char_len;
-				n_chars++;
-			}
-
-			if (n_chars == ngram_token_size) {
-				fts_string_t	ngram_token;
-				ngram_token.f_str =
-					reinterpret_cast<byte*>(
-					const_cast<char*>(start));
-				ngram_token.f_len = next - start;
-				ngram_token.f_n_char = ngram_token_size;
-
-				ib_rbt_bound_t  parent;
-				if (rbt_search(stopwords, &parent,
-					       &ngram_token) == 0) {
-					return(false);
-				}
-
-				/* Move a char forward */
-				start += my_charlen(cs, start, end);
-				n_chars = ngram_token_size - 1;
-			}
-		}
-	}
-
-	return(true);
+	return(token->f_n_char >= fts_min_token_size
+	       && token->f_n_char <= fts_max_token_size
+	       && (stopwords == NULL
+		   || rbt_search(stopwords, &parent, token) != 0));
 }
 
 /** Add the token and its start position to the token's list of positions.
@@ -4498,8 +4413,7 @@ fts_add_token(
 	/* Ignore string whose character number is less than
 	"fts_min_token_size" or more than "fts_max_token_size" */
 
-	if (fts_check_token(&str, NULL, result_doc->is_ngram,
-			    result_doc->charset)) {
+	if (fts_check_token(&str, NULL, result_doc->charset)) {
 
 		mem_heap_t*	heap;
 		fts_string_t	t_str;
@@ -5219,7 +5133,7 @@ fts_get_doc_id_from_rec(
 	rec_offs_init(offsets_);
 
 	offsets = rec_get_offsets(
-		rec, index, offsets, ULINT_UNDEFINED, &my_heap);
+		rec, index, offsets, true, ULINT_UNDEFINED, &my_heap);
 
 	col_no = dict_col_get_index_pos(
 		&table->cols[table->fts->doc_col], index);
@@ -6496,6 +6410,36 @@ fts_check_corrupt_index(
 	return(0);
 }
 
+/* Get parent table name if it's a fts aux table
+@param[in]	aux_table_name	aux table name
+@param[in]	aux_table_len	aux table length
+@return parent table name, or NULL */
+char*
+fts_get_parent_table_name(
+	const char*	aux_table_name,
+	ulint		aux_table_len)
+{
+	fts_aux_table_t	aux_table;
+	char*		parent_table_name = NULL;
+
+	if (fts_is_aux_table_name(&aux_table, aux_table_name, aux_table_len)) {
+		dict_table_t*	parent_table;
+
+		parent_table = dict_table_open_on_id(
+			aux_table.parent_id, TRUE, DICT_TABLE_OP_NORMAL);
+
+		if (parent_table != NULL) {
+			parent_table_name = mem_strdupl(
+				parent_table->name.m_name,
+				strlen(parent_table->name.m_name));
+
+			dict_table_close(parent_table, TRUE, FALSE);
+		}
+	}
+
+	return(parent_table_name);
+}
+
 /** Check the validity of the parent table.
 @param[in]	aux_table	auxiliary table
 @return true if it is a valid table or false if it is not */
@@ -7058,15 +7002,6 @@ fts_drop_orphaned_tables(void)
 	que_t*			graph;
 	ib_vector_t*		tables;
 	ib_alloc_t*		heap_alloc;
-	space_name_list_t	space_name_list;
-	dberr_t			error = DB_SUCCESS;
-
-	/* Note: We have to free the memory after we are done with the list. */
-	error = fil_get_space_names(space_name_list);
-
-	if (error == DB_OUT_OF_MEMORY) {
-		ib::fatal() << "Out of memory";
-	}
 
 	heap = mem_heap_create(1024);
 	heap_alloc = ib_heap_allocator_create(heap);
@@ -7079,34 +7014,31 @@ fts_drop_orphaned_tables(void)
 	users can't map them back to table names and this will create
 	unnecessary clutter. */
 
-	for (space_name_list_t::iterator it = space_name_list.begin();
-	     it != space_name_list.end();
-	     ++it) {
+	mutex_enter(&fil_system->mutex);
 
-		fts_aux_table_t*	fts_aux_table;
+	for (fil_space_t* space = UT_LIST_GET_FIRST(fil_system->space_list);
+	     space != NULL;
+	     space = UT_LIST_GET_NEXT(space_list, space)) {
 
-		fts_aux_table = static_cast<fts_aux_table_t*>(
-			ib_vector_push(tables, NULL));
-
-		memset(fts_aux_table, 0x0, sizeof(*fts_aux_table));
-
-		if (!fts_is_aux_table_name(fts_aux_table, *it, strlen(*it))) {
-			ib_vector_pop(tables);
-		} else {
-			ulint	len = strlen(*it);
-
-			fts_aux_table->id = fil_space_get_id_by_name(*it);
-
-			/* We got this list from fil0fil.cc. The tablespace
-			with this name must exist. */
-			ut_a(fts_aux_table->id != ULINT_UNDEFINED);
-
-			fts_aux_table->name = static_cast<char*>(
-				mem_heap_dup(heap, *it, len + 1));
-
-			fts_aux_table->name[len] = 0;
+		if (space->purpose != FIL_TYPE_TABLESPACE) {
+			continue;
 		}
+
+		fts_aux_table_t	fts_aux_table;
+		memset(&fts_aux_table, 0x0, sizeof fts_aux_table);
+
+		size_t len = strlen(space->name);
+
+		if (!fts_is_aux_table_name(&fts_aux_table, space->name, len)) {
+			continue;
+		}
+
+		fts_aux_table.id = space->id;
+		fts_aux_table.name = mem_heap_strdupl(heap, space->name, len);
+		ib_vector_push(tables, &fts_aux_table);
 	}
+
+	mutex_exit(&fil_system->mutex);
 
 	trx = trx_allocate_for_background();
 	trx->op_info = "dropping orphaned FTS tables";
@@ -7135,7 +7067,7 @@ fts_drop_orphaned_tables(void)
 		"CLOSE c;");
 
 	for (;;) {
-		error = fts_eval_sql(trx, graph);
+		dberr_t error = fts_eval_sql(trx, graph);
 
 		if (error == DB_SUCCESS) {
 			fts_check_and_drop_orphaned_tables(trx, tables);
@@ -7167,14 +7099,6 @@ fts_drop_orphaned_tables(void)
 
 	if (heap != NULL) {
 		mem_heap_free(heap);
-	}
-
-	/** Free the memory allocated to store the .ibd names. */
-	for (space_name_list_t::iterator it = space_name_list.begin();
-	     it != space_name_list.end();
-	     ++it) {
-
-		UT_DELETE_ARRAY(*it);
 	}
 }
 
@@ -7456,7 +7380,6 @@ fts_init_recover_doc(
 		}
 
 		doc.charset = get_doc->index_cache->charset;
-		doc.is_ngram = get_doc->index_cache->index->is_ngram;
 
 		if (dfield_is_ext(dfield)) {
 			dict_table_t*	table = cache->sync->table;

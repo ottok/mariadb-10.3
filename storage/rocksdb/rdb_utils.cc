@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
-#include <my_config.h>
+#include <my_global.h>
 
 /* This C++ file's header */
 #include "./rdb_utils.h"
@@ -23,7 +23,7 @@
 #include <array>
 #include <string>
 #include <vector>
-#include <sstream> //psergey-merge
+#include <sstream>
 
 /* C standard header files */
 #include <ctype.h>
@@ -303,6 +303,18 @@ bool rdb_database_exists(const std::string &db_name) {
   return true;
 }
 
+void rdb_log_status_error(const rocksdb::Status &s, const char *msg) {
+  if (msg == nullptr) {
+    // NO_LINT_DEBUG
+    sql_print_error("RocksDB: status error, code: %d, error message: %s",
+                    s.code(), s.ToString().c_str());
+    return;
+  }
+
+  // NO_LINT_DEBUG
+  sql_print_error("RocksDB: %s, Status Code: %d, Status: %s", msg, s.code(),
+                  s.ToString().c_str());
+}
 
 /*
   @brief

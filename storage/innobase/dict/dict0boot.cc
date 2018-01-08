@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2016, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -79,7 +79,9 @@ dict_hdr_get_new_id(
 
 	mtr_start(&mtr);
 	if (table) {
-		dict_disable_redo_if_temporary(table, &mtr);
+		if (table->is_temporary()) {
+			mtr.set_log_mode(MTR_LOG_NO_REDO);
+		}
 	} else if (disable_redo) {
 		/* In non-read-only mode we need to ensure that space-id header
 		page is written to disk else if page is removed from buffer
@@ -87,8 +89,8 @@ dict_hdr_get_new_id(
 		to another tablespace.
 		This is not a case with read-only mode as there is no new object
 		that is created except temporary tablespace. */
-		mtr_set_log_mode(&mtr,
-			(srv_read_only_mode ? MTR_LOG_NONE : MTR_LOG_NO_REDO));
+		mtr.set_log_mode(srv_read_only_mode
+				 ? MTR_LOG_NONE : MTR_LOG_NO_REDO);
 	}
 
 	/* Server started and let's say space-id = x
@@ -337,20 +339,20 @@ dict_boot(void)
 	dict_mem_table_add_col(table, heap, "ID", DATA_BINARY, 0, 8);
 	/* ROW_FORMAT = (N_COLS >> 31) ? COMPACT : REDUNDANT */
 	dict_mem_table_add_col(table, heap, "N_COLS", DATA_INT, 0, 4);
-	/* The low order bit of TYPE is always set to 1.  If the format
-	is UNIV_FORMAT_B or higher, this field matches table->flags. */
+	/* The low order bit of TYPE is always set to 1.  If ROW_FORMAT
+	is not REDUNDANT or COMPACT, this field matches table->flags. */
 	dict_mem_table_add_col(table, heap, "TYPE", DATA_INT, 0, 4);
 	dict_mem_table_add_col(table, heap, "MIX_ID", DATA_BINARY, 0, 0);
 	/* MIX_LEN may contain additional table flags when
-	ROW_FORMAT!=REDUNDANT.  Currently, these flags include
-	DICT_TF2_TEMPORARY. */
+	ROW_FORMAT!=REDUNDANT. */
 	dict_mem_table_add_col(table, heap, "MIX_LEN", DATA_INT, 0, 4);
 	dict_mem_table_add_col(table, heap, "CLUSTER_NAME", DATA_BINARY, 0, 0);
 	dict_mem_table_add_col(table, heap, "SPACE", DATA_INT, 0, 4);
 
 	table->id = DICT_TABLES_ID;
 
-	dict_table_add_to_cache(table, FALSE, heap);
+	dict_table_add_system_columns(table, heap);
+	table->add_to_cache();
 	dict_sys->sys_tables = table;
 	mem_heap_empty(heap);
 
@@ -368,6 +370,9 @@ dict_boot(void)
 						       MLOG_4BYTES, &mtr),
 					FALSE);
 	ut_a(error == DB_SUCCESS);
+	ut_ad(!table->is_instant());
+	table->indexes.start->n_core_null_bytes = UT_BITS_IN_BYTES(
+		table->indexes.start->n_nullable);
 
 	/*-------------------------*/
 	index = dict_mem_index_create("SYS_TABLES", "ID_IND",
@@ -396,7 +401,8 @@ dict_boot(void)
 
 	table->id = DICT_COLUMNS_ID;
 
-	dict_table_add_to_cache(table, FALSE, heap);
+	dict_table_add_system_columns(table, heap);
+	table->add_to_cache();
 	dict_sys->sys_columns = table;
 	mem_heap_empty(heap);
 
@@ -414,6 +420,9 @@ dict_boot(void)
 						       MLOG_4BYTES, &mtr),
 					FALSE);
 	ut_a(error == DB_SUCCESS);
+	ut_ad(!table->is_instant());
+	table->indexes.start->n_core_null_bytes = UT_BITS_IN_BYTES(
+		table->indexes.start->n_nullable);
 
 	/*-------------------------*/
 	table = dict_mem_table_create("SYS_INDEXES", DICT_HDR_SPACE,
@@ -430,7 +439,15 @@ dict_boot(void)
 
 	table->id = DICT_INDEXES_ID;
 
-	dict_table_add_to_cache(table, FALSE, heap);
+	dict_table_add_system_columns(table, heap);
+	/* The column SYS_INDEXES.MERGE_THRESHOLD was "instantly"
+	added in MySQL 5.7 and MariaDB 10.2.2. Assign it DEFAULT NULL.
+	Because of file format compatibility, we must treat SYS_INDEXES
+	as a special case, relaxing some debug assertions
+	for DICT_INDEXES_ID. */
+	dict_table_get_nth_col(table, DICT_COL__SYS_INDEXES__MERGE_THRESHOLD)
+		->def_val.len = UNIV_SQL_NULL;
+	table->add_to_cache();
 	dict_sys->sys_indexes = table;
 	mem_heap_empty(heap);
 
@@ -448,6 +465,9 @@ dict_boot(void)
 						       MLOG_4BYTES, &mtr),
 					FALSE);
 	ut_a(error == DB_SUCCESS);
+	ut_ad(!table->is_instant());
+	table->indexes.start->n_core_null_bytes = UT_BITS_IN_BYTES(
+		table->indexes.start->n_nullable);
 
 	/*-------------------------*/
 	table = dict_mem_table_create("SYS_FIELDS", DICT_HDR_SPACE, 3, 0, 0, 0);
@@ -458,7 +478,8 @@ dict_boot(void)
 
 	table->id = DICT_FIELDS_ID;
 
-	dict_table_add_to_cache(table, FALSE, heap);
+	dict_table_add_system_columns(table, heap);
+	table->add_to_cache();
 	dict_sys->sys_fields = table;
 	mem_heap_free(heap);
 
@@ -476,6 +497,9 @@ dict_boot(void)
 						       MLOG_4BYTES, &mtr),
 					FALSE);
 	ut_a(error == DB_SUCCESS);
+	ut_ad(!table->is_instant());
+	table->indexes.start->n_core_null_bytes = UT_BITS_IN_BYTES(
+		table->indexes.start->n_nullable);
 
 	mtr_commit(&mtr);
 
@@ -488,7 +512,9 @@ dict_boot(void)
 	err = ibuf_init_at_db_start();
 
 	if (err == DB_SUCCESS) {
-		if (srv_read_only_mode && !ibuf_is_empty()) {
+		if (srv_read_only_mode
+		    && srv_force_recovery != SRV_FORCE_NO_LOG_REDO
+		    && !ibuf_is_empty()) {
 
 			if (srv_force_recovery < SRV_FORCE_NO_IBUF_MERGE) {
 				ib::error() << "Change buffer must be empty when"

@@ -1,7 +1,7 @@
 // Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-// This source code is licensed under the BSD-style license found in the
-// LICENSE file in the root directory of this source tree. An additional grant
-// of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 
 package org.rocksdb;
 
@@ -1338,6 +1338,104 @@ public class RocksDB extends RocksObject {
   }
 
   /**
+   * Removes the database entries in the range ["beginKey", "endKey"), i.e.,
+   * including "beginKey" and excluding "endKey". a non-OK status on error. It
+   * is not an error if no keys exist in the range ["beginKey", "endKey").
+   *
+   * Delete the database entry (if any) for "key". Returns OK on success, and a
+   * non-OK status on error. It is not an error if "key" did not exist in the
+   * database.
+   *
+   * @param beginKey
+   *          First key to delete within database (included)
+   * @param endKey
+   *          Last key to delete within database (excluded)
+   *
+   * @throws RocksDBException
+   *           thrown if error happens in underlying native library.
+   */
+  public void deleteRange(final byte[] beginKey, final byte[] endKey) throws RocksDBException {
+    deleteRange(nativeHandle_, beginKey, 0, beginKey.length, endKey, 0, endKey.length);
+  }
+
+  /**
+   * Removes the database entries in the range ["beginKey", "endKey"), i.e.,
+   * including "beginKey" and excluding "endKey". a non-OK status on error. It
+   * is not an error if no keys exist in the range ["beginKey", "endKey").
+   *
+   * Delete the database entry (if any) for "key". Returns OK on success, and a
+   * non-OK status on error. It is not an error if "key" did not exist in the
+   * database.
+   *
+   * @param columnFamilyHandle
+   *          {@link org.rocksdb.ColumnFamilyHandle} instance
+   * @param beginKey
+   *          First key to delete within database (included)
+   * @param endKey
+   *          Last key to delete within database (excluded)
+   *
+   * @throws RocksDBException
+   *           thrown if error happens in underlying native library.
+   */
+  public void deleteRange(final ColumnFamilyHandle columnFamilyHandle, final byte[] beginKey,
+      final byte[] endKey) throws RocksDBException {
+    deleteRange(nativeHandle_, beginKey, 0, beginKey.length, endKey, 0, endKey.length,
+        columnFamilyHandle.nativeHandle_);
+  }
+
+  /**
+   * Removes the database entries in the range ["beginKey", "endKey"), i.e.,
+   * including "beginKey" and excluding "endKey". a non-OK status on error. It
+   * is not an error if no keys exist in the range ["beginKey", "endKey").
+   *
+   * Delete the database entry (if any) for "key". Returns OK on success, and a
+   * non-OK status on error. It is not an error if "key" did not exist in the
+   * database.
+   *
+   * @param writeOpt
+   *          WriteOptions to be used with delete operation
+   * @param beginKey
+   *          First key to delete within database (included)
+   * @param endKey
+   *          Last key to delete within database (excluded)
+   *
+   * @throws RocksDBException
+   *           thrown if error happens in underlying native library.
+   */
+  public void deleteRange(final WriteOptions writeOpt, final byte[] beginKey, final byte[] endKey)
+      throws RocksDBException {
+    deleteRange(nativeHandle_, writeOpt.nativeHandle_, beginKey, 0, beginKey.length, endKey, 0,
+        endKey.length);
+  }
+
+  /**
+   * Removes the database entries in the range ["beginKey", "endKey"), i.e.,
+   * including "beginKey" and excluding "endKey". a non-OK status on error. It
+   * is not an error if no keys exist in the range ["beginKey", "endKey").
+   *
+   * Delete the database entry (if any) for "key". Returns OK on success, and a
+   * non-OK status on error. It is not an error if "key" did not exist in the
+   * database.
+   *
+   * @param columnFamilyHandle {@link org.rocksdb.ColumnFamilyHandle}
+   *     instance
+   * @param writeOpt
+   *          WriteOptions to be used with delete operation
+   * @param beginKey
+   *          First key to delete within database (included)
+   * @param endKey
+   *          Last key to delete within database (excluded)
+   *
+   * @throws RocksDBException
+   *           thrown if error happens in underlying native library.
+   */
+  public void deleteRange(final ColumnFamilyHandle columnFamilyHandle, final WriteOptions writeOpt,
+      final byte[] beginKey, final byte[] endKey) throws RocksDBException {
+    deleteRange(nativeHandle_, writeOpt.nativeHandle_, beginKey, 0, beginKey.length, endKey, 0,
+        endKey.length, columnFamilyHandle.nativeHandle_);
+  }
+
+  /**
    * DB implementations can export properties about their state
    * via this method.  If "property" is a valid property understood by this
    * DB implementation, fills "*value" with its current value and returns
@@ -2024,100 +2122,56 @@ public class RocksDB extends RocksObject {
     return handleList;
   }
 
-  public void addFileWithFilePath(final ColumnFamilyHandle columnFamilyHandle,
-      final List<String> filePathList) throws RocksDBException {
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_,
-        filePathList.toArray(new String[filePathList.size()]), filePathList.size(), false);
-  }
-
-  public void addFileWithFilePath(final ColumnFamilyHandle columnFamilyHandle,
-      final List<String> filePathList, final boolean moveFile) throws RocksDBException {
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_,
-        filePathList.toArray(new String[filePathList.size()]), filePathList.size(), moveFile);
-  }
-
-  public void addFileWithFilePath(final List<String> filePathList) throws RocksDBException {
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_,
-        filePathList.toArray(new String[filePathList.size()]), filePathList.size(), false);
-  }
-
-  public void addFileWithFilePath(final List<String> filePathList, final boolean moveFile)
+  /**
+   * ingestExternalFile will load a list of external SST files (1) into the DB
+   * We will try to find the lowest possible level that the file can fit in, and
+   * ingest the file into this level (2). A file that have a key range that
+   * overlap with the memtable key range will require us to Flush the memtable
+   * first before ingesting the file.
+   *
+   * (1) External SST files can be created using {@link SstFileWriter}
+   * (2) We will try to ingest the files to the lowest possible level
+   * even if the file compression doesn't match the level compression
+   *
+   * @param filePathList The list of files to ingest
+   * @param ingestExternalFileOptions the options for the ingestion
+   *
+   * @throws RocksDBException thrown if error happens in underlying
+   *     native library.
+   */
+  public void ingestExternalFile(final List<String> filePathList,
+      final IngestExternalFileOptions ingestExternalFileOptions)
       throws RocksDBException {
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_,
-        filePathList.toArray(new String[filePathList.size()]), filePathList.size(), moveFile);
+    ingestExternalFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_,
+        filePathList.toArray(new String[filePathList.size()]),
+        filePathList.size(), ingestExternalFileOptions.nativeHandle_);
   }
 
-  public void addFileWithFilePath(
-      final ColumnFamilyHandle columnFamilyHandle, final String filePath) throws RocksDBException {
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_, new String[] {filePath}, 1, false);
-  }
-
-  public void addFileWithFilePath(final ColumnFamilyHandle columnFamilyHandle,
-      final String filePath, final boolean moveFile) throws RocksDBException {
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_, new String[] {filePath}, 1, moveFile);
-  }
-
-  public void addFileWithFilePath(final String filePath) throws RocksDBException {
-    addFile(
-        nativeHandle_, getDefaultColumnFamily().nativeHandle_, new String[] {filePath}, 1, false);
-  }
-
-  public void addFileWithFilePath(final String filePath, final boolean moveFile)
+  /**
+   * ingestExternalFile will load a list of external SST files (1) into the DB
+   * We will try to find the lowest possible level that the file can fit in, and
+   * ingest the file into this level (2). A file that have a key range that
+   * overlap with the memtable key range will require us to Flush the memtable
+   * first before ingesting the file.
+   *
+   * (1) External SST files can be created using {@link SstFileWriter}
+   * (2) We will try to ingest the files to the lowest possible level
+   * even if the file compression doesn't match the level compression
+   *
+   * @param columnFamilyHandle The column family for the ingested files
+   * @param filePathList The list of files to ingest
+   * @param ingestExternalFileOptions the options for the ingestion
+   *
+   * @throws RocksDBException thrown if error happens in underlying
+   *     native library.
+   */
+  public void ingestExternalFile(final ColumnFamilyHandle columnFamilyHandle,
+      final List<String> filePathList,
+      final IngestExternalFileOptions ingestExternalFileOptions)
       throws RocksDBException {
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_, new String[] {filePath}, 1,
-        moveFile);
-  }
-
-  public void addFileWithFileInfo(final ColumnFamilyHandle columnFamilyHandle,
-      final List<ExternalSstFileInfo> fileInfoList) throws RocksDBException {
-    final long[] fiHandleList = toNativeHandleList(fileInfoList);
-    addFile(
-        nativeHandle_, columnFamilyHandle.nativeHandle_, fiHandleList, fiHandleList.length, false);
-  }
-
-  public void addFileWithFileInfo(final ColumnFamilyHandle columnFamilyHandle,
-      final List<ExternalSstFileInfo> fileInfoList, final boolean moveFile)
-      throws RocksDBException {
-    final long[] fiHandleList = toNativeHandleList(fileInfoList);
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_, fiHandleList, fiHandleList.length,
-        moveFile);
-  }
-
-  public void addFileWithFileInfo(final List<ExternalSstFileInfo> fileInfoList)
-      throws RocksDBException {
-    final long[] fiHandleList = toNativeHandleList(fileInfoList);
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_, fiHandleList,
-        fiHandleList.length, false);
-  }
-
-  public void addFileWithFileInfo(final List<ExternalSstFileInfo> fileInfoList,
-      final boolean moveFile) throws RocksDBException {
-    final long[] fiHandleList = toNativeHandleList(fileInfoList);
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_, fiHandleList,
-        fiHandleList.length, moveFile);
-  }
-
-  public void addFileWithFileInfo(final ColumnFamilyHandle columnFamilyHandle,
-      final ExternalSstFileInfo fileInfo) throws RocksDBException {
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_, new long[] {fileInfo.nativeHandle_}, 1,
-        false);
-  }
-
-  public void addFileWithFileInfo(final ColumnFamilyHandle columnFamilyHandle,
-      final ExternalSstFileInfo fileInfo, final boolean moveFile) throws RocksDBException {
-    addFile(nativeHandle_, columnFamilyHandle.nativeHandle_, new long[] {fileInfo.nativeHandle_}, 1,
-        moveFile);
-  }
-
-  public void addFileWithFileInfo(final ExternalSstFileInfo fileInfo) throws RocksDBException {
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_,
-        new long[] {fileInfo.nativeHandle_}, 1, false);
-  }
-
-  public void addFileWithFileInfo(final ExternalSstFileInfo fileInfo, final boolean moveFile)
-      throws RocksDBException {
-    addFile(nativeHandle_, getDefaultColumnFamily().nativeHandle_,
-        new long[] {fileInfo.nativeHandle_}, 1, moveFile);
+    ingestExternalFile(nativeHandle_, columnFamilyHandle.nativeHandle_,
+        filePathList.toArray(new String[filePathList.size()]),
+        filePathList.size(), ingestExternalFileOptions.nativeHandle_);
   }
 
   /**
@@ -2261,6 +2315,18 @@ public class RocksDB extends RocksObject {
   protected native void singleDelete(
       long handle, long writeOptHandle,
       byte[] key, int keyLen, long cfHandle) throws RocksDBException;
+  protected native void deleteRange(long handle, byte[] beginKey, int beginKeyOffset,
+      int beginKeyLength, byte[] endKey, int endKeyOffset, int endKeyLength)
+      throws RocksDBException;
+  protected native void deleteRange(long handle, byte[] beginKey, int beginKeyOffset,
+      int beginKeyLength, byte[] endKey, int endKeyOffset, int endKeyLength, long cfHandle)
+      throws RocksDBException;
+  protected native void deleteRange(long handle, long writeOptHandle, byte[] beginKey,
+      int beginKeyOffset, int beginKeyLength, byte[] endKey, int endKeyOffset, int endKeyLength)
+      throws RocksDBException;
+  protected native void deleteRange(long handle, long writeOptHandle, byte[] beginKey,
+      int beginKeyOffset, int beginKeyLength, byte[] endKey, int endKeyOffset, int endKeyLength,
+      long cfHandle) throws RocksDBException;
   protected native String getProperty0(long nativeHandle,
       String property, int propertyLength) throws RocksDBException;
   protected native String getProperty0(long nativeHandle, long cfHandle,
@@ -2311,9 +2377,8 @@ public class RocksDB extends RocksObject {
       throws RocksDBException;
   private native void setOptions(long handle, long cfHandle, String[] keys,
       String[] values) throws RocksDBException;
-  private native void addFile(long handle, long cfHandle, String[] filePathList,
-      int filePathListLen, boolean moveFile) throws RocksDBException;
-  private native void addFile(long handle, long cfHandle, long[] fiHandleList, int fiHandleListLen,
-      boolean moveFile) throws RocksDBException;
+  private native void ingestExternalFile(long handle, long cfHandle,
+      String[] filePathList, int filePathListLen,
+      long ingest_external_file_options_handle) throws RocksDBException;
   protected DBOptionsInterface options_;
 }

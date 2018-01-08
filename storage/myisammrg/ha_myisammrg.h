@@ -91,7 +91,7 @@ public:
             HA_ANY_INDEX_MAY_BE_UNIQUE | HA_CAN_BIT_FIELD |
             HA_HAS_RECORDS | HA_CAN_EXPORT |
             HA_NO_COPY_ON_ALTER |
-            HA_DUPLICATE_POS);
+            HA_DUPLICATE_POS | HA_CAN_MULTISTEP_MERGE);
   }
   ulong index_flags(uint inx, uint part, bool all_parts) const
   {
@@ -112,7 +112,7 @@ public:
   virtual handler *clone(const char *name, MEM_ROOT *mem_root);
   int close(void);
   int write_row(uchar * buf);
-  int update_row(const uchar * old_data, uchar * new_data);
+  int update_row(const uchar * old_data, const uchar * new_data);
   int delete_row(const uchar * buf);
   int index_read_map(uchar *buf, const uchar *key, key_part_map keypart_map,
                      enum ha_rkey_function find_flag);

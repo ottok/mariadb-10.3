@@ -388,10 +388,10 @@ Warnings:
 Note	1003	/* select#1 */ select 'joce' AS `pseudo`,(/* select#2 */ select 'test' from `test`.`t8` where 1) AS `(SELECT email FROM t8 WHERE pseudo=(SELECT pseudo FROM t8 WHERE pseudo='joce'))` from `test`.`t8` where 1
 SELECT pseudo FROM t8 WHERE pseudo=(SELECT pseudo,email FROM
 t8 WHERE pseudo='joce');
-ERROR 21000: Operand should contain 1 column(s)
+ERROR HY000: Illegal parameter data types varchar and row for operation '='
 SELECT pseudo FROM t8 WHERE pseudo=(SELECT * FROM t8 WHERE
 pseudo='joce');
-ERROR 21000: Operand should contain 1 column(s)
+ERROR HY000: Illegal parameter data types varchar and row for operation '='
 SELECT pseudo FROM t8 WHERE pseudo=(SELECT pseudo FROM t8 WHERE pseudo='joce');
 pseudo
 joce
@@ -587,8 +587,6 @@ a	b
 0	10
 1	11
 2	12
-update t1 set b= (select b from t1);
-ERROR HY000: Table 't1' is specified twice, both as a target for 'UPDATE' and as a separate source for data
 update t1 set b= (select b from t2);
 ERROR 21000: Subquery returns more than 1 row
 update t1 set b= (select b from t2 where t1.a = t2.a);
@@ -611,11 +609,12 @@ select * from t1 where b = (select b from t2 where t1.a = t2.a);
 a	b
 2	12
 delete from t1 where b in (select b from t1);
-ERROR HY000: Table 't1' is specified twice, both as a target for 'DELETE' and as a separate source for data
+affected rows: 3
+insert into t1 values (0, 10),(1, 11),(2, 12);
 delete from t1 where b = (select b from t2);
 ERROR 21000: Subquery returns more than 1 row
 delete from t1 where b = (select b from t2 where t1.a = t2.a);
-select * from t1;
+select * from t1 order by b;
 a	b
 0	10
 1	11
@@ -1166,20 +1165,20 @@ drop table t1;
 CREATE TABLE t1 (a int(1));
 EXPLAIN EXTENDED SELECT (SELECT RAND() FROM t1) FROM t1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
-1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
-2	UNCACHEABLE SUBQUERY	t1	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
+2	UNCACHEABLE SUBQUERY	t1	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select (/* select#2 */ select rand() from `test`.`t1`) AS `(SELECT RAND() FROM t1)` from `test`.`t1`
 EXPLAIN EXTENDED SELECT (SELECT ENCRYPT('test') FROM t1) FROM t1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
-1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
-2	UNCACHEABLE SUBQUERY	t1	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
+2	UNCACHEABLE SUBQUERY	t1	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select (/* select#2 */ select encrypt('test') from `test`.`t1`) AS `(SELECT ENCRYPT('test') FROM t1)` from `test`.`t1`
 EXPLAIN EXTENDED SELECT (SELECT BENCHMARK(1,1) FROM t1) FROM t1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
-1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
-2	UNCACHEABLE SUBQUERY	t1	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
+2	UNCACHEABLE SUBQUERY	t1	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select (/* select#2 */ select benchmark(1,1) from `test`.`t1`) AS `(SELECT BENCHMARK(1,1) FROM t1)` from `test`.`t1`
 drop table t1;
@@ -1264,7 +1263,7 @@ a
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` bigint(20) NOT NULL
+  `a` int(3) NOT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
 drop table t1;
 create table t1 (a int);
@@ -1649,7 +1648,7 @@ a
 explain extended select * from t3 where a >= all (select b from t2);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
-2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select `test`.`t3`.`a` AS `a` from `test`.`t3` where <not>(<in_optimizer>(`test`.`t3`.`a`,(/* select#2 */ select max(NULL) from `test`.`t2`) > <cache>(`test`.`t3`.`a`)))
 select * from t3 where a >= some (select b from t2);
@@ -1657,7 +1656,7 @@ a
 explain extended select * from t3 where a >= some (select b from t2);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
-2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select `test`.`t3`.`a` AS `a` from `test`.`t3` where <nop>(<in_optimizer>(`test`.`t3`.`a`,(/* select#2 */ select min(NULL) from `test`.`t2`) <= <cache>(`test`.`t3`.`a`)))
 select * from t3 where a >= all (select b from t2 group by 1);
@@ -1668,7 +1667,7 @@ a
 explain extended select * from t3 where a >= all (select b from t2 group by 1);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
-2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select `test`.`t3`.`a` AS `a` from `test`.`t3` where <not>(<in_optimizer>(`test`.`t3`.`a`,(/* select#2 */ select max(NULL) from `test`.`t2`) > <cache>(`test`.`t3`.`a`)))
 select * from t3 where a >= some (select b from t2 group by 1);
@@ -1676,7 +1675,7 @@ a
 explain extended select * from t3 where a >= some (select b from t2 group by 1);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
-2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	const row not found
+2	SUBQUERY	t2	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
 Warnings:
 Note	1003	/* select#1 */ select `test`.`t3`.`a` AS `a` from `test`.`t3` where <nop>(<in_optimizer>(`test`.`t3`.`a`,(/* select#2 */ select min(NULL) from `test`.`t2`) <= <cache>(`test`.`t3`.`a`)))
 select * from t3 where NULL >= any (select b from t2);
@@ -2869,13 +2868,13 @@ drop table t1, t2;
 create table t1 (a int, b int);
 insert into t1 values (1,2);
 select 1 = (select * from t1);
-ERROR 21000: Operand should contain 1 column(s)
+ERROR HY000: Illegal parameter data types int and row for operation '='
 select (select * from t1) = 1;
-ERROR 21000: Operand should contain 2 column(s)
+ERROR HY000: Illegal parameter data types row and int for operation '='
 select (1,2) = (select a from t1);
-ERROR 21000: Operand should contain 2 column(s)
+ERROR HY000: Illegal parameter data types row and int for operation '='
 select (select a from t1) = (1,2);
-ERROR 21000: Operand should contain 1 column(s)
+ERROR HY000: Illegal parameter data types int and row for operation '='
 select (1,2,3) = (select * from t1);
 ERROR 21000: Operand should contain 3 column(s)
 select (select * from t1) = (1,2,3);
@@ -3738,7 +3737,7 @@ from t1' at line 1
 explain select * from t1 where not exists
 ((select t11.i from t1 t11) union (select t12.i from t1 t12));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	const row not found
+1	PRIMARY	t1	system	NULL	NULL	NULL	NULL	0	Const row not found
 2	SUBQUERY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
 3	UNION	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
 NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	
@@ -4708,7 +4707,7 @@ pk
 SET SESSION sql_mode=@old_sql_mode;
 drop table t2, t1;
 drop view v1;
-End of 5.0 tests.
+# End of 5.0 tests.
 create table t_out (subcase char(3),
 a1 char(2), b1 char(2), c1 char(2));
 create table t_in  (a2 char(2), b2 char(2), c2 char(2));
@@ -5583,7 +5582,7 @@ insert into t2 values ('x'), ('y');
 select * from t2 where a=(select a from t1) and a='x';
 ERROR 21000: Subquery returns more than 1 row
 drop table t1,t2;
-End of 5.1 tests
+# End of 5.1 tests
 #
 # Bug #11765713 58705:
 # OPTIMIZER LET ENGINE DEPEND ON UNINITIALIZED VALUES
@@ -6121,7 +6120,7 @@ FROM t1 AS sq4_alias1
 WHERE (sq4_alias1.col_varchar_key + NULL) IS NULL OR
 sq4_alias1.col_varchar_key = @var3;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	SIMPLE	sq4_alias1	system	NULL	NULL	NULL	NULL	0	const row not found
+1	SIMPLE	sq4_alias1	system	NULL	NULL	NULL	NULL	0	Const row not found
 SELECT @var3:=12, sq4_alias1.*
 FROM t1 AS sq4_alias1
 WHERE (sq4_alias1.col_varchar_key + NULL) IS NULL OR
@@ -6135,7 +6134,7 @@ FROM t1 AS sq4_alias1
 WHERE (sq4_alias1.col_varchar_key + NULL) IS NULL OR
 sq4_alias1.col_varchar_key = @var3 ) AS alias3;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	PRIMARY	<derived2>	system	NULL	NULL	NULL	NULL	0	const row not found
+1	PRIMARY	<derived2>	system	NULL	NULL	NULL	NULL	0	Const row not found
 2	DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
 SELECT * FROM ( SELECT @var3:=12, sq4_alias1.*
 FROM t1 AS sq4_alias1
@@ -6193,7 +6192,7 @@ WHERE (c_sq1_alias1.col_int_nokey != @var2
 OR c_sq1_alias1.pk != @var3)) ) AS alias3;
 pk	col_int_nokey	col_int_key	col_time_key	col_varchar_key	col_varchar_nokey
 DROP TABLE t1,t2;
-End of 5.2 tests
+# End of 5.2 tests
 #
 # BUG#779885: Crash in eliminate_item_equal with materialization=on in
 #
@@ -6721,7 +6720,7 @@ CREATE TABLE t2 (b INT);
 EXPLAIN
 SELECT SUM(a) AS f1, a AS f2 FROM (t1, t2) HAVING f2 >= ALL (SELECT 4 UNION SELECT 5) AND f1 = 7;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
-1	PRIMARY	t2	system	NULL	NULL	NULL	NULL	0	const row not found
+1	PRIMARY	t2	system	NULL	NULL	NULL	NULL	0	Const row not found
 1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	2	
 2	SUBQUERY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
 3	UNION	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
@@ -7150,9 +7149,10 @@ INSERT INTO t1 VALUES (1),(2);
 CREATE TABLE t2 (f2 INT, KEY(f2));
 INSERT INTO t2 VALUES (3);
 CREATE ALGORITHM=MERGE VIEW v2 AS SELECT * FROM t2;
+SELECT ( SELECT MIN(t2.f2) FROM t1 ) AS sq FROM t2 GROUP BY sq;
+ERROR 42000: Can't group on 'sq'
 SELECT ( SELECT MIN(v2.f2) FROM t1 ) AS sq FROM v2 GROUP BY sq;
-sq
-3
+ERROR 42000: Can't group on 'sq'
 SELECT * FROM v2 where ( SELECT MIN(v2.f2) FROM t1 ) > 0;
 f2
 3
@@ -7160,9 +7160,10 @@ SELECT count(*) FROM v2 group by ( SELECT MIN(v2.f2) FROM t1 );
 count(*)
 1
 delete from t1;
+SELECT ( SELECT MIN(t2.f2) FROM t1 ) AS sq FROM t2 GROUP BY sq;
+ERROR 42000: Can't group on 'sq'
 SELECT ( SELECT MIN(v2.f2) FROM t1 ) AS sq FROM v2 GROUP BY sq;
-sq
-NULL
+ERROR 42000: Can't group on 'sq'
 drop view v2;
 drop table t1,t2;
 #
@@ -7176,6 +7177,44 @@ SELECT * FROM t1 WHERE f2 <= SOME ( SELECT f1 FROM t1 );
 f1	f2
 foo	bar
 DROP TABLE t1;
+#
+# MDEV-10146: Wrong result (or questionable result and behavior)
+# with aggregate function in uncorrelated SELECT subquery
+#
+CREATE TABLE t1 (f1 INT);
+CREATE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES (1),(2);
+CREATE TABLE t2 (f2 int);
+INSERT INTO t2 VALUES (3);
+SELECT ( SELECT MAX(f1) FROM t2 ) FROM t1;
+( SELECT MAX(f1) FROM t2 )
+2
+SELECT ( SELECT MAX(f1) FROM t2 ) FROM v1;
+( SELECT MAX(f1) FROM t2 )
+2
+INSERT INTO t2 VALUES (4);
+SELECT ( SELECT MAX(f1) FROM t2 ) FROM v1;
+ERROR 21000: Subquery returns more than 1 row
+SELECT ( SELECT MAX(f1) FROM t2 ) FROM t1;
+ERROR 21000: Subquery returns more than 1 row
+drop view v1;
+drop table t1,t2;
+CREATE TABLE t1 (f1 INT, KEY(f1)) ENGINE=MyISAM;
+INSERT t1 VALUES (4),(8);
+CREATE TABLE t2 (f2 INT, KEY(f2)) ENGINE=MyISAM;
+INSERT t2 VALUES (6);
+SELECT (SELECT MAX(sq.f2) FROM t1) FROM (SELECT * FROM t2) AS sq WHERE f2 = 2;
+(SELECT MAX(sq.f2) FROM t1)
+NULL
+#
+# Disable this query till MDEV-13399 is resolved
+#
+# INSERT t2 VALUES (9);
+# --error ER_SUBQUERY_NO_1_ROW
+# SELECT (SELECT MAX(sq.f2) FROM t1) FROM (SELECT * FROM t2) AS sq WHERE f2 = 2;
+#
+drop table t1, t2;
+# End of 10.0 tests
 #
 # MDEV-9487: Server crashes in Time_and_counter_tracker::incr_loops
 # with UNION in ALL subquery
@@ -7203,7 +7242,21 @@ SELECT * FROM t1, t2 WHERE f3 = f2 AND f1 > ANY ( SELECT 'foo');
 f1	f2	f3
 DROP TABLE t1, t2;
 SET NAMES default;
-End of 10.1 tests
+# End of 10.1 tests
+#
+# MDEV-12564: IN TO EXISTS transformation for rows after 
+#             conversion an outer join to inner join
+#
+CREATE TABLE t (
+pk int PRIMARY KEY, i int NOT NULL, c varchar(8), KEY(c)
+) ENGINE=MyISAM;
+INSERT INTO t VALUES (1,10,'foo'),(2,20,'bar');
+SELECT * FROM t t1 RIGHT JOIN t t2 ON (t2.pk = t1.pk)
+WHERE (t2.i, t2.pk) NOT IN ( SELECT t3.i, t3.i FROM t t3, t t4 ) AND t1.c = 'foo';
+pk	i	c	pk	i	c
+1	10	foo	1	10	foo
+DROP TABLE t;
+# End of 10.2 tests
 set optimizer_switch=default;
 select @@optimizer_switch like '%exists_to_in=off%';
 @@optimizer_switch like '%exists_to_in=off%'

@@ -29,6 +29,7 @@
 #include <mysql_com.h>                  /* USERNAME_LENGTH */
 
 struct TABLE;
+class Type_handler;
 class Field;
 class Index_statistics;
 
@@ -108,9 +109,9 @@ typedef struct st_key {
       pk2 is explicitly present in idx1, it is not in the extension, so
       ext_key_part_map.is_set(1) == false
   */
+  LEX_CSTRING name;
   key_part_map ext_key_part_map;
   uint  block_size;
-  uint  name_length;
   enum  ha_key_alg algorithm;
   /* 
     The flag is on if statistical data for the index prefixes
@@ -124,10 +125,9 @@ typedef struct st_key {
   union
   {
     plugin_ref parser;                  /* Fulltext [pre]parser */
-    LEX_STRING *parser_name;            /* Fulltext [pre]parser name */
+    LEX_CSTRING *parser_name;           /* Fulltext [pre]parser name */
   };
   KEY_PART_INFO *key_part;
-  char	*name;				/* Name of key */
   /* Unique name for cache;  db + \0 + table_name + \0 + key_name + \0 */
   uchar *cache_name;
   /*
@@ -152,7 +152,7 @@ typedef struct st_key {
     int  bdb_return_if_eq;
   } handler;
   TABLE *table;
-  LEX_STRING comment;
+  LEX_CSTRING comment;
   /** reference to the list of options or NULL */
   engine_option_value *option_list;
   ha_index_option_struct *option_struct;                  /* structure with parsed options */
@@ -203,24 +203,39 @@ extern const char *show_comp_option_name[];
 
 typedef int *(*update_var)(THD *, struct st_mysql_show_var *);
 
-typedef struct	st_lex_user {
-  LEX_STRING user, host, plugin, auth;
-  LEX_STRING pwtext, pwhash;
+
+struct AUTHID
+{
+  LEX_CSTRING user, host;
+  void init() { memset(this, 0, sizeof(*this)); }
+  void copy(MEM_ROOT *root, const LEX_CSTRING *usr, const LEX_CSTRING *host);
   bool is_role() const { return user.str[0] && !host.str[0]; }
-  void set_lex_string(LEX_STRING *l, char *buf)
+  void set_lex_string(LEX_CSTRING *l, char *buf)
   {
     if (is_role())
       *l= user;
     else
-      l->length= strxmov(l->str= buf, user.str, "@", host.str, NullS) - buf;
+    {
+      l->str= buf;
+      l->length= strxmov(buf, user.str, "@", host.str, NullS) - buf;
+    }
   }
+  void parse(const char *str, size_t length);
+  bool read_from_mysql_proc_row(THD *thd, TABLE *table);
+};
+
+
+struct LEX_USER: public AUTHID
+{
+  LEX_CSTRING plugin, auth;
+  LEX_CSTRING pwtext, pwhash;
   void reset_auth()
   {
     pwtext.length= pwhash.length= plugin.length= auth.length= 0;
     pwtext.str= pwhash.str= 0;
-    plugin.str= auth.str= const_cast<char*>("");
+    plugin.str= auth.str= "";
   }
-} LEX_USER;
+};
 
 /*
   This structure specifies the maximum amount of resources which
@@ -578,27 +593,27 @@ public:
 struct Lex_field_type_st: public Lex_length_and_dec_st
 {
 private:
-  enum_field_types m_type;
-  void set(enum_field_types type, const char *length, const char *dec)
+  const Type_handler *m_handler;
+  void set(const Type_handler *handler, const char *length, const char *dec)
   {
-    m_type= type;
+    m_handler= handler;
     Lex_length_and_dec_st::set(length, dec);
   }
 public:
-  void set(enum_field_types type, Lex_length_and_dec_st length_and_dec)
+  void set(const Type_handler *handler, Lex_length_and_dec_st length_and_dec)
   {
-    m_type= type;
+    m_handler= handler;
     Lex_length_and_dec_st::operator=(length_and_dec);
   }
-  void set(enum_field_types type, const char *length)
+  void set(const Type_handler *handler, const char *length)
   {
-    set(type, length, 0);
+    set(handler, length, 0);
   }
-  void set(enum_field_types type)
+  void set(const Type_handler *handler)
   {
-    set(type, 0, 0);
+    set(handler, 0, 0);
   }
-  enum_field_types field_type() const { return m_type; }
+  const Type_handler *type_handler() const { return m_handler; }
 };
 
 
@@ -708,7 +723,7 @@ public:
 };
 
 
-struct Lex_string_with_pos_st: public LEX_STRING
+struct Lex_string_with_pos_st: public LEX_CSTRING
 {
   const char *m_pos;
 };

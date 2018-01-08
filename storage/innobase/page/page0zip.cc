@@ -2,7 +2,7 @@
 
 Copyright (c) 2005, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2017, MariaDB Corporation.
+Copyright (c) 2014, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -66,12 +66,12 @@ page_zip_stat_t		page_zip_stat[PAGE_ZIP_SSIZE_MAX];
 /** Statistics on compression, indexed by index->id */
 page_zip_stat_per_index_t	page_zip_stat_per_index;
 
-/* Compression level to be used by zlib. Settable by user. */
-uint	page_zip_level = DEFAULT_COMPRESSION_LEVEL;
+/** Compression level to be used by zlib. Settable by user. */
+uint	page_zip_level;
 
-/* Whether or not to log compressed page images to avoid possible
+/** Whether or not to log compressed page images to avoid possible
 compression algorithm changes in zlib. */
-my_bool	page_zip_log_pages = true;
+my_bool	page_zip_log_pages;
 
 /* Please refer to ../include/page0zip.ic for a description of the
 compressed page format. */
@@ -885,7 +885,7 @@ page_zip_compress_node_ptrs(
 	do {
 		const rec_t*	rec = *recs++;
 
-		offsets = rec_get_offsets(rec, index, offsets,
+		offsets = rec_get_offsets(rec, index, offsets, false,
 					  ULINT_UNDEFINED, &heap);
 		/* Only leaf nodes may contain externally stored columns. */
 		ut_ad(!rec_offs_any_extern(offsets));
@@ -1134,7 +1134,7 @@ page_zip_compress_clust(
 	do {
 		const rec_t*	rec = *recs++;
 
-		offsets = rec_get_offsets(rec, index, offsets,
+		offsets = rec_get_offsets(rec, index, offsets, true,
 					  ULINT_UNDEFINED, &heap);
 		ut_ad(rec_offs_n_fields(offsets)
 		      == dict_index_get_n_fields(index));
@@ -1340,8 +1340,8 @@ page_zip_compress(
 	if (UNIV_UNLIKELY(page_zip_compress_log)) {
 		/* Create a log file for every compression attempt. */
 		char	logfilename[9];
-		ut_snprintf(logfilename, sizeof logfilename,
-			    "%08x", page_zip_compress_log++);
+		snprintf(logfilename, sizeof logfilename,
+			 "%08x", page_zip_compress_log++);
 		logfile = fopen(logfilename, "wb");
 
 		if (logfile) {
@@ -1775,6 +1775,10 @@ page_zip_fields_decode(
 		}
 	}
 
+	/* ROW_FORMAT=COMPRESSED does not support instant ADD COLUMN */
+	index->n_core_fields = index->n_fields;
+	index->n_core_null_bytes = UT_BITS_IN_BYTES(index->n_nullable);
+
 	ut_ad(b == end);
 
 	if (is_spatial) {
@@ -2078,6 +2082,7 @@ page_zip_apply_log(
 				sorted by address (indexed by
 				heap_no - PAGE_HEAP_NO_USER_LOW) */
 	ulint		n_dense,/*!< in: size of recs[] */
+	bool		is_leaf,/*!< in: whether this is a leaf page */
 	ulint		trx_id_col,/*!< in: column number of trx_id in the index,
 				or ULINT_UNDEFINED if none */
 	ulint		heap_status,
@@ -2153,7 +2158,7 @@ page_zip_apply_log(
 			/* Clear the data bytes of the record. */
 			mem_heap_t*	heap	= NULL;
 			ulint*		offs;
-			offs = rec_get_offsets(rec, index, offsets,
+			offs = rec_get_offsets(rec, index, offsets, is_leaf,
 					       ULINT_UNDEFINED, &heap);
 			memset(rec, 0, rec_offs_data_size(offs));
 
@@ -2163,13 +2168,11 @@ page_zip_apply_log(
 			continue;
 		}
 
-#if REC_STATUS_NODE_PTR != TRUE
-# error "REC_STATUS_NODE_PTR != TRUE"
-#endif
+		compile_time_assert(REC_STATUS_NODE_PTR == TRUE);
 		rec_get_offsets_reverse(data, index,
 					hs & REC_STATUS_NODE_PTR,
 					offsets);
-		rec_offs_make_valid(rec, index, offsets);
+		rec_offs_make_valid(rec, index, is_leaf, offsets);
 
 		/* Copy the extra bytes (backwards). */
 		{
@@ -2349,7 +2352,7 @@ page_zip_decompress_node_ptrs(
 		}
 
 		/* Read the offsets. The status bits are needed here. */
-		offsets = rec_get_offsets(rec, index, offsets,
+		offsets = rec_get_offsets(rec, index, offsets, false,
 					  ULINT_UNDEFINED, &heap);
 
 		/* Non-leaf nodes should not have any externally
@@ -2435,7 +2438,7 @@ zlib_done:
 		const byte*	mod_log_ptr;
 		mod_log_ptr = page_zip_apply_log(d_stream->next_in,
 						 d_stream->avail_in + 1,
-						 recs, n_dense,
+						 recs, n_dense, false,
 						 ULINT_UNDEFINED, heap_status,
 						 index, offsets);
 
@@ -2466,7 +2469,7 @@ zlib_done:
 	for (slot = 0; slot < n_dense; slot++) {
 		rec_t*		rec	= recs[slot];
 
-		offsets = rec_get_offsets(rec, index, offsets,
+		offsets = rec_get_offsets(rec, index, offsets, false,
 					  ULINT_UNDEFINED, &heap);
 		/* Non-leaf nodes should not have any externally
 		stored columns. */
@@ -2587,7 +2590,7 @@ zlib_done:
 		const byte*	mod_log_ptr;
 		mod_log_ptr = page_zip_apply_log(d_stream->next_in,
 						 d_stream->avail_in + 1,
-						 recs, n_dense,
+						 recs, n_dense, true,
 						 ULINT_UNDEFINED, heap_status,
 						 index, offsets);
 
@@ -2790,7 +2793,7 @@ page_zip_decompress_clust(
 		}
 
 		/* Read the offsets. The status bits are needed here. */
-		offsets = rec_get_offsets(rec, index, offsets,
+		offsets = rec_get_offsets(rec, index, offsets, true,
 					  ULINT_UNDEFINED, &heap);
 
 		/* This is a leaf page in a clustered index. */
@@ -2916,7 +2919,7 @@ zlib_done:
 		const byte*	mod_log_ptr;
 		mod_log_ptr = page_zip_apply_log(d_stream->next_in,
 						 d_stream->avail_in + 1,
-						 recs, n_dense,
+						 recs, n_dense, true,
 						 trx_id_col, heap_status,
 						 index, offsets);
 
@@ -2952,7 +2955,7 @@ zlib_done:
 		rec_t*	rec	= recs[slot];
 		ibool	exists	= !page_zip_dir_find_free(
 			page_zip, page_offset(rec));
-		offsets = rec_get_offsets(rec, index, offsets,
+		offsets = rec_get_offsets(rec, index, offsets, true,
 					  ULINT_UNDEFINED, &heap);
 
 		dst = rec_get_nth_field(rec, offsets,
@@ -3463,6 +3466,7 @@ page_zip_validate_low(
 			page + PAGE_NEW_INFIMUM, TRUE);
 		trec = page_rec_get_next_low(
 			temp_page + PAGE_NEW_INFIMUM, TRUE);
+		ut_d(const bool is_leaf = page_is_leaf(page));
 
 		do {
 			if (page_offset(rec) != page_offset(trec)) {
@@ -3477,7 +3481,7 @@ page_zip_validate_low(
 			if (index) {
 				/* Compare the data. */
 				offsets = rec_get_offsets(
-					rec, index, offsets,
+					rec, index, offsets, is_leaf,
 					ULINT_UNDEFINED, &heap);
 
 				if (memcmp(rec - rec_offs_extra_size(offsets),
@@ -3711,6 +3715,10 @@ page_zip_write_rec(
 	ut_a(slot);
 	/* Copy the delete mark. */
 	if (rec_get_deleted_flag(rec, TRUE)) {
+		/* In delete-marked records, DB_TRX_ID must
+		always refer to an existing undo log record. */
+		ut_ad(!dict_index_is_clust(index)
+		      || row_get_rec_trx_id(rec, index, offsets));
 		*slot |= PAGE_ZIP_DIR_SLOT_DEL >> 8;
 	} else {
 		*slot &= ~(PAGE_ZIP_DIR_SLOT_DEL >> 8);
@@ -4136,17 +4144,23 @@ page_zip_write_node_ptr(
 	}
 }
 
-/**********************************************************************//**
-Write the trx_id and roll_ptr of a record on a B-tree leaf node page. */
+/** Write the DB_TRX_ID,DB_ROLL_PTR into a clustered index leaf page record.
+@param[in,out]	page_zip	compressed page
+@param[in,out]	rec		record
+@param[in]	offsets		rec_get_offsets(rec, index)
+@param[in]	trx_id_field	field number of DB_TRX_ID (number of PK fields)
+@param[in]	trx_id		DB_TRX_ID value (transaction identifier)
+@param[in]	roll_ptr	DB_ROLL_PTR value (undo log pointer)
+@param[in,out]	mtr		mini-transaction, or NULL to skip logging */
 void
 page_zip_write_trx_id_and_roll_ptr(
-/*===============================*/
-	page_zip_des_t*	page_zip,/*!< in/out: compressed page */
-	byte*		rec,	/*!< in/out: record */
-	const ulint*	offsets,/*!< in: rec_get_offsets(rec, index) */
-	ulint		trx_id_col,/*!< in: column number of TRX_ID in rec */
-	trx_id_t	trx_id,	/*!< in: transaction identifier */
-	roll_ptr_t	roll_ptr)/*!< in: roll_ptr */
+	page_zip_des_t*	page_zip,
+	byte*		rec,
+	const ulint*	offsets,
+	ulint		trx_id_col,
+	trx_id_t	trx_id,
+	roll_ptr_t	roll_ptr,
+	mtr_t*		mtr)
 {
 	byte*	field;
 	byte*	storage;
@@ -4198,6 +4212,83 @@ page_zip_write_trx_id_and_roll_ptr(
 	UNIV_MEM_ASSERT_RW(rec - rec_offs_extra_size(offsets),
 			   rec_offs_extra_size(offsets));
 	UNIV_MEM_ASSERT_RW(page_zip->data, page_zip_get_size(page_zip));
+
+	if (mtr) {
+		byte*	log_ptr	= mlog_open(
+			mtr, 11 + 2 + 2 + DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN);
+		if (UNIV_UNLIKELY(!log_ptr)) {
+			return;
+		}
+
+		log_ptr = mlog_write_initial_log_record_fast(
+			(byte*) field, MLOG_ZIP_WRITE_TRX_ID, log_ptr, mtr);
+		mach_write_to_2(log_ptr, page_offset(field));
+		log_ptr += 2;
+		mach_write_to_2(log_ptr, storage - page_zip->data);
+		log_ptr += 2;
+		memcpy(log_ptr, field, DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN);
+		log_ptr += DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN;
+		mlog_close(mtr, log_ptr);
+	}
+}
+
+/** Parse a MLOG_ZIP_WRITE_TRX_ID record.
+@param[in]	ptr		redo log buffer
+@param[in]	end_ptr		end of redo log buffer
+@param[in,out]	page		uncompressed page
+@param[in,out]	page_zip	compressed page
+@return end of log record
+@retval	NULL	if the log record is incomplete */
+byte*
+page_zip_parse_write_trx_id(
+	byte*		ptr,
+	byte*		end_ptr,
+	page_t*		page,
+	page_zip_des_t*	page_zip)
+{
+	byte* const end = 2 + 2 + DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN + ptr;
+
+	if (UNIV_UNLIKELY(end_ptr < end)) {
+		return(NULL);
+	}
+
+	uint offset = mach_read_from_2(ptr);
+	uint z_offset = mach_read_from_2(ptr + 2);
+
+	if (offset < PAGE_ZIP_START
+	    || offset >= UNIV_PAGE_SIZE
+	    || z_offset >= UNIV_PAGE_SIZE) {
+corrupt:
+		recv_sys->found_corrupt_log = TRUE;
+
+		return(NULL);
+	}
+
+	if (page) {
+		if (!page_zip || !page_is_leaf(page)) {
+			goto corrupt;
+		}
+
+#ifdef UNIV_ZIP_DEBUG
+		ut_a(page_zip_validate(page_zip, page, NULL));
+#endif /* UNIV_ZIP_DEBUG */
+
+		byte* field = page + offset;
+		byte* storage = page_zip->data + z_offset;
+
+		if (storage >= page_zip_dir_start(page_zip)) {
+			goto corrupt;
+		}
+
+		memcpy(field, ptr + 4, DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN);
+		memcpy(storage, ptr + 4, DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN);
+
+#ifdef UNIV_ZIP_DEBUG
+		ut_a(page_zip_validate(page_zip, page, NULL));
+#endif /* UNIV_ZIP_DEBUG */
+	}
+
+	return end;
 }
 
 /**********************************************************************//**
@@ -4634,6 +4725,7 @@ page_zip_write_header_log(
 #if PAGE_DATA > 255
 # error "PAGE_DATA > 255"
 #endif
+	ut_ad(length > 0);
 	ut_ad(length < 256);
 
 	/* If no logging is requested, we may return now */
@@ -4973,38 +5065,21 @@ ibool
 page_zip_verify_checksum(
 /*=====================*/
 	const void*	data,		/*!< in: compressed page */
-	ulint		size		/*!< in: size of compressed page */
-#ifdef UNIV_INNOCHECKSUM
-	/* these variables are used only for innochecksum tool. */
-	,uintmax_t	page_no,	/*!< in: page number of
-					given read_buf */
-	bool		strict_check,	/*!< in: true if strict-check
-					option is enable */
-	bool		is_log_enabled,	/*!< in: true if log option is
-					enabled */
-	FILE*		log_file	/*!< in: file pointer to
-					log_file */
-#endif /* UNIV_INNOCHECKSUM */
-)
+	ulint		size)		/*!< in: size of compressed page */
 {
-	const unsigned char*	p = static_cast<const unsigned char*>(data)
-		+ FIL_PAGE_SPACE_OR_CHKSUM;
+	ib_uint32_t	stored;
+	ib_uint32_t	calc;
 
-	const uint32_t		stored = static_cast<uint32_t>(
-		mach_read_from_4(p));
+	stored = static_cast<ib_uint32_t>(mach_read_from_4(
+		static_cast<const unsigned char*>(data) + FIL_PAGE_SPACE_OR_CHKSUM));
 
-#ifdef UNIV_INNOCHECKSUM
-	p = static_cast<const unsigned char*>(data) + FIL_PAGE_TYPE;
-	bool no_checksum = (mach_read_from_2(p) == FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED);
-	p = static_cast<const unsigned char*>(data) + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION;
-	bool encrypted = (mach_read_from_4(p) != 0);
-	p = static_cast<const unsigned char*>(data) + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION + 4;
-	const uint32_t checksum = static_cast<uint32_t>(mach_read_from_4(p));
-
-	if (no_checksum) {
-		return (TRUE);
-	}
-#endif
+	ulint	page_no MY_ATTRIBUTE((unused)) =
+                mach_read_from_4(static_cast<const unsigned char*>
+                                 (data) + FIL_PAGE_OFFSET);
+	ulint	space_id MY_ATTRIBUTE((unused)) =
+                mach_read_from_4(static_cast<const unsigned char*>
+                                 (data) + FIL_PAGE_SPACE_ID);
+	const page_id_t	page_id(space_id, page_no);
 
 #if FIL_PAGE_LSN % 8
 #error "FIL_PAGE_LSN must be 64 bit aligned"
@@ -5023,9 +5098,9 @@ page_zip_verify_checksum(
 				break;
 		}
 		if (i >= size) {
-			if (is_log_enabled) {
-				fprintf(log_file, "Page::%lu is empty and"
-					" uncorrupted\n", page_no);
+			if (log_file) {
+			fprintf(log_file, "Page::%llu is empty and"
+					" uncorrupted\n", cur_page_num);
 			}
 
 			return(TRUE);
@@ -5048,50 +5123,37 @@ page_zip_verify_checksum(
 		return(TRUE);
 	}
 
-#ifndef	UNIV_INNOCHECKSUM
-	ulint		page_no = mach_read_from_4(static_cast<
-						   const unsigned char*>
-						   (data) + FIL_PAGE_OFFSET);
-	ulint		space_id = mach_read_from_4(static_cast<
-						    const unsigned char*>
-						    (data) + FIL_PAGE_SPACE_ID);
-	const page_id_t	page_id(space_id, page_no);
-#endif	/* UNIV_INNOCHECKSUM */
-
-	const uint32_t	calc = page_zip_calc_checksum(data, size, curr_algo);
+	calc = static_cast<ib_uint32_t>(page_zip_calc_checksum(
+		data, size, curr_algo));
 
 #ifdef UNIV_INNOCHECKSUM
-	if (is_log_enabled) {
-		fprintf(log_file, "page::%lu;"
+	if (log_file) {
+		fprintf(log_file, "page::%llu;"
 			" %s checksum: calculated = %u;"
-			" recorded = %u\n", page_no,
+			" recorded = %u\n", cur_page_num,
 			buf_checksum_algorithm_name(
 				static_cast<srv_checksum_algorithm_t>(
 				srv_checksum_algorithm)),
 			calc, stored);
 	}
 
-	if (!strict_check) {
+	if (!strict_verify) {
 
 		const uint32_t	crc32 = page_zip_calc_checksum(
 			data, size, SRV_CHECKSUM_ALGORITHM_CRC32);
 
-		if (is_log_enabled) {
-			fprintf(log_file, "page::%lu: crc32 checksum:"
+		if (log_file) {
+			fprintf(log_file, "page::%llu: crc32 checksum:"
 				" calculated = %u; recorded = %u\n",
-				page_no, crc32, stored);
-			fprintf(log_file, "page::%lu: none checksum:"
+				cur_page_num, crc32, stored);
+			fprintf(log_file, "page::%llu: none checksum:"
 				" calculated = %lu; recorded = %u\n",
-				page_no, BUF_NO_CHECKSUM_MAGIC, stored);
+				cur_page_num, BUF_NO_CHECKSUM_MAGIC, stored);
 		}
 	}
 #endif /* UNIV_INNOCHECKSUM */
 
-	if (stored == calc
-#ifdef UNIV_INNOCHECKSUM
-	    || ( encrypted == true && stored == checksum)
-#endif
-	) {
+	if (stored == calc) {
 		return(TRUE);
 	}
 
@@ -5123,11 +5185,7 @@ page_zip_verify_checksum(
 		if (legacy_big_endian_checksum) {
 			const uint32_t calculated =
 				page_zip_calc_checksum(data, size, curr_algo, true);
-			if (stored == calculated
-#ifdef UNIV_INNOCHECKSUM
-			    || ( encrypted == true && calculated == checksum)
-#endif
-			) {
+			if (stored == calculated) {
 
 				return(TRUE);
 			}
@@ -5137,11 +5195,7 @@ page_zip_verify_checksum(
 		uint32_t calculated =
 				page_zip_calc_checksum(data, size, SRV_CHECKSUM_ALGORITHM_INNODB);
 
-		if (stored == calculated
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && stored == checksum)
-#endif
-		) {
+		if (stored == calculated) {
 
 #ifndef	UNIV_INNOCHECKSUM
 			if (curr_algo
@@ -5161,11 +5215,7 @@ page_zip_verify_checksum(
 
 		/* If legacy checksum is not checked, do it now. */
 		if ((legacy_checksum_checked
-		     && stored == calculated)
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && calculated == checksum)
-#endif
-		) {
+		     && stored == calculated)) {
 			legacy_big_endian_checksum = true;
 			return(TRUE);
 		}
@@ -5175,11 +5225,7 @@ page_zip_verify_checksum(
 	case SRV_CHECKSUM_ALGORITHM_STRICT_INNODB:
 	case SRV_CHECKSUM_ALGORITHM_INNODB: {
 
-		if (stored == BUF_NO_CHECKSUM_MAGIC
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && checksum == BUF_NO_CHECKSUM_MAGIC)
-#endif
-		) {
+		if (stored == BUF_NO_CHECKSUM_MAGIC) {
 #ifndef	UNIV_INNOCHECKSUM
 			if (curr_algo
 			    == SRV_CHECKSUM_ALGORITHM_STRICT_INNODB) {
@@ -5198,14 +5244,8 @@ page_zip_verify_checksum(
 		uint32_t calculated1;
 
 		if (stored == calculated
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && checksum == calculated)
-#endif
-		    || stored == (calculated1 = 
+		    || stored == (calculated1 =
 					page_zip_calc_checksum(data, size, SRV_CHECKSUM_ALGORITHM_CRC32, true))
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && checksum == calculated1)
-#endif
 		) {
 #ifndef	UNIV_INNOCHECKSUM
 			if (curr_algo
@@ -5229,12 +5269,7 @@ page_zip_verify_checksum(
 			data, size, SRV_CHECKSUM_ALGORITHM_CRC32, true);
 
 		if (stored == calculated
-		    || stored == calculated1
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && checksum == calculated)
-		    || ( encrypted == true && checksum == calculated1)
-#endif
-		) {
+		    || stored == calculated1) {
 #ifndef	UNIV_INNOCHECKSUM
 			page_warn_strict_checksum(
 				curr_algo,
@@ -5247,11 +5282,7 @@ page_zip_verify_checksum(
 		calculated = page_zip_calc_checksum(
 			data, size, SRV_CHECKSUM_ALGORITHM_INNODB);
 
-		if (stored == calculated
-#ifdef UNIV_INNOCHECKSUM
-		    || ( encrypted == true && checksum == calculated)
-#endif
-		) {
+		if (stored == calculated) {
 
 #ifndef	UNIV_INNOCHECKSUM
 			page_warn_strict_checksum(

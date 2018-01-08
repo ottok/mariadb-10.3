@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, MariaDB Corporation.
+Copyright (c) 2016, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -30,6 +30,7 @@ Created 4/20/1996 Heikki Tuuri
 #include "univ.i"
 #include "data0data.h"
 #include "dict0types.h"
+#include "ibuf0ibuf.h"
 #include "trx0types.h"
 #include "que0types.h"
 #include "mtr0mtr.h"
@@ -284,8 +285,8 @@ row_build_row_ref_fast(
 	const ulint*	map,	/*!< in: array of field numbers in rec
 				telling how ref should be built from
 				the fields of rec */
-	const rec_t*	rec,	/*!< in: record in the index; must be
-				preserved while ref is used, as we do
+	const rec_t*	rec,	/*!< in: secondary index record;
+				must be preserved while ref is used, as we do
 				not copy field values to heap */
 	const ulint*	offsets);/*!< in: array returned by rec_get_offsets() */
 /***************************************************************//**
@@ -386,6 +387,34 @@ row_raw_format(
 	ulint			buf_size)	/*!< in: output buffer size
 						in bytes */
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
+
+/** Prepare to start a mini-transaction to modify an index.
+@param[in,out]	mtr		mini-transaction
+@param[in,out]	index		possibly secondary index
+@param[in]	pessimistic	whether this is a pessimistic operation */
+inline
+void
+row_mtr_start(mtr_t* mtr, dict_index_t* index, bool pessimistic)
+{
+	mtr->start();
+
+	switch (index->space) {
+	case IBUF_SPACE_ID:
+		if (pessimistic
+		    && !(index->type & (DICT_UNIQUE | DICT_SPATIAL))) {
+			ibuf_free_excess_pages();
+		}
+		break;
+	case SRV_TMP_SPACE_ID:
+		mtr->set_log_mode(MTR_LOG_NO_REDO);
+		break;
+	default:
+		mtr->set_named_space(index->space);
+		break;
+	}
+
+	log_free_check();
+}
 
 #include "row0row.ic"
 

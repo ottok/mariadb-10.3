@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2000, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -204,6 +204,7 @@ row_update_prebuilt_trx(
 	row_prebuilt_t*	prebuilt,	/*!< in/out: prebuilt struct
 					in MySQL handle */
 	trx_t*		trx);		/*!< in: transaction handle */
+
 /*********************************************************************//**
 Sets an AUTO_INC type lock on the table mentioned in prebuilt. The
 AUTO_INC lock gives exclusive access to the auto-inc counter of the
@@ -261,23 +262,11 @@ row_get_prebuilt_update_vector(
 /*===========================*/
 	row_prebuilt_t*	prebuilt);	/*!< in: prebuilt struct in MySQL
 					handle */
-/*********************************************************************//**
-Checks if a table is such that we automatically created a clustered
-index on it (on row id).
-@return TRUE if the clustered index was generated automatically */
-ibool
-row_table_got_default_clust_index(
-/*==============================*/
-	const dict_table_t*	table);	/*!< in: table */
-
 /** Does an update or delete of a row for MySQL.
-@param[in]	mysql_rec	row in the MySQL format
 @param[in,out]	prebuilt	prebuilt struct in MySQL handle
 @return error code or DB_SUCCESS */
 dberr_t
-row_update_for_mysql(
-	const byte*		mysql_rec,
-	row_prebuilt_t*		prebuilt)
+row_update_for_mysql(row_prebuilt_t* prebuilt)
 	MY_ATTRIBUTE((warn_unused_result));
 
 /** This can only be used when srv_locks_unsafe_for_binlog is TRUE or this
@@ -363,9 +352,8 @@ row_create_table_for_mysql(
 				(will be freed, or on DB_SUCCESS
 				added to the data dictionary cache) */
 	trx_t*		trx,	/*!< in/out: transaction */
-	bool		commit,	/*!< in: if true, commit the transaction */
 	fil_encryption_t mode,	/*!< in: encryption mode */
-	ulint		key_id)	/*!< in: encryption key_id */
+	uint32_t	key_id)	/*!< in: encryption key_id */
 	MY_ATTRIBUTE((warn_unused_result));
 
 /*********************************************************************//**
@@ -432,6 +420,10 @@ ulint
 row_get_background_drop_list_len_low(void);
 /*======================================*/
 
+/** Drop garbage tables during recovery. */
+void
+row_mysql_drop_garbage_tables();
+
 /*********************************************************************//**
 Sets an exclusive lock on a table.
 @return error code or DB_SUCCESS */
@@ -474,7 +466,7 @@ row_drop_table_for_mysql(
 /*********************************************************************//**
 Discards the tablespace of a table which stored in an .ibd file. Discarding
 means that this function deletes the .ibd file and assigns a new table id for
-the table. Also the flag table->ibd_file_missing is set TRUE.
+the table. Also the file_unreadable flag is set.
 @return error code or DB_SUCCESS */
 dberr_t
 row_discard_tablespace_for_mysql(
@@ -540,9 +532,6 @@ row_scan_index_for_mysql(
 	row_prebuilt_t*		prebuilt,	/*!< in: prebuilt struct
 						in MySQL handle */
 	const dict_index_t*	index,		/*!< in: index */
-	bool			check_keys,	/*!< in: true=check for mis-
-						ordered or duplicate records,
-						false=count the rows only */
 	ulint*			n_rows)		/*!< out: number of entries
 						seen in the consistent read */
 	MY_ATTRIBUTE((warn_unused_result));
@@ -683,12 +672,6 @@ struct row_prebuilt_t {
 					not to be confused with InnoDB
 					externally stored columns
 					(VARCHAR can be off-page too) */
-	unsigned	templ_contains_fixed_point:1;/*!< TRUE if the
-					template contains a column with
-					DATA_POINT. Since InnoDB regards
-					DATA_POINT as non-BLOB type, the
-					templ_contains_blob can't tell us
-					if there is DATA_POINT */
 	mysql_row_templ_t* mysql_template;/*!< template used to transform
 					rows fast between MySQL and Innobase
 					formats; memory for this template
@@ -865,9 +848,6 @@ struct row_prebuilt_t {
 
 	/** The MySQL table object */
 	TABLE*		m_mysql_table;
-
-	/** limit value to avoid fts result overflow */
-	ulonglong	m_fts_limit;
 };
 
 /** Callback for row_mysql_sys_index_iterate() */

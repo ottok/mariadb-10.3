@@ -74,34 +74,6 @@ int (*_my_b_encr_read)(IO_CACHE *info,uchar *Buffer,size_t Count)= 0;
 int (*_my_b_encr_write)(IO_CACHE *info,const uchar *Buffer,size_t Count)= 0;
 
 
-/*
-  Setup internal pointers inside IO_CACHE
-
-  SYNOPSIS
-    setup_io_cache()
-    info		IO_CACHE handler
-
-  NOTES
-    This is called on automatically on init or reinit of IO_CACHE
-    It must be called externally if one moves or copies an IO_CACHE
-    object.
-*/
-
-void setup_io_cache(IO_CACHE* info)
-{
-  /* Ensure that my_b_tell() and my_b_bytes_in_cache works */
-  if (info->type == WRITE_CACHE)
-  {
-    info->current_pos= &info->write_pos;
-    info->current_end= &info->write_end;
-  }
-  else
-  {
-    info->current_pos= &info->read_pos;
-    info->current_end= &info->read_end;
-  }
-}
-
 
 static void
 init_functions(IO_CACHE* info)
@@ -148,8 +120,6 @@ init_functions(IO_CACHE* info)
     DBUG_ASSERT(0);
     break;
   }
-
-  setup_io_cache(info);
 }
 
 
@@ -184,8 +154,8 @@ int init_io_cache(IO_CACHE *info, File file, size_t cachesize,
   my_off_t pos;
   my_off_t end_of_file= ~(my_off_t) 0;
   DBUG_ENTER("init_io_cache");
-  DBUG_PRINT("enter",("cache: 0x%lx  type: %d  pos: %ld",
-		      (ulong) info, (int) type, (ulong) seek_offset));
+  DBUG_PRINT("enter",("cache:%p  type: %d  pos: %llu",
+		      info, (int) type, (ulonglong) seek_offset));
 
   info->file= file;
   info->type= TYPE_NOT_SET;	    /* Don't set it until mutex are created */
@@ -360,12 +330,7 @@ int init_slave_io_cache(IO_CACHE *master, IO_CACHE *slave)
   memcpy(slave->buffer, master->buffer, master->buffer_length);
   slave->read_pos= slave->buffer + (master->read_pos - master->buffer);
   slave->read_end= slave->buffer + (master->read_end - master->buffer);
-   
-  DBUG_ASSERT(master->current_pos == &master->read_pos);
-  slave->current_pos= &slave->read_pos;
-  DBUG_ASSERT(master->current_end == &master->read_end);
-  slave->current_end= &slave->read_end;
-  
+
   if (master->next_file_user)
   {
     IO_CACHE *p;
@@ -472,8 +437,8 @@ my_bool reinit_io_cache(IO_CACHE *info, enum cache_type type,
 			my_bool clear_cache)
 {
   DBUG_ENTER("reinit_io_cache");
-  DBUG_PRINT("enter",("cache: 0x%lx type: %d  seek_offset: %lu  clear_cache: %d",
-		      (ulong) info, type, (ulong) seek_offset,
+  DBUG_PRINT("enter",("cache:%p type: %d  seek_offset: %llu  clear_cache: %d",
+		      info, type, (ulonglong) seek_offset,
 		      (int) clear_cache));
 
   DBUG_ASSERT(type == READ_CACHE || type == WRITE_CACHE);
@@ -900,10 +865,10 @@ void init_io_cache_share(IO_CACHE *read_cache, IO_CACHE_SHARE *cshare,
                          IO_CACHE *write_cache, uint num_threads)
 {
   DBUG_ENTER("init_io_cache_share");
-  DBUG_PRINT("io_cache_share", ("read_cache: 0x%lx  share: 0x%lx  "
-                                "write_cache: 0x%lx  threads: %u",
-                                (long) read_cache, (long) cshare,
-                                (long) write_cache, num_threads));
+  DBUG_PRINT("io_cache_share", ("read_cache: %p  share: %p "
+                                "write_cache: %p  threads: %u",
+                                 read_cache,  cshare,
+                                 write_cache, num_threads));
 
   DBUG_ASSERT(num_threads > 1);
   DBUG_ASSERT(read_cache->type == READ_CACHE);
@@ -924,8 +889,6 @@ void init_io_cache_share(IO_CACHE *read_cache, IO_CACHE_SHARE *cshare,
 
   read_cache->share=         cshare;
   read_cache->read_function= _my_b_cache_read_r;
-  read_cache->current_pos=   NULL;
-  read_cache->current_end=   NULL;
 
   if (write_cache)
   {
@@ -967,9 +930,9 @@ void remove_io_thread(IO_CACHE *cache)
     flush_io_cache(cache);
 
   mysql_mutex_lock(&cshare->mutex);
-  DBUG_PRINT("io_cache_share", ("%s: 0x%lx",
+  DBUG_PRINT("io_cache_share", ("%s: %p",
                                 (cache == cshare->source_cache) ?
-                                "writer" : "reader", (long) cache));
+                                "writer" : "reader", cache));
 
   /* Remove from share. */
   total= --cshare->total_threads;
@@ -1043,9 +1006,9 @@ static int lock_io_cache(IO_CACHE *cache, my_off_t pos)
   /* Enter the lock. */
   mysql_mutex_lock(&cshare->mutex);
   cshare->running_threads--;
-  DBUG_PRINT("io_cache_share", ("%s: 0x%lx  pos: %lu  running: %u",
+  DBUG_PRINT("io_cache_share", ("%s: %p  pos: %lu  running: %u",
                                 (cache == cshare->source_cache) ?
-                                "writer" : "reader", (long) cache, (ulong) pos,
+                                "writer" : "reader", cache, (ulong) pos,
                                 cshare->running_threads));
 
   if (cshare->source_cache)
@@ -1182,10 +1145,10 @@ static void unlock_io_cache(IO_CACHE *cache)
 {
   IO_CACHE_SHARE *cshare= cache->share;
   DBUG_ENTER("unlock_io_cache");
-  DBUG_PRINT("io_cache_share", ("%s: 0x%lx  pos: %lu  running: %u",
+  DBUG_PRINT("io_cache_share", ("%s: %p  pos: %lu  running: %u",
                                 (cache == cshare->source_cache) ?
                                 "writer" : "reader",
-                                (long) cache, (ulong) cshare->pos_in_file,
+                                cache, (ulong) cshare->pos_in_file,
                                 cshare->total_threads));
 
   cshare->running_threads= cshare->total_threads;
@@ -1936,7 +1899,7 @@ int my_b_flush_io_cache(IO_CACHE *info, int need_append_buffer_lock)
   size_t length;
   my_bool append_cache= (info->type == SEQ_READ_APPEND);
   DBUG_ENTER("my_b_flush_io_cache");
-  DBUG_PRINT("enter", ("cache: 0x%lx", (long) info));
+  DBUG_PRINT("enter", ("cache: %p",  info));
 
   if (!append_cache)
     need_append_buffer_lock= 0;
@@ -2014,7 +1977,7 @@ int end_io_cache(IO_CACHE *info)
 {
   int error=0;
   DBUG_ENTER("end_io_cache");
-  DBUG_PRINT("enter",("cache: 0x%lx", (ulong) info));
+  DBUG_PRINT("enter",("cache: %p", info));
 
   /*
     Every thread must call remove_io_thread(). The last one destroys

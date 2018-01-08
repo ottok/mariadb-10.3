@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2011, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, MariaDB Corporation. All Rights reserved.
+Copyright (c) 2016, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -409,6 +409,7 @@ extern bool		fts_need_sync;
 /** Variable specifying the table that has Fulltext index to display its
 content through information schema table */
 extern char*		fts_internal_tbl_name;
+extern char*		fts_internal_tbl_name2;
 
 #define	fts_que_graph_free(graph)			\
 do {							\
@@ -453,20 +454,6 @@ fts_update_next_doc_id(
 	const dict_table_t*	table,		/*!< in: table */
 	const char*		table_name,	/*!< in: table name, or NULL */
 	doc_id_t		doc_id);	/*!< in: DOC ID to set */
-
-/******************************************************************//**
-Create a new document id .
-@return DB_SUCCESS if all went well else error */
-dberr_t
-fts_create_doc_id(
-/*==============*/
-	dict_table_t*	table,			/*!< in: row is of this
-						table. */
-	dtuple_t*	row,			/*!< in/out: add doc id
-						value to this row. This is the
-						current row that is being
-						inserted. */
-	mem_heap_t*	heap);			/*!< in: heap */
 
 /******************************************************************//**
 Create a new fts_doc_ids_t.
@@ -578,7 +565,6 @@ fts_commit(
 @param[in]	query_str	FTS query
 @param[in]	query_len	FTS query string len in bytes
 @param[in,out]	result		result doc ids
-@param[in]	limit		limit value
 @return DB_SUCCESS if successful otherwise error code */
 dberr_t
 fts_query(
@@ -587,8 +573,7 @@ fts_query(
 	uint		flags,
 	const byte*	query_str,
 	ulint		query_len,
-	fts_result_t**	result,
-	ulonglong	limit)
+	fts_result_t**	result)
 	MY_ATTRIBUTE((warn_unused_result));
 
 /******************************************************************//**
@@ -842,6 +827,15 @@ fts_init_doc_id(
 /*============*/
 	const dict_table_t*		table);	/*!< in: table */
 
+/* Get parent table name if it's a fts aux table
+@param[in]	aux_table_name	aux table name
+@param[in]	aux_table_len	aux table length
+@return parent table name, or NULL */
+char*
+fts_get_parent_table_name(
+	const char*	aux_table_name,
+	ulint		aux_table_len);
+
 /******************************************************************//**
 compare two character string according to their charset. */
 extern
@@ -1023,4 +1017,3 @@ fts_check_corrupt(
 
 
 #endif /*!< fts0fts.h */
-

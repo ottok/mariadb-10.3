@@ -161,7 +161,7 @@ LF_PINS *lf_pinbox_get_pins(LF_PINBOX *pinbox)
     pinstack_top_ver is 32 bits; 16 low bits are the index in the
     array, to the first element of the list. 16 high bits are a version
     (every time the 16 low bits are updated, the 16 high bits are
-    incremented). Versioniong prevents the ABA problem.
+    incremented). Versioning prevents the ABA problem.
   */
   top_ver= pinbox->pinstack_top_ver;
   do
@@ -323,12 +323,6 @@ static int match_pins(LF_PINS *el, void *addr)
   return 0;
 }
 
-#if STACK_DIRECTION < 0
-#define available_stack_size(CUR,END) (long) ((char*)(CUR) - (char*)(END))
-#else
-#define available_stack_size(CUR,END) (long) ((char*)(END) - (char*)(CUR))
-#endif
-
 #define next_node(P, X) (*((uchar * volatile *)(((uchar *)(X)) + (P)->free_ptr_offset)))
 #define anext_node(X) next_node(&allocator->pinbox, (X))
 
@@ -361,7 +355,7 @@ static void lf_pinbox_real_free(LF_PINS *pins)
      lf_dynarray_iterate(&pinbox->pinarray,
                            (lf_dynarray_func)harvest_pins, &hv);
 
-      npins= hv.granary-addr;
+      npins= (int)(hv.granary-addr);
       /* and sort them */
       if (npins)
         qsort(addr, npins, sizeof(void *), (qsort_cmp)ptr_cmp);
@@ -436,7 +430,7 @@ static void alloc_free(uchar *first,
   {
     anext_node(last)= tmp.node;
   } while (!my_atomic_casptr((void **)(char *)&allocator->top,
-                             (void **)&tmp.ptr, first) && LF_BACKOFF);
+                             (void **)&tmp.ptr, first) && LF_BACKOFF());
 }
 
 /*
@@ -507,7 +501,7 @@ void *lf_alloc_new(LF_PINS *pins)
     {
       node= allocator->top;
      lf_pin(pins, 0, node);
-    } while (node != allocator->top && LF_BACKOFF);
+    } while (node != allocator->top && LF_BACKOFF());
     if (!node)
     {
       node= (void *)my_malloc(allocator->element_size, MYF(MY_WME));

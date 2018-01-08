@@ -3165,7 +3165,7 @@ static my_bool write_block_record(MARIA_HA *info,
                       translog_flush(translog_get_horizon());
                     });
     DBUG_EXECUTE_IF("maria_crash",
-                    { DBUG_PRINT("maria_crash", ("now")); DBUG_ABORT(); });
+                    { DBUG_PRINT("maria_crash", ("now")); DBUG_SUICIDE(); });
   }
 #endif
 
@@ -6893,7 +6893,7 @@ uint _ma_apply_redo_insert_row_blobs(MARIA_HA *info,
           }
           else
           {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
             uchar found_page_type= (buff[PAGE_TYPE_OFFSET] & PAGE_TYPE_MASK);
 #endif
             if (lsn_korr(buff) >= lsn)
@@ -7540,7 +7540,7 @@ void _ma_print_block_info(MARIA_SHARE *share, uchar *buff)
 {
   LSN lsn= lsn_korr(buff);
 
-  printf("LSN: %lu,0x%lx  type: %u  dir_entries: %u  dir_free: %u  empty_space: %u\n",
+  printf("LSN:" LSN_FMT " type: %u  dir_entries: %u  dir_free: %u  empty_space: %u\n",
          LSN_IN_PARTS(lsn),
          (uint)buff[PAGE_TYPE_OFFSET],
          (uint)buff[DIR_COUNT_OFFSET],

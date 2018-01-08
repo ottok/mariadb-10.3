@@ -29,10 +29,10 @@
 #define MADB_BIND_DUMMY 1
 
 #define MARIADB_STMT_BULK_SUPPORTED(stmt)\
-  ((stmt)->array_size > 0 && \
-  (stmt)->mysql && \
+  ((stmt)->mysql && \
   (!((stmt)->mysql->server_capabilities & CLIENT_MYSQL) &&\
-    ((stmt)->mysql->extension->mariadb_server_capabilities & MARIADB_CLIENT_STMT_BULK_OPERATIONS >> 32)))
+    ((stmt)->mysql->extension->mariadb_server_capabilities & \
+    (MARIADB_CLIENT_STMT_BULK_OPERATIONS >> 32))))
 
 #define SET_CLIENT_STMT_ERROR(a, b, c, d) \
 { \
@@ -81,16 +81,21 @@ enum enum_indicator_type
   STMT_INDICATOR_NONE=0,
   STMT_INDICATOR_NULL=1,
   STMT_INDICATOR_DEFAULT=2,
-  STMT_INDICATOR_IGNORE=3
+  STMT_INDICATOR_IGNORE=3,
+  STMT_INDICATOR_IGNORE_ROW=4
 };
+
+/*
+  bulk PS flags
+*/
+#define STMT_BULK_FLAG_CLIENT_SEND_TYPES 128
+#define STMT_BULK_FLAG_INSERT_ID_REQUEST 64
 
 typedef enum mysql_stmt_state
 {
   MYSQL_STMT_INITTED = 0,
   MYSQL_STMT_PREPARED,
   MYSQL_STMT_EXECUTED,
-//  MYSQL_STMT_USE_RESULT,
-//  MYSQL_STMT_STORE_RESULT,
   MYSQL_STMT_WAITING_USE_OR_STORE,
   MYSQL_STMT_USE_OR_STORE_CALLED,
   MYSQL_STMT_USER_FETCHING, /* fetch_row_buff or fetch_row_unbuf */
@@ -248,7 +253,7 @@ int ma_simple_command(MYSQL *mysql,enum enum_server_command command, const char 
  *  function prototypes
  */
 MYSQL_STMT * STDCALL mysql_stmt_init(MYSQL *mysql);
-int STDCALL mysql_stmt_prepare(MYSQL_STMT *stmt, const char *query, size_t length);
+int STDCALL mysql_stmt_prepare(MYSQL_STMT *stmt, const char *query, unsigned long length);
 int STDCALL mysql_stmt_execute(MYSQL_STMT *stmt);
 int STDCALL mysql_stmt_fetch(MYSQL_STMT *stmt);
 int STDCALL mysql_stmt_fetch_column(MYSQL_STMT *stmt, MYSQL_BIND *bind_arg, unsigned int column, unsigned long offset);
@@ -261,7 +266,7 @@ my_bool STDCALL mysql_stmt_bind_result(MYSQL_STMT * stmt, MYSQL_BIND * bnd);
 my_bool STDCALL mysql_stmt_close(MYSQL_STMT * stmt);
 my_bool STDCALL mysql_stmt_reset(MYSQL_STMT * stmt);
 my_bool STDCALL mysql_stmt_free_result(MYSQL_STMT *stmt);
-my_bool STDCALL mysql_stmt_send_long_data(MYSQL_STMT *stmt, unsigned int param_number, const char *data, size_t length);
+my_bool STDCALL mysql_stmt_send_long_data(MYSQL_STMT *stmt, unsigned int param_number, const char *data, unsigned long length);
 MYSQL_RES *STDCALL mysql_stmt_result_metadata(MYSQL_STMT *stmt);
 MYSQL_RES *STDCALL mysql_stmt_param_metadata(MYSQL_STMT *stmt);
 unsigned int STDCALL mysql_stmt_errno(MYSQL_STMT * stmt);

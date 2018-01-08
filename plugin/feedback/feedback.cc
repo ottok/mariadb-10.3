@@ -93,8 +93,8 @@ static COND* make_cond(THD *thd, TABLE_LIST *tables, LEX_STRING *filter)
 {
   Item_cond_or *res= NULL;
   Name_resolution_context nrc;
-  const char *db= tables->db, *table= tables->alias,
-             *field= tables->table->field[0]->field_name;
+  const char *db= tables->db, *table= tables->alias;
+  LEX_CSTRING *field= &tables->table->field[0]->field_name;
   CHARSET_INFO *cs= &my_charset_latin1;
 
   if (!filter->str)
@@ -112,7 +112,7 @@ static COND* make_cond(THD *thd, TABLE_LIST *tables, LEX_STRING *filter)
     Item_field  *fld= new (thd->mem_root) Item_field(thd, &nrc, db, table,
                                                      field);
     Item_string *pattern= new (thd->mem_root) Item_string(thd, filter->str,
-                                                          filter->length, cs);
+                                                          (uint) filter->length, cs);
     Item_string *escape= new (thd->mem_root) Item_string(thd, "\\", 1, cs);
 
     if (!fld || !pattern || !escape)

@@ -20,7 +20,7 @@
   Multi-table updates were introduced by Sinisa & Monty
 */
 
-#include <my_global.h>                          /* NO_EMBEDDED_ACCESS_CHECKS */
+#include "mariadb.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include "sql_update.h"
 #include "sql_cache.h"                          // query_cache_*
@@ -80,7 +80,7 @@ bool compare_record(const TABLE *table)
       {
         if (field->real_maybe_null())
         {
-          uchar null_byte_index= field->null_ptr - table->record[0];
+          uchar null_byte_index= (uchar)(field->null_ptr - table->record[0]);
           
           if (((table->record[0][null_byte_index]) & field->null_bit) !=
               ((table->record[1][null_byte_index]) & field->null_bit))
@@ -140,7 +140,7 @@ static bool check_fields(THD *thd, List<Item> &items)
     if (!(field= item->field_for_view_update()))
     {
       /* item has name, because it comes from VIEW SELECT list */
-      my_error(ER_NONUPDATEABLE_COLUMN, MYF(0), item->name);
+      my_error(ER_NONUPDATEABLE_COLUMN, MYF(0), item->name.str);
       return TRUE;
     }
     /*
@@ -255,11 +255,12 @@ int mysql_update(THD *thd,
 {
   bool		using_limit= limit != HA_POS_ERROR;
   bool          safe_update= thd->variables.option_bits & OPTION_SAFE_UPDATES;
-  bool          used_key_is_modified= FALSE, transactional_table, will_batch;
+  bool          used_key_is_modified= FALSE, transactional_table;
+  bool          will_batch= FALSE;
   bool		can_compare_record;
   int           res;
   int		error, loc_error;
-  uint          dup_key_found;
+  ha_rows       dup_key_found;
   bool          need_sort= TRUE;
   bool          reverse= FALSE;
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
@@ -276,8 +277,10 @@ int mysql_update(THD *thd,
   ulonglong     id;
   List<Item> all_fields;
   killed_state killed_status= NOT_KILLED;
+  bool has_triggers, binlog_is_row, do_direct_update= FALSE;
   Update_plan query_plan(thd->mem_root);
   Explain_update *explain;
+  TABLE_LIST *update_source_table;
   query_plan.index= MAX_KEY;
   query_plan.using_filesort= FALSE;
   DBUG_ENTER("mysql_update");
@@ -286,13 +289,15 @@ int mysql_update(THD *thd,
   if (open_tables(thd, &table_list, &table_count, 0))
     DBUG_RETURN(1);
 
-  //Prepare views so they are handled correctly.
+  /* Prepare views so they are handled correctly */
   if (mysql_handle_derived(thd->lex, DT_INIT))
     DBUG_RETURN(1);
 
-  if (table_list->is_multitable())
+  if (((update_source_table=unique_table(thd, table_list,
+                                        table_list->next_global, 0)) ||
+        table_list->is_multitable()))
   {
-    DBUG_ASSERT(table_list->view != 0);
+    DBUG_ASSERT(update_source_table || table_list->view != 0);
     DBUG_PRINT("info", ("Switch to multi-update"));
     /* pass counter value */
     thd->lex->table_count= table_count;
@@ -302,12 +307,12 @@ int mysql_update(THD *thd,
   if (lock_tables(thd, table_list, table_count, 0))
     DBUG_RETURN(1);
 
+  THD_STAGE_INFO(thd, stage_init_update);
   if (table_list->handle_derived(thd->lex, DT_MERGE_FOR_INSERT))
     DBUG_RETURN(1);
   if (table_list->handle_derived(thd->lex, DT_PREPARE))
     DBUG_RETURN(1);
 
-  THD_STAGE_INFO(thd, stage_init);
   table= table_list->table;
 
   if (!table_list->single_table_updatable())
@@ -359,7 +364,7 @@ int mysql_update(THD *thd,
   table_list->grant.want_privilege= table->grant.want_privilege=
     (SELECT_ACL & ~table->grant.privilege);
 #endif
-  if (setup_fields(thd, Ref_ptr_array(), values, MARK_COLUMNS_READ, 0, 0))
+  if (setup_fields(thd, Ref_ptr_array(), values, MARK_COLUMNS_READ, 0, NULL, 0))
   {
     free_underlaid_joins(thd, select_lex);
     DBUG_RETURN(1);				/* purecov: inspected */
@@ -448,7 +453,8 @@ int mysql_update(THD *thd,
       goto err;
     }
   }
-  init_ftfuncs(thd, select_lex, 1);
+  if (init_ftfuncs(thd, select_lex, 1))
+    goto err;
 
   table->mark_columns_needed_for_update();
 
@@ -511,7 +517,6 @@ int mysql_update(THD *thd,
       query_plan.using_io_buffer= true;
   }
 
-
   /*
     Ok, we have generated a query plan for the UPDATE.
      - if we're running EXPLAIN UPDATE, goto produce explain output 
@@ -519,15 +524,74 @@ int mysql_update(THD *thd,
   */
   if (thd->lex->describe)
     goto produce_explain_and_leave;
-  explain= query_plan.save_explain_update_data(query_plan.mem_root, thd);
+  if (!(explain= query_plan.save_explain_update_data(query_plan.mem_root, thd)))
+    goto err;
 
   ANALYZE_START_TRACKING(&explain->command_tracker);
 
   DBUG_EXECUTE_IF("show_explain_probe_update_exec_start", 
                   dbug_serve_apcs(thd, 1););
-  
+
+  has_triggers= (table->triggers &&
+                 (table->triggers->has_triggers(TRG_EVENT_UPDATE,
+                                                TRG_ACTION_BEFORE) ||
+                 table->triggers->has_triggers(TRG_EVENT_UPDATE,
+                                               TRG_ACTION_AFTER)));
+  DBUG_PRINT("info", ("has_triggers: %s", has_triggers ? "TRUE" : "FALSE"));
+  binlog_is_row= thd->is_current_stmt_binlog_format_row();
+  DBUG_PRINT("info", ("binlog_is_row: %s", binlog_is_row ? "TRUE" : "FALSE"));
+
   if (!(select && select->quick))
     status_var_increment(thd->status_var.update_scan_count);
+
+  /*
+    We can use direct update (update that is done silently in the handler)
+    if none of the following conditions are true:
+    - There are triggers
+    - There is binary logging
+    - using_io_buffer
+      - This means that the partition changed or the key we want
+        to use for scanning the table is changed
+    - ignore is set
+      - Direct updates don't return the number of ignored rows
+    - There is a virtual not stored column in the WHERE clause
+    - Changing a field used by a stored virtual column, which
+      would require the column to be recalculated.
+    - ORDER BY or LIMIT
+      - As this requires the rows to be updated in a specific order
+      - Note that Spider can handle ORDER BY and LIMIT in a cluster with
+        one data node.  These conditions are therefore checked in
+        direct_update_rows_init().
+
+    Direct update does not require a WHERE clause
+
+    Later we also ensure that we are only using one table (no sub queries)
+  */
+  if ((table->file->ha_table_flags() & HA_CAN_DIRECT_UPDATE_AND_DELETE) &&
+      !has_triggers && !binlog_is_row &&
+      !query_plan.using_io_buffer && !ignore &&
+      !table->check_virtual_columns_marked_for_read() &&
+      !table->check_virtual_columns_marked_for_write())
+  {
+    DBUG_PRINT("info", ("Trying direct update"));
+    if (select && select->cond &&
+        (select->cond->used_tables() == table->map))
+    {
+      DBUG_ASSERT(!table->file->pushed_cond);
+      if (!table->file->cond_push(select->cond))
+        table->file->pushed_cond= select->cond;
+    }
+
+    if (!table->file->info_push(INFO_KIND_UPDATE_FIELDS, &fields) &&
+        !table->file->info_push(INFO_KIND_UPDATE_VALUES, &values) &&
+        !table->file->direct_update_rows_init())
+    {
+      do_direct_update= TRUE;
+
+      /* Direct update is not using_filesort and is not using_io_buffer */
+      goto update_begin;
+    }
+  }
 
   if (query_plan.using_filesort || query_plan.using_io_buffer)
   {
@@ -616,7 +680,7 @@ int mysql_update(THD *thd,
       THD_STAGE_INFO(thd, stage_searching_rows_for_update);
       ha_rows tmp_limit= limit;
 
-      while (!(error=info.read_record(&info)) && !thd->killed)
+      while (!(error=info.read_record()) && !thd->killed)
       {
         explain->buf_tracker.on_record_read();
         thd->inc_examined_row_count(1);
@@ -688,6 +752,7 @@ int mysql_update(THD *thd,
     }
   }
 
+update_begin:
   if (ignore)
     table->file->extra(HA_EXTRA_IGNORE_DUP_KEY);
   
@@ -704,15 +769,23 @@ int mysql_update(THD *thd,
   */
   thd->count_cuted_fields= CHECK_FIELD_WARN;
   thd->cuted_fields=0L;
-  THD_STAGE_INFO(thd, stage_updating);
 
   transactional_table= table->file->has_transactions();
   thd->abort_on_warning= !ignore && thd->is_strict_mode();
-  if (table->prepare_triggers_for_update_stmt_or_event())
+
+  if (do_direct_update)
   {
-    will_batch= FALSE;
+    /* Direct updating is supported */
+    DBUG_PRINT("info", ("Using direct update"));
+    table->reset_default_fields();
+    if (!(error= table->file->ha_direct_update_rows(&updated)))
+      error= -1;
+    found= updated;
+    goto update_end;
   }
-  else
+
+  if ((table->file->ha_table_flags() & HA_CAN_FORCE_BULK_UPDATE) &&
+      !table->prepare_triggers_for_update_stmt_or_event())
     will_batch= !table->file->start_bulk_update();
 
   /*
@@ -732,7 +805,8 @@ int mysql_update(THD *thd,
   can_compare_record= records_are_comparable(table);
   explain->tracker.on_scan_init();
 
-  while (!(error=info.read_record(&info)) && !thd->killed)
+  THD_STAGE_INFO(thd, stage_updating);
+  while (!(error=info.read_record()) && !thd->killed)
   {
     explain->tracker.on_record_read();
     thd->inc_examined_row_count(1);
@@ -796,6 +870,7 @@ int mysql_update(THD *thd,
             call then it should be included in the count of dup_key_found
             and error should be set to 0 (only if these errors are ignored).
           */
+          DBUG_PRINT("info", ("Batched update"));
           error= table->file->ha_bulk_update_row(table->record[1],
                                                  table->record[0],
                                                  &dup_key_found);
@@ -918,7 +993,7 @@ int mysql_update(THD *thd,
   // simulated killing after the loop must be ineffective for binlogging
   DBUG_EXECUTE_IF("simulate_kill_bug27571",
                   {
-                    thd->killed= KILL_QUERY;
+                    thd->set_killed(KILL_QUERY);
                   };);
   error= (killed_status == NOT_KILLED)?  error : 1;
   
@@ -944,6 +1019,8 @@ int mysql_update(THD *thd,
     updated-= dup_key_found;
   if (will_batch)
     table->file->end_bulk_update();
+
+update_end:
   table->file->try_semi_consistent_read(0);
 
   if (!transactional_table && updated > 0)
@@ -999,6 +1076,11 @@ int mysql_update(THD *thd,
   DBUG_ASSERT(transactional_table || !updated || thd->transaction.stmt.modified_non_trans_table);
   free_underlaid_joins(thd, select_lex);
   delete file_sort;
+  if (table->file->pushed_cond)
+  {
+    table->file->pushed_cond= 0;
+    table->file->cond_pop();
+  }
 
   /* If LAST_INSERT_ID(X) was used, report X */
   id= thd->arg_of_last_insert_id_function ?
@@ -1024,7 +1106,6 @@ int mysql_update(THD *thd,
   *found_return= found;
   *updated_return= updated;
   
-  
   if (thd->lex->analyze_stmt)
     goto emit_explain_and_leave;
 
@@ -1035,6 +1116,8 @@ err:
   delete file_sort;
   free_underlaid_joins(thd, select_lex);
   table->file->ha_end_keyread();
+  if (table->file->pushed_cond)
+    table->file->cond_pop();
   thd->abort_on_warning= 0;
   DBUG_RETURN(1);
 
@@ -1043,7 +1126,8 @@ produce_explain_and_leave:
     We come here for various "degenerate" query plans: impossible WHERE,
     no-partitions-used, impossible-range, etc.
   */
-  query_plan.save_explain_update_data(query_plan.mem_root, thd);
+  if (!query_plan.save_explain_update_data(query_plan.mem_root, thd))
+    goto err;
 
 emit_explain_and_leave:
   int err2= thd->lex->explain->send_explain(thd);
@@ -1540,16 +1624,6 @@ int mysql_multi_update_prepare(THD *thd)
     }
     DBUG_PRINT("info", ("table: %s  want_privilege: %u", tl->alias,
                         (uint) table->grant.want_privilege));
-    if (tl->lock_type != TL_READ &&
-        tl->lock_type != TL_READ_NO_INSERT)
-    {
-      TABLE_LIST *duplicate;
-      if ((duplicate= unique_table(thd, tl, table_list, 0)))
-      {
-        update_non_unique_table_error(table_list, "UPDATE", duplicate);
-        DBUG_RETURN(TRUE);
-      }
-    }
   }
   /*
     Set exclude_from_table_unique_test value back to FALSE. It is needed for
@@ -1595,10 +1669,9 @@ bool mysql_multi_update(THD *thd,
   List<Item> total_list;
 
   res= mysql_select(thd,
-                    table_list, select_lex->with_wild,
-                    total_list,
-                    conds, 0, (ORDER *) NULL, (ORDER *)NULL, (Item *) NULL,
-                    (ORDER *)NULL,
+                    table_list, select_lex->with_wild, total_list, conds,
+                    select_lex->order_list.elements, select_lex->order_list.first,
+                    (ORDER *)NULL, (Item *) NULL, (ORDER *)NULL,
                     options | SELECT_NO_JOIN_CACHE | SELECT_NO_UNLOCK |
                     OPTION_SETUP_TABLES_DONE,
                     *result, unit, select_lex);
@@ -1691,7 +1764,7 @@ int multi_update::prepare(List<Item> &not_used_values,
   */
 
   int error= setup_fields(thd, Ref_ptr_array(),
-                          *values, MARK_COLUMNS_READ, 0, 0);
+                          *values, MARK_COLUMNS_READ, 0, NULL, 0);
 
   ti.rewind();
   while ((table_ref= ti++))
@@ -1784,7 +1857,7 @@ int multi_update::prepare(List<Item> &not_used_values,
       switch_to_nullable_trigger_fields(*values_for_table[i], table);
     }
   }
-  copy_field= new Copy_field[max_fields];
+  copy_field= new (thd->mem_root) Copy_field[max_fields];
   DBUG_RETURN(thd->is_fatal_error != 0);
 }
 
@@ -1856,6 +1929,8 @@ static bool safe_update_on_fly(THD *thd, JOIN_TAB *join_tab,
 {
   TABLE *table= join_tab->table;
   if (unique_table(thd, table_ref, all_tables, 0))
+    return 0;
+  if (join_tab->join->order) // FIXME this is probably too strong
     return 0;
   switch (join_tab->type) {
   case JT_SYSTEM:
@@ -1934,6 +2009,7 @@ multi_update::initialize_tables(JOIN *join)
       }
     }
     table->prepare_for_position();
+    join->map2table[table->tablenr]->keep_current_rowid= true;
 
     /*
       enable uncacheable flag if we update a view with check option
@@ -1992,15 +2068,19 @@ loop_end:
     TABLE *tbl= table;
     do
     {
+      LEX_CSTRING field_name;
+      field_name.str= tbl->alias.c_ptr();
+      field_name.length= strlen(field_name.str);
       /*
         Signal each table (including tables referenced by WITH CHECK OPTION
         clause) for which we will store row position in the temporary table
         that we need a position to be read first.
       */
       tbl->prepare_for_position();
+      join->map2table[tbl->tablenr]->keep_current_rowid= true;
 
       Field_string *field= new Field_string(tbl->file->ref_length, 0,
-                                            tbl->alias.c_ptr(),
+                                            &field_name,
                                             &my_charset_bin);
       if (!field)
         DBUG_RETURN(1);
@@ -2308,6 +2388,26 @@ int multi_update::do_updates()
   do_update= 0;					// Don't retry this function
   if (!found)
     DBUG_RETURN(0);
+
+  /*
+    Update read_set to include all fields that virtual columns may depend on.
+    Usually they're already in the read_set, but if the previous access
+    method was keyread, only the virtual column itself will be in read_set,
+    not its dependencies
+  */
+  while(TABLE *tbl= check_opt_it++)
+  {
+    if (tbl->vcol_set)
+    {
+      bitmap_clear_all(tbl->vcol_set);
+      for (Field **vf= tbl->vfield; *vf; vf++)
+      {
+        if (bitmap_is_set(tbl->read_set, (*vf)->field_index))
+          tbl->mark_virtual_col(*vf);
+      }
+    }
+  }
+
   for (cur_table= update_tables; cur_table; cur_table= cur_table->next_local)
   {
     bool can_compare_record;

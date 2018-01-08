@@ -45,6 +45,7 @@ Created 1/20/1994 Heikki Tuuri
 #include <stdarg.h>
 
 #include <string>
+#include <my_atomic.h>
 
 /** Index name prefix in fast index creation, as a string constant */
 #define TEMP_INDEX_PREFIX_STR	"\377"
@@ -52,50 +53,12 @@ Created 1/20/1994 Heikki Tuuri
 /** Time stamp */
 typedef time_t	ib_time_t;
 
-#ifdef HAVE_PAUSE_INSTRUCTION
-   /* According to the gcc info page, asm volatile means that the
-   instruction has important side-effects and must not be removed.
-   Also asm volatile may trigger a memory barrier (spilling all registers
-   to memory). */
-# ifdef __SUNPRO_CC
-#  define UT_RELAX_CPU() asm ("pause" )
-# else
-#  define UT_RELAX_CPU() __asm__ __volatile__ ("pause")
-# endif /* __SUNPRO_CC */
-
-#elif defined(HAVE_FAKE_PAUSE_INSTRUCTION)
-# define UT_RELAX_CPU() __asm__ __volatile__ ("rep; nop")
-#elif defined _WIN32
-   /* In the Win32 API, the x86 PAUSE instruction is executed by calling
-   the YieldProcessor macro defined in WinNT.h. It is a CPU architecture-
-   independent way by using YieldProcessor. */
-# define UT_RELAX_CPU() YieldProcessor()
-#elif defined(__powerpc__) && defined __GLIBC__
-# include <sys/platform/ppc.h>
-# define UT_RELAX_CPU() __ppc_get_timebase()
-#else
-# define UT_RELAX_CPU() do { \
-     volatile int32	volatile_var; \
-     int32 oldval= 0; \
-     my_atomic_cas32(&volatile_var, &oldval, 1); \
-   } while (0)
-#endif
-
 #if defined (__GNUC__)
 # define UT_COMPILER_BARRIER() __asm__ __volatile__ ("":::"memory")
 #elif defined (_MSC_VER)
 # define UT_COMPILER_BARRIER() _ReadWriteBarrier()
 #else
 # define UT_COMPILER_BARRIER()
-#endif
-
-#if defined(HAVE_HMT_PRIORITY_INSTRUCTION)
-# include <sys/platform/ppc.h>
-# define UT_LOW_PRIORITY_CPU() __ppc_set_ppr_low()
-# define UT_RESUME_PRIORITY_CPU() __ppc_set_ppr_med()
-#else
-# define UT_LOW_PRIORITY_CPU() ((void)0)
-# define UT_RESUME_PRIORITY_CPU() ((void)0)
 #endif
 
 /*********************************************************************//**
@@ -299,7 +262,7 @@ void
 ut_print_timestamp(
 /*===============*/
 	FILE*	file)	/*!< in: file where to print */
-	UNIV_COLD MY_ATTRIBUTE((nonnull));
+	ATTRIBUTE_COLD __attribute__((nonnull));
 
 #ifndef UNIV_INNOCHECKSUM
 
@@ -313,7 +276,7 @@ ut_sprintf_timestamp(
 Runs an idle loop on CPU. The argument gives the desired delay
 in microseconds on 100 MHz Pentium + Visual C++.
 @return dummy value */
-ulint
+void
 ut_delay(
 /*=====*/
 	ulint	delay);	/*!< in: delay in microseconds on 100 MHz Pentium */
@@ -395,50 +358,6 @@ ut_copy_file(
 	FILE*	dest,	/*!< in: output file */
 	FILE*	src);	/*!< in: input file to be appended to output */
 
-#ifdef _WIN32
-/**********************************************************************//**
-A substitute for vsnprintf(3), formatted output conversion into
-a limited buffer. Note: this function DOES NOT return the number of
-characters that would have been printed if the buffer was unlimited because
-VC's _vsnprintf() returns -1 in this case and we would need to call
-_vscprintf() in addition to estimate that but we would need another copy
-of "ap" for that and VC does not provide va_copy(). */
-void
-ut_vsnprintf(
-/*=========*/
-	char*		str,	/*!< out: string */
-	size_t		size,	/*!< in: str size */
-	const char*	fmt,	/*!< in: format */
-	va_list		ap);	/*!< in: format values */
-
-/**********************************************************************//**
-A substitute for snprintf(3), formatted output conversion into
-a limited buffer.
-@return number of characters that would have been printed if the size
-were unlimited, not including the terminating '\0'. */
-int
-ut_snprintf(
-/*========*/
-	char*		str,	/*!< out: string */
-	size_t		size,	/*!< in: str size */
-	const char*	fmt,	/*!< in: format */
-	...);			/*!< in: format values */
-#else
-/**********************************************************************//**
-A wrapper for vsnprintf(3), formatted output conversion into
-a limited buffer. Note: this function DOES NOT return the number of
-characters that would have been printed if the buffer was unlimited because
-VC's _vsnprintf() returns -1 in this case and we would need to call
-_vscprintf() in addition to estimate that but we would need another copy
-of "ap" for that and VC does not provide va_copy(). */
-# define ut_vsnprintf(buf, size, fmt, ap)	\
-	((void) vsnprintf(buf, size, fmt, ap))
-/**********************************************************************//**
-A wrapper for snprintf(3), formatted output conversion into
-a limited buffer. */
-# define ut_snprintf	snprintf
-#endif /* _WIN32 */
-
 /*************************************************************//**
 Convert an error number to a human readable text message. The
 returned string is static and should not be freed or modified.
@@ -505,6 +424,7 @@ use this class directly, instead use one of the derived classes. */
 class logger {
 public:
 	template<typename T>
+	ATTRIBUTE_COLD
 	logger& operator<<(const T& rhs)
 	{
 		m_oss << rhs;
@@ -515,6 +435,7 @@ public:
 	@param[in]	buf	the buffer whose contents will be logged.
 	@param[in]	count	the length of the buffer buf.
 	@return the output stream into which buffer was written. */
+	ATTRIBUTE_COLD
 	std::ostream&
 	write(
 		const char*		buf,
@@ -527,6 +448,7 @@ public:
 	@param[in]	buf	the buffer whose contents will be logged.
 	@param[in]	count	the length of the buffer buf.
 	@return the output stream into which buffer was written. */
+	ATTRIBUTE_COLD
 	std::ostream&
 	write(
 		const byte*		buf,
@@ -539,6 +461,7 @@ public:
 protected:
 	/* This class must not be used directly, hence making the default
 	constructor protected. */
+	ATTRIBUTE_COLD
 	logger() {}
 };
 
@@ -555,6 +478,7 @@ statement.  If a named object is created, then the log message will be emitted
 only when it goes out of scope or destroyed. */
 class info : public logger {
 public:
+	ATTRIBUTE_COLD
 	~info();
 };
 
@@ -562,6 +486,7 @@ public:
 class info for further details. */
 class warn : public logger {
 public:
+	ATTRIBUTE_COLD
 	~warn();
 };
 
@@ -569,6 +494,7 @@ public:
 documentation of class info for further details. */
 class error : public logger {
 public:
+	ATTRIBUTE_COLD
 	~error();
 };
 
@@ -577,6 +503,7 @@ by crashing it.  Use this class when MySQL server needs to be stopped
 immediately.  Refer to the documentation of class info for usage details. */
 class fatal : public logger {
 public:
+	ATTRIBUTE_NORETURN
 	~fatal();
 };
 
@@ -584,10 +511,12 @@ public:
 warning message */
 class error_or_warn : public logger {
 public:
+	ATTRIBUTE_COLD
 	error_or_warn(bool	pred)
 	: m_error(pred)
 	{}
 
+	ATTRIBUTE_COLD
 	~error_or_warn();
 private:
 	const bool	m_error;
@@ -597,10 +526,12 @@ private:
 error message. */
 class fatal_or_error : public logger {
 public:
+	ATTRIBUTE_COLD
 	fatal_or_error(bool	pred)
 	: m_fatal(pred)
 	{}
 
+	ATTRIBUTE_COLD
 	~fatal_or_error();
 private:
 	const bool	m_fatal;

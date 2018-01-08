@@ -100,6 +100,7 @@ TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
 */
 #define MYSQL_OPEN_SKIP_SCOPED_MDL_LOCK         0x1000
 #define MYSQL_LOCK_NOT_TEMPORARY		0x2000
+#define MYSQL_LOCK_USE_MALLOC                   0x4000
 /**
   Only check THD::killed if waits happen (e.g. wait on MDL, wait on
   table flush, wait on thr_lock.c locks) while opening and locking table.
@@ -159,7 +160,8 @@ int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
 	       List<Item> *sum_func_list, uint wild_num);
 bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
                   List<Item> &item, enum_mark_columns mark_used_columns,
-                  List<Item> *sum_func_list, bool allow_sum_func);
+                  List<Item> *sum_func_list, List<Item> *pre_fix,
+                  bool allow_sum_func);
 void unfix_fields(List<Item> &items);
 bool fill_record(THD * thd, TABLE *table_arg, List<Item> &fields,
                  List<Item> &values, bool ignore_errors, bool update);
@@ -256,12 +258,13 @@ bool open_normal_and_derived_tables(THD *thd, TABLE_LIST *tables, uint flags,
                                     uint dt_phases);
 bool open_tables_only_view_structure(THD *thd, TABLE_LIST *tables,
                                      bool can_deadlock);
+bool open_and_lock_internal_tables(TABLE *table, bool lock);
 bool lock_tables(THD *thd, TABLE_LIST *tables, uint counter, uint flags);
 int decide_logging_format(THD *thd, TABLE_LIST *tables);
 void close_thread_table(THD *thd, TABLE **table_ptr);
 TABLE_LIST *unique_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,
                          bool check_alias);
-bool is_equal(const LEX_STRING *a, const LEX_STRING *b);
+bool is_equal(const LEX_CSTRING *a, const LEX_CSTRING *b);
 
 class Open_tables_backup;
 /* Functions to work with system tables. */
@@ -279,7 +282,7 @@ void close_performance_schema_table(THD *thd, Open_tables_state *backup);
 
 bool close_cached_tables(THD *thd, TABLE_LIST *tables,
                          bool wait_for_refresh, ulong timeout);
-bool close_cached_connection_tables(THD *thd, LEX_STRING *connect_string);
+bool close_cached_connection_tables(THD *thd, LEX_CSTRING *connect_string);
 void close_all_tables_for_name(THD *thd, TABLE_SHARE *share,
                                ha_extra_function extra,
                                TABLE *skip_table);
@@ -366,7 +369,7 @@ inline bool setup_fields_with_no_wrap(THD *thd, Ref_ptr_array ref_pointer_array,
   bool res;
   thd->lex->select_lex.no_wrap_view_item= TRUE;
   res= setup_fields(thd, ref_pointer_array, item, mark_used_columns,
-                    sum_func_list, allow_sum_func);
+                    sum_func_list, NULL,  allow_sum_func);
   thd->lex->select_lex.no_wrap_view_item= FALSE;
   return res;
 }

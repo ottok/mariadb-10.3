@@ -80,6 +80,8 @@ static bool field_valid_for_tokudb_table(Field* field) {
     case MYSQL_TYPE_DECIMAL:
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_NULL:
+    case MYSQL_TYPE_VARCHAR_COMPRESSED:
+    case MYSQL_TYPE_BLOB_COMPRESSED:
         ret_val = false;
     }
 exit:
@@ -242,6 +244,8 @@ static TOKU_TYPE mysql_to_toku_type (Field* field) {
     case MYSQL_TYPE_DECIMAL:
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_NULL:
+    case MYSQL_TYPE_VARCHAR_COMPRESSED:
+    case MYSQL_TYPE_BLOB_COMPRESSED:
         assert_unreachable();
     }
 exit:
@@ -3031,7 +3035,7 @@ static uint32_t pack_key_from_desc(
 }
 
 static bool fields_have_same_name(Field* a, Field* b) {
-    return strcmp(a->field_name, b->field_name) == 0;
+    return strcmp(a->field_name.str, b->field_name.str) == 0;
 }
 
 static bool fields_are_same_type(Field* a, Field* b) {
@@ -3204,6 +3208,8 @@ static bool fields_are_same_type(Field* a, Field* b) {
     case MYSQL_TYPE_DECIMAL:
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_NULL:
+    case MYSQL_TYPE_VARCHAR_COMPRESSED:
+    case MYSQL_TYPE_BLOB_COMPRESSED:
         assert_unreachable();
     }
 

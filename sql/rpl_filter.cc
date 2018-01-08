@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "mysqld.h"                             // system_charset_info
 #include "rpl_filter.h"
@@ -239,7 +239,7 @@ Rpl_filter::db_ok_with_wild_table(const char *db)
   int len;
   end= strmov(hash_key, db);
   *end++= '.';
-  len= end - hash_key ;
+  len= (int)(end - hash_key);
   if (wild_do_table_inited && find_wild(&wild_do_table, hash_key, len))
   {
     DBUG_PRINT("return",("1"));

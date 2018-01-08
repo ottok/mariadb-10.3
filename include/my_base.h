@@ -20,7 +20,6 @@
 #ifndef _my_base_h
 #define _my_base_h
 
-#include <my_global.h>
 #include <my_dir.h>			/* This includes types */
 #include <my_sys.h>
 #include <m_string.h>
@@ -202,7 +201,14 @@ enum ha_extra_function {
   HA_EXTRA_DETACH_CHILDREN,
   HA_EXTRA_DETACH_CHILD,
   /* Inform handler we will force a close as part of flush */
-  HA_EXTRA_PREPARE_FOR_FORCED_CLOSE
+  HA_EXTRA_PREPARE_FOR_FORCED_CLOSE,
+  /* Inform handler that we will do an alter table */
+  HA_EXTRA_PREPARE_FOR_ALTER_TABLE,
+  /*
+    Used in ha_partition::handle_ordered_index_scan() to inform engine
+    that we are starting an ordered index scan. Needed by Spider
+  */
+  HA_EXTRA_STARTING_ORDERED_INDEX_SCAN
 };
 
 /* Compatible option, to be deleted in 6.0 */
@@ -276,7 +282,8 @@ enum ha_base_keytype {
   This flag can be calculated -- it's based on key lengths comparison.
 */
 #define HA_KEY_HAS_PART_KEY_SEG 65536
-
+/* Internal Flag Can be calcaluted */
+#define HA_INVISIBLE_KEY 2<<18
 	/* Automatic bits in key-flag */
 
 #define HA_SPACE_PACK_USED	 4	/* Test for if SPACE_PACK used */

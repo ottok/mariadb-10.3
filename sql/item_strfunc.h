@@ -27,8 +27,6 @@
 
 extern size_t username_char_length;
 
-class MY_LOCALE;
-
 class Item_str_func :public Item_func
 {
 protected:
@@ -64,8 +62,7 @@ public:
   longlong val_int();
   double val_real();
   my_decimal *val_decimal(my_decimal *);
-  enum Item_result result_type () const { return STRING_RESULT; }
-  enum_field_types field_type() const { return string_field_type(); }
+  const Type_handler *type_handler() const { return string_type_handler(); }
   void left_right_max_length();
   bool fix_fields(THD *thd, Item **ref);
   void update_null_value()
@@ -93,7 +90,7 @@ public:
   {
     return val_str_from_val_str_ascii(str, &ascii_buf);
   }
-  virtual String *val_str_ascii(String *)= 0;
+  String *val_str_ascii(String *)= 0;
 };
 
 
@@ -142,7 +139,6 @@ public:
 
 class Item_func_md5 :public Item_str_ascii_checksum_func
 {
-  String tmp_value;
 public:
   Item_func_md5(THD *thd, Item *a): Item_str_ascii_checksum_func(thd, a) {}
   String *val_str_ascii(String *);
@@ -151,8 +147,8 @@ public:
     fix_length_and_charset(32, default_charset());
   }
   const char *func_name() const { return "md5"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_md5>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_md5>(thd, this); }
 };
 
 
@@ -163,8 +159,8 @@ public:
   String *val_str_ascii(String *);    
   void fix_length_and_dec();      
   const char *func_name() const { return "sha"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_sha>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_sha>(thd, this); }
 };
 
 class Item_func_sha2 :public Item_str_ascii_checksum_func
@@ -175,8 +171,8 @@ public:
   String *val_str_ascii(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "sha2"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_sha2>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_sha2>(thd, this); }
 };
 
 class Item_func_to_base64 :public Item_str_ascii_checksum_func
@@ -188,8 +184,8 @@ public:
   String *val_str_ascii(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "to_base64"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_to_base64>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_to_base64>(thd, this); }
 };
 
 class Item_func_from_base64 :public Item_str_binary_checksum_func
@@ -201,8 +197,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "from_base64"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_from_base64>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_from_base64>(thd, this); }
 };
 
 #include <my_crypt.h>
@@ -227,8 +223,8 @@ public:
     Item_aes_crypt(thd, a, b) {}
   void fix_length_and_dec();
   const char *func_name() const { return "aes_encrypt"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_aes_encrypt>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_aes_encrypt>(thd, this); }
 };
 
 class Item_func_aes_decrypt :public Item_aes_crypt
@@ -238,8 +234,8 @@ public:
     Item_aes_crypt(thd, a, b) {}
   void fix_length_and_dec();
   const char *func_name() const { return "aes_decrypt"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_aes_decrypt>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_aes_decrypt>(thd, this); }
 };
 
 
@@ -285,8 +281,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "concat"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_concat>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_concat>(thd, this); }
 };
 
 
@@ -305,16 +301,15 @@ public:
   { }
   String *val_str(String *);
   const char *func_name() const { return "concat_operator_oracle"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
+  Item *get_copy(THD *thd)
   {
-    return get_item_copy<Item_func_concat_operator_oracle>(thd, mem_root, this);
+    return get_item_copy<Item_func_concat_operator_oracle>(thd, this);
   }
 };
 
 
 class Item_func_decode_histogram :public Item_str_func
 {
-  String tmp_value;
 public:
   Item_func_decode_histogram(THD *thd, Item *a, Item *b):
     Item_str_func(thd, a, b) {}
@@ -326,8 +321,8 @@ public:
     maybe_null= 1;
   }
   const char *func_name() const { return "decode_histogram"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_decode_histogram>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_decode_histogram>(thd, this); }
 };
 
 class Item_func_concat_ws :public Item_str_func
@@ -339,8 +334,8 @@ public:
   void fix_length_and_dec();
   const char *func_name() const { return "concat_ws"; }
   table_map not_null_tables() const { return 0; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_concat_ws>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_concat_ws>(thd, this); }
 };
 
 class Item_func_reverse :public Item_str_func
@@ -351,8 +346,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "reverse"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_reverse>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_reverse>(thd, this); }
 };
 
 
@@ -362,11 +357,25 @@ class Item_func_replace :public Item_str_func
 public:
   Item_func_replace(THD *thd, Item *org, Item *find, Item *replace):
     Item_str_func(thd, org, find, replace) {}
-  String *val_str(String *);
+  String *val_str(String *to) { return val_str_internal(to, NULL); };
   void fix_length_and_dec();
+  String *val_str_internal(String *str, String *empty_string_for_null);
   const char *func_name() const { return "replace"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_replace>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_replace>(thd, this); }
+};
+
+
+class Item_func_replace_oracle :public Item_func_replace
+{
+  String tmp_emtpystr;
+public:
+  Item_func_replace_oracle(THD *thd, Item *org, Item *find, Item *replace):
+    Item_func_replace(thd, org, find, replace) {}
+  String *val_str(String *to) { return val_str_internal(to, &tmp_emtpystr); };
+  const char *func_name() const { return "replace_oracle"; }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_replace_oracle>(thd, this); }
 };
 
 
@@ -388,10 +397,10 @@ public:
     DBUG_VOID_RETURN;
   }
   String *val_str(String *str);
+  bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec();
   const char *func_name() const { return "regexp_replace"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_regexp_replace>(thd, mem_root, this); }
+  Item *get_copy(THD *thd) { return 0;}
 };
 
 
@@ -410,10 +419,10 @@ public:
     DBUG_VOID_RETURN;
   }
   String *val_str(String *str);
+  bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec();
   const char *func_name() const { return "regexp_substr"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_regexp_substr>(thd, mem_root, this); }
+  Item *get_copy(THD *thd) { return 0; }
 };
 
 
@@ -427,8 +436,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "insert"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_insert>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_insert>(thd, this); }
 };
 
 
@@ -450,8 +459,8 @@ public:
   Item_func_lcase(THD *thd, Item *item): Item_str_conv(thd, item) {}
   const char *func_name() const { return "lcase"; }
   void fix_length_and_dec();
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_lcase>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_lcase>(thd, this); }
 };
 
 class Item_func_ucase :public Item_str_conv
@@ -460,8 +469,8 @@ public:
   Item_func_ucase(THD *thd, Item *item): Item_str_conv(thd, item) {}
   const char *func_name() const { return "ucase"; }
   void fix_length_and_dec();
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_ucase>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_ucase>(thd, this); }
 };
 
 
@@ -473,8 +482,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "left"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_left>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_left>(thd, this); }
 };
 
 
@@ -486,24 +495,41 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "right"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_right>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_right>(thd, this); }
 };
 
 
 class Item_func_substr :public Item_str_func
 {
   String tmp_value;
+protected:
+  virtual longlong get_position() { return args[1]->val_int(); }
 public:
   Item_func_substr(THD *thd, Item *a, Item *b): Item_str_func(thd, a, b) {}
-  Item_func_substr(THD *thd, Item *a, Item *b, Item *c): Item_str_func(thd, a, b, c) {}
+  Item_func_substr(THD *thd, Item *a, Item *b, Item *c):
+    Item_str_func(thd, a, b, c) {}
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "substr"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_substr>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_substr>(thd, this); }
 };
 
+class Item_func_substr_oracle :public Item_func_substr
+{
+protected:
+  longlong get_position()
+  { longlong pos= args[1]->val_int(); return pos == 0 ? 1 : pos; }
+public:
+  Item_func_substr_oracle(THD *thd, Item *a, Item *b):
+    Item_func_substr(thd, a, b) {}
+  Item_func_substr_oracle(THD *thd, Item *a, Item *b, Item *c):
+    Item_func_substr(thd, a, b, c) {}
+  const char *func_name() const { return "substr_oracle"; }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_substr_oracle>(thd, this); }
+};
 
 class Item_func_substr_index :public Item_str_func
 {
@@ -514,8 +540,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "substring_index"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_substr_index>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_substr_index>(thd, this); }
 
 };
 
@@ -546,10 +572,10 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "trim"; }
-  virtual void print(String *str, enum_query_type query_type);
+  void print(String *str, enum_query_type query_type);
   virtual const char *mode_name() const { return "both"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_trim>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_trim>(thd, this); }
 };
 
 
@@ -561,8 +587,8 @@ public:
   String *val_str(String *);
   const char *func_name() const { return "ltrim"; }
   const char *mode_name() const { return "leading"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_ltrim>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_ltrim>(thd, this); }
 };
 
 
@@ -574,8 +600,8 @@ public:
   String *val_str(String *);
   const char *func_name() const { return "rtrim"; }
   const char *mode_name() const { return "trailing"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_rtrim>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_rtrim>(thd, this); }
 };
 
 
@@ -613,8 +639,8 @@ public:
                                           "password" : "old_password"); }
   static char *alloc(THD *thd, const char *password, size_t pass_len,
                      enum PW_Alg al);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_password>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_password>(thd, this); }
 };
 
 
@@ -635,8 +661,8 @@ public:
     max_length = args[0]->max_length + 9;
   }
   const char *func_name() const { return "des_encrypt"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_des_encrypt>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_des_encrypt>(thd, this); }
 };
 
 class Item_func_des_decrypt :public Item_str_binary_checksum_func
@@ -657,8 +683,8 @@ public:
       max_length-= 9U;
   }
   const char *func_name() const { return "des_decrypt"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_des_decrypt>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_des_decrypt>(thd, this); }
 };
 
 
@@ -693,8 +719,8 @@ public:
   {
     return FALSE;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_encrypt>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_encrypt>(thd, this); }
 };
 
 #include "sql_crypt.h"
@@ -713,8 +739,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "encode"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_encode>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_encode>(thd, this); }
 protected:
   virtual void crypto_transform(String *);
 private:
@@ -728,8 +754,8 @@ class Item_func_decode :public Item_func_encode
 public:
   Item_func_decode(THD *thd, Item *a, Item *seed_arg): Item_func_encode(thd, a, seed_arg) {}
   const char *func_name() const { return "decode"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_decode>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_decode>(thd, this); }
 protected:
   void crypto_transform(String *);
 };
@@ -740,10 +766,7 @@ class Item_func_sysconst :public Item_str_func
 public:
   Item_func_sysconst(THD *thd): Item_str_func(thd)
   { collation.set(system_charset_info,DERIVATION_SYSCONST); }
-  Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs)
-  {
-    return const_charset_converter(thd, tocs, true, fully_qualified_func_name());
-  }
+  Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs);
   /*
     Used to create correct Item name in new converted item in
     safe_charset_converter, return string representation of this function
@@ -755,6 +778,7 @@ public:
     return mark_unsupported_function(fully_qualified_func_name(), arg,
                                      VCOL_SESSION_FUNC);
   }
+  bool const_item() const;
 };
 
 
@@ -770,8 +794,8 @@ public:
   }
   const char *func_name() const { return "database"; }
   const char *fully_qualified_func_name() const { return "database()"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_database>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_database>(thd, this); }
 };
 
 
@@ -791,8 +815,8 @@ public:
     max_length= 512 * system_charset_info->mbmaxlen;
     null_value= maybe_null= false;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_sqlerrm>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_sqlerrm>(thd, this); }
 };
 
 
@@ -814,7 +838,7 @@ public:
   bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec()
   {
-    max_length= (username_char_length +
+    max_length= (uint32) (username_char_length +
                  HOSTNAME_LENGTH + 1) * SYSTEM_CHARSET_MBMAXLEN;
   }
   const char *func_name() const { return "user"; }
@@ -823,8 +847,8 @@ public:
   {
     return save_str_value_in_field(field, &str_value);
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_user>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_user>(thd, this); }
 };
 
 
@@ -856,7 +880,7 @@ public:
     Item_func_sysconst(thd), context(context_arg) {}
   bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec()
-  { max_length= username_char_length * SYSTEM_CHARSET_MBMAXLEN; }
+  { max_length= (uint32) username_char_length * SYSTEM_CHARSET_MBMAXLEN; }
   int save_in_field(Field *field, bool no_conversions)
   { return save_str_value_in_field(field, &str_value); }
   const char *func_name() const { return "current_role"; }
@@ -864,7 +888,7 @@ public:
   String *val_str(String *)
   {
     DBUG_ASSERT(fixed == 1);
-    return (null_value ? 0 : &str_value);
+    return null_value ? NULL : &str_value;
   }
   bool check_vcol_func_processor(void *arg)
   {
@@ -873,8 +897,8 @@ public:
     return mark_unsupported_function(fully_qualified_func_name(), arg,
                                      VCOL_SESSION_FUNC);
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_current_role>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_current_role>(thd, this); }
 };
 
 
@@ -886,8 +910,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "soundex"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_soundex>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_soundex>(thd, this); }
 };
 
 
@@ -900,8 +924,8 @@ public:
   String *val_str(String *str);
   void fix_length_and_dec();
   const char *func_name() const { return "elt"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_elt>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_elt>(thd, this); }
 };
 
 
@@ -914,28 +938,25 @@ public:
   String *val_str(String *str);
   void fix_length_and_dec();
   const char *func_name() const { return "make_set"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_make_set>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_make_set>(thd, this); }
 };
 
 
 class Item_func_format :public Item_str_ascii_func
 {
-  String tmp_str;
-  MY_LOCALE *locale;
+  const MY_LOCALE *locale;
 public:
   Item_func_format(THD *thd, Item *org, Item *dec):
     Item_str_ascii_func(thd, org, dec) {}
   Item_func_format(THD *thd, Item *org, Item *dec, Item *lang):
     Item_str_ascii_func(thd, org, dec, lang) {}
 
-  MY_LOCALE *get_locale(Item *item);
   String *val_str_ascii(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "format"; }
-  virtual void print(String *str, enum_query_type query_type);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_format>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_format>(thd, this); }
 };
 
 
@@ -947,16 +968,35 @@ public:
   Item_func_char(THD *thd, List<Item> &list, CHARSET_INFO *cs):
     Item_str_func(thd, list)
   { collation.set(cs); }
+  Item_func_char(THD *thd, Item *arg1, CHARSET_INFO *cs):
+    Item_str_func(thd, arg1)
+  { collation.set(cs); }
   String *val_str(String *);
+  void append_char(String * str, int32 num);
   void fix_length_and_dec()
   {
     max_length= arg_count * 4;
   }
   const char *func_name() const { return "char"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_char>(thd, mem_root, this); }
+  void print(String *str, enum_query_type query_type);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_char>(thd, this); }
 };
 
+class Item_func_chr :public Item_func_char
+{
+public:
+  Item_func_chr(THD *thd, Item *arg1, CHARSET_INFO *cs):
+    Item_func_char(thd, arg1, cs) {}
+  String *val_str(String *);
+  void fix_length_and_dec()
+  {
+    max_length= 4;
+  }
+  const char *func_name() const { return "chr"; }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_chr>(thd, this); }
+};
 
 class Item_func_repeat :public Item_str_func
 {
@@ -967,8 +1007,8 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "repeat"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_repeat>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_repeat>(thd, this); }
 };
 
 
@@ -979,14 +1019,13 @@ public:
   String *val_str(String *);
   void fix_length_and_dec();
   const char *func_name() const { return "space"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_space>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_space>(thd, this); }
 };
 
 
 class Item_func_binlog_gtid_pos :public Item_str_func
 {
-  String tmp_value;
 public:
   Item_func_binlog_gtid_pos(THD *thd, Item *arg1, Item *arg2):
     Item_str_func(thd, arg1, arg2) {}
@@ -995,39 +1034,51 @@ public:
   const char *func_name() const { return "binlog_gtid_pos"; }
   bool check_vcol_func_processor(void *arg)
   {
-
     return mark_unsupported_function(func_name(), "()", arg, VCOL_IMPOSSIBLE);
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_binlog_gtid_pos>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_binlog_gtid_pos>(thd, this); }
 };
 
 
-class Item_func_rpad :public Item_str_func
+class Item_func_pad: public Item_str_func
 {
-  String tmp_value, rpad_str;
+protected:
+  String tmp_value, pad_str;
+public:
+  Item_func_pad(THD *thd, Item *arg1, Item *arg2, Item *arg3):
+    Item_str_func(thd, arg1, arg2, arg3) {}
+  Item_func_pad(THD *thd, Item *arg1, Item *arg2):
+    Item_str_func(thd, arg1, arg2) {}
+  void fix_length_and_dec();
+};
+
+
+class Item_func_rpad :public Item_func_pad
+{
 public:
   Item_func_rpad(THD *thd, Item *arg1, Item *arg2, Item *arg3):
-    Item_str_func(thd, arg1, arg2, arg3) {}
+    Item_func_pad(thd, arg1, arg2, arg3) {}
+  Item_func_rpad(THD *thd, Item *arg1, Item *arg2):
+    Item_func_pad(thd, arg1, arg2) {}
   String *val_str(String *);
-  void fix_length_and_dec();
   const char *func_name() const { return "rpad"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_rpad>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_rpad>(thd, this); }
 };
 
 
-class Item_func_lpad :public Item_str_func
+class Item_func_lpad :public Item_func_pad
 {
-  String tmp_value, lpad_str;
 public:
   Item_func_lpad(THD *thd, Item *arg1, Item *arg2, Item *arg3):
-    Item_str_func(thd, arg1, arg2, arg3) {}
+    Item_func_pad(thd, arg1, arg2, arg3) {}
+  Item_func_lpad(THD *thd, Item *arg1, Item *arg2):
+    Item_func_pad(thd, arg1, arg2) {}
   String *val_str(String *);
-  void fix_length_and_dec();
   const char *func_name() const { return "lpad"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_lpad>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_lpad>(thd, this); }
 };
 
 
@@ -1044,8 +1095,8 @@ public:
     max_length=64;
     maybe_null= 1;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_conv>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_conv>(thd, this); }
 };
 
 
@@ -1074,13 +1125,13 @@ public:
   }
   void fix_length_and_dec()
   {
-    collation.set(default_charset());
+    collation.set(default_charset(), DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII);
     decimals=0;
     fix_char_length(args[0]->max_length * 2);
     m_arg0_type_handler= args[0]->type_handler();
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_hex>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_hex>(thd, this); }
 };
 
 class Item_func_unhex :public Item_str_func
@@ -1100,8 +1151,8 @@ public:
     decimals=0;
     max_length=(1+args[0]->max_length)/2;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_unhex>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_unhex>(thd, this); }
 };
 
 
@@ -1132,8 +1183,8 @@ public:
   Item_func_like_range_min(THD *thd, Item *a, Item *b):
     Item_func_like_range(thd, a, b, true) { }
   const char *func_name() const { return "like_range_min"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_like_range_min>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_like_range_min>(thd, this); }
 };
 
 
@@ -1143,8 +1194,8 @@ public:
   Item_func_like_range_max(THD *thd, Item *a, Item *b):
     Item_func_like_range(thd, a, b, false) { }
   const char *func_name() const { return "like_range_max"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_like_range_max>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_like_range_max>(thd, this); }
 };
 #endif
 
@@ -1167,11 +1218,11 @@ public:
     collation.set(&my_charset_bin);
     max_length=args[0]->max_length;
   }
-  virtual void print(String *str, enum_query_type query_type);
+  void print(String *str, enum_query_type query_type);
   const char *func_name() const { return "cast_as_binary"; }
   bool need_parentheses_in_default() { return true; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_binary>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_binary>(thd, this); }
 };
 
 
@@ -1192,8 +1243,8 @@ public:
   {
     return mark_unsupported_function(func_name(), "()", arg, VCOL_IMPOSSIBLE);
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_load_file>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_load_file>(thd, this); }
 };
 
 
@@ -1209,8 +1260,8 @@ class Item_func_export_set: public Item_str_func
   String  *val_str(String *str);
   void fix_length_and_dec();
   const char *func_name() const { return "export_set"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_export_set>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_export_set>(thd, this); }
 };
 
 
@@ -1228,8 +1279,8 @@ public:
                                   2 * collation.collation->mbmaxlen;
     max_length= (uint32) MY_MIN(max_result_length, MAX_BLOB_WIDTH);
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_quote>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_quote>(thd, this); }
 };
 
 class Item_func_conv_charset :public Item_str_func
@@ -1311,9 +1362,9 @@ public:
   }
   void fix_length_and_dec();
   const char *func_name() const { return "convert"; }
-  virtual void print(String *str, enum_query_type query_type);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_conv_charset>(thd, mem_root, this); }
+  void print(String *str, enum_query_type query_type);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_conv_charset>(thd, this); }
 };
 
 class Item_func_set_collation :public Item_str_func
@@ -1327,15 +1378,15 @@ public:
   const char *func_name() const { return "collate"; }
   enum precedence precedence() const { return COLLATE_PRECEDENCE; }
   enum Functype functype() const { return COLLATE_FUNC; }
-  virtual void print(String *str, enum_query_type query_type);
+  void print(String *str, enum_query_type query_type);
   Item_field *field_for_view_update()
   {
     /* this function is transparent for view updating */
     return args[0]->field_for_view_update();
   }
   bool need_parentheses_in_default() { return true; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_set_collation>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_set_collation>(thd, this); }
 };
 
 
@@ -1363,8 +1414,8 @@ public:
     :Item_func_expr_str_metadata(thd, a) { }
   String *val_str(String *);
   const char *func_name() const { return "charset"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_charset>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_charset>(thd, this); }
 };
 
 
@@ -1375,8 +1426,8 @@ public:
     :Item_func_expr_str_metadata(thd, a) {}
   String *val_str(String *);
   const char *func_name() const { return "collation"; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_collation>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_collation>(thd, this); }
 };
 
 
@@ -1410,33 +1461,36 @@ public:
   Item* propagate_equal_fields(THD *thd, const Context &ctx, COND_EQUAL *cond)
   { return this; }
   void print(String *str, enum_query_type query_type);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_weight_string>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_weight_string>(thd, this); }
 };
 
-class Item_func_crc32 :public Item_int_func
+class Item_func_crc32 :public Item_long_func
 {
+  bool check_arguments() const
+  { return args[0]->check_type_can_return_str(func_name()); }
   String value;
 public:
-  Item_func_crc32(THD *thd, Item *a): Item_int_func(thd, a)
+  Item_func_crc32(THD *thd, Item *a): Item_long_func(thd, a)
   { unsigned_flag= 1; }
   const char *func_name() const { return "crc32"; }
   void fix_length_and_dec() { max_length=10; }
   longlong val_int();
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_crc32>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_crc32>(thd, this); }
 };
 
-class Item_func_uncompressed_length : public Item_int_func
+class Item_func_uncompressed_length : public Item_long_func_length
 {
   String value;
 public:
-  Item_func_uncompressed_length(THD *thd, Item *a): Item_int_func(thd, a) {}
+  Item_func_uncompressed_length(THD *thd, Item *a)
+   :Item_long_func_length(thd, a) {}
   const char *func_name() const{return "uncompressed_length";}
   void fix_length_and_dec() { max_length=10; maybe_null= true; }
   longlong val_int();
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_uncompressed_length>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_uncompressed_length>(thd, this); }
 };
 
 #ifdef HAVE_COMPRESS
@@ -1447,28 +1501,28 @@ public:
 
 class Item_func_compress: public Item_str_binary_checksum_func
 {
-  String buffer;
+  String tmp_value;
 public:
   Item_func_compress(THD *thd, Item *a)
    :Item_str_binary_checksum_func(thd, a) {}
   void fix_length_and_dec(){max_length= (args[0]->max_length*120)/100+12;}
   const char *func_name() const{return "compress";}
   String *val_str(String *) ZLIB_DEPENDED_FUNCTION
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_compress>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_compress>(thd, this); }
 };
 
 class Item_func_uncompress: public Item_str_binary_checksum_func
 {
-  String buffer;
+  String tmp_value;
 public:
   Item_func_uncompress(THD *thd, Item *a)
    :Item_str_binary_checksum_func(thd, a) {}
   void fix_length_and_dec(){ maybe_null= 1; max_length= MAX_BLOB_WIDTH; }
   const char *func_name() const{return "uncompress";}
   String *val_str(String *) ZLIB_DEPENDED_FUNCTION
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_uncompress>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_uncompress>(thd, this); }
 };
 
 
@@ -1488,8 +1542,8 @@ public:
   {
     return mark_unsupported_function(func_name(), "()", arg, VCOL_NON_DETERMINISTIC);
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_uuid>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_uuid>(thd, this); }
 };
 
 
@@ -1509,10 +1563,10 @@ public:
   void fix_length_and_dec();
   const char *func_name() const{ return "column_create"; }
   String *val_str(String *);
-  virtual void print(String *str, enum_query_type query_type);
-  virtual enum Functype functype() const   { return DYNCOL_FUNC; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_dyncol_create>(thd, mem_root, this); }
+  void print(String *str, enum_query_type query_type);
+  enum Functype functype() const   { return DYNCOL_FUNC; }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_dyncol_create>(thd, this); }
 };
 
 
@@ -1524,26 +1578,26 @@ public:
   {}
   const char *func_name() const{ return "column_add"; }
   String *val_str(String *);
-  virtual void print(String *str, enum_query_type query_type);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_dyncol_add>(thd, mem_root, this); }
+  void print(String *str, enum_query_type query_type);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_dyncol_add>(thd, this); }
 };
 
 class Item_func_dyncol_json: public Item_str_func
 {
 public:
-  Item_func_dyncol_json(THD *thd, Item *str): Item_str_func(thd, str) {}
+  Item_func_dyncol_json(THD *thd, Item *str): Item_str_func(thd, str)
+    {collation.set(DYNCOL_UTF);}
   const char *func_name() const{ return "column_json"; }
   String *val_str(String *);
   void fix_length_and_dec()
   {
     max_length= MAX_BLOB_WIDTH;
     maybe_null= 1;
-    collation.set(&my_charset_bin);
     decimals= 0;
   }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_dyncol_json>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_dyncol_json>(thd, this); }
 };
 
 /*
@@ -1584,20 +1638,21 @@ public:
   bool get_dyn_value(THD *thd, DYNAMIC_COLUMN_VALUE *val, String *tmp);
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   void print(String *str, enum_query_type query_type);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_dyncol_get>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_dyncol_get>(thd, this); }
 };
 
 
 class Item_func_dyncol_list: public Item_str_func
 {
 public:
-  Item_func_dyncol_list(THD *thd, Item *str): Item_str_func(thd, str) {};
+  Item_func_dyncol_list(THD *thd, Item *str): Item_str_func(thd, str)
+    {collation.set(DYNCOL_UTF);}
   void fix_length_and_dec() { maybe_null= 1; max_length= MAX_BLOB_WIDTH; };
   const char *func_name() const{ return "column_list"; }
   String *val_str(String *);
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_func_dyncol_list>(thd, mem_root, this); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_func_dyncol_list>(thd, this); }
 };
 
 #endif /* ITEM_STRFUNC_INCLUDED */

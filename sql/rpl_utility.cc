@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include <my_bit.h>
 #include "rpl_utility.h"
 #include "log_event.h"
@@ -128,6 +128,8 @@ max_display_length_for_field(enum_field_types sql_type, unsigned int metadata)
   case MYSQL_TYPE_VAR_STRING:
   case MYSQL_TYPE_VARCHAR:
     return metadata;
+  case MYSQL_TYPE_VARCHAR_COMPRESSED:
+    return metadata - 1;
 
     /*
       The actual length for these types does not really matter since
@@ -139,22 +141,23 @@ max_display_length_for_field(enum_field_types sql_type, unsigned int metadata)
     */
 
   case MYSQL_TYPE_TINY_BLOB:
-    return my_set_bits(1 * 8);
+    return (uint32)my_set_bits(1 * 8);
 
   case MYSQL_TYPE_MEDIUM_BLOB:
-    return my_set_bits(3 * 8);
+    return (uint32)my_set_bits(3 * 8);
 
   case MYSQL_TYPE_BLOB:
+  case MYSQL_TYPE_BLOB_COMPRESSED:
     /*
       For the blob type, Field::real_type() lies and say that all
       blobs are of type MYSQL_TYPE_BLOB. In that case, we have to look
       at the length instead to decide what the max display size is.
      */
-    return my_set_bits(metadata * 8);
+    return (uint32)my_set_bits(metadata * 8);
 
   case MYSQL_TYPE_LONG_BLOB:
   case MYSQL_TYPE_GEOMETRY:
-    return my_set_bits(4 * 8);
+    return (uint32)my_set_bits(4 * 8);
 
   default:
     return ~(uint32) 0;
@@ -294,6 +297,7 @@ uint32 table_def::calc_field_size(uint col, uchar *master_data) const
     break;
   }
   case MYSQL_TYPE_VARCHAR:
+  case MYSQL_TYPE_VARCHAR_COMPRESSED:
   {
     length= m_field_metadata[col] > 255 ? 2 : 1; // c&p of Field_varstring::data_length()
     length+= length == 1 ? (uint32) *master_data : uint2korr(master_data);
@@ -303,6 +307,7 @@ uint32 table_def::calc_field_size(uint col, uchar *master_data) const
   case MYSQL_TYPE_MEDIUM_BLOB:
   case MYSQL_TYPE_LONG_BLOB:
   case MYSQL_TYPE_BLOB:
+  case MYSQL_TYPE_BLOB_COMPRESSED:
   case MYSQL_TYPE_GEOMETRY:
   {
     /*
@@ -406,11 +411,14 @@ void show_sql_type(enum_field_types type, uint16 metadata, String *str, CHARSET_
 
   case MYSQL_TYPE_VAR_STRING:
   case MYSQL_TYPE_VARCHAR:
+  case MYSQL_TYPE_VARCHAR_COMPRESSED:
     {
       CHARSET_INFO *cs= str->charset();
       uint32 length=
         cs->cset->snprintf(cs, (char*) str->ptr(), str->alloced_length(),
-                           "varchar(%u)", metadata);
+                           "varchar(%u)%s", metadata,
+                           type == MYSQL_TYPE_VARCHAR_COMPRESSED ? " compressed"
+                                                                 : "");
       str->length(length);
     }
     break;
@@ -455,6 +463,7 @@ void show_sql_type(enum_field_types type, uint16 metadata, String *str, CHARSET_
     break;
 
   case MYSQL_TYPE_BLOB:
+  case MYSQL_TYPE_BLOB_COMPRESSED:
     /*
       Field::real_type() lies regarding the actual type of a BLOB, so
       it is necessary to check the pack length to figure out what kind
@@ -482,6 +491,9 @@ void show_sql_type(enum_field_types type, uint16 metadata, String *str, CHARSET_
       DBUG_ASSERT(0);
       break;
     }
+
+    if (type == MYSQL_TYPE_BLOB_COMPRESSED)
+      str->append(STRING_WITH_LEN(" compressed"));
     break;
 
   case MYSQL_TYPE_STRING:
@@ -583,6 +595,7 @@ can_convert_field_to(Field *field,
                      int *order_var)
 {
   DBUG_ENTER("can_convert_field_to");
+  bool same_type;
 #ifndef DBUG_OFF
   char field_type_buf[MAX_FIELD_WIDTH];
   String field_type(field_type_buf, sizeof(field_type_buf), &my_charset_latin1);
@@ -590,11 +603,30 @@ can_convert_field_to(Field *field,
   DBUG_PRINT("enter", ("field_type: %s, target_type: %d, source_type: %d, source_metadata: 0x%x",
                        field_type.c_ptr_safe(), field->real_type(), source_type, metadata));
 #endif
+  /**
+    @todo
+      Implement Field_varstring_cmopressed::real_type() and
+      Field_blob_compressed::real_type() properly. All occurencies
+      of Field::real_type() have to be inspected and adjusted if needed.
+
+      Until it is not ready we have to compare source_type against
+      binlog_type() when replicating from or to compressed data types.
+
+      @sa Comment for Field::binlog_type()
+  */
+  if (source_type == MYSQL_TYPE_VARCHAR_COMPRESSED ||
+      source_type == MYSQL_TYPE_BLOB_COMPRESSED ||
+      field->binlog_type() == MYSQL_TYPE_VARCHAR_COMPRESSED ||
+      field->binlog_type() == MYSQL_TYPE_BLOB_COMPRESSED)
+    same_type= field->binlog_type() == source_type;
+  else
+    same_type= field->real_type() == source_type;
+
   /*
     If the real type is the same, we need to check the metadata to
     decide if conversions are allowed.
    */
-  if (field->real_type() == source_type)
+  if (same_type)
   {
     if (metadata == 0) // Metadata can only be zero if no metadata was provided
     {
@@ -731,18 +763,22 @@ can_convert_field_to(Field *field,
   case MYSQL_TYPE_MEDIUM_BLOB:
   case MYSQL_TYPE_LONG_BLOB:
   case MYSQL_TYPE_BLOB:
+  case MYSQL_TYPE_BLOB_COMPRESSED:
   case MYSQL_TYPE_STRING:
   case MYSQL_TYPE_VAR_STRING:
   case MYSQL_TYPE_VARCHAR:
+  case MYSQL_TYPE_VARCHAR_COMPRESSED:
     switch (field->real_type())
     {
     case MYSQL_TYPE_TINY_BLOB:
     case MYSQL_TYPE_MEDIUM_BLOB:
     case MYSQL_TYPE_LONG_BLOB:
     case MYSQL_TYPE_BLOB:
+    case MYSQL_TYPE_BLOB_COMPRESSED:
     case MYSQL_TYPE_STRING:
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_VARCHAR:
+    case MYSQL_TYPE_VARCHAR_COMPRESSED:
       *order_var= compare_lengths(field, source_type, metadata);
       /*
         Here we know that the types are different, so if the order
@@ -825,7 +861,7 @@ table_def::compatible_with(THD *thd, rpl_group_info *rgi,
     {
       DBUG_PRINT("debug", ("Checking column %d -"
                            " field '%s' can be converted - order: %d",
-                           col, field->field_name, order));
+                           col, field->field_name.str, order));
       DBUG_ASSERT(order >= -1 && order <= 1);
 
       /*
@@ -855,7 +891,7 @@ table_def::compatible_with(THD *thd, rpl_group_info *rgi,
     {
       DBUG_PRINT("debug", ("Checking column %d -"
                            " field '%s' can not be converted",
-                           col, field->field_name));
+                           col, field->field_name.str));
       DBUG_ASSERT(col < size() && col < table->s->fields);
       DBUG_ASSERT(table->s->db.str && table->s->table_name.str);
       DBUG_ASSERT(table->in_use);
@@ -891,7 +927,7 @@ table_def::compatible_with(THD *thd, rpl_group_info *rgi,
         table->field[col]->sql_type(target_type);
         DBUG_PRINT("debug", ("Field %s - conversion required."
                              " Source type: '%s', Target type: '%s'",
-                             tmp_table->field[col]->field_name,
+                             tmp_table->field[col]->field_name.str,
                              source_type.c_ptr_safe(), target_type.c_ptr_safe()));
       }
   }
@@ -928,7 +964,7 @@ public:
                       (int) sql_type,
                       target_field->table->s->db.str,
                       target_field->table->s->table_name.str,
-                      target_field->field_name);
+                      target_field->field_name.str);
       return true;
     }
     Field *tmp= handler->make_conversion_table_field(this, metadata,
@@ -938,7 +974,7 @@ public:
     Virtual_tmp_table::add(tmp);
     DBUG_PRINT("debug", ("sql_type: %d, target_field: '%s', max_length: %d, decimals: %d,"
                          " maybe_null: %d, unsigned_flag: %d, pack_length: %u",
-                         sql_type, target_field->field_name,
+                         sql_type, target_field->field_name.str,
                          tmp->field_length, tmp->decimals(), TRUE,
                          tmp->flags, tmp->pack_length()));
     return false;
@@ -980,7 +1016,7 @@ TABLE *table_def::create_conversion_table(THD *thd, rpl_group_info *rgi,
       DBUG_PRINT("debug", ("binlog_type: %d, metadata: %04X, target_field: '%s'"
                            " make_conversion_table_field() failed",
                            binlog_type(col), field_metadata(col),
-                           target_table->field[col]->field_name));
+                           target_table->field[col]->field_name.str));
       goto err;
     }
   }
@@ -1036,6 +1072,7 @@ table_def::table_def(unsigned char *types, ulong size,
       switch (binlog_type(i)) {
       case MYSQL_TYPE_TINY_BLOB:
       case MYSQL_TYPE_BLOB:
+      case MYSQL_TYPE_BLOB_COMPRESSED:
       case MYSQL_TYPE_MEDIUM_BLOB:
       case MYSQL_TYPE_LONG_BLOB:
       case MYSQL_TYPE_DOUBLE:
@@ -1066,6 +1103,7 @@ table_def::table_def(unsigned char *types, ulong size,
         break;
       }
       case MYSQL_TYPE_VARCHAR:
+      case MYSQL_TYPE_VARCHAR_COMPRESSED:
       {
         /*
           These types store two bytes.
@@ -1127,7 +1165,7 @@ bool event_checksum_test(uchar *event_buf, ulong event_len, enum enum_binlog_che
 
     if (event_buf[EVENT_TYPE_OFFSET] == FORMAT_DESCRIPTION_EVENT)
     {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
       int8 fd_alg= event_buf[event_len - BINLOG_CHECKSUM_LEN - 
                              BINLOG_CHECKSUM_ALG_DESC_LEN];
 #endif

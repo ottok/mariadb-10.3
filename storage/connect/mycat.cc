@@ -1,4 +1,4 @@
-/* Copyright (C) Olivier Bertrand 2004 - 2017
+/* Copyright (C) MariaDB Corporation Ab
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -28,20 +28,16 @@
 /***********************************************************************/
 /*  Include relevant MariaDB header file.                              */
 /***********************************************************************/
-#include <my_config.h>
+#define DONT_DEFINE_VOID
+#include <my_global.h>
 
 #if defined(__WIN__)
 //#include <windows.h>
 //#include <sqlext.h>
 #elif defined(UNIX)
-#include <sys/types.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #endif
-#define DONT_DEFINE_VOID
-//#include <mysql/plugin.h>
 #include "handler.h"
 #undef  OFFSET
 
@@ -83,19 +79,20 @@
 #define NODBC
 #include "tabodbc.h"
 #endif   // ODBC_SUPPORT
-#if defined(JDBC_SUPPORT)
+#if defined(JAVA_SUPPORT)
 #define NJDBC
 #include "tabjdbc.h"
-#endif   // ODBC_SUPPORT
-#if defined(PIVOT_SUPPORT)
+#endif   // JAVA_SUPPORT
 #include "tabpivot.h"
-#endif   // PIVOT_SUPPORT
 #include "tabvir.h"
 #include "tabjson.h"
 #include "ha_connect.h"
 #if defined(XML_SUPPORT)
 #include "tabxml.h"
 #endif   // XML_SUPPORT
+#if defined(JAVA_SUPPORT)
+#include "mongo.h"
+#endif   // JAVA_SUPPORT
 #if defined(ZIP_SUPPORT)
 #include "tabzip.h"
 #endif   // ZIP_SUPPORT
@@ -108,6 +105,9 @@
 extern "C" HINSTANCE s_hModule;           // Saved module handle
 #endif  // !__WIN__
 
+#if defined(JAVA_SUPPORT)
+//bool MongoEnabled(void);
+#endif   // JAVA_SUPPORT
 PQRYRES OEMColumns(PGLOBAL g, PTOS topt, char *tab, char *db, bool info);
 
 /***********************************************************************/
@@ -130,21 +130,22 @@ TABTYPE GetTypeID(const char *type)
 	               : (!stricmp(type, "CSV"))   ? TAB_CSV
                  : (!stricmp(type, "FMT"))   ? TAB_FMT
                  : (!stricmp(type, "DBF"))   ? TAB_DBF
-#ifdef XML_SUPPORT
+#if defined(XML_SUPPORT)
                  : (!stricmp(type, "XML"))   ? TAB_XML
 #endif
                  : (!stricmp(type, "INI"))   ? TAB_INI
                  : (!stricmp(type, "VEC"))   ? TAB_VEC
-#ifdef ODBC_SUPPORT
+#if defined(ODBC_SUPPORT)
                  : (!stricmp(type, "ODBC"))  ? TAB_ODBC
 #endif
-#ifdef JDBC_SUPPORT
+#if defined(JAVA_SUPPORT)
 								 : (!stricmp(type, "JDBC"))  ? TAB_JDBC
+		             : (!stricmp(type, "MONGO")) ? TAB_MONGO
 #endif
 								 : (!stricmp(type, "MYSQL")) ? TAB_MYSQL
                  : (!stricmp(type, "MYPRX")) ? TAB_MYSQL
                  : (!stricmp(type, "DIR"))   ? TAB_DIR
-#ifdef __WIN__
+#if defined(__WIN__)
 	               : (!stricmp(type, "MAC"))   ? TAB_MAC
 	               : (!stricmp(type, "WMI"))   ? TAB_WMI
 #endif
@@ -153,15 +154,13 @@ TABTYPE GetTypeID(const char *type)
 	               : (!stricmp(type, "OCCUR")) ? TAB_OCCUR
                  : (!stricmp(type, "CATLG")) ? TAB_PRX  // Legacy
                  : (!stricmp(type, "PROXY")) ? TAB_PRX
-#ifdef PIVOT_SUPPORT
                  : (!stricmp(type, "PIVOT")) ? TAB_PIVOT
-#endif
                  : (!stricmp(type, "VIR"))   ? TAB_VIR
                  : (!stricmp(type, "JSON"))  ? TAB_JSON
-#ifdef ZIP_SUPPORT
+#if defined(ZIP_SUPPORT)
 								 : (!stricmp(type, "ZIP"))   ? TAB_ZIP
 #endif
-								 : (!stricmp(type, "OEM"))   ? TAB_OEM : TAB_NIY;
+		             : (!stricmp(type, "OEM"))   ? TAB_OEM : TAB_NIY;
   } // end of GetTypeID
 
 /***********************************************************************/
@@ -307,6 +306,7 @@ int GetIndexType(TABTYPE type)
     case TAB_MYSQL:
     case TAB_ODBC:
 		case TAB_JDBC:
+		case TAB_MONGO:
 			xtyp= 2;
       break;
     case TAB_VIR:
@@ -477,39 +477,6 @@ void MYCAT::Reset(void)
   {
   } // end of Reset
 
-#if 0
-/***********************************************************************/
-/*  This function sets the current database path.                      */
-/***********************************************************************/
-void MYCAT::SetPath(PGLOBAL g, LPCSTR *datapath, const char *path)
-	{
-	if (path) {
-		size_t len= strlen(path) + (*path != '.' ? 4 : 1);
-		char  *buf= (char*)PlugSubAlloc(g, NULL, len);
-		
-		if (PlugIsAbsolutePath(path))
-		{
-		  strcpy(buf, path);
-		  *datapath= buf;
-		  return;
-		}
-
-		if (*path != '.') {
-#if defined(__WIN__)
-			char *s= "\\";
-#else   // !__WIN__
-			char *s= "/";
-#endif  // !__WIN__
-			strcat(strcat(strcat(strcpy(buf, "."), s), path), s);
-		} else
-			strcpy(buf, path);
-
-		*datapath= buf;
-		} // endif path
-
-	} // end of SetDataPath
-#endif // 0
-
 /***********************************************************************/
 /*  GetTableDesc: retrieve a table descriptor.                         */
 /*  Look for a table descriptor matching the name and type.            */
@@ -565,9 +532,9 @@ PRELDEF MYCAT::MakeTableDesc(PGLOBAL g, PTABLE tablep, LPCSTR am)
 #if defined(ODBC_SUPPORT)
     case TAB_ODBC: tdp= new(g) ODBCDEF; break;
 #endif   // ODBC_SUPPORT
-#if defined(JDBC_SUPPORT)
+#if defined(JAVA_SUPPORT)
 		case TAB_JDBC: tdp= new(g) JDBCDEF; break;
-#endif   // JDBC_SUPPORT
+#endif   // JAVA_SUPPORT
 #if defined(__WIN__)
     case TAB_MAC: tdp= new(g) MACDEF;   break;
     case TAB_WMI: tdp= new(g) WMIDEF;   break;
@@ -578,11 +545,18 @@ PRELDEF MYCAT::MakeTableDesc(PGLOBAL g, PTABLE tablep, LPCSTR am)
 	  case TAB_PRX: tdp= new(g) PRXDEF;   break;
 		case TAB_OCCUR: tdp= new(g) OCCURDEF;	break;
 		case TAB_MYSQL: tdp= new(g) MYSQLDEF;	break;
-#if defined(PIVOT_SUPPORT)
     case TAB_PIVOT: tdp= new(g) PIVOTDEF; break;
-#endif   // PIVOT_SUPPORT
     case TAB_VIR: tdp= new(g) VIRDEF;   break;
     case TAB_JSON: tdp= new(g) JSONDEF; break;
+#if defined(MONGO_SUPPORT)
+		case TAB_MONGO:
+//		if (MongoEnabled())
+			  tdp = new(g) MGODEF;
+//		else
+//			strcpy(g->Message, "MONGO type not enabled");
+
+			break;
+#endif   // MONGO_SUPPORT
 #if defined(ZIP_SUPPORT)
 		case TAB_ZIP: tdp= new(g) ZIPDEF;   break;
 #endif   // ZIP_SUPPORT

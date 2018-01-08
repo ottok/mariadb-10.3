@@ -89,7 +89,7 @@ static int sort_record_index(MARIA_SORT_PARAM *sort_param, MARIA_PAGE *page,
 			     uint sortkey, File new_file,
                              my_bool update_index);
 static my_bool write_log_record(HA_CHECK *param);
-static void my_exit(int exit_code) __attribute__ ((noreturn));
+ATTRIBUTE_NORETURN static void my_exit(int exit_code);
 
 HA_CHECK check_param;
 
@@ -1526,8 +1526,8 @@ static void descript(HA_CHECK *param, register MARIA_HA *info, char *name)
     }
     if (share->base.born_transactional)
     {
-      printf("LSNs:                create_rename (%lu,0x%lx),"
-             " state_horizon (%lu,0x%lx), skip_redo (%lu,0x%lx)\n",
+      printf("LSNs:                create_rename " LSN_FMT ","
+             " state_horizon " LSN_FMT ", skip_redo " LSN_FMT "\n",
              LSN_IN_PARTS(share->state.create_rename_lsn),
              LSN_IN_PARTS(share->state.is_of_horizon),
              LSN_IN_PARTS(share->state.skip_redo_lsn));

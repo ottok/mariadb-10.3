@@ -185,7 +185,7 @@ static int test_conc70(MYSQL *my)
   }
 
   row= mysql_fetch_row(res);
-  diag("Length: %ld", strlen(row[0]));
+  diag("Length: %ld", (long)strlen(row[0]));
   FAIL_IF(strlen(row[0]) != 1024 * 1024 * 20, "Wrong length");
 
   mysql_free_result(res);
@@ -243,7 +243,7 @@ static int test_conc68(MYSQL *my)
   }
 
   row= mysql_fetch_row(res);
-  diag("Length: %ld", strlen(row[0]));
+  diag("Length: %ld", (long)strlen(row[0]));
   FAIL_IF(strlen(row[0]) != 1024 * 1024 * 20, "Wrong length");
 
   mysql_free_result(res);
@@ -549,7 +549,7 @@ static int test_mysql_insert_id(MYSQL *mysql)
   rc= mysql_query(mysql, "drop table t2");
   check_mysql_rc(rc, mysql);
   rc= mysql_query(mysql, "create table t2 (f1 int not null primary key "
-                  "auto_increment, f2 varchar(255), unique (f2)) engine=MyISAM");
+                  "auto_increment, f2 varchar(200), unique (f2)) engine=MyISAM");
   check_mysql_rc(rc, mysql);
   rc= mysql_query(mysql, "insert into t2 values (null,'e')");
   res= mysql_insert_id(mysql);

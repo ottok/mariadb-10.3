@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2012, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -453,8 +454,7 @@ row_quiesce_write_cfg(
 
 			char	msg[BUFSIZ];
 
-			ut_snprintf(msg, sizeof(msg), "%s flush() failed",
-				    name);
+			snprintf(msg, sizeof(msg), "%s flush() failed", name);
 
 			ib_senderrf(
 				thd, IB_LOG_LEVEL_WARN, ER_IO_WRITE_ERROR,
@@ -464,8 +464,7 @@ row_quiesce_write_cfg(
 		if (fclose(file) != 0) {
 			char	msg[BUFSIZ];
 
-			ut_snprintf(msg, sizeof(msg), "%s flose() failed",
-				    name);
+			snprintf(msg, sizeof(msg), "%s flose() failed", name);
 
 			ib_senderrf(
 				thd, IB_LOG_LEVEL_WARN, ER_IO_WRITE_ERROR,
@@ -521,7 +520,7 @@ row_quiesce_table_start(
 	ut_ad(fil_space_get(table->space) != NULL);
 	ib::info() << "Sync to disk of " << table->name << " started.";
 
-	if (trx_purge_state() != PURGE_STATE_DISABLED) {
+	if (srv_undo_sources) {
 		trx_purge_stop();
 	}
 
@@ -536,8 +535,10 @@ row_quiesce_table_start(
 	}
 
 	if (!trx_is_interrupted(trx)) {
-		buf_LRU_flush_or_remove_pages(
-			table->space, BUF_REMOVE_FLUSH_WRITE, trx);
+		{
+			FlushObserver observer(table->space, trx, NULL);
+			buf_LRU_flush_or_remove_pages(table->space, &observer);
+		}
 
 		if (trx_is_interrupted(trx)) {
 
@@ -589,18 +590,20 @@ row_quiesce_table_complete(
 		++count;
 	}
 
-	/* Remove the .cfg file now that the user has resumed
-	normal operations. Otherwise it will cause problems when
-	the user tries to drop the database (remove directory). */
-	char		cfg_name[OS_FILE_MAX_PATH];
+	if (!opt_bootstrap) {
+		/* Remove the .cfg file now that the user has resumed
+		normal operations. Otherwise it will cause problems when
+		the user tries to drop the database (remove directory). */
+		char		cfg_name[OS_FILE_MAX_PATH];
 
-	srv_get_meta_data_filename(table, cfg_name, sizeof(cfg_name));
+		srv_get_meta_data_filename(table, cfg_name, sizeof(cfg_name));
 
-	os_file_delete_if_exists(innodb_data_file_key, cfg_name, NULL);
+		os_file_delete_if_exists(innodb_data_file_key, cfg_name, NULL);
 
-	ib::info() << "Deleting the meta-data file '" << cfg_name << "'";
+		ib::info() << "Deleting the meta-data file '" << cfg_name << "'";
+	}
 
-	if (trx_purge_state() != PURGE_STATE_DISABLED) {
+	if (srv_undo_sources) {
 		trx_purge_run();
 	}
 
