@@ -61,6 +61,7 @@ usr/lib/*/mariadb3/plugin/wsrep_info.so
 usr/lib/*/mariadb3/plugin/auth_ed25519.so
 usr/share/doc/mariadb-server-*/mysqld.sym.gz
 usr/share/mysql/errmsg-utf8.txt
+usr/share/mysql/hindi/errmsg.sys
 usr/share/mysql/fill_help_tables.sql
 usr/share/mysql/maria_add_gis_sp.sql
 usr/share/mysql/maria_add_gis_sp_bootstrap.sql
