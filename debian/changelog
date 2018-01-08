@@ -1,3 +1,12 @@
+mariadb-10.3 (10.3.0-0+exp4~1.gbp6495d3) UNRELEASED; urgency=medium
+
+  ** SNAPSHOT build @6495d3ac1b5865ca12b36667c2409086ed24f42e **
+
+  * Update gbp.conf for the standard layout
+  * New upstream version 10.3.3
+
+ -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 21:15:14 +0000
+
 mariadb-10.3 (10.3.0-0+exp3) experimental; urgency=medium
 
   [ Ondřej Surý ]
