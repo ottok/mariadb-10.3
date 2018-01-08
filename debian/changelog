@@ -1,6 +1,6 @@
-mariadb-10.3 (10.3.3-0~5.gbpc79288) UNRELEASED; urgency=medium
+mariadb-10.3 (10.3.3-0~6.gbpe5188a) UNRELEASED; urgency=medium
 
-  ** SNAPSHOT build @c792883088a21ce207270c340fa00e9273c1c2be **
+  ** SNAPSHOT build @e5188a9fbd25bee2fe471c48eb8e82863170df95 **
 
   [ Ondřej Surý ]
   * Update gbp.conf for the standard layout
@@ -72,8 +72,10 @@ mariadb-10.3 (10.3.3-0~5.gbpc79288) UNRELEASED; urgency=medium
   * Remove some non-existing plugins from Debian packages
   * Update changelog for 10.3.3-0~4.gbp51edbb release
   * Add not-installed files into (maybe) proper places
+  * Update changelog for 10.3.3-0~5.gbpc79288 release
+  * Update libmariadb3.symbols file with versioned symbols
 
- -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 22:27:06 +0000
+ -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 22:53:59 +0000
 
 mariadb-10.3 (10.3.0-0+exp2) experimental; urgency=medium
 
