@@ -1,6 +1,6 @@
-mariadb-10.3 (10.3.3-0~4.gbp51edbb) UNRELEASED; urgency=medium
+mariadb-10.3 (10.3.3-0~5.gbpc79288) UNRELEASED; urgency=medium
 
-  ** SNAPSHOT build @51edbb6181fa922970f307642488650e0c5a013c **
+  ** SNAPSHOT build @c792883088a21ce207270c340fa00e9273c1c2be **
 
   [ Ondřej Surý ]
   * Update gbp.conf for the standard layout
@@ -70,8 +70,10 @@ mariadb-10.3 (10.3.3-0~4.gbp51edbb) UNRELEASED; urgency=medium
   * Ignore failed tests on more non-release platforms (kfreebsd-i386, kfreebsd-amd64, hppa and sparc64)
   * Revert to using system pcre library (Closes: #882329)
   * Remove some non-existing plugins from Debian packages
+  * Update changelog for 10.3.3-0~4.gbp51edbb release
+  * Add not-installed files into (maybe) proper places
 
- -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 21:59:13 +0000
+ -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 22:27:06 +0000
 
 mariadb-10.3 (10.3.0-0+exp2) experimental; urgency=medium
 
