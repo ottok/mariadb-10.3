@@ -22,12 +22,9 @@
   Sorts a database
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "filesort.h"
-#ifdef HAVE_STDDEF_H
-#include <stddef.h>			/* for macro offsetof */
-#endif
 #include <m_ctype.h>
 #include "sql_sort.h"
 #include "probes_mysql.h"
@@ -37,7 +34,6 @@
 #include "bounded_queue.h"
 #include "filesort_utils.h"
 #include "sql_select.h"
-#include "log_slow.h"
 #include "debug_sync.h"
 
 /// How to write record_ref.
@@ -141,7 +137,8 @@ SORT_INFO *filesort(THD *thd, TABLE *table, Filesort *filesort,
                     table_map first_table_bit)
 {
   int error;
-  size_t memory_available= thd->variables.sortbuff_size;
+  DBUG_ASSERT(thd->variables.sortbuff_size <= SIZE_T_MAX);
+  size_t memory_available= (size_t)thd->variables.sortbuff_size;
   uint maxbuffer;
   BUFFPEK *buffpek;
   ha_rows num_rows= HA_POS_ERROR;
@@ -181,12 +178,6 @@ SORT_INFO *filesort(THD *thd, TABLE *table, Filesort *filesort,
   }
 
   outfile= &sort->io_cache;
-
-  /*
-   Release InnoDB's adaptive hash index latch (if holding) before
-   running a sort.
-  */
-  ha_release_temporary_latches(thd);
 
   my_b_clear(&tempfile);
   my_b_clear(&buffpek_pointers);
@@ -569,7 +560,8 @@ const char* dbug_print_table_row(TABLE *table)
     else
       output.append(",");
 
-    output.append((*pfield)->field_name? (*pfield)->field_name: "NULL");
+    output.append((*pfield)->field_name.str ?
+                  (*pfield)->field_name.str: "NULL");
   }
 
   output.append(")=(");
@@ -620,7 +612,8 @@ static void dbug_print_record(TABLE *table, bool print_rowid)
   
   fprintf(DBUG_FILE, "record (");
   for (pfield= table->field; *pfield ; pfield++)
-    fprintf(DBUG_FILE, "%s%s", (*pfield)->field_name, (pfield[1])? ", ":"");
+    fprintf(DBUG_FILE, "%s%s", (*pfield)->field_name.str,
+            (pfield[1])? ", ":"");
   fprintf(DBUG_FILE, ") = ");
 
   fprintf(DBUG_FILE, "(");
@@ -833,11 +826,11 @@ static ha_rows find_all_keys(THD *thd, Sort_param *param, SQL_SELECT *select,
         MY_BITMAP *tmp_write_set= sort_form->write_set;
         MY_BITMAP *tmp_vcol_set= sort_form->vcol_set;
 
-        if (select->cond->with_subselect)
+        if (select->cond->with_subquery())
           sort_form->column_bitmaps_set(save_read_set, save_write_set,
                                         save_vcol_set);
         write_record= (select->skip_record(thd) > 0);
-        if (select->cond->with_subselect)
+        if (select->cond->with_subquery())
           sort_form->column_bitmaps_set(tmp_read_set,
                                         tmp_write_set,
                                         tmp_vcol_set);
@@ -951,6 +944,7 @@ write_keys(Sort_param *param,  SORT_INFO *fs_info, uint count,
   /* check we won't have more buffpeks than we can possibly keep in memory */
   if (my_b_tell(buffpek_pointers) + sizeof(BUFFPEK) > (ulonglong)UINT_MAX)
     goto err;
+  bzero(&buffpek, sizeof(buffpek));
   buffpek.file_pos= my_b_tell(tempfile);
   if ((ha_rows) count > param->max_rows)
     count=(uint) param->max_rows;               /* purecov: inspected */
@@ -1489,8 +1483,6 @@ int merge_many_buff(Sort_param *param, uchar *sort_buffer,
     if (flush_io_cache(to_file))
       break;					/* purecov: inspected */
     temp=from_file; from_file=to_file; to_file=temp;
-    setup_io_cache(from_file);
-    setup_io_cache(to_file);
     *maxbuffer= (uint) (lastbuff-buffpek)-1;
   }
 cleanup:
@@ -1498,7 +1490,6 @@ cleanup:
   if (to_file == t_file)
   {
     *t_file=t_file2;				// Copy result file
-    setup_io_cache(t_file);
   }
 
   DBUG_RETURN(*maxbuffer >= MERGEBUFF2);	/* Return 1 if interrupted */
@@ -1812,7 +1803,7 @@ int merge_buffers(Sort_param *param, IO_CACHE *from_file,
     if (flag == 0)
     {
       if (my_b_write(to_file, (uchar*) buffpek->key,
-                     (rec_length*buffpek->mem_count)))
+                     (size_t)(rec_length*buffpek->mem_count)))
       {
         error= 1; goto err;                        /* purecov: inspected */
       }

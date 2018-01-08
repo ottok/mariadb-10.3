@@ -86,7 +86,7 @@ select t2.a from t1,t2 where t1.a+1=t2.a
 select * from t1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	30	
-2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	5	Using where
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	5	Using where
 3	UNION	t1	ALL	NULL	NULL	NULL	NULL	5	
 3	UNION	t2	ALL	NULL	NULL	NULL	NULL	5	Using where; Using join buffer (flat, BNL join)
 NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	
@@ -114,7 +114,7 @@ select t2.a from t1,t2 where t1.a+1=t2.a
 select * from t1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	5	
-2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	5	Using where
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	5	Using where
 3	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	5	
 3	RECURSIVE UNION	t2	ALL	NULL	NULL	NULL	NULL	5	Using where; Using join buffer (flat, BNL join)
 NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	
@@ -130,7 +130,7 @@ select t2.a+1 from t1,t2 where t1.a=t2.a
 select * from t1;
 show columns from v1;
 Field	Type	Null	Key	Default	Extra
-a	bigint(20)	YES		NULL	
+a	bigint(12)	YES		NULL	
 # WITH RECURSIVE : types of t1 columns are determined by anchor parts 
 create view v2 as
 with recursive
@@ -691,13 +691,13 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 1	PRIMARY	<derived3>	ref	key0	key0	5	c.h_id	2	100.00	
 1	PRIMARY	<derived3>	ref	key0	key0	5	c.w_id	2	100.00	
-3	SUBQUERY	folks	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where
+3	DERIVED	folks	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where
 4	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	2	100.00	
 4	RECURSIVE UNION	p	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where; Using join buffer (flat, BNL join)
 5	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	2	100.00	
 5	RECURSIVE UNION	p	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where; Using join buffer (flat, BNL join)
 NULL	UNION RESULT	<union3,4,5>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	
-2	UNCACHEABLE SUBQUERY	<derived3>	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where
+2	DERIVED	<derived3>	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where
 Warnings:
 Note	1003	with recursive ancestor_couple_ids as (/* select#2 */ select `a`.`father` AS `h_id`,`a`.`mother` AS `w_id` from `coupled_ancestors` `a` where `a`.`father` is not null and `a`.`mother` is not null), coupled_ancestors as (/* select#3 */ select `test`.`folks`.`id` AS `id`,`test`.`folks`.`name` AS `name`,`test`.`folks`.`dob` AS `dob`,`test`.`folks`.`father` AS `father`,`test`.`folks`.`mother` AS `mother` from `test`.`folks` where `test`.`folks`.`name` = 'Me' union all /* select#4 */ select `test`.`p`.`id` AS `id`,`test`.`p`.`name` AS `name`,`test`.`p`.`dob` AS `dob`,`test`.`p`.`father` AS `father`,`test`.`p`.`mother` AS `mother` from `test`.`folks` `p` join `ancestor_couple_ids` `fa` where `test`.`p`.`id` = `fa`.`h_id` union all /* select#5 */ select `test`.`p`.`id` AS `id`,`test`.`p`.`name` AS `name`,`test`.`p`.`dob` AS `dob`,`test`.`p`.`father` AS `father`,`test`.`p`.`mother` AS `mother` from `test`.`folks` `p` join `ancestor_couple_ids` `ma` where `test`.`p`.`id` = `ma`.`w_id`)/* select#1 */ select `h`.`name` AS `name`,`h`.`dob` AS `dob`,`w`.`name` AS `name`,`w`.`dob` AS `dob` from `ancestor_couple_ids` `c` join `coupled_ancestors` `h` join `coupled_ancestors` `w` where `h`.`id` = `c`.`h_id` and `w`.`id` = `c`.`w_id`
 # simple mutual recursion
@@ -877,7 +877,7 @@ where p.id = a.father or p.id = a.mother
 select * from ancestors;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	12	100.00	
-2	SUBQUERY	folks	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where
+2	DERIVED	folks	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where
 3	RECURSIVE UNION	p	ALL	NULL	NULL	NULL	NULL	12	100.00	
 3	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	12	100.00	Using where; Using join buffer (flat, BNL join)
 NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	
@@ -1236,7 +1236,7 @@ where p.id = ma.mother
 select * from ancestors;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	12	
-2	SUBQUERY	folks	ALL	NULL	NULL	NULL	NULL	12	Using where
+2	DERIVED	folks	ALL	NULL	NULL	NULL	NULL	12	Using where
 3	RECURSIVE UNION	p	ALL	PRIMARY	NULL	NULL	NULL	12	
 3	RECURSIVE UNION	<derived2>	ref	key0	key0	5	test.p.id	2	
 4	RECURSIVE UNION	p	ALL	PRIMARY	NULL	NULL	NULL	12	
@@ -1300,14 +1300,14 @@ from prev_gen
 select ancestors.name, ancestors.dob from ancestors;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	<derived4>	ALL	NULL	NULL	NULL	NULL	24	
-4	SUBQUERY	folks	ALL	NULL	NULL	NULL	NULL	12	Using where
+4	DERIVED	folks	ALL	NULL	NULL	NULL	NULL	12	Using where
 6	RECURSIVE UNION	<derived3>	ALL	NULL	NULL	NULL	NULL	12	
-5	RECURSIVE UNION	<derived4>	ALL	NULL	NULL	NULL	NULL	24	
-NULL	UNION RESULT	<union4,6,5>	ALL	NULL	NULL	NULL	NULL	NULL	
-3	SUBQUERY	folks	ALL	NULL	NULL	NULL	NULL	12	Using where
+3	DERIVED	folks	ALL	NULL	NULL	NULL	NULL	12	Using where
 2	RECURSIVE UNION	folks	ALL	PRIMARY	NULL	NULL	NULL	12	
 2	RECURSIVE UNION	<derived3>	ALL	NULL	NULL	NULL	NULL	12	Using where; Using join buffer (flat, BNL join)
 NULL	UNION RESULT	<union3,2>	ALL	NULL	NULL	NULL	NULL	NULL	
+5	RECURSIVE UNION	<derived4>	ALL	NULL	NULL	NULL	NULL	24	
+NULL	UNION RESULT	<union4,6,5>	ALL	NULL	NULL	NULL	NULL	NULL	
 explain FORMAT=JSON
 with recursive 
 prev_gen
@@ -1353,7 +1353,6 @@ EXPLAIN
               {
                 "query_block": {
                   "select_id": 4,
-                  "operation": "UNION",
                   "table": {
                     "table_name": "folks",
                     "access_type": "ALL",
@@ -1382,7 +1381,6 @@ EXPLAIN
                             {
                               "query_block": {
                                 "select_id": 3,
-                                "operation": "UNION",
                                 "table": {
                                   "table_name": "folks",
                                   "access_type": "ALL",
@@ -1489,7 +1487,6 @@ EXPLAIN
               {
                 "query_block": {
                   "select_id": 3,
-                  "operation": "UNION",
                   "table": {
                     "table_name": "v",
                     "access_type": "ALL",
@@ -1757,7 +1754,6 @@ EXPLAIN
               {
                 "query_block": {
                   "select_id": 2,
-                  "operation": "UNION",
                   "table": {
                     "table_name": "t1",
                     "access_type": "ALL",
@@ -1840,7 +1836,7 @@ select t2.a from t1,t2 where t1.a+1=t2.a
 select * from t1;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	5	
-2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	5	Using where
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	5	Using where
 4	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	5	
 4	RECURSIVE UNION	t2	ALL	NULL	NULL	NULL	NULL	5	Using where; Using join buffer (flat, BNL join)
 NULL	UNION RESULT	<union2,4>	ALL	NULL	NULL	NULL	NULL	NULL	
@@ -2387,7 +2383,6 @@ ANALYZE
               {
                 "query_block": {
                   "select_id": 2,
-                  "operation": "UNION",
                   "table": {
                     "message": "No tables used"
                   }
@@ -2560,3 +2555,421 @@ m
 m1
 m2
 drop table value_nodes, module_nodes, module_arguments, module_results;
+#
+# mdev-12519: recursive references in subqueries 
+#             
+create table t1 (lp char(4) not null, rp char(4) not null);
+insert into t1 values
+('p1','p2'), ('p2','p3'), ('p3','p4'), ('p4','p5'),
+('p2','p7'), ('p7','p8'), ('p8','p3'), ('p8','p4');
+set standard_compliant_cte=0;
+with recursive
+reachables(p) as 
+( 
+select lp from t1 where lp = 'p1'
+   union 
+select t1.rp from reachables, t1 
+where t1.lp = reachables.p
+)
+select * from reachables;
+p
+p1
+p2
+p3
+p7
+p4
+p8
+p5
+with recursive 
+reachables(p) as
+(
+select lp from t1 where lp = 'p1'
+   union 
+select t1.rp from reachables, t1 
+where 'p3' not in (select * from reachables) and
+t1.lp = reachables.p
+)
+select * from reachables;
+p
+p1
+p2
+p3
+p7
+with recursive 
+reachables(p) as
+(
+select lp from t1 where lp = 'p1'
+   union 
+select t1.rp from reachables, t1 
+where 'p3' not in (select p from reachables where p <= 'p5'
+                         union
+select p from reachables where p > 'p5') and
+t1.lp = reachables.p
+)
+select * from reachables;
+p
+p1
+p2
+p3
+p7
+prepare stmt from "
+with recursive 
+reachables(p) as
+(
+   select lp from t1 where lp = 'p1'
+   union 
+   select t1.rp from reachables, t1 
+      where 'p3' not in (select p from reachables where p <= 'p5'
+                         union
+                         select p from reachables where p > 'p5') and
+                 t1.lp = reachables.p
+)
+select * from reachables;
+";
+execute stmt;
+p
+p1
+p2
+p3
+p7
+execute stmt;
+p
+p1
+p2
+p3
+p7
+deallocate prepare stmt;
+drop table t1;
+create table objects(v char(4) not null);
+insert into objects values
+('v1'), ('v2'), ('v3'), ('v4'), ('v5'),
+('v6'), ('v7'), ('v8'), ('v9'), ('v10');
+create table modules(m char(4) not null);
+insert into modules values
+('m1'), ('m2'), ('m3'), ('m4');
+create table module_arguments(m char(4) not null, v char(4) not null);
+insert into module_arguments values
+('m1','v3'), ('m1','v9'),
+('m2','v4'), ('m2','v7'),
+('m3','v6'), ('m4','v2');
+create table module_results(m char(4) not null, v char(4) not null);
+insert into module_results values
+('m1','v4'),
+('m2','v1'), ('m2','v6'),
+('m3','v10'), ('m4','v7');
+set standard_compliant_cte=0;
+with recursive
+reached_objects as 
+(
+select v, 'init' as m from objects where v in ('v3','v7','v9')
+union
+select module_results.v, module_results.m from module_results, applied_modules
+where module_results.m = applied_modules.m
+),
+applied_modules as
+(
+select * from modules where 1=0
+union
+select modules.m
+from
+modules
+where
+not exists (select * from module_arguments
+where module_arguments.m = modules.m and
+module_arguments.v not in 
+(select v from reached_objects))
+)
+select * from reached_objects;
+v	m
+v3	init
+v7	init
+v9	init
+v4	m1
+v1	m2
+v6	m2
+v10	m3
+with recursive
+reached_objects as 
+(
+select v, 'init' as m from objects where v in ('v3','v7','v9')
+union
+select module_results.v, module_results.m from module_results, applied_modules
+where module_results.m = applied_modules.m
+),
+applied_modules as
+(
+select * from modules where 1=0
+union
+select modules.m
+from
+modules
+where 
+'v6' not in (select v from reached_objects) and
+not exists (select * from module_arguments
+where module_arguments.m = modules.m and
+module_arguments.v not in 
+(select v from reached_objects))
+)
+select * from reached_objects;
+v	m
+v3	init
+v7	init
+v9	init
+v4	m1
+v1	m2
+v6	m2
+prepare stmt from "
+with recursive
+reached_objects as 
+(
+  select v, 'init' as m from objects where v in ('v3','v7','v9')
+  union
+  select module_results.v, module_results.m from module_results, applied_modules
+     where module_results.m = applied_modules.m
+),
+applied_modules as
+(
+  select * from modules where 1=0
+  union
+  select modules.m
+  from
+    modules
+    where 
+      'v6' not in (select v from reached_objects) and
+      not exists (select * from module_arguments
+                    where module_arguments.m = modules.m and
+                          module_arguments.v not in 
+                          (select v from reached_objects))
+)
+select * from reached_objects;
+";
+execute stmt;
+v	m
+v3	init
+v7	init
+v9	init
+v4	m1
+v1	m2
+v6	m2
+execute stmt;
+v	m
+v3	init
+v7	init
+v9	init
+v4	m1
+v1	m2
+v6	m2
+deallocate prepare stmt;
+drop table objects, modules, module_arguments, module_results;
+set standard_compliant_cte=default;
+select @@standard_compliant_cte;
+@@standard_compliant_cte
+1
+#
+# mdev-12554: impossible where in recursive select 
+#             
+CREATE TABLE t1 (i int);
+INSERT INTO t1 VALUES (1),(2);
+WITH RECURSIVE
+cte(f) AS ( SELECT i FROM t1 UNION SELECT f FROM t1, cte WHERE 1=0 )
+SELECT * FROM cte;
+f
+1
+2
+DROP TABLE t1;
+#
+# mdev-12556: recursive execution uses Aria temporary tables 
+#             
+CREATE TABLE t (c1 varchar(255), c2 tinytext);
+INSERT INTO t VALUES ('a','a'),('b','b'),('c','c'),('d','d');
+ANALYZE WITH RECURSIVE cte(f) AS (
+SELECT c1 FROM t
+UNION
+SELECT c1 FROM t, cte
+) SELECT COUNT(*) FROM cte;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	r_rows	filtered	r_filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	
+2	DERIVED	t	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	
+3	RECURSIVE UNION	t	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	
+3	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	Using join buffer (flat, BNL join)
+NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	0.00	NULL	NULL	
+WITH RECURSIVE cte(f) AS (
+SELECT c1 FROM t
+UNION
+SELECT c1 FROM t, cte
+) SELECT COUNT(*) FROM cte;
+COUNT(*)
+4
+ANALYZE WITH RECURSIVE cte(f) AS (
+SELECT c2 FROM t
+UNION
+SELECT c2 FROM t, cte
+) SELECT COUNT(*) FROM cte;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	r_rows	filtered	r_filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	
+2	DERIVED	t	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	
+3	RECURSIVE UNION	t	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	
+3	RECURSIVE UNION	<derived2>	ALL	NULL	NULL	NULL	NULL	4	4.00	100.00	100.00	Using join buffer (flat, BNL join)
+NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	0.00	NULL	NULL	
+WITH RECURSIVE cte(f) AS (
+SELECT c2 FROM t
+UNION
+SELECT c2 FROM t, cte
+) SELECT COUNT(*) FROM cte;
+COUNT(*)
+4
+DROP TABLE t;
+#
+# mdev-12563: no recursive references on the top level of the CTE spec 
+#  
+CREATE TABLE t (i int);
+INSERT INTO t VALUES (3), (1),(2);
+SET standard_compliant_cte=0;
+WITH RECURSIVE cte(f) AS (
+SELECT i FROM t
+UNION
+SELECT i FROM t WHERE i NOT IN ( SELECT * FROM cte )
+) SELECT * FROM cte;
+f
+3
+1
+2
+WITH RECURSIVE cte(f) AS (
+SELECT i FROM t
+UNION
+SELECT i FROM t WHERE i NOT IN ( SELECT * FROM cte WHERE i < 2 )
+UNION
+SELECT i FROM t WHERE i NOT IN ( SELECT * FROM cte WHERE i > 2 )
+) SELECT * FROM cte;
+f
+3
+1
+2
+WITH RECURSIVE cte(f) AS (
+SELECT i FROM t
+UNION
+SELECT i FROM t
+WHERE i NOT IN ( SELECT * FROM cte WHERE i < 2
+UNION
+SELECT * FROM cte WHERE i > 2)
+) SELECT * FROM cte;
+f
+3
+1
+2
+WITH RECURSIVE cte(f) AS (
+SELECT i FROM t
+UNION
+SELECT i FROM t 
+WHERE i NOT IN ( SELECT * FROM t
+WHERE i IN ( SELECT * FROM cte ) GROUP BY i )
+) SELECT * FROM cte;
+f
+3
+1
+2
+WITH RECURSIVE cte(f) AS (
+SELECT i FROM t
+UNION
+SELECT i FROM t WHERE i NOT IN ( SELECT * FROM cte )
+UNION 
+SELECT * FROM cte WHERE f > 2
+) SELECT * FROM cte;
+f
+3
+1
+2
+set standard_compliant_cte=default;
+DROP TABLE t;
+#
+# mdev-14184: recursive CTE embedded into CTE with multiple references 
+#
+WITH
+cte1 AS (
+SELECT n FROM (
+WITH RECURSIVE rec_cte(n) AS (
+SELECT 1 as n1
+UNION ALL
+SELECT n+1 as n2 FROM rec_cte WHERE n < 3
+) SELECT n FROM rec_cte
+) AS X
+),
+cte2 as (
+SELECT 2 FROM cte1
+)
+SELECT *
+FROM cte1;
+n
+1
+2
+3
+#
+# mdev-14629: a user-defined variable is defined by the recursive CTE
+#
+set @var=
+(
+with recursive cte_tab(a) as (
+select 1
+union
+select a+1 from cte_tab
+where a<3)
+select count(*) from cte_tab
+);
+select @var;
+@var
+3
+create table t1(a int, b int);
+insert into t1 values (3,8),(1,5),(5,7),(7,4),(4,3);
+set @var=
+(
+with recursive summ(a,s) as (
+select 1, 0 union
+select t1.b, t1.b+summ.s from summ, t1
+where summ.a=t1.a)
+select s from summ
+order by a desc
+limit 1
+);
+select @var;
+@var
+27
+set @var=
+(
+with recursive
+cte_1 as (
+select 1
+union
+select * from cte_2),
+cte_2 as (
+select * from cte_1
+union
+select a from t1, cte_2
+where t1.a=cte_2.a)
+select * from cte_2
+limit 1
+);
+ERROR HY000: Unacceptable mutual recursion with anchored table 'cte_1'
+drop table t1;
+#
+# MDEV-14217 [db crash] Recursive CTE when SELECT includes new field
+#
+CREATE TEMPORARY TABLE a_tbl (
+a VARCHAR(33) PRIMARY KEY,
+b VARCHAR(33)
+);
+INSERT INTO a_tbl VALUES ('block0', 'block0'), ('block1', NULL);
+WITH RECURSIVE Q0 AS (
+SELECT T0.a, T0.b, 5
+FROM a_tbl T0
+WHERE b IS NULL
+UNION ALL
+SELECT T1.a, T1.b
+FROM Q0
+JOIN a_tbl T1
+ON T1.a=Q0.a
+) SELECT distinct(Q0.a), Q0.b
+FROM Q0;
+ERROR 21000: The used SELECT statements have a different number of columns
+DROP TABLE a_tbl;
+WITH RECURSIVE x AS (SELECT 1,2 UNION ALL SELECT 1 FROM x) SELECT * FROM x;
+ERROR 21000: The used SELECT statements have a different number of columns

@@ -9,8 +9,8 @@
 #    --source include/wait_innodb_all_purged.inc
 #
 --source include/have_innodb.inc
+--source include/have_debug.inc
 
-if (`select version() like '%debug%'`) {
 --disable_query_log
 
 let $wait_counter_init= 300;
@@ -29,8 +29,10 @@ let $wait_condition_reps= 0;
 let $prev_trx_age= 0;
 while ($wait_counter)
 {
+--disable_warnings
     let $trx_age = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
 WHERE VARIABLE_NAME = 'INNODB_PURGE_TRX_ID_AGE';`;
+--enable_warnings
 
     if ($trx_age != $prev_trx_age)
     {
@@ -46,7 +48,6 @@ WHERE VARIABLE_NAME = 'INNODB_PURGE_TRX_ID_AGE';`;
     }
     if (!$success)
     {
-        set global innodb_purge_run_now=ON;
         real_sleep 0.1;
         dec $wait_counter;
     }
@@ -57,4 +58,3 @@ if (!$success)
 }
 
 --enable_query_log
-}

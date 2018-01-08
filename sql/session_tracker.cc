@@ -396,7 +396,7 @@ bool Session_sysvars_tracker::vars_list::parse_var_list(THD *thd,
     return false;
   }
 
-  if(!strcmp(var_list.str,(const char *)"*"))
+  if(!strcmp(var_list.str, "*"))
   {
     track_all= true;
     buffer_length= 2;
@@ -418,7 +418,7 @@ bool Session_sysvars_tracker::vars_list::parse_var_list(THD *thd,
   for (;;)
   {
     sys_var *svar;
-    LEX_STRING var;
+    LEX_CSTRING var;
     uint not_used;
 
     lasts= (char *) memchr(token, separator, rest);
@@ -435,7 +435,7 @@ bool Session_sysvars_tracker::vars_list::parse_var_list(THD *thd,
     /* Remove leading/trailing whitespace. */
     trim_whitespace(char_set, &var, &not_used);
 
-    if(!strcmp(var.str,(const char *)"*"))
+    if(!strcmp(var.str, "*"))
     {
       track_all= true;
     }
@@ -483,7 +483,7 @@ bool Session_sysvars_tracker::check_var_list(THD *thd,
   size_t rest= var_list.length;
 
   if (!var_list.str || var_list.length == 0 ||
-      !strcmp(var_list.str,(const char *)"*"))
+      !strcmp(var_list.str, "*"))
   {
     return false;
   }
@@ -500,7 +500,7 @@ bool Session_sysvars_tracker::check_var_list(THD *thd,
     mysql_mutex_lock(&LOCK_plugin);
   for (;;)
   {
-    LEX_STRING var;
+    LEX_CSTRING var;
     uint not_used;
 
     lasts= (char *) memchr(token, separator, rest);
@@ -517,7 +517,7 @@ bool Session_sysvars_tracker::check_var_list(THD *thd,
     /* Remove leading/trailing whitespace. */
     trim_whitespace(char_set, &var, &not_used);
 
-    if(!strcmp(var.str,(const char *)"*") &&
+    if(!strcmp(var.str, "*") &&
        !find_sys_var_ex(thd, var.str, var.length, throw_error, true))
     {
       if (throw_error && take_mutex && thd)
@@ -967,7 +967,7 @@ bool Current_schema_tracker::update(THD *thd, set_var *)
 
 bool Current_schema_tracker::store(THD *thd, String *buf)
 {
-  ulonglong db_length, length;
+  size_t db_length, length;
 
   /*
     Protocol made (by unknown reasons) redundant:
@@ -1216,7 +1216,7 @@ bool Transaction_state_tracker::store(THD *thd, String *buf)
           tx_isolation_typelib as it hyphenates its items.
         */
         buf->append(STRING_WITH_LEN("SET TRANSACTION ISOLATION LEVEL "));
-        buf->append(isol[tx_isol_level - 1].str, isol[tx_isol_level - 1].length);
+        buf->append(&isol[tx_isol_level - 1]);
         buf->append(STRING_WITH_LEN("; "));
       }
 
@@ -1320,16 +1320,16 @@ bool Transaction_state_tracker::store(THD *thd, String *buf)
     }
 
     {
-      ulonglong length= buf->length() - start;
+      size_t length= buf->length() - start;
       uchar *place= (uchar *)(buf->ptr() + (start - 2));
       DBUG_ASSERT(length < 249); // in fact < 110
       DBUG_ASSERT(start >= 3);
 
       DBUG_ASSERT((place - 1)[0] == SESSION_TRACK_TRANSACTION_CHARACTERISTICS);
       /* Length of the overall entity. */
-      place[0]= length + 1;
+      place[0]= (uchar)length + 1;
       /* Transaction characteristics (length-encoded string). */
-      place[1]= length;
+      place[1]= (uchar)length;
     }
   }
 

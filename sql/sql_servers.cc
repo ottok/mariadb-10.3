@@ -33,7 +33,7 @@
   currently running transactions etc will not be disrupted.
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_servers.h"
 #include "unireg.h"
@@ -64,7 +64,7 @@ static int insert_server_record_into_cache(FOREIGN_SERVER *server);
 static FOREIGN_SERVER *
 prepare_server_struct_for_insert(LEX_SERVER_OPTIONS *server_options);
 /* drop functions */ 
-static int delete_server_record(TABLE *table, LEX_STRING *name);
+static int delete_server_record(TABLE *table, LEX_CSTRING *name);
 static int delete_server_record_in_cache(LEX_SERVER_OPTIONS *server_options);
 
 /* update functions */
@@ -208,7 +208,7 @@ static bool servers_load(THD *thd, TABLE_LIST *tables)
   if (init_read_record(&read_record_info,thd,table=tables[0].table, NULL, NULL,
                        1,0, FALSE))
     DBUG_RETURN(1);
-  while (!(read_record_info.read_record(&read_record_info)))
+  while (!(read_record_info.read_record()))
   {
     /* return_val is already TRUE, so no need to set */
     if ((get_server_from_table_to_cache(table)))
@@ -350,8 +350,8 @@ get_server_from_table_to_cache(TABLE *table)
   DBUG_PRINT("info", ("server->socket %s", server->socket));
   if (my_hash_insert(&servers_cache, (uchar*) server))
   {
-    DBUG_PRINT("info", ("had a problem inserting server %s at %lx",
-                        server->server_name, (long unsigned int) server));
+    DBUG_PRINT("info", ("had a problem inserting server %s at %p",
+                        server->server_name, server));
     // error handling needed here
     DBUG_RETURN(TRUE);
   }
@@ -431,13 +431,13 @@ insert_server_record_into_cache(FOREIGN_SERVER *server)
     We succeded in insertion of the server to the table, now insert
     the server to the cache
   */
-  DBUG_PRINT("info", ("inserting server %s at %lx, length %d",
-                        server->server_name, (long unsigned int) server,
+  DBUG_PRINT("info", ("inserting server %s at %p, length %d",
+                        server->server_name, server,
                         server->server_name_length));
   if (my_hash_insert(&servers_cache, (uchar*) server))
   {
-    DBUG_PRINT("info", ("had a problem inserting server %s at %lx",
-                        server->server_name, (long unsigned int) server));
+    DBUG_PRINT("info", ("had a problem inserting server %s at %p",
+                        server->server_name, server));
     // error handling needed here
     error= 1;
   }
@@ -804,8 +804,8 @@ int update_server_record_in_cache(FOREIGN_SERVER *existing,
   */
   if (my_hash_insert(&servers_cache, (uchar*)altered))
   {
-    DBUG_PRINT("info", ("had a problem inserting server %s at %lx",
-                        altered->server_name, (long unsigned int) altered));
+    DBUG_PRINT("info", ("had a problem inserting server %s at %p",
+                        altered->server_name,altered));
     error= ER_OUT_OF_RESOURCES;
   }
 
@@ -939,7 +939,7 @@ end:
 */
 
 static int 
-delete_server_record(TABLE *table, LEX_STRING *name)
+delete_server_record(TABLE *table, LEX_CSTRING *name)
 {
   int error;
   DBUG_ENTER("delete_server_record");

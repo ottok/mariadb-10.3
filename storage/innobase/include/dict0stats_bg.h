@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2012, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -47,17 +47,6 @@ extern my_bool		innodb_dict_stats_disabled_debug;
 #endif /* UNIV_DEBUG */
 
 /*****************************************************************//**
-Add a table to the recalc pool, which is processed by the
-background stats gathering thread. Only the table id is added to the
-list, so the table can be closed after being enqueued and it will be
-opened when needed. If the table does not exist later (has been DROPped),
-then it will be removed from the pool and skipped. */
-void
-dict_stats_recalc_pool_add(
-/*=======================*/
-	const dict_table_t*	table);	/*!< in: table to add */
-
-/*****************************************************************//**
 Delete a given table from the auto recalc pool.
 dict_stats_recalc_pool_del() */
 void
@@ -67,8 +56,8 @@ dict_stats_recalc_pool_del(
 
 /** Yield the data dictionary latch when waiting
 for the background thread to stop accessing a table.
-@param trx transaction holding the data dictionary locks */
-#define DICT_STATS_BG_YIELD(trx)	do {	\
+@param trx	transaction holding the data dictionary locks */
+#define DICT_BG_YIELD(trx)	do {	\
 	row_mysql_unlock_data_dictionary(trx);	\
 	os_thread_sleep(250000);		\
 	row_mysql_lock_data_dictionary(trx);	\
@@ -151,7 +140,7 @@ DECLARE_THREAD(dict_stats_thread)(
 	void*	arg);	/*!< in: a dummy parameter
 			required by os_thread_create */
 
-/** Shutdown the dict stats thread. */
+/** Shut down the dict_stats_thread. */
 void
 dict_stats_shutdown();
 

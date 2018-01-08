@@ -172,6 +172,7 @@
       !! thread4 should not wait for thread2.
 */
 
+#include <my_global.h>
 #include <waiting_threads.h>
 #include <m_string.h>
 
@@ -556,7 +557,7 @@ my_bool wt_resource_id_memcmp(const void *a, const void *b)
 {
   /* we use the fact that there's no padding in the middle of WT_RESOURCE_ID */
   compile_time_assert(offsetof(WT_RESOURCE_ID, type) == sizeof(ulonglong));
-  return memcmp(a, b, sizeof_WT_RESOURCE_ID);
+  return MY_TEST(memcmp(a, b, sizeof_WT_RESOURCE_ID));
 }
 
 /**
@@ -617,7 +618,7 @@ retry:
   {
     rc= *shared_ptr;
     lf_pin(arg->thd->pins, 0, rc);
-  } while (rc != *shared_ptr && LF_BACKOFF);
+  } while (rc != *shared_ptr && LF_BACKOFF());
 
   if (rc == 0)
   {

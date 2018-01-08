@@ -1,6 +1,5 @@
-/* Copyright (c) 2006, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab
-   Copyright (c) 2016, MariaDB Corporation
+/* Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2010, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -15,7 +14,7 @@
    along with this program; if not, write to the Free Software Foundation,
    51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"                             // HAVE_*
 #include "rpl_mi.h"
@@ -32,6 +31,8 @@
 #include "slave.h"
 #include <mysql/plugin.h>
 #include <mysql/service_thd_wait.h>
+#include "lock.h"
+#include "sql_table.h"
 
 static int count_relay_log_space(Relay_log_info* rli);
 
@@ -52,8 +53,8 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery)
    sync_counter(0), is_relay_log_recovery(is_slave_recovery),
    save_temporary_tables(0),
    mi(0), inuse_relaylog_list(0), last_inuse_relaylog(0),
-   cur_log_old_open_count(0), group_relay_log_pos(0), 
-   event_relay_log_pos(0),
+   cur_log_old_open_count(0), error_on_rli_init_info(false),
+   group_relay_log_pos(0), event_relay_log_pos(0),
    group_master_log_pos(0), log_space_total(0), ignore_log_space_limit(0),
    last_master_timestamp(0), sql_thread_caught_up(true), slave_skip_counter(0),
    abort_pos_wait(0), slave_run_id(0), sql_driver_thd(),
@@ -69,10 +70,12 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery)
   relay_log_state.init();
 #ifdef HAVE_PSI_INTERFACE
   relay_log.set_psi_keys(key_RELAYLOG_LOCK_index,
-                         key_RELAYLOG_update_cond,
+                         key_RELAYLOG_COND_relay_log_updated,
+                         key_RELAYLOG_COND_bin_log_updated,
                          key_file_relaylog,
                          key_file_relaylog_index,
-                         key_RELAYLOG_COND_queue_busy);
+                         key_RELAYLOG_COND_queue_busy,
+                         key_LOCK_relaylog_end_pos);
 #endif
 
   group_relay_log_name[0]= event_relay_log_name[0]=
@@ -124,10 +127,13 @@ int Relay_log_info::init(const char* info_fname)
   char fname[FN_REFLEN+128];
   const char* msg = 0;
   int error = 0;
+  mysql_mutex_t *log_lock;
   DBUG_ENTER("Relay_log_info::init");
 
   if (inited)                       // Set if this function called
     DBUG_RETURN(0);
+
+  log_lock= relay_log.get_log_lock();
   fn_format(fname, info_fname, mysql_data_home, "", 4+32);
   mysql_mutex_lock(&data_lock);
   cur_log_fd = -1;
@@ -135,6 +141,9 @@ int Relay_log_info::init(const char* info_fname)
   abort_pos_wait=0;
   log_space_limit= relay_log_space_limit;
   log_space_total= 0;
+
+  if (error_on_rli_init_info)
+    goto err;
 
   char pattern[FN_REFLEN];
   (void) my_realpath(pattern, slave_load_tmpdir, 0);
@@ -207,7 +216,6 @@ a file name for --relay-log-index option", opt_relaylog_index_name);
     /* For multimaster, add connection name to relay log filenames */
     char buf_relay_logname[FN_REFLEN], buf_relaylog_index_name_buff[FN_REFLEN];
     char *buf_relaylog_index_name= opt_relaylog_index_name;
-    mysql_mutex_t *log_lock;
 
     create_logfile_name_with_suffix(buf_relay_logname,
                                     sizeof(buf_relay_logname),
@@ -227,11 +235,10 @@ a file name for --relay-log-index option", opt_relaylog_index_name);
       note, that if open() fails, we'll still have index file open
       but a destructor will take care of that
     */
-    log_lock= relay_log.get_log_lock();
     mysql_mutex_lock(log_lock);
     if (relay_log.open_index_file(buf_relaylog_index_name, ln, TRUE) ||
         relay_log.open(ln, LOG_BIN, 0, 0, SEQ_READ_APPEND,
-                       max_relay_log_size, 1, TRUE))
+                       (ulong)max_relay_log_size, 1, TRUE))
     {
       mysql_mutex_unlock(log_lock);
       mysql_mutex_unlock(&data_lock);
@@ -253,8 +260,8 @@ a file name for --relay-log-index option", opt_relaylog_index_name);
     if ((info_fd= mysql_file_open(key_file_relay_log_info,
                                   fname, O_CREAT|O_RDWR|O_BINARY, MYF(MY_WME))) < 0)
     {
-      sql_print_error("Failed to create a new relay log info file (\
-file '%s', errno %d)", fname, my_errno);
+      sql_print_error("Failed to create a new relay log info file ("
+                      "file '%s', errno %d)", fname, my_errno);
       msg= current_thd->get_stmt_da()->message();
       goto err;
     }
@@ -304,7 +311,9 @@ Failed to open the existing relay log info file '%s' (errno %d)",
         if (info_fd >= 0)
           mysql_file_close(info_fd, MYF(0));
         info_fd= -1;
+        mysql_mutex_lock(log_lock);
         relay_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT);
+        mysql_mutex_unlock(log_lock);
         mysql_mutex_unlock(&data_lock);
         DBUG_RETURN(1);
       }
@@ -417,16 +426,21 @@ Failed to open the existing relay log info file '%s' (errno %d)",
     goto err;
   }
   inited= 1;
+  error_on_rli_init_info= false;
   mysql_mutex_unlock(&data_lock);
   DBUG_RETURN(0);
 
 err:
-  sql_print_error("%s", msg);
+  error_on_rli_init_info= true;
+  if (msg)
+    sql_print_error("%s", msg);
   end_io_cache(&info_file);
   if (info_fd >= 0)
     mysql_file_close(info_fd, MYF(0));
   info_fd= -1;
+  mysql_mutex_lock(log_lock);
   relay_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT);
+  mysql_mutex_unlock(log_lock);
   mysql_mutex_unlock(&data_lock);
   DBUG_RETURN(1);
 }
@@ -526,7 +540,7 @@ read_relay_log_description_event(IO_CACHE *cur_log, ulonglong start_pos,
     if (my_b_tell(cur_log) >= start_pos)
       break;
 
-    if (!(ev= Log_event::read_log_event(cur_log, 0, fdev,
+    if (!(ev= Log_event::read_log_event(cur_log, fdev,
                                         opt_slave_sql_verify_checksum)))
     {
       DBUG_PRINT("info",("could not read event, cur_log->error=%d",
@@ -1124,6 +1138,8 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
                      const char** errmsg)
 {
   int error=0;
+  const char *ln;
+  char name_buf[FN_REFLEN];
   DBUG_ENTER("purge_relay_logs");
 
   /*
@@ -1150,12 +1166,37 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
   if (!rli->inited)
   {
     DBUG_PRINT("info", ("rli->inited == 0"));
-    DBUG_RETURN(0);
+    if (rli->error_on_rli_init_info)
+    {
+      ln= rli->relay_log.generate_name(opt_relay_logname, "-relay-bin",
+                                       1, name_buf);
+
+      if (rli->relay_log.open_index_file(opt_relaylog_index_name, ln, TRUE))
+      {
+        sql_print_error("Unable to purge relay log files. Failed to open relay "
+                        "log index file:%s.", rli->relay_log.get_index_fname());
+        DBUG_RETURN(1);
+      }
+      mysql_mutex_lock(rli->relay_log.get_log_lock());
+      if (rli->relay_log.open(ln, LOG_BIN, 0, 0, SEQ_READ_APPEND,
+                             (ulong)(rli->max_relay_log_size ? rli->max_relay_log_size :
+                              max_binlog_size), 1, TRUE))
+      {
+        sql_print_error("Unable to purge relay log files. Failed to open relay "
+                        "log file:%s.", rli->relay_log.get_log_fname());
+        mysql_mutex_unlock(rli->relay_log.get_log_lock());
+        DBUG_RETURN(1);
+      }
+      mysql_mutex_unlock(rli->relay_log.get_log_lock());
+    }
+    else
+      DBUG_RETURN(0);
   }
-
-  DBUG_ASSERT(rli->slave_running == 0);
-  DBUG_ASSERT(rli->mi->slave_running == 0);
-
+  else
+  {
+    DBUG_ASSERT(rli->slave_running == 0);
+    DBUG_ASSERT(rli->mi->slave_running == 0);
+  }
   mysql_mutex_lock(&rli->data_lock);
 
   /*
@@ -1202,6 +1243,12 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
     rli->group_relay_log_name[0]= rli->event_relay_log_name[0]= 0;
   }
 
+  if (!rli->inited && rli->error_on_rli_init_info)
+  {
+    mysql_mutex_lock(rli->relay_log.get_log_lock());
+    rli->relay_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT);
+    mysql_mutex_unlock(rli->relay_log.get_log_lock());
+  }
 err:
   DBUG_PRINT("info",("log_space_total: %llu",rli->log_space_total));
   mysql_mutex_unlock(&rli->data_lock);
@@ -1466,41 +1513,22 @@ Relay_log_info::update_relay_log_state(rpl_gtid *gtid_list, uint32 count)
 
 
 #if !defined(MYSQL_CLIENT) && defined(HAVE_REPLICATION)
-int
-rpl_load_gtid_slave_state(THD *thd)
+struct gtid_pos_element { uint64 sub_id; rpl_gtid gtid; void *hton; };
+
+static int
+scan_one_gtid_slave_pos_table(THD *thd, HASH *hash, DYNAMIC_ARRAY *array,
+                              LEX_CSTRING *tablename, void **out_hton)
 {
   TABLE_LIST tlist;
   TABLE *table;
   bool table_opened= false;
   bool table_scanned= false;
-  bool array_inited= false;
-  struct local_element { uint64 sub_id; rpl_gtid gtid; };
-  struct local_element tmp_entry, *entry;
-  HASH hash;
-  DYNAMIC_ARRAY array;
+  struct gtid_pos_element tmp_entry, *entry;
   int err= 0;
-  uint32 i;
-  DBUG_ENTER("rpl_load_gtid_slave_state");
-
-  mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-  bool loaded= rpl_global_gtid_slave_state->loaded;
-  mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-  if (loaded)
-    DBUG_RETURN(0);
-
-  my_hash_init(&hash, &my_charset_bin, 32,
-               offsetof(local_element, gtid) + offsetof(rpl_gtid, domain_id),
-               sizeof(uint32), NULL, my_free, HASH_UNIQUE);
-  if ((err= my_init_dynamic_array(&array, sizeof(local_element), 0, 0, MYF(0))))
-    goto end;
-  array_inited= true;
 
   thd->reset_for_next_command();
-
-  tlist.init_one_table(STRING_WITH_LEN("mysql"),
-                       rpl_gtid_slave_state_table_name.str,
-                       rpl_gtid_slave_state_table_name.length,
-                       NULL, TL_READ);
+  tlist.init_one_table(STRING_WITH_LEN("mysql"), tablename->str,
+                       tablename->length, NULL, TL_READ);
   if ((err= open_and_lock_tables(thd, &tlist, FALSE, 0)))
     goto end;
   table_opened= true;
@@ -1534,9 +1562,9 @@ rpl_load_gtid_slave_state(THD *thd)
         goto end;
       }
     }
-    domain_id= (ulonglong)table->field[0]->val_int();
+    domain_id= (uint32)table->field[0]->val_int();
     sub_id= (ulonglong)table->field[1]->val_int();
-    server_id= (ulonglong)table->field[2]->val_int();
+    server_id= (uint32)table->field[2]->val_int();
     seq_no= (ulonglong)table->field[3]->val_int();
     DBUG_PRINT("info", ("Read slave state row: %u-%u-%lu sub_id=%lu\n",
                         (unsigned)domain_id, (unsigned)server_id,
@@ -1546,26 +1574,28 @@ rpl_load_gtid_slave_state(THD *thd)
     tmp_entry.gtid.domain_id= domain_id;
     tmp_entry.gtid.server_id= server_id;
     tmp_entry.gtid.seq_no= seq_no;
-    if ((err= insert_dynamic(&array, (uchar *)&tmp_entry)))
+    tmp_entry.hton= table->s->db_type();
+    if ((err= insert_dynamic(array, (uchar *)&tmp_entry)))
     {
       my_error(ER_OUT_OF_RESOURCES, MYF(0));
       goto end;
     }
 
-    if ((rec= my_hash_search(&hash, (const uchar *)&domain_id, 0)))
+    if ((rec= my_hash_search(hash, (const uchar *)&domain_id, 0)))
     {
-      entry= (struct local_element *)rec;
+      entry= (struct gtid_pos_element *)rec;
       if (entry->sub_id >= sub_id)
         continue;
       entry->sub_id= sub_id;
       DBUG_ASSERT(entry->gtid.domain_id == domain_id);
       entry->gtid.server_id= server_id;
       entry->gtid.seq_no= seq_no;
+      entry->hton= table->s->db_type();
     }
     else
     {
-      if (!(entry= (struct local_element *)my_malloc(sizeof(*entry),
-                                                     MYF(MY_WME))))
+      if (!(entry= (struct gtid_pos_element *)my_malloc(sizeof(*entry),
+                                                        MYF(MY_WME))))
       {
         my_error(ER_OUTOFMEMORY, MYF(0), (int)sizeof(*entry));
         err= 1;
@@ -1575,7 +1605,8 @@ rpl_load_gtid_slave_state(THD *thd)
       entry->gtid.domain_id= domain_id;
       entry->gtid.server_id= server_id;
       entry->gtid.seq_no= seq_no;
-      if ((err= my_hash_insert(&hash, (uchar *)entry)))
+      entry->hton= table->s->db_type();
+      if ((err= my_hash_insert(hash, (uchar *)entry)))
       {
         my_free(entry);
         my_error(ER_OUT_OF_RESOURCES, MYF(0));
@@ -1583,45 +1614,6 @@ rpl_load_gtid_slave_state(THD *thd)
       }
     }
   }
-
-  mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-  if (rpl_global_gtid_slave_state->loaded)
-  {
-    mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-    goto end;
-  }
-
-  for (i= 0; i < array.elements; ++i)
-  {
-    get_dynamic(&array, (uchar *)&tmp_entry, i);
-    if ((err= rpl_global_gtid_slave_state->update(tmp_entry.gtid.domain_id,
-                                                 tmp_entry.gtid.server_id,
-                                                 tmp_entry.sub_id,
-                                                 tmp_entry.gtid.seq_no,
-                                                 NULL)))
-    {
-      mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-      my_error(ER_OUT_OF_RESOURCES, MYF(0));
-      goto end;
-    }
-  }
-
-  for (i= 0; i < hash.records; ++i)
-  {
-    entry= (struct local_element *)my_hash_element(&hash, i);
-    if (opt_bin_log &&
-        mysql_bin_log.bump_seq_no_counter_if_needed(entry->gtid.domain_id,
-                                                    entry->gtid.seq_no))
-    {
-      mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-      my_error(ER_OUT_OF_RESOURCES, MYF(0));
-      goto end;
-    }
-  }
-
-  rpl_global_gtid_slave_state->loaded= true;
-  mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
-
   err= 0;                                       /* Clear HA_ERR_END_OF_FILE */
 
 end:
@@ -1633,13 +1625,453 @@ end:
   }
   if (table_opened)
   {
+    *out_hton= table->s->db_type();
     close_thread_tables(thd);
     thd->mdl_context.release_transactional_locks();
   }
+  return err;
+}
+
+
+/*
+  Look for all tables mysql.gtid_slave_pos*. Read all rows from each such
+  table found into ARRAY. For each domain id, put the row with highest sub_id
+  into HASH.
+*/
+static int
+scan_all_gtid_slave_pos_table(THD *thd, int (*cb)(THD *, LEX_CSTRING *, void *),
+                              void *cb_data)
+{
+  static LEX_CSTRING mysql_db_name= {C_STRING_WITH_LEN("mysql")};
+  char path[FN_REFLEN];
+  MY_DIR *dirp;
+
+  thd->reset_for_next_command();
+  if (lock_schema_name(thd, mysql_db_name.str))
+    return 1;
+
+  build_table_filename(path, sizeof(path) - 1, mysql_db_name.str, "", "", 0);
+  if (!(dirp= my_dir(path, MYF(MY_DONT_SORT))))
+  {
+    my_error(ER_FILE_NOT_FOUND, MYF(0), path, my_errno);
+    close_thread_tables(thd);
+    thd->mdl_context.release_transactional_locks();
+    return 1;
+  }
+  else
+  {
+    size_t i;
+    Dynamic_array<LEX_CSTRING*> files(dirp->number_of_files);
+    Discovered_table_list tl(thd, &files);
+    int err;
+
+    err= ha_discover_table_names(thd, &mysql_db_name, dirp, &tl, false);
+    my_dirend(dirp);
+    close_thread_tables(thd);
+    thd->mdl_context.release_transactional_locks();
+    if (err)
+      return err;
+
+    for (i = 0; i < files.elements(); ++i)
+    {
+      if (strncmp(files.at(i)->str,
+                  rpl_gtid_slave_state_table_name.str,
+                  rpl_gtid_slave_state_table_name.length) == 0)
+      {
+        if ((err= (*cb)(thd, files.at(i), cb_data)))
+          return err;
+      }
+    }
+  }
+
+  return 0;
+}
+
+
+struct load_gtid_state_cb_data {
+  HASH *hash;
+  DYNAMIC_ARRAY *array;
+  struct rpl_slave_state::gtid_pos_table *table_list;
+  struct rpl_slave_state::gtid_pos_table *default_entry;
+};
+
+static int
+process_gtid_pos_table(THD *thd, LEX_CSTRING *table_name, void *hton,
+                       struct load_gtid_state_cb_data *data)
+{
+  struct rpl_slave_state::gtid_pos_table *p, *entry, **next_ptr;
+  bool is_default=
+    (strcmp(table_name->str, rpl_gtid_slave_state_table_name.str) == 0);
+
+  /*
+    Ignore tables with duplicate storage engine, with a warning.
+    Prefer the default mysql.gtid_slave_pos over another table
+    mysql.gtid_slave_posXXX with the same storage engine.
+  */
+  next_ptr= &data->table_list;
+  entry= data->table_list;
+  while (entry)
+  {
+    if (entry->table_hton == hton)
+    {
+      static const char *warning_msg= "Ignoring redundant table mysql.%s "
+        "since mysql.%s has the same storage engine";
+      if (!is_default)
+      {
+        /* Ignore the redundant table. */
+        sql_print_warning(warning_msg, table_name->str, entry->table_name);
+        return 0;
+      }
+      else
+      {
+        sql_print_warning(warning_msg, entry->table_name, table_name->str);
+        /* Delete the redundant table, and proceed to add this one instead. */
+        *next_ptr= entry->next;
+        my_free(entry);
+        break;
+      }
+    }
+    next_ptr= &entry->next;
+    entry= entry->next;
+  }
+
+  p= rpl_global_gtid_slave_state->alloc_gtid_pos_table(table_name,
+      hton, rpl_slave_state::GTID_POS_AVAILABLE);
+  if (!p)
+    return 1;
+  p->next= data->table_list;
+  data->table_list= p;
+  if (is_default)
+    data->default_entry= p;
+  return 0;
+}
+
+
+/*
+  Put tables corresponding to @@gtid_pos_auto_engines at the end of the list,
+  marked to be auto-created if needed.
+*/
+static int
+gtid_pos_auto_create_tables(rpl_slave_state::gtid_pos_table **list_ptr)
+{
+  plugin_ref *auto_engines;
+  int err= 0;
+  mysql_mutex_lock(&LOCK_global_system_variables);
+  for (auto_engines= opt_gtid_pos_auto_plugins;
+       !err && auto_engines && *auto_engines;
+       ++auto_engines)
+  {
+    void *hton= plugin_hton(*auto_engines);
+    char buf[FN_REFLEN+1];
+    LEX_CSTRING table_name;
+    char *p;
+    rpl_slave_state::gtid_pos_table *entry, **next_ptr;
+
+    /* See if this engine is already in the list. */
+    next_ptr= list_ptr;
+    entry= *list_ptr;
+    while (entry)
+    {
+      if (entry->table_hton == hton)
+        break;
+      next_ptr= &entry->next;
+      entry= entry->next;
+    }
+    if (entry)
+      continue;
+
+    /* Add an auto-create entry for this engine at end of list. */
+    p= strmake(buf, rpl_gtid_slave_state_table_name.str, FN_REFLEN);
+    p= strmake(p, "_", FN_REFLEN - (p - buf));
+    p= strmake(p, plugin_name(*auto_engines)->str, FN_REFLEN - (p - buf));
+    table_name.str= buf;
+    table_name.length= p - buf;
+    entry= rpl_global_gtid_slave_state->alloc_gtid_pos_table
+      (&table_name, hton, rpl_slave_state::GTID_POS_AUTO_CREATE);
+    if (!entry)
+    {
+      err= 1;
+      break;
+    }
+    *next_ptr= entry;
+  }
+  mysql_mutex_unlock(&LOCK_global_system_variables);
+  return err;
+}
+
+
+static int
+load_gtid_state_cb(THD *thd, LEX_CSTRING *table_name, void *arg)
+{
+  int err;
+  load_gtid_state_cb_data *data= static_cast<load_gtid_state_cb_data *>(arg);
+  void *hton;
+
+  if ((err= scan_one_gtid_slave_pos_table(thd, data->hash, data->array,
+                                          table_name, &hton)))
+    return err;
+  return process_gtid_pos_table(thd, table_name, hton, data);
+}
+
+
+int
+rpl_load_gtid_slave_state(THD *thd)
+{
+  bool array_inited= false;
+  struct gtid_pos_element tmp_entry, *entry;
+  HASH hash;
+  DYNAMIC_ARRAY array;
+  int err= 0;
+  uint32 i;
+  load_gtid_state_cb_data cb_data;
+  DBUG_ENTER("rpl_load_gtid_slave_state");
+
+  mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  bool loaded= rpl_global_gtid_slave_state->loaded;
+  mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  if (loaded)
+    DBUG_RETURN(0);
+
+  cb_data.table_list= NULL;
+  cb_data.default_entry= NULL;
+  my_hash_init(&hash, &my_charset_bin, 32,
+               offsetof(gtid_pos_element, gtid) + offsetof(rpl_gtid, domain_id),
+               sizeof(uint32), NULL, my_free, HASH_UNIQUE);
+  if ((err= my_init_dynamic_array(&array, sizeof(gtid_pos_element), 0, 0, MYF(0))))
+    goto end;
+  array_inited= true;
+
+  cb_data.hash = &hash;
+  cb_data.array = &array;
+  if ((err= scan_all_gtid_slave_pos_table(thd, load_gtid_state_cb, &cb_data)))
+    goto end;
+
+  if (!cb_data.default_entry)
+  {
+    /*
+      If the mysql.gtid_slave_pos table does not exist, but at least one other
+      table is available, arbitrarily pick the first in the list to use as
+      default.
+    */
+    cb_data.default_entry= cb_data.table_list;
+  }
+  if ((err= gtid_pos_auto_create_tables(&cb_data.table_list)))
+    goto end;
+
+  mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  if (rpl_global_gtid_slave_state->loaded)
+  {
+    mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+    goto end;
+  }
+
+  if (!cb_data.table_list)
+  {
+    my_error(ER_NO_SUCH_TABLE, MYF(0), "mysql",
+             rpl_gtid_slave_state_table_name.str);
+    mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+    err= 1;
+    goto end;
+  }
+
+  for (i= 0; i < array.elements; ++i)
+  {
+    get_dynamic(&array, (uchar *)&tmp_entry, i);
+    if ((err= rpl_global_gtid_slave_state->update(tmp_entry.gtid.domain_id,
+                                                  tmp_entry.gtid.server_id,
+                                                  tmp_entry.sub_id,
+                                                  tmp_entry.gtid.seq_no,
+                                                  tmp_entry.hton,
+                                                  NULL)))
+    {
+      mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+      my_error(ER_OUT_OF_RESOURCES, MYF(0));
+      goto end;
+    }
+  }
+
+  for (i= 0; i < hash.records; ++i)
+  {
+    entry= (struct gtid_pos_element *)my_hash_element(&hash, i);
+    if (opt_bin_log &&
+        mysql_bin_log.bump_seq_no_counter_if_needed(entry->gtid.domain_id,
+                                                    entry->gtid.seq_no))
+    {
+      mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+      my_error(ER_OUT_OF_RESOURCES, MYF(0));
+      goto end;
+    }
+  }
+
+  rpl_global_gtid_slave_state->set_gtid_pos_tables_list(cb_data.table_list,
+                                                        cb_data.default_entry);
+  cb_data.table_list= NULL;
+  rpl_global_gtid_slave_state->loaded= true;
+  mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+
+end:
   if (array_inited)
     delete_dynamic(&array);
   my_hash_free(&hash);
+  if (cb_data.table_list)
+    rpl_global_gtid_slave_state->free_gtid_pos_tables(cb_data.table_list);
   DBUG_RETURN(err);
+}
+
+
+static int
+find_gtid_pos_tables_cb(THD *thd, LEX_CSTRING *table_name, void *arg)
+{
+  load_gtid_state_cb_data *data= static_cast<load_gtid_state_cb_data *>(arg);
+  TABLE_LIST tlist;
+  TABLE *table= NULL;
+  int err;
+
+  thd->reset_for_next_command();
+  tlist.init_one_table(STRING_WITH_LEN("mysql"), table_name->str,
+                       table_name->length, NULL, TL_READ);
+  if ((err= open_and_lock_tables(thd, &tlist, FALSE, 0)))
+    goto end;
+  table= tlist.table;
+
+  if ((err= gtid_check_rpl_slave_state_table(table)))
+    goto end;
+  err= process_gtid_pos_table(thd, table_name, table->s->db_type(), data);
+
+end:
+  if (table)
+  {
+    ha_commit_trans(thd, FALSE);
+    ha_commit_trans(thd, TRUE);
+    close_thread_tables(thd);
+    thd->mdl_context.release_transactional_locks();
+  }
+
+  return err;
+}
+
+
+/*
+  Re-compute the list of available mysql.gtid_slave_posXXX tables.
+
+  This is done at START SLAVE to pick up any newly created tables without
+  requiring server restart.
+*/
+int
+find_gtid_slave_pos_tables(THD *thd)
+{
+  int err= 0;
+  load_gtid_state_cb_data cb_data;
+  uint num_running;
+
+  mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  bool loaded= rpl_global_gtid_slave_state->loaded;
+  mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  if (!loaded)
+    return 0;
+
+  cb_data.table_list= NULL;
+  cb_data.default_entry= NULL;
+  if ((err= scan_all_gtid_slave_pos_table(thd, find_gtid_pos_tables_cb, &cb_data)))
+    goto end;
+
+  if (!cb_data.table_list)
+  {
+    my_error(ER_NO_SUCH_TABLE, MYF(0), "mysql",
+             rpl_gtid_slave_state_table_name.str);
+    err= 1;
+    goto end;
+  }
+  if (!cb_data.default_entry)
+  {
+    /*
+      If the mysql.gtid_slave_pos table does not exist, but at least one other
+      table is available, arbitrarily pick the first in the list to use as
+      default.
+    */
+    cb_data.default_entry= cb_data.table_list;
+  }
+  if ((err= gtid_pos_auto_create_tables(&cb_data.table_list)))
+    goto end;
+
+  mysql_mutex_lock(&LOCK_active_mi);
+  num_running= any_slave_sql_running(true);
+  mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  if (num_running <= 1)
+  {
+    /*
+      If no slave is running now, the count will be 1, since this SQL thread
+      which is starting is included in the count. In this case, we can safely
+      replace the list, no-one can be trying to read it without lock.
+    */
+    DBUG_ASSERT(num_running == 1);
+    rpl_global_gtid_slave_state->set_gtid_pos_tables_list(cb_data.table_list,
+                                                          cb_data.default_entry);
+    cb_data.table_list= NULL;
+  }
+  else
+  {
+    /*
+      If there are SQL threads running, we cannot safely remove the old list.
+      However we can add new entries, and warn about any tables that
+      disappeared, but may still be visible to running SQL threads.
+    */
+    rpl_slave_state::gtid_pos_table *old_entry, *new_entry, **next_ptr_ptr;
+
+    old_entry= (rpl_slave_state::gtid_pos_table *)
+      rpl_global_gtid_slave_state->gtid_pos_tables;
+    while (old_entry)
+    {
+      new_entry= cb_data.table_list;
+      while (new_entry)
+      {
+        if (new_entry->table_hton == old_entry->table_hton)
+          break;
+        new_entry= new_entry->next;
+      }
+      if (!new_entry)
+        sql_print_warning("The table mysql.%s was removed. "
+                          "This change will not take full effect "
+                          "until all SQL threads have been restarted",
+                          old_entry->table_name.str);
+      old_entry= old_entry->next;
+    }
+    next_ptr_ptr= &cb_data.table_list;
+    new_entry= cb_data.table_list;
+    while (new_entry)
+    {
+      /* Check if we already have a table with this storage engine. */
+      old_entry= (rpl_slave_state::gtid_pos_table *)
+        rpl_global_gtid_slave_state->gtid_pos_tables;
+      while (old_entry)
+      {
+        if (new_entry->table_hton == old_entry->table_hton)
+          break;
+        old_entry= old_entry->next;
+      }
+      if (old_entry)
+      {
+        /* This new_entry is already available in the list. */
+        next_ptr_ptr= &new_entry->next;
+        new_entry= new_entry->next;
+      }
+      else
+      {
+        /* Move this new_entry to the list. */
+        rpl_slave_state::gtid_pos_table *next= new_entry->next;
+        rpl_global_gtid_slave_state->add_gtid_pos_table(new_entry);
+        *next_ptr_ptr= next;
+        new_entry= next;
+      }
+    }
+  }
+  mysql_mutex_unlock(&rpl_global_gtid_slave_state->LOCK_slave_state);
+  mysql_mutex_unlock(&LOCK_active_mi);
+
+end:
+  if (cb_data.table_list)
+    rpl_global_gtid_slave_state->free_gtid_pos_tables(cb_data.table_list);
+  return err;
 }
 
 

@@ -81,7 +81,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) VIRTUAL COMMENT 'my comment'
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) VIRTUAL COMMENT 'my comment'
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t1;
 Field	Type	Null	Key	Default	Extra
@@ -94,7 +94,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) VIRTUAL COMMENT 'my comment'
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) VIRTUAL COMMENT 'my comment'
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t1;
 Field	Type	Null	Key	Default	Extra
@@ -114,7 +114,7 @@ show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) VIRTUAL COMMENT 'my comment'
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) VIRTUAL COMMENT 'my comment'
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t2;
 Field	Type	Null	Key	Default	Extra
@@ -136,7 +136,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) STORED
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t1;
 Field	Type	Null	Key	Default	Extra
@@ -158,7 +158,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) STORED
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 drop table t1;
 create table t1 (a int, b int generated always as (a % 2) virtual);
@@ -168,7 +168,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 drop table t1;
 drop table t2;
@@ -191,7 +191,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t1;
 Field	Type	Null	Key	Default	Extra
@@ -203,7 +203,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) STORED
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t1;
 Field	Type	Null	Key	Default	Extra
@@ -216,7 +216,7 @@ show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
-  `b` int(11) GENERATED ALWAYS AS (`a` % 2) VIRTUAL
+  `b` int(11) GENERATED ALWAYS AS (`a` MOD 2) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 describe t1;
 Field	Type	Null	Key	Default	Extra
@@ -259,7 +259,7 @@ ERROR 01000: Expression for field `b` is refering to uninitialized field `b`
 create table t1 (a int, b int generated always as(-c) virtual, c int generated always as (b + 1) virtual);
 ERROR 01000: Expression for field `b` is refering to uninitialized field `c`
 create table t1 (pk int auto_increment primary key, col_int_nokey int generated always as (pk + col_int_key) stored, col_int_key int);
-ERROR 01000: Expression for field `col_int_nokey` is refering to uninitialized field `pk`
+ERROR HY000: Function or expression 'AUTO_INCREMENT' cannot be used in the GENERATED ALWAYS AS clause of `pk`
 # Bug#20339347: FAIL TO USE CREATE ....SELECT STATEMENT TO CREATE A NEW TABLE
 create table t1 (a int, b int generated always as(-a) virtual, c int generated always as (b + 1) stored);
 insert into t1(a) values(1),(2);

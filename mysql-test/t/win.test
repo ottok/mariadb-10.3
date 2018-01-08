@@ -1856,3 +1856,208 @@ from
 ) q;
 
 drop table t1;
+
+--echo #
+--echo # MDEV-11990: window function over min/max aggregation
+--echo #
+
+create table t1 (id int);
+insert into t1 values (1), (2), (3), (2), (4), (2);
+
+select sum(max(id)) over (order by max(id)) from t1;
+explain
+select sum(max(id)) over (order by max(id)) from t1;
+
+create index idx on t1(id);
+select sum(max(id)) over (order by max(id)) from t1;
+explain
+select sum(max(id)) over (order by max(id)) from t1;
+select sum(max(id)) over (order by max(id)) from t1 where id < 3;
+select count(max(id)) over (order by max(id)) from t1 where id < 3;
+select max(id), rank() over (order by max(id)) from t1 where id < 3;
+
+drop table t1;
+
+--echo #
+--echo # main.win failure post MDEV-12336
+--echo #
+create table t(a decimal(35,10), b int);
+insert into t values (1, 10), (2, 20), (3, 30);
+
+prepare stmt from "SELECT (CASE WHEN sum(t.a) over (partition by t.b)=1 THEN 1000 ELSE 300 END) AS a FROM t";
+execute stmt;
+drop table t;
+
+--echo #
+--echo # MDEV-12851 case with window functions query crashes server
+--echo #
+
+create table t1(dt datetime);
+insert into t1 values ('2017-05-17'), ('2017-05-18');
+select dt,
+       case when (max(dt) over (order by dt rows between 1 following and 1 following) is null)
+       then '9999-12-31 12:00:00'
+       else max(dt) over (order by dt rows between 1 following and 1 following)
+       end x,
+       case when (max(dt) over (order by dt rows between 1 following and 1 following) is not null)
+       then '9999-12-31 12:00:00'
+       else max(dt) over (order by dt rows between 1 following and 1 following)
+       end x
+from t1;
+
+drop table t1;
+
+create table t1(i int);
+insert into t1 values (null),(1),(2);
+select max(i) over (order by i),
+       max(i) over (order by i) is null,
+       max(i) over (order by i) is not null
+from t1;
+drop table t1;
+
+--echo #
+--echo # MDEV-13189: Window functions crash when using INTERVAL function
+--echo #
+create table t1(i int);
+insert into t1 values (1),(2),(10),(20),(30);
+select sum(i) over (order by i), interval(sum(i) over (order by i), 10, 20)
+from t1;
+drop table t1;
+
+--echo #
+--echo # MDEV-13352: Server crashes in st_join_table::remove_duplicates
+--echo #
+CREATE TABLE t1 (i INT);
+INSERT INTO t1 VALUES (1),(2);
+SELECT DISTINCT ROW_NUMBER() OVER(), i FROM t1 WHERE 0;
+SELECT ROW_NUMBER() OVER(), i FROM t1 WHERE 0;
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-13344: Server crashes in in AGGR_OP::put_record on subquery 
+--echo #             with window function and constant table
+--echo # (Testcase only)
+--echo #
+CREATE TABLE t1 (c CHAR(8)) ENGINE=MyISAM;
+INSERT IGNORE INTO t1 VALUES ('foo');
+SELECT ('bar',1) IN ( SELECT c, ROW_NUMBER() OVER (PARTITION BY c) FROM t1);
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-13351: Server crashes in st_select_lex::set_explain_type upon UNION with window function 
+--echo #
+CREATE TABLE t1 (i INT);
+INSERT INTO t1 VALUES (1),(2);
+SELECT Nth_value(i,1) OVER() FROM t1 
+UNION ALL 
+( SELECT Nth_value(i,2) OVER() FROM t1 LIMIT 0 )
+;
+DROP TABLE t1;
+
+--echo #
+--echo # A regression after MDEV-13351:
+--echo # MDEV-13374 : Server crashes in first_linear_tab / st_select_lex::set_explain_type 
+--echo #              upon UNION with aggregate function	
+--echo #
+
+CREATE TABLE t1 (i INT) ENGINE=MyISAM;
+INSERT INTO t1 VALUES (1),(2);
+SELECT i AS fld FROM t1 UNION SELECT COUNT(*) AS fld FROM t1;
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-13240 Wrong warning with MAX(datetime_field) OVER (...)
+--echo #
+
+CREATE TABLE t1 (dt DATETIME);
+INSERT INTO t1 VALUES ('2017-05-17');
+SELECT MAX(dt) OVER (ORDER BY dt ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING) FROM t1;
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-13358 FIRST_VALUE throws SQL Error (1292): Incorrect datetime value
+--echo #
+CREATE TABLE IF NOT EXISTS `fv_test` (
+        `SOME_DATE` datetime NOT NULL
+        );
+
+INSERT INTO `fv_test` (`SOME_DATE`) VALUES ('2017-07-20 12:47:56');
+
+CREATE TABLE fv_result
+SELECT
+FIRST_VALUE(SOME_DATE) OVER(ORDER BY SOME_DATE DESC) AS somedate
+FROM fv_test;
+
+SHOW CREATE TABLE fv_result;
+
+SELECT * FROM fv_result;
+
+DROP TABLE fv_test, fv_result;
+
+--echo #
+--echo # MDEV-13649: Server crashes in set_field_to_null_with_conversions or in Field::set_notnull
+--echo #
+
+CREATE TABLE t1 (a int);
+INSERT INTO t1 VALUES (0),(1),(2);
+SELECT LEAD(a) OVER (PARTITION BY a) as lead,
+       a AND LEAD(a) OVER (PARTITION BY a) AS a_and_lead_part
+FROM t1;
+
+SELECT a OR LEAD(a) OVER (ORDER BY a) AS a_or_lead_order
+FROM t1
+ORDER BY a;
+
+SELECT a AND LEAD(a) OVER (ORDER BY a) AS a_and_lead_order
+FROM t1
+ORDER BY a;
+
+SELECT a XOR LEAD(a) OVER (ORDER BY a) AS a_xor_lead_order
+FROM t1
+ORDER BY a;
+
+SELECT NOT LEAD(a) OVER (ORDER BY a) AS not_lead_order
+FROM t1
+ORDER BY a;
+
+SELECT LEAD(a) OVER (ORDER BY a) is not null AS is_not_null_lead_order
+FROM t1
+ORDER BY a;
+
+drop table t1;
+
+--echo #
+--echo # MDEV-13354: Server crashes in find_field_in_tables upon PS with window function and subquery
+--echo #
+
+CREATE TABLE t1 (i INT, a char);
+INSERT INTO t1 VALUES (1, 'a'),(2, 'b');
+PREPARE stmt FROM "SELECT row_number() over (partition by i order by i), i FROM (SELECT * from t1) as sq";
+EXECUTE stmt;
+
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-13384: "window" seems like a reserved column name but it's not listed as one
+--echo #
+--echo # Currently we allow window as an identifier, except for table aliases.
+--echo #
+
+CREATE TABLE door (id INT, window VARCHAR(10));
+
+--error ER_PARSE_ERROR
+SELECT id
+FROM door as window;
+
+SELECT id, window
+FROM door;
+
+--error ER_PARSE_ERROR
+SELECT id, window
+FROM door as window;
+
+DROP TABLE door;
+
+--echo #
+--echo # Start of 10.3 tests
+--echo #

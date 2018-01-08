@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_reload.h"
 #include "sql_priv.h"
 #include "mysqld.h"      // select_errors
@@ -153,7 +153,10 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
     tmp_write_to_binlog= 0;
     if (mysql_bin_log.is_open())
     {
-      if (mysql_bin_log.rotate_and_purge(true))
+      DYNAMIC_ARRAY *drop_gtid_domain=
+        (thd && (thd->lex->delete_gtid_domain.elements > 0)) ?
+        &thd->lex->delete_gtid_domain : NULL;
+      if (mysql_bin_log.rotate_and_purge(true, drop_gtid_domain))
         *write_to_binlog= -1;
 
       if (WSREP_ON)
@@ -166,7 +169,7 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
   if (options & REFRESH_RELAY_LOG)
   {
 #ifdef HAVE_REPLICATION
-    LEX_STRING connection_name;
+    LEX_CSTRING connection_name;
     Master_info *mi;
     if (thd)
       connection_name= thd->lex->relay_log_connection_name;
@@ -181,8 +184,12 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
       slave is not likely to have the same connection names.
     */
     tmp_write_to_binlog= 0;
-
-    if (!(mi= (get_master_info(&connection_name,
+    if (connection_name.length == 0)
+    {
+      if (master_info_index->flush_all_relay_logs())
+          *write_to_binlog= -1;
+    }
+    else if (!(mi= (get_master_info(&connection_name,
                                Sql_condition::WARN_LEVEL_ERROR))))
     {
       result= 1;
@@ -249,7 +256,8 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
           NOTE: my_error() has been already called by reopen_tables() within
           close_cached_tables().
         */
-        result= 1;
+        thd->global_read_lock.unlock_global_read_lock(thd);
+        return 1;
       }
 
       if (thd->global_read_lock.make_global_read_lock_block_commit(thd)) // Killed

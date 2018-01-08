@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_binlog.h"
 #include "sql_parse.h"
@@ -192,8 +192,8 @@ void mysql_client_binlog_statement(THD* thd)
         since it will read from unassigned memory.
       */
     DBUG_PRINT("info",
-               ("bytes_decoded: %d  strptr: 0x%lx  endptr: 0x%lx ('%c':%d)",
-                bytes_decoded, (long) strptr, (long) endptr, *endptr,
+               ("bytes_decoded: %d  strptr: %p  endptr: %p ('%c':%d)",
+                bytes_decoded, strptr, endptr, *endptr,
                 *endptr));
 #endif
 

@@ -21,7 +21,8 @@
 #pragma implementation        // gcc: Class implementation
 #endif
 
-#include "sql_class.h"                          // SSV and my_global.h
+#include <my_global.h>
+#include "sql_class.h"                          // SSV
 #include "sql_table.h"                          // build_table_filename
 #include <myisam.h>                             // T_EXTEND
 
@@ -409,7 +410,7 @@ unsigned int ha_archive::pack_row_v1(uchar *record)
       pos+= length;
     }
   }
-  DBUG_RETURN(pos - record_buffer->buffer);
+  DBUG_RETURN((int)(pos - record_buffer->buffer));
 }
 
 /*
@@ -1708,7 +1709,6 @@ int ha_archive::info(uint flag)
       stats.update_time= (ulong) file_stat.st_mtime;
     if (flag & HA_STATUS_CONST)
     {
-      stats.max_data_file_length= share->rows_recorded * stats.mean_rec_length;
       stats.max_data_file_length= MAX_FILE_SIZE;
       stats.create_time= (ulong) file_stat.st_ctime;
     }

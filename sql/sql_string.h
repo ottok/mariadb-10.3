@@ -25,7 +25,7 @@
 #endif
 
 #include "m_ctype.h"                            /* my_charset_bin */
-#include "my_sys.h"              /* alloc_root, my_free, my_realloc */
+#include <my_sys.h>              /* alloc_root, my_free, my_realloc */
 #include "m_string.h"                           /* TRASH */
 
 class String;
@@ -181,6 +181,8 @@ public:
   }
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
   { return (void*) alloc_root(mem_root, (uint) size); }
+  static void *operator new[](size_t size, MEM_ROOT *mem_root) throw ()
+  { return alloc_root(mem_root, size); }
   static void operator delete(void *ptr_arg, size_t size)
   {
     (void) ptr_arg;
@@ -189,6 +191,10 @@ public:
   }
   static void operator delete(void *, MEM_ROOT *)
   { /* never called */ }
+  static void operator delete[](void *ptr, size_t size) { TRASH(ptr, size); }
+  static void operator delete[](void *ptr, MEM_ROOT *mem_root)
+  { /* never called */ }
+
   ~String() { free(); }
 
   /* Mark variable thread specific it it's not allocated already */
@@ -357,22 +363,22 @@ public:
     Ptr=0;
     str_length=0;				/* Safety */
   }
-  inline bool alloc(uint32 arg_length)
+  inline bool alloc(size_t arg_length)
   {
     if (arg_length < Alloced_length)
       return 0;
     return real_alloc(arg_length);
   }
-  bool real_alloc(uint32 arg_length);			// Empties old string
-  bool realloc_raw(uint32 arg_length);
-  bool realloc(uint32 arg_length)
+  bool real_alloc(size_t arg_length);			// Empties old string
+  bool realloc_raw(size_t arg_length);
+  bool realloc(size_t arg_length)
   {
     if (realloc_raw(arg_length))
       return TRUE;
     Ptr[arg_length]=0;        // This make other funcs shorter
     return FALSE;
   }
-  bool realloc_with_extra(uint32 arg_length)
+  bool realloc_with_extra(size_t arg_length)
   {
     if (extra_alloc < 4096)
       extra_alloc= extra_alloc*2+128;
@@ -381,7 +387,7 @@ public:
     Ptr[arg_length]=0;        // This make other funcs shorter
     return FALSE;
   }
-  bool realloc_with_extra_if_needed(uint32 arg_length)
+  bool realloc_with_extra_if_needed(size_t arg_length)
   {
     if (arg_length < Alloced_length)
     {
@@ -391,7 +397,7 @@ public:
     return realloc_with_extra(arg_length);
   }
   // Shrink the buffer, but only if it is allocated on the heap.
-  inline void shrink(uint32 arg_length)
+  inline void shrink(size_t arg_length)
   {
     if (!is_alloced())
       return;
@@ -408,7 +414,7 @@ public:
       else
       {
 	Ptr=new_ptr;
-	Alloced_length=arg_length;
+	Alloced_length=(uint32)arg_length;
       }
     }
   }
@@ -431,7 +437,7 @@ public:
 
   bool copy();					// Alloc string if not alloced
   bool copy(const String &s);			// Allocate new string
-  bool copy(const char *s,uint32 arg_length, CHARSET_INFO *cs);	// Allocate new string
+  bool copy(const char *s,size_t arg_length, CHARSET_INFO *cs);	// Allocate new string
   static bool needs_conversion(uint32 arg_length,
   			       CHARSET_INFO *cs_from, CHARSET_INFO *cs_to,
 			       uint32 *offset);
@@ -469,12 +475,25 @@ public:
   }
   bool append(const String &s);
   bool append(const char *s);
-  bool append(const LEX_STRING *ls) { return append(ls->str, ls->length); }
-  bool append(const LEX_CSTRING *ls) { return append(ls->str, ls->length); }
-  bool append(const char *s, uint32 arg_length);
-  bool append(const char *s, uint32 arg_length, CHARSET_INFO *cs);
-  bool append_longlong(longlong val);
+  bool append(const LEX_STRING *ls)
+  {
+    DBUG_ASSERT(ls->length < UINT_MAX32);
+    return append(ls->str, (uint32) ls->length);
+  }
+  bool append(const LEX_CSTRING *ls)
+  {
+    DBUG_ASSERT(ls->length < UINT_MAX32);
+    return append(ls->str, (uint32) ls->length);
+  }
+  bool append(const LEX_CSTRING &ls)
+  {
+    DBUG_ASSERT(ls.length < UINT_MAX32);
+    return append(ls.str, (uint32) ls.length);
+  }
+  bool append(const char *s, size_t size);
+  bool append(const char *s, uint arg_length, CHARSET_INFO *cs);
   bool append_ulonglong(ulonglong val);
+  bool append_longlong(longlong val);
   bool append(IO_CACHE* file, uint32 arg_length);
   bool append_with_prefill(const char *s, uint32 arg_length, 
 			   uint32 full_length, char fill_char);
@@ -555,10 +574,16 @@ public:
     float8store(Ptr + str_length, *d);
     str_length += 8;
   }
-  void q_append(const char *data, uint32 data_len)
+  void q_append(const char *data, size_t data_len)
   {
     memcpy(Ptr + str_length, data, data_len);
-    str_length += data_len;
+    DBUG_ASSERT(str_length <= UINT_MAX32 - data_len);
+    str_length += (uint)data_len;
+  }
+  void q_append(const LEX_CSTRING *ls)
+  {
+    DBUG_ASSERT(ls->length < UINT_MAX32);
+    q_append(ls->str, (uint32) ls->length);
   }
 
   void write_at_position(int position, uint32 value)
@@ -569,6 +594,10 @@ public:
   void qs_append(const char *str)
   {
     qs_append(str, (uint32)strlen(str));
+  }
+  void qs_append(const LEX_CSTRING *str)
+  {
+    qs_append(str->str, str->length);
   }
   void qs_append(const char *str, uint32 len);
   void qs_append_hex(const char *str, uint32 len);
@@ -638,7 +667,9 @@ public:
   }
   bool append_for_single_quote(const char *st)
   {
-    return append_for_single_quote(st, strlen(st));
+    size_t len= strlen(st);
+    DBUG_ASSERT(len < UINT_MAX32);
+    return append_for_single_quote(st, (uint32) len);
   }
 
   /* Swap two string objects. Efficient way to exchange data without memcpy. */
@@ -682,10 +713,11 @@ public:
   }
   void q_net_store_data(const uchar *from, size_t length)
   {
+    DBUG_ASSERT(length < UINT_MAX32);
     DBUG_ASSERT(Alloced_length >= (str_length + length +
                                    net_length_size(length)));
     q_net_store_length(length);
-    q_append((const char *)from, length);
+    q_append((const char *)from, (uint32) length);
   }
 };
 

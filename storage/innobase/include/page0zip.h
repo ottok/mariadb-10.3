@@ -340,18 +340,39 @@ page_zip_write_node_ptr(
 	ulint		ptr,	/*!< in: node pointer */
 	mtr_t*		mtr);	/*!< in: mini-transaction, or NULL */
 
-/**********************************************************************//**
-Write the trx_id and roll_ptr of a record on a B-tree leaf node page. */
+/** Write the DB_TRX_ID,DB_ROLL_PTR into a clustered index leaf page record.
+@param[in,out]	page_zip	compressed page
+@param[in,out]	rec		record
+@param[in]	offsets		rec_get_offsets(rec, index)
+@param[in]	trx_id_field	field number of DB_TRX_ID (number of PK fields)
+@param[in]	trx_id		DB_TRX_ID value (transaction identifier)
+@param[in]	roll_ptr	DB_ROLL_PTR value (undo log pointer)
+@param[in,out]	mtr		mini-transaction, or NULL to skip logging */
 void
 page_zip_write_trx_id_and_roll_ptr(
-/*===============================*/
-	page_zip_des_t*	page_zip,/*!< in/out: compressed page */
-	byte*		rec,	/*!< in/out: record */
-	const ulint*	offsets,/*!< in: rec_get_offsets(rec, index) */
-	ulint		trx_id_col,/*!< in: column number of TRX_ID in rec */
-	trx_id_t	trx_id,	/*!< in: transaction identifier */
-	roll_ptr_t	roll_ptr)/*!< in: roll_ptr */
-	MY_ATTRIBUTE((nonnull));
+	page_zip_des_t*	page_zip,
+	byte*		rec,
+	const ulint*	offsets,
+	ulint		trx_id_col,
+	trx_id_t	trx_id,
+	roll_ptr_t	roll_ptr,
+	mtr_t*		mtr = NULL)
+	MY_ATTRIBUTE((nonnull(1,2,3)));
+
+/** Parse a MLOG_ZIP_WRITE_TRX_ID record.
+@param[in]	ptr		redo log buffer
+@param[in]	end_ptr		end of redo log buffer
+@param[in,out]	page		uncompressed page
+@param[in,out]	page_zip	compressed page
+@return end of log record
+@retval	NULL	if the log record is incomplete */
+byte*
+page_zip_parse_write_trx_id(
+	byte*		ptr,
+	byte*		end_ptr,
+	page_t*		page,
+	page_zip_des_t*	page_zip)
+	MY_ATTRIBUTE((nonnull(1,2), warn_unused_result));
 
 /**********************************************************************//**
 Write the "deleted" flag of a record on a compressed page.  The flag must
@@ -512,19 +533,7 @@ ibool
 page_zip_verify_checksum(
 /*=====================*/
 	const void*	data,	/*!< in: compressed page */
-	ulint		size	/*!< in: size of compressed page */
-#ifdef UNIV_INNOCHECKSUM
-	/* these variables are used only for innochecksum tool. */
-	,uintmax_t	page_no,	/*!< in: page number of
-					given read_buf */
-	bool		strict_check,	/*!< in: true if strict-check
-					option is enable */
-	bool		is_log_enabled, /*!< in: true if log option is
-					enable */
-	FILE*		log_file	/*!< in: file pointer to
-					log_file */
-#endif /* UNIV_INNOCHECKSUM */
-);
+	ulint		size);	/*!< in: size of compressed page */
 
 #ifndef UNIV_INNOCHECKSUM
 /**********************************************************************//**

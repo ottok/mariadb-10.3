@@ -1,3 +1,20 @@
+/*
+   Copyright (c) 2016, 2017 MariaDB
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; version 2 of the License.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+
+#include "mariadb.h"
 #include "sql_class.h"
 #include "sql_lex.h"
 #include "sql_cte.h"
@@ -112,8 +129,8 @@ bool With_clause::check_dependencies()
          elem != with_elem;
          elem= elem->next)
     {
-      if (my_strcasecmp(system_charset_info, with_elem->query_name->str,
-                        elem->query_name->str) == 0)
+      if (lex_string_cmp(system_charset_info, with_elem->query_name,
+                         elem->query_name) == 0)
       {
 	my_error(ER_DUP_QUERY_NAME, MYF(0), with_elem->query_name->str);
 	return true;
@@ -141,7 +158,7 @@ bool With_clause::check_dependencies()
 
   /*
     Mark those elements where tables are defined with direct or indirect
-   make recursion.
+    recursion.
   */ 
   for (With_element *with_elem= with_list.first;
        with_elem;
@@ -342,12 +359,64 @@ void With_element::check_dependencies_in_select(st_select_lex *sl,
       tbl->with_internal_reference_map= get_elem_map();
       if (in_subq)
         sq_dep_map|= tbl->with->get_elem_map();
+      else
+        top_level_dep_map|= tbl->with->get_elem_map();
     }
   }
   /* Now look for the dependencies in the subqueries of sl */
   st_select_lex_unit *inner_unit= sl->first_inner_unit();
   for (; inner_unit; inner_unit= inner_unit->next_unit())
-    check_dependencies_in_unit(inner_unit, ctxt, in_subq, dep_map);
+  {
+    if (!inner_unit->with_element)
+      check_dependencies_in_unit(inner_unit, ctxt, in_subq, dep_map);
+  }
+}
+
+
+/**
+  @brief
+    Find a recursive reference to this with element in subqueries of a select
+ 
+  @param  sel      The select in whose subqueries the reference
+                   to be looked for
+
+  @details
+    The function looks for a recursive reference to this with element in
+    subqueries of select sl. When the first such reference is found
+    it is returned as the result.
+    The function assumes that the identification of all CTE references
+    has been performed earlier.
+
+  @retval
+    Pointer to the found recursive reference if the search succeeded
+    NULL - otherwise 
+*/
+
+TABLE_LIST *With_element::find_first_sq_rec_ref_in_select(st_select_lex *sel)
+{
+  TABLE_LIST *rec_ref= NULL;
+  st_select_lex_unit *inner_unit= sel->first_inner_unit();
+  for (; inner_unit; inner_unit= inner_unit->next_unit())
+  {
+    st_select_lex *sl= inner_unit->first_select();
+    for (; sl; sl= sl->next_select())
+    {
+      for (TABLE_LIST *tbl= sl->table_list.first; tbl; tbl= tbl->next_local)
+      {
+        if (tbl->derived || tbl->nested_join)
+          continue;
+        if (tbl->with && tbl->with->owner== this->owner &&
+            (tbl->with_internal_reference_map & mutually_recursive))
+	{
+	  rec_ref= tbl;
+          return rec_ref;
+        }
+      }
+      if ((rec_ref= find_first_sq_rec_ref_in_select(sl)))
+        return rec_ref;
+    } 
+  }
+  return 0;
 }
 
 
@@ -602,6 +671,10 @@ void With_clause::move_anchors_ahead()
   @details
     If the specification of this with element contains anchors the method
     moves them at the very beginning of the specification.
+    Additionally for the other selects of the specification if none of them
+    contains a recursive reference to this with element or a mutually recursive
+    one the method looks for the first such reference in the first recursive 
+    select and set a pointer to it in this->sq_rec_ref.   
 */
 
 void With_element::move_anchors_ahead()
@@ -617,6 +690,11 @@ void With_element::move_anchors_ahead()
     {
       sl->move_node(new_pos);
       new_pos= sl->next_select();
+    }
+    else if (!sq_rec_ref && no_rec_ref_on_top_level())
+    {
+      sq_rec_ref= find_first_sq_rec_ref_in_select(sl);
+      DBUG_ASSERT(sq_rec_ref != NULL);
     }
     last_sl= sl;
   }
@@ -677,8 +755,7 @@ bool With_clause::prepare_unreferenced_elements(THD *thd)
 bool With_element::set_unparsed_spec(THD *thd, char *spec_start, char *spec_end)
 {
   unparsed_spec.length= spec_end - spec_start;
-  unparsed_spec.str= (char*) thd->memdup(spec_start, unparsed_spec.length+1);
-  unparsed_spec.str[unparsed_spec.length]= '\0';
+  unparsed_spec.str= thd->strmake(spec_start, unparsed_spec.length);
 
   if (!unparsed_spec.str)
   {
@@ -748,7 +825,7 @@ st_select_lex_unit *With_element::clone_parsed_spec(THD *thd,
   TABLE_LIST *spec_tables_tail;
   st_select_lex *with_select;
 
-  if (parser_state.init(thd, unparsed_spec.str, unparsed_spec.length))
+  if (parser_state.init(thd, (char*) unparsed_spec.str, unparsed_spec.length))
     goto err;
   lex_start(thd);
   with_select= &lex->select_lex;
@@ -762,9 +839,10 @@ st_select_lex_unit *With_element::clone_parsed_spec(THD *thd,
        tbl;
        tbl= tbl->next_global)
   {
-    tbl->grant.privilege= with_table->grant.privilege;
     spec_tables_tail= tbl;
   }
+  if (check_table_access(thd, SELECT_ACL, spec_tables, FALSE, UINT_MAX, FALSE))
+    goto err;
   if (spec_tables)
   {
     if (with_table->next_global)
@@ -780,7 +858,6 @@ st_select_lex_unit *With_element::clone_parsed_spec(THD *thd,
     with_table->next_global= spec_tables;
   }
   res= &lex->unit;
-  res->set_with_clause(owner);
   
   lex->unit.include_down(with_table->select_lex);
   lex->unit.set_slave(with_select); 
@@ -789,6 +866,8 @@ st_select_lex_unit *With_element::clone_parsed_spec(THD *thd,
 		      insert_chain_before(
 			(st_select_lex_node **) &(old_lex->all_selects_list),
                         with_select));
+  if (check_dependencies_in_with_clauses(lex->with_clauses_list))
+    res= NULL;
   lex_end(lex);
 err:
   if (arena)
@@ -830,9 +909,9 @@ With_element::rename_columns_of_derived_unit(THD *thd,
   if (column_list.elements)  //  The column list is optional
   {
     List_iterator_fast<Item> it(select->item_list);
-    List_iterator_fast<LEX_STRING> nm(column_list);
+    List_iterator_fast<LEX_CSTRING> nm(column_list);
     Item *item;
-    LEX_STRING *name;
+    LEX_CSTRING *name;
 
     if (column_list.elements != select->item_list.elements)
     {
@@ -932,14 +1011,18 @@ With_element *st_select_lex::find_table_def_in_with_clauses(TABLE_LIST *table)
       and it was unsuccesful. Yet for units cloned from the spec it has not 
       been done yet.
     */
-    if (with_elem && sl->master_unit() == with_elem->spec)
-      break;      
-    With_clause *with_clause=sl->get_with_clause();
-    if (with_clause)
+    With_clause *attached_with_clause=sl->get_with_clause();
+    if (attached_with_clause &&
+        (found= attached_with_clause->find_table_def(table, NULL)))
+      break;
+    if (with_elem)
     {
-      With_element *barrier= with_clause->with_recursive ? NULL : with_elem;
-      if ((found= with_clause->find_table_def(table, barrier)))
+      With_clause *containing_with_clause= with_elem->get_owner();
+      With_element *barrier= containing_with_clause->with_recursive ?
+                               NULL : with_elem;
+      if ((found= containing_with_clause->find_table_def(table, barrier)))
         break;
+      sl= sl->master_unit()->outer_select(); 
     }
     master_unit= sl->master_unit();
     /* Do not look for the table's definition beyond the scope of the view */
@@ -968,15 +1051,34 @@ With_element *st_select_lex::find_table_def_in_with_clauses(TABLE_LIST *table)
 
 bool TABLE_LIST::set_as_with_table(THD *thd, With_element *with_elem)
 {
+  if (table)
+  {
+    /*
+      This table was prematurely identified as a temporary table.
+      We correct it here, but it's not a nice solution in the case
+      when the temporary table with this name is not used anywhere
+      else in the query.
+    */
+    thd->mark_tmp_table_as_free_for_reuse(table);
+    table= 0;
+  }
   with= with_elem;
   if (!with_elem->is_referenced() || with_elem->is_recursive)
+  {
     derived= with_elem->spec;
+    if (derived->get_master() != select_lex &&
+        !is_with_table_recursive_reference())
+    {
+       derived->move_as_slave(select_lex);
+    }
+  }
   else 
   {
     if(!(derived= with_elem->clone_parsed_spec(thd, this)))
       return true;
     derived->with_element= with_elem;
   }
+  derived->first_select()->linkage= DERIVED_TABLE_TYPE;
   with_elem->inc_references();
   return false;
 }
@@ -1229,6 +1331,7 @@ bool st_select_lex::check_subqueries_with_recursive_references()
 	continue;
       Item_subselect *subq= (Item_subselect *) sl_master->item;
       subq->with_recursive_reference= true;
+      subq->register_as_with_rec_ref(tbl->with);
     }
   }
   return false;

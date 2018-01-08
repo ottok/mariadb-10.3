@@ -15,6 +15,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include <my_global.h>
 #include <wqueue.h>
 
 #define STRUCT_PTR(TYPE, MEMBER, a)                                           \
@@ -224,17 +225,17 @@ void wqueue_add_and_wait(WQUEUE *wqueue,
 {
   DBUG_ENTER("wqueue_add_and_wait");
   DBUG_PRINT("enter",
-             ("thread: 0x%lx  cond: 0x%lx  mutex: 0x%lx",
-              (ulong) thread, (ulong) &thread->suspend, (ulong) lock));
+             ("thread: %p cond: %p mutex: %p",
+              thread, &thread->suspend, lock));
   wqueue_add_to_queue(wqueue, thread);
   do
   {
-    DBUG_PRINT("info", ("wait... cond:  0x%lx  mutex:  0x%lx",
-                        (ulong) &thread->suspend, (ulong) lock));
+    DBUG_PRINT("info", ("wait... cond:  %p  mutex:  %p",
+                        &thread->suspend, lock));
     mysql_cond_wait(&thread->suspend, lock);
-    DBUG_PRINT("info", ("wait done cond: 0x%lx  mutex: 0x%lx   next: 0x%lx",
-                        (ulong) &thread->suspend, (ulong) lock,
-                        (ulong) thread->next));
+    DBUG_PRINT("info", ("wait done cond: %p mutex: %p next: %p",
+                        &thread->suspend, lock,
+                        thread->next));
   }
   while (thread->next);
   DBUG_VOID_RETURN;

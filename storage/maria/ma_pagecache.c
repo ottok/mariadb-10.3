@@ -97,10 +97,10 @@
 
 #define PCBLOCK_INFO(B) \
   DBUG_PRINT("info", \
-             ("block: 0x%lx  fd: %lu  page: %lu  status: 0x%x  " \
-              "hshL: 0x%lx  requests: %u/%u  wrlocks: %u  rdlocks: %u  " \
+             ("block: %p  fd: %lu  page: %lu  status: 0x%x  " \
+              "hshL: %p  requests: %u/%u  wrlocks: %u  rdlocks: %u  " \
               "rdlocks_q: %u  pins: %u  type: %s", \
-              (ulong)(B), \
+              (B), \
               (ulong)((B)->hash_link ? \
                       (B)->hash_link->file.file : \
                       0), \
@@ -108,7 +108,7 @@
                       (B)->hash_link->pageno : \
                       0), \
               (uint) (B)->status,    \
-              (ulong)(B)->hash_link, \
+              (B)->hash_link, \
               (uint) (B)->requests, \
               (uint)((B)->hash_link ? \
                      (B)->hash_link->requests : \
@@ -493,7 +493,8 @@ error:
 
 #define FLUSH_CACHE         2000            /* sort this many blocks at once */
 
-static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block);
+static my_bool free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block,
+                          my_bool abort_if_pinned);
 static void unlink_hash(PAGECACHE *pagecache, PAGECACHE_HASH_LINK *hash_link);
 #ifndef DBUG_OFF
 static void test_key_cache(PAGECACHE *pagecache,
@@ -658,9 +659,9 @@ static my_bool pagecache_fwrite(PAGECACHE *pagecache,
   /* Todo: Integrate this with write_callback so we have only one callback */
   if ((*filedesc->flush_log_callback)(&args))
     DBUG_RETURN(1);
-  DBUG_PRINT("info", ("pre_write_hook: 0x%lx  data: 0x%lx",
-                      (ulong) filedesc->pre_write_hook,
-                      (ulong) filedesc->callback_data));
+  DBUG_PRINT("info", ("pre_write_hook:%p  data: %p",
+                      filedesc->pre_write_hook,
+                      filedesc->callback_data));
   if ((*filedesc->pre_write_hook)(&args))
   {
     DBUG_PRINT("error", ("write callback problem"));
@@ -1186,14 +1187,14 @@ void end_pagecache(PAGECACHE *pagecache, my_bool cleanup)
     pagecache->blocks_changed= 0;
   }
 
-  DBUG_PRINT("status", ("used: %zu  changed: %zu  w_requests: %lu  "
-                        "writes: %lu  r_requests: %lu  reads: %lu",
-                        (ulong) pagecache->blocks_used,
-                        (ulong) pagecache->global_blocks_changed,
-                        (ulong) pagecache->global_cache_w_requests,
-                        (ulong) pagecache->global_cache_write,
-                        (ulong) pagecache->global_cache_r_requests,
-                        (ulong) pagecache->global_cache_read));
+  DBUG_PRINT("status", ("used: %zu  changed: %zu  w_requests: %llu  "
+                        "writes: %llu  r_requests: %llu  reads: %llu",
+			pagecache->blocks_used,
+			pagecache->global_blocks_changed,
+			pagecache->global_cache_w_requests,
+			pagecache->global_cache_write,
+			pagecache->global_cache_r_requests,
+			pagecache->global_cache_read));
 
   if (cleanup)
   {
@@ -1945,7 +1946,7 @@ restart:
         removed from the cache as we set the PCBLOCK_REASSIGNED
         flag (see the code below that handles reading requests).
       */
-      free_block(pagecache, block);
+      free_block(pagecache, block, 0);
       return 0;
     }
     /* Wait until the page is flushed on disk */
@@ -1956,7 +1957,7 @@ restart:
     /* Invalidate page in the block if it has not been done yet */
     DBUG_ASSERT(block->status);                 /* Should always be true */
     if (block->status)
-      free_block(pagecache, block);
+      free_block(pagecache, block, 0);
     return 0;
   }
 
@@ -1981,8 +1982,13 @@ restart:
     }
     else
     {
-      DBUG_ASSERT(hash_link->requests > 0);
-      hash_link->requests--;
+      /*
+        When we come here either PCBLOCK_REASSIGNED or PCBLOCK_IN_SWITCH are
+        active. In both cases wqueue_release_queue() is called when the
+        state changes.
+      */
+      DBUG_ASSERT(block->hash_link == hash_link);
+      remove_reader(block);
       KEYCACHE_DBUG_PRINT("find_block",
                           ("request waiting for old page to be saved"));
       {
@@ -2038,7 +2044,7 @@ restart:
         DBUG_ASSERT(block->rlocks_queue == 0);
         DBUG_ASSERT(block->pins == 0);
         block->status= 0;
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
         block->type= PAGECACHE_EMPTY_PAGE;
 #endif
         DBUG_ASSERT(reg_req);
@@ -2181,7 +2187,7 @@ restart:
           block->last_hit_time= 0;
           block->status= error ? PCBLOCK_ERROR : 0;
           block->error=  error ? (int16) my_errno : 0;
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
           block->type= PAGECACHE_EMPTY_PAGE;
           if (error)
             my_debug_put_break_here();
@@ -2783,7 +2789,7 @@ static void check_and_set_lsn(PAGECACHE *pagecache,
   */
   DBUG_ASSERT((block->type == PAGECACHE_LSN_PAGE) || maria_in_recovery);
   old= lsn_korr(block->buffer);
-  DBUG_PRINT("info", ("old lsn: (%lu, 0x%lx)  new lsn: (%lu, 0x%lx)",
+  DBUG_PRINT("info", ("old lsn: " LSN_FMT "  new lsn: " LSN_FMT,
                       LSN_IN_PARTS(old), LSN_IN_PARTS(lsn)));
   if (cmp_translog_addr(lsn, old) > 0)
   {
@@ -3469,6 +3475,7 @@ restart:
                             lock_to_read[lock].unlock_lock,
                             unlock_pin, FALSE))
       {
+        pagecache_pthread_mutex_unlock(&pagecache->cache_lock);
         DBUG_ASSERT(0);
         return (uchar*) 0;
       }
@@ -3638,7 +3645,7 @@ static my_bool pagecache_delete_internal(PAGECACHE *pagecache,
   DBUG_ASSERT(block->hash_link->requests > 0);
   page_link->requests--;
   /* See NOTE for pagecache_unlock() about registering requests. */
-  free_block(pagecache, block);
+  free_block(pagecache, block, 0);
   dec_counter_for_resize_op(pagecache);
   return 0;
 
@@ -3825,8 +3832,8 @@ restart:
     block= page_link->block;
     if (block->status & (PCBLOCK_REASSIGNED | PCBLOCK_IN_SWITCH))
     {
-      DBUG_PRINT("info", ("Block 0x%0lx already is %s",
-                          (ulong) block,
+      DBUG_PRINT("info", ("Block %p already is %s",
+                          block,
                           ((block->status & PCBLOCK_REASSIGNED) ?
                            "reassigned" : "in switch")));
       PCBLOCK_INFO(block);
@@ -4219,7 +4226,8 @@ end:
   and add it to the free list.
 */
 
-static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
+static my_bool free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block,
+                          my_bool abort_if_pinned)
 {
   uint status= block->status;
   KEYCACHE_THREAD_TRACE("free block");
@@ -4233,11 +4241,27 @@ static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
     /*
       While waiting for readers to finish, new readers might request the
       block. But since we set block->status|= PCBLOCK_REASSIGNED, they
-      will wait on block->wqueue[COND_FOR_SAVED]. They must be signalled
+      will wait on block->wqueue[COND_FOR_SAVED]. They must be signaled
       later.
     */
     block->status|= PCBLOCK_REASSIGNED;
     wait_for_readers(pagecache, block);
+    if (unlikely(abort_if_pinned) && unlikely(block->pins))
+    {
+      /*
+        Block got pinned while waiting for readers.
+        This can only happens when called from flush_pagecache_blocks_int()
+        when flushing blocks as part of prepare for maria_close() or from
+        flush_cached_blocks()
+      */
+      block->status&= ~PCBLOCK_REASSIGNED;
+      unreg_request(pagecache, block, 0);
+
+      /* All pending requests for this page must be resubmitted. */
+      if (block->wqueue[COND_FOR_SAVED].last_thread)
+        wqueue_release_queue(&block->wqueue[COND_FOR_SAVED]);
+      return 1;
+    }
     unlink_hash(pagecache, block->hash_link);
   }
 
@@ -4250,7 +4274,7 @@ static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
   DBUG_ASSERT(block->requests >= 1);
   DBUG_ASSERT(block->next_used == NULL);
   block->status= 0;
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   block->type= PAGECACHE_EMPTY_PAGE;
 #endif
   block->rec_lsn= LSN_MAX;
@@ -4288,6 +4312,8 @@ static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
   /* All pending requests for this page must be resubmitted. */
   if (block->wqueue[COND_FOR_SAVED].last_thread)
     wqueue_release_queue(&block->wqueue[COND_FOR_SAVED]);
+
+  return 0;
 }
 
 
@@ -4423,9 +4449,16 @@ static int flush_cached_blocks(PAGECACHE *pagecache,
     if (! (type == FLUSH_KEEP || type == FLUSH_KEEP_LAZY ||
            type == FLUSH_FORCE_WRITE))
     {
-      pagecache->blocks_changed--;
-      pagecache->global_blocks_changed--;
-      free_block(pagecache, block);
+      if (!free_block(pagecache, block, 1))
+      {
+        pagecache->blocks_changed--;
+        pagecache->global_blocks_changed--;
+      }
+      else
+      {
+        block->status&= ~PCBLOCK_IN_FLUSH;
+        link_to_file_list(pagecache, block, file, 1);
+      }
     }
     else
     {
@@ -4663,7 +4696,7 @@ restart:
             /* It's a temporary file */
             pagecache->blocks_changed--;
 	    pagecache->global_blocks_changed--;
-            free_block(pagecache, block);
+            free_block(pagecache, block, 0);
           }
         }
         else if (type != FLUSH_KEEP_LAZY)
@@ -4733,11 +4766,12 @@ restart:
 #endif
         next= block->next_changed;
         if (block->hash_link->file.file == file->file &&
+            !block->pins &&
             (! (block->status & PCBLOCK_CHANGED)
              || type == FLUSH_IGNORE_CHANGED))
         {
           reg_requests(pagecache, block, 1);
-          free_block(pagecache, block);
+          free_block(pagecache, block, 1);
         }
       }
     }
@@ -4747,10 +4781,8 @@ restart:
       wqueue_release_queue(&us_flusher.flush_queue);
   }
 
-#ifndef DBUG_OFF
   DBUG_EXECUTE("check_pagecache",
                test_key_cache(pagecache, "end of flush_pagecache_blocks", 0););
-#endif
   if (cache != cache_buff)
     my_free(cache);
   if (rc != 0)

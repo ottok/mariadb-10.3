@@ -44,9 +44,6 @@ Created 13/06/2005 Jan Lindstrom
 /* Reserve free space from every block for key_version */
 #define ROW_MERGE_RESERVE_SIZE 4
 
-/* Reserve free space from every block for key_version */
-#define ROW_MERGE_RESERVE_SIZE 4
-
 /* Cluster index read task is mandatory */
 #define COST_READ_CLUSTERED_INDEX            1.0
 
@@ -61,6 +58,9 @@ Created 13/06/2005 Jan Lindstrom
 
 // Forward declaration
 struct ib_sequence_t;
+
+/** The DB_TRX_ID,DB_ROLL_PTR values for "no history is available" */
+extern const byte reset_trx_id[DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN];
 
 /** @brief Block size for I/O operations in merge sort.
 
@@ -129,7 +129,6 @@ struct index_def_t {
 	index_field_t*	fields;		/*!< field definitions */
 	st_mysql_ftparser*
 			parser;		/*!< fulltext parser plugin */
-	bool		is_ngram;	/*!< true if it's ngram parser */
 };
 
 /** Structure for reporting duplicate records. */
@@ -195,7 +194,7 @@ row_merge_drop_temp_indexes(void);
 
 /** Create temporary merge files in the given paramater path, and if
 UNIV_PFS_IO defined, register the file descriptor with Performance Schema.
-@param[in]	path	location for creating temporary merge files.
+@param[in]	path	location for creating temporary merge files, or NULL
 @return File descriptor */
 int
 row_merge_file_create_low(
@@ -264,21 +263,16 @@ row_merge_rename_index_to_drop(
 	MY_ATTRIBUTE((nonnull(1), warn_unused_result));
 
 /** Create the index and load in to the dictionary.
-@param[in,out]	trx		trx (sets error_state)
 @param[in,out]	table		the index is on this table
 @param[in]	index_def	the index definition
 @param[in]	add_v		new virtual columns added along with add
 				index call
-@param[in]	col_names	column names if columns are renamed
-				or NULL
 @return index, or NULL on error */
 dict_index_t*
 row_merge_create_index(
-	trx_t*			trx,
 	dict_table_t*		table,
 	const index_def_t*	index_def,
-	const dict_add_v_col_t*	add_v,
-	const char**		col_names)
+	const dict_add_v_col_t*	add_v)
 	MY_ATTRIBUTE((warn_unused_result));
 
 /*********************************************************************//**
@@ -374,15 +368,15 @@ row_merge_buf_sort(
 
 /********************************************************************//**
 Write a merge block to the file system.
-@return TRUE if request was successful, FALSE if fail */
-ibool
+@return whether the request was completed successfully */
+UNIV_INTERN
+bool
 row_merge_write(
 /*============*/
 	int		fd,	/*!< in: file descriptor */
 	ulint		offset,	/*!< in: offset where to write,
 				in number of row_merge_block_t elements */
 	const void*	buf,	/*!< in: data */
-	fil_space_crypt_t*	crypt_data,	/*!< in: table crypt data */
 	void*		crypt_buf,		/*!< in: crypt buf or NULL */
 	ulint		space)			/*!< in: space id */
 	MY_ATTRIBUTE((warn_unused_result));
@@ -398,13 +392,13 @@ row_merge_buf_empty(
 
 /** Create a merge file in the given location.
 @param[out]	merge_file	merge file structure
-@param[in]	path		location for creating temporary file
+@param[in]	path		location for creating temporary file, or NULL
 @return file descriptor, or -1 on failure */
 int
 row_merge_file_create(
 	merge_file_t*	merge_file,
 	const char*	path)
-	MY_ATTRIBUTE((warn_unused_result, nonnull));
+	MY_ATTRIBUTE((warn_unused_result, nonnull(1)));
 
 /** Merge disk files.
 @param[in]	trx	transaction
@@ -415,7 +409,6 @@ row_merge_file_create(
 @param[in]      update_progress true, if we should update progress status
 @param[in]      pct_progress total progress percent until now
 @param[in]      pct_ocst current progress percent
-@param[in]      crypt_data tale crypt data
 @param[in]      crypt_block crypt buf or NULL
 @param[in]      space    space_id
 @param[in,out]	stage	performance schema accounting object, used by
@@ -433,7 +426,6 @@ row_merge_sort(
 	const bool		update_progress,
 	const double	pct_progress,
 	const double	pct_cost,
-	fil_space_crypt_t*	crypt_data,
 	row_merge_block_t*	crypt_block,
 	ulint			space,
 	ut_stage_alter_t*	stage = NULL)
@@ -464,10 +456,9 @@ row_merge_file_destroy(
 	merge_file_t*	merge_file)	/*!< in/out: merge file structure */
 	MY_ATTRIBUTE((nonnull));
 
-/********************************************************************//**
-Read a merge block from the file system.
-@return TRUE if request was successful, FALSE if fail */
-ibool
+/** Read a merge block from the file system.
+@return whether the request was completed successfully */
+bool
 row_merge_read(
 /*===========*/
 	int			fd,	/*!< in: file descriptor */
@@ -475,7 +466,6 @@ row_merge_read(
 					in number of row_merge_block_t
 					elements */
 	row_merge_block_t*	buf,	/*!< out: data */
-	fil_space_crypt_t*	crypt_data,/*!< in: table crypt data */
 	row_merge_block_t*	crypt_buf, /*!< in: crypt buf or NULL */
 	ulint			space)	   /*!< in: space id */
 	MY_ATTRIBUTE((warn_unused_result));
@@ -496,7 +486,6 @@ row_merge_read_rec(
 					or NULL on end of list
 					(non-NULL on I/O error) */
 	ulint*			offsets,/*!< out: offsets of mrec */
-	fil_space_crypt_t*	crypt_data,/*!< in: table crypt data */
 	row_merge_block_t*	crypt_block, /*!< in: crypt buf or NULL */
 	ulint			space)	   /*!< in: space id */
 	MY_ATTRIBUTE((warn_unused_result));

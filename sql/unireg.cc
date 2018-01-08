@@ -25,7 +25,7 @@
     str is a (long) to record position where 0 is the first position.
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_partition.h"                      // struct partition_info
@@ -73,7 +73,7 @@ static uchar *extra2_write_len(uchar *pos, size_t len)
 }
 
 static uchar *extra2_write(uchar *pos, enum extra2_frm_value_type type,
-                           LEX_STRING *str)
+                           const LEX_CSTRING *str)
 {
   *pos++ = type;
   pos= extra2_write_len(pos, str->length);
@@ -84,7 +84,22 @@ static uchar *extra2_write(uchar *pos, enum extra2_frm_value_type type,
 static uchar *extra2_write(uchar *pos, enum extra2_frm_value_type type,
                            LEX_CUSTRING *str)
 {
-  return extra2_write(pos, type, reinterpret_cast<LEX_STRING *>(str));
+  return extra2_write(pos, type, reinterpret_cast<LEX_CSTRING *>(str));
+}
+
+static uchar *extra2_write_additional_field_properties(uchar *pos,
+                   int number_of_fields,List_iterator<Create_field> * it)
+{
+  *pos++=EXTRA2_FIELD_FLAGS;
+  /*
+   always first 2  for field visibility
+  */
+  pos= extra2_write_len(pos, number_of_fields);
+  Create_field *cf;
+  while((cf=(*it)++))
+    *pos++= cf->field_visibility;
+  it->rewind();
+  return pos;
 }
 
 /**
@@ -107,7 +122,7 @@ LEX_CUSTRING build_frm_image(THD *thd, const char *table,
                               List<Create_field> &create_fields,
                               uint keys, KEY *key_info, handler *db_file)
 {
-  LEX_STRING str_db_type;
+  LEX_CSTRING str_db_type;
   uint reclength, key_info_length, i;
   ulong key_buff_length;
   ulong filepos, data_offset;
@@ -120,6 +135,19 @@ LEX_CUSTRING build_frm_image(THD *thd, const char *table,
   LEX_CUSTRING frm= {0,0};
   StringBuffer<MAX_FIELD_WIDTH> vcols;
   DBUG_ENTER("build_frm_image");
+
+  List_iterator<Create_field> it(create_fields);
+  Create_field *field;
+  bool have_additional_field_properties= false;
+  while ((field=it++))
+  {
+    if (field->field_visibility != NOT_INVISIBLE)
+    {
+      have_additional_field_properties= true;
+      break;
+    }
+  }
+  it.rewind();
 
  /* If fixed row records, we need one bit to check for deleted rows */
   if (!(create_info->table_options & HA_OPTION_PACK_RECORD))
@@ -218,7 +246,9 @@ LEX_CUSTRING build_frm_image(THD *thd, const char *table,
 
   if (gis_extra2_len)
     extra2_size+= 1 + (gis_extra2_len > 255 ? 3 : 1) + gis_extra2_len;
-
+  if(have_additional_field_properties)
+    extra2_size+=1 + (create_fields.elements > 255 ? 3 : 1) +
+        create_fields.elements;
 
   key_buff_length= uint4korr(fileinfo+47);
 
@@ -274,7 +304,8 @@ LEX_CUSTRING build_frm_image(THD *thd, const char *table,
     pos+= gis_field_options_image(pos, create_fields);
   }
 #endif /*HAVE_SPATIAL*/
-
+  if (have_additional_field_properties)
+    pos=extra2_write_additional_field_properties(pos,create_fields.elements,&it);
   int4store(pos, filepos); // end of the extra2 segment
   pos+= 4;
 
@@ -452,9 +483,9 @@ static uint pack_keys(uchar *keybuff, uint key_count, KEY *keyinfo,
     int2store(pos+6, key->block_size);
     pos+=8;
     key_parts+=key->user_defined_key_parts;
-    DBUG_PRINT("loop", ("flags: %lu  key_parts: %d  key_part: 0x%lx",
+    DBUG_PRINT("loop", ("flags: %lu  key_parts: %d  key_part: %p",
                         key->flags, key->user_defined_key_parts,
-                        (long) key->key_part));
+                        key->key_part));
     for (key_part=key->key_part,key_part_end=key_part+key->user_defined_key_parts ;
 	 key_part != key_part_end ;
 	 key_part++)
@@ -478,7 +509,7 @@ static uint pack_keys(uchar *keybuff, uint key_count, KEY *keyinfo,
   *pos++=(uchar) NAMES_SEP_CHAR;
   for (key=keyinfo ; key != end ; key++)
   {
-    uchar *tmp=(uchar*) strmov((char*) pos,key->name);
+    uchar *tmp=(uchar*) strmov((char*) pos,key->name.str);
     *tmp++= (uchar) NAMES_SEP_CHAR;
     *tmp=0;
     pos=tmp;
@@ -539,7 +570,7 @@ static bool pack_expression(String *buf, Virtual_column_info *vcol,
   size_t len_off= buf->length();
   buf->q_append2b(0); // to be added later
   buf->q_append((char)vcol->name.length);
-  buf->q_append(vcol->name.str, vcol->name.length);
+  buf->q_append(&vcol->name);
   size_t expr_start= buf->length();
   vcol->print(buf);
   size_t expr_len= buf->length() - expr_start;
@@ -616,23 +647,24 @@ static bool pack_header(THD *thd, uchar *forminfo,
   while ((field=it++))
   {
     if (validate_comment_length(thd, &field->comment, COLUMN_COMMENT_MAXLEN,
-                                ER_TOO_LONG_FIELD_COMMENT, field->field_name))
+                                ER_TOO_LONG_FIELD_COMMENT,
+                                field->field_name.str))
        DBUG_RETURN(1);
 
-    totlength+= field->length;
+    totlength+= (size_t)field->length;
     com_length+= field->comment.length;
     /*
       We mark first TIMESTAMP field with NOW() in DEFAULT or ON UPDATE
       as auto-update field.
     */
-    if (field->sql_type == MYSQL_TYPE_TIMESTAMP &&
+    if (field->real_field_type() == MYSQL_TYPE_TIMESTAMP &&
         MTYP_TYPENR(field->unireg_check) != Field::NONE &&
 	!time_stamp_pos)
       time_stamp_pos= (uint) field->offset+ (uint) data_offset + 1;
     length=field->pack_length;
     if ((uint) field->offset+ (uint) data_offset+ length > reclength)
       reclength=(uint) (field->offset+ data_offset + length);
-    n_length+= (ulong) strlen(field->field_name)+1;
+    n_length+= field->field_name.length + 1;
     field->interval_id=0;
     field->save_interval= 0;
     if (field->interval)
@@ -776,7 +808,7 @@ static size_t packed_fields_length(List<Create_field> &create_fields)
     }
 
     length+= FCOMP;
-    length+= strlen(field->field_name)+1;
+    length+= field->field_name.length + 1;
     length+= field->comment.length;
   }
   length+= 2;
@@ -807,8 +839,8 @@ static bool pack_fields(uchar **buff_arg, List<Create_field> &create_fields,
     int2store(buff+8,field->pack_flag);
     buff[10]= (uchar) field->unireg_check;
     buff[12]= (uchar) field->interval_id;
-    buff[13]= (uchar) field->sql_type;
-    if (field->sql_type == MYSQL_TYPE_GEOMETRY)
+    buff[13]= (uchar) field->real_field_type();
+    if (field->real_field_type() == MYSQL_TYPE_GEOMETRY)
     {
       buff[11]= 0;
       buff[14]= (uchar) field->geom_type;
@@ -837,7 +869,7 @@ static bool pack_fields(uchar **buff_arg, List<Create_field> &create_fields,
   it.rewind();
   while ((field=it++))
   {
-    buff= (uchar*)strmov((char*) buff, field->field_name);
+    buff= (uchar*)strmov((char*) buff, field->field_name.str);
     *buff++=NAMES_SEP_CHAR;
   }
   *buff++= 0;
@@ -949,17 +981,17 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
     /* regfield don't have to be deleted as it's allocated on THD::mem_root */
     Field *regfield= make_field(&share, thd->mem_root,
                                 buff+field->offset + data_offset,
-                                field->length,
+                                (uint32)field->length,
                                 null_pos + null_count / 8,
                                 null_count & 7,
                                 field->pack_flag,
-                                field->sql_type,
+                                field->type_handler(),
                                 field->charset,
                                 field->geom_type, field->srid,
                                 field->unireg_check,
                                 field->save_interval ? field->save_interval
                                                      : field->interval,
-                                field->field_name);
+                                &field->field_name);
     if (!regfield)
     {
       error= 1;
@@ -975,25 +1007,32 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
       null_count++;
     }
 
-    if (field->sql_type == MYSQL_TYPE_BIT && !f_bit_as_char(field->pack_flag))
+    if (field->real_field_type() == MYSQL_TYPE_BIT &&
+        !f_bit_as_char(field->pack_flag))
       null_count+= field->length & 7;
 
     if (field->default_value && !field->default_value->flags &&
-        !(field->flags & BLOB_FLAG))
+        (!(field->flags & BLOB_FLAG) ||
+         field->real_field_type() == MYSQL_TYPE_GEOMETRY))
     {
       Item *expr= field->default_value->expr;
+
       int res= !expr->fixed && // may be already fixed if ALTER TABLE
                 expr->fix_fields(thd, &expr);
       if (!res)
         res= expr->save_in_field(regfield, 1);
+      if (!res && (field->flags & BLOB_FLAG))
+        regfield->reset();
+
       /* If not ok or warning of level 'note' */
       if (res != 0 && res != 3)
       {
-        my_error(ER_INVALID_DEFAULT, MYF(0), regfield->field_name);
+        my_error(ER_INVALID_DEFAULT, MYF(0), regfield->field_name.str);
         error= 1;
         delete regfield; //To avoid memory leak
         goto err;
       }
+      delete regfield; //To avoid memory leak
     }
     else if (regfield->real_type() == MYSQL_TYPE_ENUM &&
 	     (field->flags & NOT_NULL_FLAG))

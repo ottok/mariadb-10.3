@@ -448,7 +448,8 @@ ALTER TABLE proc MODIFY name char(64) DEFAULT '' NOT NULL,
                             'NO_AUTO_CREATE_USER',
                             'HIGH_NOT_PRECEDENCE',
                             'NO_ENGINE_SUBSTITUTION',
-                            'PAD_CHAR_TO_FULL_LENGTH'
+                            'PAD_CHAR_TO_FULL_LENGTH',
+                            'EMPTY_STRING_IS_NULL'
                             ) DEFAULT '' NOT NULL,
                  DEFAULT CHARACTER SET utf8;
 
@@ -518,6 +519,10 @@ ALTER TABLE proc MODIFY body_utf8 longblob DEFAULT NULL;
 ALTER TABLE proc MODIFY comment
                         text collate utf8_bin NOT NULL;
 
+# MDEV-7773: Stored Aggregate Functions
+ALTER TABLE proc ADD aggregate enum('NONE', 'GROUP') DEFAULT 'NONE' NOT NULL
+                     AFTER body_utf8;
+
 #
 # EVENT privilege
 #
@@ -572,7 +577,8 @@ ALTER TABLE event MODIFY sql_mode
                             'NO_AUTO_CREATE_USER',
                             'HIGH_NOT_PRECEDENCE',
                             'NO_ENGINE_SUBSTITUTION',
-                            'PAD_CHAR_TO_FULL_LENGTH'
+                            'PAD_CHAR_TO_FULL_LENGTH',
+                            'EMPTY_STRING_IS_NULL'
                             ) DEFAULT '' NOT NULL AFTER on_completion;
 ALTER TABLE event MODIFY name char(64) CHARACTER SET utf8 NOT NULL default '';
 
@@ -677,6 +683,15 @@ DROP PROCEDURE mysql.count_duplicate_host_names;
 
 # Convering the host name to lower case for existing users
 UPDATE user SET host=LOWER( host ) WHERE LOWER( host ) <> host;
+
+# fix bad data when upgrading from unfixed InnoDB (MDEV-13360)
+set @str="delete from innodb_index_stats where length(table_name) > 64";
+set @str=if(@have_innodb <> 0, @str, "set @dummy = 0");
+prepare stmt from @str;
+execute stmt;
+set @str=replace(@str, "innodb_index_stats", "innodb_table_stats");
+prepare stmt from @str;
+execute stmt;
 
 # update timestamp fields in the innodb stat tables
 set @str="alter table mysql.innodb_index_stats modify last_update timestamp not null default current_timestamp on update current_timestamp";

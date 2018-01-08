@@ -20,7 +20,7 @@
 #pragma implementation
 #endif
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 // Required to get server definitions for mysql/plugin.h right
 #include "sql_plugin.h"
@@ -42,13 +42,12 @@ partition_info *partition_info::get_clone(THD *thd)
 
   List_iterator<partition_element> part_it(partitions);
   partition_element *part;
-  partition_info *clone= new (mem_root) partition_info();
+  partition_info *clone= new (mem_root) partition_info(*this);
   if (!clone)
   {
     mem_alloc_error(sizeof(partition_info));
     DBUG_RETURN(NULL);
   }
-  memcpy(clone, this, sizeof(partition_info));
   memset(&(clone->read_partitions), 0, sizeof(clone->read_partitions));
   memset(&(clone->lock_partitions), 0, sizeof(clone->lock_partitions));
   clone->bitmaps_are_initialized= FALSE;
@@ -394,9 +393,9 @@ bool partition_info::set_up_default_partitions(THD *thd, handler *file,
   {
     const char *error_string;
     if (part_type == RANGE_PARTITION)
-      error_string= partition_keywords[PKW_RANGE].str;
+      error_string= "RANGE";
     else
-      error_string= partition_keywords[PKW_LIST].str;
+      error_string= "LIST";
     my_error(ER_PARTITIONS_MUST_BE_DEFINED_ERROR, MYF(0), error_string);
     goto end;
   }
@@ -562,10 +561,11 @@ bool partition_info::set_up_defaults_for_partitioning(THD *thd, handler *file,
     Check that the user haven't defined the same field twice in
     key or column list partitioning.
 */
-char* partition_info::find_duplicate_field()
+
+const char* partition_info::find_duplicate_field()
 {
-  char *field_name_outer, *field_name_inner;
-  List_iterator<char> it_outer(part_field_list);
+  const char *field_name_outer, *field_name_inner;
+  List_iterator<const char> it_outer(part_field_list);
   uint num_fields= part_field_list.elements;
   uint i,j;
   DBUG_ENTER("partition_info::find_duplicate_field");
@@ -573,7 +573,7 @@ char* partition_info::find_duplicate_field()
   for (i= 0; i < num_fields; i++)
   {
     field_name_outer= it_outer++;
-    List_iterator<char> it_inner(part_field_list);
+    List_iterator<const char> it_inner(part_field_list);
     for (j= 0; j < num_fields; j++)
     {
       field_name_inner= it_inner++;
@@ -608,6 +608,7 @@ char* partition_info::find_duplicate_field()
 */
 partition_element *partition_info::get_part_elem(const char *partition_name,
                                                  char *file_name,
+                                                 size_t file_name_size,
                                                  uint32 *part_id)
 {
   List_iterator<partition_element> part_it(partitions);
@@ -629,10 +630,10 @@ partition_element *partition_info::get_part_elem(const char *partition_name,
                            sub_part_elem->partition_name, partition_name))
         {
           if (file_name)
-            create_subpartition_name(file_name, "",
-                                     part_elem->partition_name,
-                                     partition_name,
-                                     NORMAL_PART_NAME);
+            if (create_subpartition_name(file_name, file_name_size, "",
+                                         part_elem->partition_name,
+                                         partition_name, NORMAL_PART_NAME))
+              DBUG_RETURN(NULL);
           *part_id= j + (i * num_subparts);
           DBUG_RETURN(sub_part_elem);
         }
@@ -647,8 +648,9 @@ partition_element *partition_info::get_part_elem(const char *partition_name,
                             part_elem->partition_name, partition_name))
     {
       if (file_name)
-        create_partition_name(file_name, "", partition_name,
-                              NORMAL_PART_NAME, TRUE);
+        if (create_partition_name(file_name, file_name_size, "",
+                                  partition_name, NORMAL_PART_NAME, TRUE))
+          DBUG_RETURN(NULL);
       *part_id= i;
       DBUG_RETURN(part_elem);
     }
@@ -1382,7 +1384,7 @@ bool partition_info::check_partition_info(THD *thd, handlerton **eng_type,
   handlerton *table_engine= default_engine_type;
   uint i, tot_partitions;
   bool result= TRUE, table_engine_set;
-  char *same_name;
+  const char *same_name;
   DBUG_ENTER("partition_info::check_partition_info");
   DBUG_ASSERT(default_engine_type != partition_hton);
 
@@ -1671,7 +1673,7 @@ void partition_info::print_no_partition_found(TABLE *table_arg, myf errflag)
 bool partition_info::set_part_expr(THD *thd, char *start_token, Item *item_ptr,
                                    char *end_token, bool is_subpart)
 {
-  uint expr_len= end_token - start_token;
+  size_t expr_len= end_token - start_token;
   char *func_string= (char*) thd->memdup(start_token, expr_len);
 
   if (!func_string)
@@ -1683,15 +1685,11 @@ bool partition_info::set_part_expr(THD *thd, char *start_token, Item *item_ptr,
   {
     list_of_subpart_fields= FALSE;
     subpart_expr= item_ptr;
-    subpart_func_string= func_string;
-    subpart_func_len= expr_len;
   }
   else
   {
     list_of_part_fields= FALSE;
     part_expr= item_ptr;
-    part_func_string= func_string;
-    part_func_len= expr_len;
   }
   return FALSE;
 }
@@ -1921,7 +1919,7 @@ void partition_info::report_part_expr_error(bool use_subpart_expr)
         !(type == HASH_PARTITION && list_of_fields))
     {
       my_error(ER_FIELD_TYPE_NOT_ALLOWED_AS_PARTITION_FIELD, MYF(0),
-               item_field->name);
+               item_field->name.str);
       DBUG_VOID_RETURN;
     }
   }
@@ -2348,7 +2346,7 @@ bool partition_info::fix_column_value_functions(THD *thd,
       {
         uchar *val_ptr;
         uint len= field->pack_length();
-        ulonglong save_sql_mode;
+        sql_mode_t save_sql_mode;
         bool save_got_warning;
 
         if (!(column_item= get_column_item(column_item,
@@ -2649,9 +2647,9 @@ bool partition_info::has_same_partitioning(partition_info *new_part_info)
   }
 
   /* Check that it will use the same fields in KEY (fields) list. */
-  List_iterator<char> old_field_name_it(part_field_list);
-  List_iterator<char> new_field_name_it(new_part_info->part_field_list);
-  char *old_name, *new_name;
+  List_iterator<const char> old_field_name_it(part_field_list);
+  List_iterator<const char> new_field_name_it(new_part_info->part_field_list);
+  const char *old_name, *new_name;
   while ((old_name= old_field_name_it++))
   {
     new_name= new_field_name_it++;
@@ -2664,9 +2662,9 @@ bool partition_info::has_same_partitioning(partition_info *new_part_info)
   if (is_sub_partitioned())
   {
     /* Check that it will use the same fields in KEY subpart fields list. */
-    List_iterator<char> old_field_name_it(subpart_field_list);
-    List_iterator<char> new_field_name_it(new_part_info->subpart_field_list);
-    char *old_name, *new_name;
+    List_iterator<const char> old_field_name_it(subpart_field_list);
+    List_iterator<const char> new_field_name_it(new_part_info->subpart_field_list);
+    const char *old_name, *new_name;
     while ((old_name= old_field_name_it++))
     {
       new_name= new_field_name_it++;

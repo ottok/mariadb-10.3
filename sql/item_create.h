@@ -56,7 +56,7 @@ public:
     @param item_list The list of arguments to the function, can be NULL
     @return An item representing the parsed function call, or NULL
   */
-  virtual Item *create_func(THD *thd, LEX_STRING name, List<Item> *item_list) = 0;
+  virtual Item *create_func(THD *thd, LEX_CSTRING *name, List<Item> *item_list) = 0;
 
 protected:
   /** Constructor */
@@ -83,7 +83,8 @@ public:
     @param item_list The list of arguments to the function, can be NULL
     @return An item representing the parsed function call
   */
-  virtual Item *create_func(THD *thd, LEX_STRING name, List<Item> *item_list);
+  virtual Item *create_func(THD *thd, LEX_CSTRING *name,
+                            List<Item> *item_list);
 
   /**
     The builder create method, for qualified functions.
@@ -94,7 +95,7 @@ public:
     @param item_list The list of arguments to the function, can be NULL
     @return An item representing the parsed function call
   */
-  virtual Item *create_with_db(THD *thd, LEX_STRING db, LEX_STRING name,
+  virtual Item *create_with_db(THD *thd, LEX_CSTRING *db, LEX_CSTRING *name,
                                bool use_explicit_name,
                                List<Item> *item_list) = 0;
 
@@ -112,7 +113,8 @@ protected:
   @param name The native function name
   @return The native function builder associated with the name, or NULL
 */
-extern Create_func * find_native_function_builder(THD *thd, LEX_STRING name);
+extern Create_func *find_native_function_builder(THD *thd,
+                                                 const LEX_CSTRING *name);
 
 
 /**
@@ -131,7 +133,8 @@ extern Create_qfunc * find_qualified_function_builder(THD *thd);
 class Create_udf_func : public Create_func
 {
 public:
-  virtual Item *create_func(THD *thd, LEX_STRING name, List<Item> *item_list);
+  virtual Item *create_func(THD *thd, LEX_CSTRING *name,
+                            List<Item> *item_list);
 
   /**
     The builder create method, for User Defined Functions.
@@ -153,20 +156,6 @@ protected:
 };
 #endif
 
-
-/**
-  Builder for cast expressions.
-  @param thd The current thread
-  @param a The item to cast
-  @param cast_type the type casted into
-  @param len TODO
-  @param dec TODO
-  @param cs The character set
-*/
-Item *
-create_func_cast(THD *thd, Item *a, Cast_target cast_type,
-                 const char *len, const char *dec,
-                 CHARSET_INFO *cs);
 
 Item *create_temporal_literal(THD *thd,
                               const char *str, uint length,
@@ -191,7 +180,7 @@ Item *create_func_dyncol_add(THD *thd, Item *str,
                              List<DYNCALL_CREATE_DEF> &list);
 Item *create_func_dyncol_delete(THD *thd, Item *str, List<Item> &nums);
 Item *create_func_dyncol_get(THD *thd, Item *num, Item *str,
-                             Cast_target cast_type,
+                             const Type_handler *handler,
                              const char *c_len, const char *c_dec,
                              CHARSET_INFO *cs);
 Item *create_func_dyncol_json(THD *thd, Item *str);

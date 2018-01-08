@@ -56,7 +56,7 @@ dtype_get_at_most_n_mbchars(
 	ulint	mbminlen = DATA_MBMINLEN(mbminmaxlen);
 	ulint	mbmaxlen = DATA_MBMAXLEN(mbminmaxlen);
 
-	ut_a(data_len != UNIV_SQL_NULL);
+	ut_a(len_is_stored(data_len));
 	ut_ad(!mbmaxlen || !(prefix_len % mbmaxlen));
 
 	if (mbminlen != mbmaxlen) {
@@ -192,13 +192,6 @@ dtype_print(const dtype_t* type)
 	case DATA_BLOB:
 		fputs("DATA_BLOB", stderr);
 		break;
-
-	case DATA_POINT:
-		fputs("DATA_POINT", stderr);
-		break;
-
-	case DATA_VAR_POINT:
-		fputs("DATA_VAR_POINT", stderr);
 
 	case DATA_GEOMETRY:
 		fputs("DATA_GEOMETRY", stderr);

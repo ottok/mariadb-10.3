@@ -23,7 +23,7 @@
   @{
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_base.h"
 #include "key.h"
 #include "sql_statistics.h"
@@ -471,9 +471,9 @@ protected:
   
   /* Table for which statistical data is read / updated */
   TABLE *table;
-  TABLE_SHARE *table_share; /* Table share for 'table */    
-  LEX_STRING *db_name;      /* Name of the database containing 'table' */ 
-  LEX_STRING *table_name;   /* Name of the table 'table' */
+  TABLE_SHARE *table_share; /* Table share for 'table */
+  LEX_CSTRING *db_name;      /* Name of the database containing 'table' */
+  LEX_CSTRING *table_name;   /* Name of the table 'table' */
 
   void store_record_for_update()
   {
@@ -528,7 +528,7 @@ public:
     by the database name 'db' and the table name 'tab'.
   */  
   
-  Stat_table(TABLE *stat, LEX_STRING *db, LEX_STRING *tab)
+  Stat_table(TABLE *stat, LEX_CSTRING *db, LEX_CSTRING *tab)
     :stat_table(stat), table_share(NULL)
   {
     common_init_stat_table();
@@ -553,7 +553,7 @@ public:
     The method is called by the update_table_name_key_parts function.
   */      
 
- virtual void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)= 0;
+ virtual void change_full_table_name(LEX_CSTRING *db, LEX_CSTRING *tab)= 0;
 
  
   /**
@@ -666,16 +666,22 @@ public:
   {
     if (find_stat())
     {    
+      bool res;
       store_record_for_update();
       store_stat_fields();
-      return update_record();
+      res= update_record();
+      DBUG_ASSERT(res == 0);
+      return res;
     }
     else
     {
       int err;
       store_stat_fields();
       if ((err= stat_file->ha_write_row(record[0])))
+      {
+        DBUG_ASSERT(0);
 	return TRUE;
+      }
       /* Make change permanent and avoid 'table is marked as crashed' errors */
       stat_file->extra(HA_EXTRA_FLUSH);
     } 
@@ -703,7 +709,7 @@ public:
     to store the new names in the record buffer used for updates.
   */
 
-  bool update_table_name_key_parts(LEX_STRING *db, LEX_STRING *tab)
+  bool update_table_name_key_parts(LEX_CSTRING *db, LEX_CSTRING *tab)
   {
     store_record_for_update();
     change_full_table_name(db, tab);
@@ -765,7 +771,7 @@ private:
     table_name_field= stat_table->field[TABLE_STAT_TABLE_NAME];
   }
 
-  void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)
+  void change_full_table_name(LEX_CSTRING *db, LEX_CSTRING *tab)
   {
     db_name_field->store(db->str, db->length, system_charset_info);
     table_name_field->store(tab->str, tab->length, system_charset_info);
@@ -795,7 +801,7 @@ public:
     from the database 'db'.
   */
 
-  Table_stat(TABLE *stat, LEX_STRING *db, LEX_STRING *tab) 
+  Table_stat(TABLE *stat, LEX_CSTRING *db, LEX_CSTRING *tab)
     :Stat_table(stat, db, tab)
   {
     common_init_table_stat();
@@ -843,7 +849,7 @@ public:
     else
     {
       stat_field->set_notnull();
-      stat_field->store(table->collected_stats->cardinality);
+      stat_field->store(table->collected_stats->cardinality,true);
     }
   }
 
@@ -909,7 +915,7 @@ private:
     column_name_field= stat_table->field[COLUMN_STAT_COLUMN_NAME];
   } 
 
-  void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)
+  void change_full_table_name(LEX_CSTRING *db, LEX_CSTRING *tab)
   {
      db_name_field->store(db->str, db->length, system_charset_info);
      table_name_field->store(tab->str, tab->length, system_charset_info);
@@ -939,7 +945,7 @@ public:
     from the database 'db'. 
   */
 
-  Column_stat(TABLE *stat, LEX_STRING *db, LEX_STRING *tab) 
+  Column_stat(TABLE *stat, LEX_CSTRING *db, LEX_CSTRING *tab)
     :Stat_table(stat, db, tab)
   {
     common_init_column_stat_table();
@@ -983,8 +989,7 @@ public:
   void set_key_fields(Field *col)
   {
     set_full_table_name();
-    const char *column_name= col->field_name;
-    column_name_field->store(column_name, strlen(column_name),
+    column_name_field->store(col->field_name.str, col->field_name.length,
                              system_charset_info);  
     table_field= col;
   }
@@ -1055,7 +1060,7 @@ public:
         switch (i) {
         case COLUMN_STAT_MIN_VALUE:
           if (table_field->type() == MYSQL_TYPE_BIT)
-            stat_field->store(table_field->collected_stats->min_value->val_int());
+            stat_field->store(table_field->collected_stats->min_value->val_int(),true);
           else
           {
             table_field->collected_stats->min_value->val_str(&val);
@@ -1064,7 +1069,7 @@ public:
           break;
         case COLUMN_STAT_MAX_VALUE:
           if (table_field->type() == MYSQL_TYPE_BIT)
-            stat_field->store(table_field->collected_stats->max_value->val_int());
+            stat_field->store(table_field->collected_stats->max_value->val_int(),true);
           else
           {
             table_field->collected_stats->max_value->val_str(&val);
@@ -1245,7 +1250,7 @@ private:
     prefix_arity_field= stat_table->field[INDEX_STAT_PREFIX_ARITY];
   } 
 
-  void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)
+  void change_full_table_name(LEX_CSTRING *db, LEX_CSTRING *tab)
   {
      db_name_field->store(db->str, db->length, system_charset_info);
      table_name_field->store(tab->str, tab->length, system_charset_info);
@@ -1277,7 +1282,7 @@ public:
     from the database 'db'. 
   */
 
-  Index_stat(TABLE *stat, LEX_STRING *db, LEX_STRING *tab) 
+  Index_stat(TABLE *stat, LEX_CSTRING *db, LEX_CSTRING *tab)
     :Stat_table(stat, db, tab)
   {
     common_init_index_stat_table();
@@ -1320,8 +1325,8 @@ public:
   void set_index_prefix_key_fields(KEY *index_info)
   {
     set_full_table_name();
-    char *index_name= index_info->name;
-    index_name_field->store(index_name, strlen(index_name),
+    const char *index_name= index_info->name.str;
+    index_name_field->store(index_name, index_info->name.length,
                             system_charset_info);
     table_key_info= index_info;
   }
@@ -1631,7 +1636,7 @@ public:
     of the parameters to be passed to the constructor of the Unique object. 
   */  
 
-  Count_distinct_field(Field *field, uint max_heap_table_size)
+  Count_distinct_field(Field *field, size_t max_heap_table_size)
   {
     table_field= field;
     tree_key_length= field->pack_length();
@@ -1729,7 +1734,7 @@ class Count_distinct_field_bit: public Count_distinct_field
 {
 public:
 
-  Count_distinct_field_bit(Field *field, uint max_heap_table_size)
+  Count_distinct_field_bit(Field *field, size_t max_heap_table_size)
   {
     table_field= field;
     tree_key_length= sizeof(ulonglong);
@@ -1825,7 +1830,7 @@ public:
     if ((calc_state=
          (Prefix_calc_state *) thd->alloc(sizeof(Prefix_calc_state)*key_parts)))
     {
-      uint keyno= key_info-table->key_info;
+      uint keyno= (uint)(key_info-table->key_info);
       for (i= 0, state= calc_state; i < key_parts; i++, state++)
       {
         /* 
@@ -1961,7 +1966,7 @@ void create_min_max_statistical_fields_for_table(TABLE *table)
 
     for (uint i=0; i < 2; i++, record+= rec_buff_length)
     {
-      for (Field **field_ptr= table->field; *field_ptr; field_ptr++) 
+      for (Field **field_ptr= table->field; *field_ptr; field_ptr++)
       {
         Field *fld;
         Field *table_field= *field_ptr;
@@ -2030,7 +2035,7 @@ void create_min_max_statistical_fields_for_table_share(THD *thd,
 
     for (uint i=0; i < 2; i++, record+= rec_buff_length)
     {
-      for (Field **field_ptr= table_share->field; *field_ptr; field_ptr++) 
+      for (Field **field_ptr= table_share->field; *field_ptr; field_ptr++)
       {
         Field *fld;
         Field *table_field= *field_ptr;
@@ -2439,7 +2444,7 @@ int alloc_histograms_for_table_share(THD* thd, TABLE_SHARE *table_share,
 inline
 void Column_statistics_collected::init(THD *thd, Field *table_field)
 {
-  uint max_heap_table_size= thd->variables.max_heap_table_size;
+  size_t max_heap_table_size= (size_t)thd->variables.max_heap_table_size;
   TABLE *table= table_field->table;
   uint pk= table->s->primary_key;
   
@@ -2493,7 +2498,7 @@ bool Column_statistics_collected::add(ha_rows rowno)
       set_not_null(COLUMN_STAT_MIN_VALUE);
     if (max_value && column->update_max(max_value, rowno == nulls))
       set_not_null(COLUMN_STAT_MAX_VALUE);
-    if (count_distinct) 
+    if (count_distinct)
       err= count_distinct->add();
   } 
   return err;
@@ -3283,7 +3288,7 @@ int read_statistics_for_tables_if_needed(THD *thd, TABLE_LIST *tables)
   The function is called when executing the statement DROP TABLE 'tab'.
 */
 
-int delete_statistics_for_table(THD *thd, LEX_STRING *db, LEX_STRING *tab)
+int delete_statistics_for_table(THD *thd, LEX_CSTRING *db, LEX_CSTRING *tab)
 {
   int err;
   enum_binlog_format save_binlog_format;
@@ -3521,8 +3526,8 @@ int delete_statistics_for_index(THD *thd, TABLE *tab, KEY *key_info,
   The function is called when executing any statement that renames a table
 */
 
-int rename_table_in_stat_tables(THD *thd, LEX_STRING *db, LEX_STRING *tab,
-                                LEX_STRING *new_db, LEX_STRING *new_tab)
+int rename_table_in_stat_tables(THD *thd, LEX_CSTRING *db, LEX_CSTRING *tab,
+                                LEX_CSTRING *new_db, LEX_CSTRING *new_tab)
 {
   int err;
   enum_binlog_format save_binlog_format;
@@ -3720,14 +3725,14 @@ double get_column_avg_frequency(Field * field)
   */
   if (!table->s->field)
   {
-    res= table->stat_records();
+    res= (double)table->stat_records();
     return res;
   }
  
   Column_statistics *col_stats= field->read_stats;
 
   if (!col_stats)
-    res= table->stat_records();
+    res= (double)table->stat_records();
   else
     res= col_stats->get_avg_frequency();
   return res;
@@ -3752,7 +3757,10 @@ double get_column_avg_frequency(Field * field)
   using the statistical data from the table column_stats.
 
   @retval
-  The required estimate of the rows in the column range
+  - The required estimate of the rows in the column range
+  - If there is some kind of error, this function should return DBL_MAX (and
+    not HA_POS_ERROR as that is an integer constant).
+
 */
 
 double get_column_range_cardinality(Field *field,
@@ -3763,7 +3771,7 @@ double get_column_range_cardinality(Field *field,
   double res;
   TABLE *table= field->table;
   Column_statistics *col_stats= field->read_stats;
-  double tab_records= table->stat_records();
+  double tab_records= (double)table->stat_records();
 
   if (!col_stats)
     return tab_records;

@@ -118,10 +118,18 @@ os_thread_create_func(
 	os_thread_id_t*		thread_id);	/*!< out: id of the created
 						thread, or NULL */
 
-/** Exits the current thread. */
+/** Waits until the specified thread completes and joins it.
+Its return value is ignored.
+@param[in,out]	thread	thread to join */
 void
-os_thread_exit()
-	UNIV_COLD MY_ATTRIBUTE((noreturn));
+os_thread_join(
+	os_thread_id_t	thread);
+
+/** Exits the current thread.
+@param[in]	detach	if true, the thread will be detached right before
+exiting. If false, another thread is responsible for joining this thread */
+ATTRIBUTE_NORETURN ATTRIBUTE_COLD
+void os_thread_exit(bool detach = true);
 
 /*****************************************************************//**
 Returns the thread identifier of current thread.
@@ -140,24 +148,5 @@ void
 os_thread_sleep(
 /*============*/
 	ulint	tm);	/*!< in: time in microseconds */
-
-/**
-Initializes OS thread management data structures. */
-void
-os_thread_init();
-/*============*/
-
-/**
-Frees OS thread management data structures. */
-void
-os_thread_free();
-/*============*/
-
-/*****************************************************************//**
-Check if there are threads active.
-@return true if the thread count > 0. */
-bool
-os_thread_active();
-/*==============*/
 
 #endif

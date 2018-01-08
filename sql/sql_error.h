@@ -17,12 +17,12 @@
 #ifndef SQL_ERROR_H
 #define SQL_ERROR_H
 
-#include "sql_list.h" /* Sql_alloc, MEM_ROOT */
-#include "m_string.h" /* LEX_STRING */
-#include "sql_string.h"                        /* String */
-#include "sql_plist.h" /* I_P_List */
-#include "mysql_com.h" /* MYSQL_ERRMSG_SIZE */
-#include "my_time.h"   /* MYSQL_TIME */
+#include "sql_list.h" 	/* Sql_alloc, MEM_ROOT, list */
+#include "m_string.h"		/* LEX_STRING */
+#include "sql_string.h"       /* String */
+#include "sql_plist.h"        /* I_P_List */
+#include "mysql_com.h"        /* MYSQL_ERRMSG_SIZE */
+#include "my_time.h"          /* MYSQL_TIME */
 #include "decimal.h"
 
 class THD;
@@ -837,7 +837,10 @@ public:
   ErrConvString(const String *s)
     : ErrConv(), str(s->ptr()), len(s->length()), cs(s->charset()) {}
   const char *ptr() const
-  { return err_conv(err_buffer, sizeof(err_buffer), str, len, cs); }
+  {
+    DBUG_ASSERT(len < UINT_MAX32);
+    return err_conv(err_buffer, (uint) sizeof(err_buffer), str, (uint) len, cs);
+  }
 };
 
 class ErrConvInteger : public ErrConv
@@ -1244,7 +1247,7 @@ uint32 convert_error_message(char *to, uint32 to_length,
 
 extern const LEX_STRING warning_level_names[];
 
-bool is_sqlstate_valid(const LEX_STRING *sqlstate);
+bool is_sqlstate_valid(const LEX_CSTRING *sqlstate);
 /**
   Checks if the specified SQL-state-string defines COMPLETION condition.
   This function assumes that the given string contains a valid SQL-state.

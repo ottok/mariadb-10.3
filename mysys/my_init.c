@@ -105,6 +105,10 @@ my_bool my_init(void)
   if (my_thread_global_init())
     return 1;
 
+#if defined(SAFEMALLOC) && !defined(DBUG_OFF)
+  dbug_sanity= sf_sanity;
+#endif
+
   /* $HOME is needed early to parse configuration files located in ~/ */
   if ((home_dir= getenv("HOME")) != 0)
     home_dir= intern_filename(home_dir_buff, home_dir);
@@ -200,7 +204,6 @@ Voluntary context switches %ld, Involuntary context switches %ld\n",
    _CrtSetReportMode( _CRT_ASSERT, _CRTDBG_MODE_FILE );
    _CrtSetReportFile( _CRT_ASSERT, _CRTDBG_FILE_STDERR );
    _CrtCheckMemory();
-   _CrtDumpMemoryLeaks();
 #endif
   }
 
@@ -230,7 +233,7 @@ Voluntary context switches %ld, Involuntary context switches %ld\n",
   my_init_done= my_thr_key_mysys_exists= 0;
 } /* my_end */
 
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
 /* Dummy tag function for debugging */
 
 void my_debug_put_break_here(void)
@@ -254,8 +257,6 @@ void my_parameter_handler(const wchar_t * expression, const wchar_t * function,
                           const wchar_t * file, unsigned int line,
                           uintptr_t pReserved)
 {
-  DBUG_PRINT("my",("Expression: %s  function: %s  file: %s, line: %d",
-		   expression, function, file, line));
   __debugbreak();
 }
 

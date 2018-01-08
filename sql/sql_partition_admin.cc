@@ -15,6 +15,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#include "mariadb.h"
 #include "sql_parse.h"                      // check_one_table_access
                                             // check_merge_table_access
                                             // check_one_table_access
@@ -89,9 +90,15 @@ bool Sql_cmd_alter_table_exchange_partition::execute(THD *thd)
 
   /* Not allowed with EXCHANGE PARTITION */
   DBUG_ASSERT(!create_info.data_file_name && !create_info.index_file_name);
+  WSREP_TO_ISOLATION_BEGIN_WRTCHK(NULL, NULL, first_table);
 
-  thd->enable_slow_log= opt_log_slow_admin_statements;
+  thd->prepare_logs_for_admin_command();
   DBUG_RETURN(exchange_partition(thd, first_table, &alter_info));
+#ifdef WITH_WSREP
+ error:
+  /* handle errors in TO_ISOLATION here */
+  DBUG_RETURN(true);
+#endif /* WITH_WSREP */
 }
 
 
@@ -172,7 +179,8 @@ static bool check_exchange_partition(TABLE *table, TABLE *part_table)
 */
 static bool compare_table_with_partition(THD *thd, TABLE *table,
                                          TABLE *part_table,
-                                         partition_element *part_elem)
+                                         partition_element *part_elem,
+                                         uint part_id)
 {
   HA_CREATE_INFO table_create_info, part_create_info;
   Alter_info part_alter_info;
@@ -197,6 +205,7 @@ static bool compare_table_with_partition(THD *thd, TABLE *table,
   }
   /* db_type is not set in prepare_alter_table */
   part_create_info.db_type= part_table->part_info->default_engine_type;
+  ((ha_partition*)(part_table->file))->update_part_create_info(&part_create_info, part_id);
   /*
     Since we exchange the partition with the table, allow exchanging
     auto_increment value as well.
@@ -371,16 +380,14 @@ static bool exchange_name_with_ddl_log(THD *thd,
   /* call rename table from table to tmp-name */
   DBUG_EXECUTE_IF("exchange_partition_fail_3",
                   my_error(ER_ERROR_ON_RENAME, MYF(0),
-                           name, tmp_name, 0, "n/a");
+                           name, tmp_name, 0);
                   error_set= TRUE;
                   goto err_rename;);
   DBUG_EXECUTE_IF("exchange_partition_abort_3", DBUG_SUICIDE(););
   if (file->ha_rename_table(name, tmp_name))
   {
-    char errbuf[MYSYS_STRERROR_SIZE];
-    my_strerror(errbuf, sizeof(errbuf), my_errno);
     my_error(ER_ERROR_ON_RENAME, MYF(0), name, tmp_name,
-             my_errno, errbuf);
+             my_errno);
     error_set= TRUE;
     goto err_rename;
   }
@@ -392,16 +399,13 @@ static bool exchange_name_with_ddl_log(THD *thd,
   /* call rename table from partition to table */
   DBUG_EXECUTE_IF("exchange_partition_fail_5",
                   my_error(ER_ERROR_ON_RENAME, MYF(0),
-                           from_name, name, 0, "n/a");
+                           from_name, name, 0);
                   error_set= TRUE;
                   goto err_rename;);
   DBUG_EXECUTE_IF("exchange_partition_abort_5", DBUG_SUICIDE(););
   if (file->ha_rename_table(from_name, name))
   {
-    char errbuf[MYSYS_STRERROR_SIZE];
-    my_strerror(errbuf, sizeof(errbuf), my_errno);
-    my_error(ER_ERROR_ON_RENAME, MYF(0), from_name, name,
-             my_errno, errbuf);
+    my_error(ER_ERROR_ON_RENAME, MYF(0), from_name, name, my_errno);
     error_set= TRUE;
     goto err_rename;
   }
@@ -413,16 +417,13 @@ static bool exchange_name_with_ddl_log(THD *thd,
   /* call rename table from tmp-nam to partition */
   DBUG_EXECUTE_IF("exchange_partition_fail_7",
                   my_error(ER_ERROR_ON_RENAME, MYF(0),
-                           tmp_name, from_name, 0, "n/a");
+                           tmp_name, from_name, 0);
                   error_set= TRUE;
                   goto err_rename;);
   DBUG_EXECUTE_IF("exchange_partition_abort_7", DBUG_SUICIDE(););
   if (file->ha_rename_table(tmp_name, from_name))
   {
-    char errbuf[MYSYS_STRERROR_SIZE];
-    my_strerror(errbuf, sizeof(errbuf), my_errno);
-    my_error(ER_ERROR_ON_RENAME, MYF(0), tmp_name, from_name,
-             my_errno, errbuf);
+    my_error(ER_ERROR_ON_RENAME, MYF(0), tmp_name, from_name, my_errno);
     error_set= TRUE;
     goto err_rename;
   }
@@ -491,9 +492,9 @@ bool Sql_cmd_alter_table_exchange_partition::
   TABLE_LIST *swap_table_list;
   handlerton *table_hton;
   partition_element *part_elem;
-  char *partition_name;
+  const char *partition_name;
   char temp_name[FN_REFLEN+1];
-  char part_file_name[FN_REFLEN+1];
+  char part_file_name[2*FN_REFLEN+1];
   char swap_file_name[FN_REFLEN+1];
   char temp_file_name[FN_REFLEN+1];
   uint swap_part_id;
@@ -532,21 +533,6 @@ bool Sql_cmd_alter_table_exchange_partition::
                   &alter_prelocking_strategy))
     DBUG_RETURN(true);
 
-#ifdef WITH_WSREP
-  if (WSREP_ON)
-  {
-    if ((!thd->is_current_stmt_binlog_format_row() ||
-         /* TODO: Do we really need to check for temp tables in this case? */
-         !thd->find_temporary_table(table_list)) &&
-        wsrep_to_isolation_begin(thd, table_list->db, table_list->table_name,
-                                 NULL))
-    {
-      WSREP_WARN("ALTER TABLE EXCHANGE PARTITION isolation failure");
-      DBUG_RETURN(TRUE);
-    }
-  }
-#endif /* WITH_WSREP */
-
   part_table= table_list->table;
   swap_table= swap_table_list->table;
 
@@ -579,7 +565,7 @@ bool Sql_cmd_alter_table_exchange_partition::
                        swap_table_list->table_name,
                        "", 0);
   /* create a unique temp name #sqlx-nnnn_nnnn, x for eXchange */
-  my_snprintf(temp_name, sizeof(temp_name), "%sx-%lx_%lx",
+  my_snprintf(temp_name, sizeof(temp_name), "%sx-%lx_%llx",
               tmp_file_prefix, current_pid, thd->thread_id);
   if (lower_case_table_names)
     my_casedn_str(files_charset_info, temp_name);
@@ -588,9 +574,9 @@ bool Sql_cmd_alter_table_exchange_partition::
                        temp_name, "", FN_IS_TMP);
 
   if (!(part_elem= part_table->part_info->get_part_elem(partition_name,
-                                                        part_file_name +
-                                                          part_file_name_len,
-                                                        &swap_part_id)))
+                                  part_file_name + part_file_name_len,
+                                  sizeof(part_file_name) - part_file_name_len,
+                                  &swap_part_id)))
   {
  // my_error(ER_UNKNOWN_PARTITION, MYF(0), partition_name,
  //          part_table->alias);
@@ -604,12 +590,13 @@ bool Sql_cmd_alter_table_exchange_partition::
     DBUG_RETURN(TRUE);
   }
 
-  if (compare_table_with_partition(thd, swap_table, part_table, part_elem))
+  if (compare_table_with_partition(thd, swap_table, part_table, part_elem,
+                                   swap_part_id))
     DBUG_RETURN(TRUE);
 
   /* Table and partition has same structure/options, OK to exchange */
 
-  thd_proc_info(thd, "verifying data with partition");
+  thd_proc_info(thd, "Verifying data with partition");
 
   if (verify_data_with_partition(swap_table, part_table, swap_part_id))
     DBUG_RETURN(TRUE);
@@ -785,7 +772,7 @@ bool Sql_cmd_alter_table_truncate_partition::execute(THD *thd)
       (!thd->is_current_stmt_binlog_format_row() ||
        !thd->find_temporary_table(first_table))  &&
       wsrep_to_isolation_begin(
-        thd, first_table->db, first_table->table_name, NULL)
+          thd, first_table->db, first_table->table_name, NULL)
       )
   {
     WSREP_WARN("ALTER TABLE TRUNCATE PARTITION isolation failure");
@@ -808,11 +795,11 @@ bool Sql_cmd_alter_table_truncate_partition::execute(THD *thd)
     Prune all, but named partitions,
     to avoid excessive calls to external_lock().
   */
-  List_iterator<char> partition_names_it(alter_info->partition_names);
+  List_iterator<const char> partition_names_it(alter_info->partition_names);
   uint num_names= alter_info->partition_names.elements;
   for (i= 0; i < num_names; i++)
   {
-    char *partition_name= partition_names_it++;
+    const char *partition_name= partition_names_it++;
     String *str_partition_name= new (thd->mem_root)
                                   String(partition_name, system_charset_info);
     if (!str_partition_name)

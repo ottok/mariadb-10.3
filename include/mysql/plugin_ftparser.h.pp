@@ -137,6 +137,43 @@ size_t my_md5_context_size();
 void my_md5_init(void *context);
 void my_md5_input(void *context, const unsigned char *buf, size_t len);
 void my_md5_result(void *context, unsigned char *digest);
+enum my_aes_mode {
+    MY_AES_ECB, MY_AES_CBC
+};
+extern struct my_crypt_service_st {
+  int (*my_aes_crypt_init)(void *ctx, enum my_aes_mode mode, int flags,
+                      const unsigned char* key, unsigned int klen,
+                      const unsigned char* iv, unsigned int ivlen);
+  int (*my_aes_crypt_update)(void *ctx, const unsigned char *src, unsigned int slen,
+                        unsigned char *dst, unsigned int *dlen);
+  int (*my_aes_crypt_finish)(void *ctx, unsigned char *dst, unsigned int *dlen);
+  int (*my_aes_crypt)(enum my_aes_mode mode, int flags,
+                 const unsigned char *src, unsigned int slen, unsigned char *dst, unsigned int *dlen,
+                 const unsigned char *key, unsigned int klen, const unsigned char *iv, unsigned int ivlen);
+  unsigned int (*my_aes_get_size)(enum my_aes_mode mode, unsigned int source_length);
+  unsigned int (*my_aes_ctx_size)(enum my_aes_mode mode);
+  int (*my_random_bytes)(unsigned char* buf, int num);
+} *my_crypt_service;
+int my_aes_crypt_init(void *ctx, enum my_aes_mode mode, int flags,
+                      const unsigned char* key, unsigned int klen,
+                      const unsigned char* iv, unsigned int ivlen);
+int my_aes_crypt_update(void *ctx, const unsigned char *src, unsigned int slen,
+                        unsigned char *dst, unsigned int *dlen);
+int my_aes_crypt_finish(void *ctx, unsigned char *dst, unsigned int *dlen);
+int my_aes_crypt(enum my_aes_mode mode, int flags,
+                 const unsigned char *src, unsigned int slen, unsigned char *dst, unsigned int *dlen,
+                 const unsigned char *key, unsigned int klen, const unsigned char *iv, unsigned int ivlen);
+int my_random_bytes(unsigned char* buf, int num);
+unsigned int my_aes_get_size(enum my_aes_mode mode, unsigned int source_length);
+unsigned int my_aes_ctx_size(enum my_aes_mode mode);
+extern struct my_print_error_service_st {
+  void (*my_error_func)(unsigned int nr, unsigned long MyFlags, ...);
+  void (*my_printf_error_func)(unsigned int nr, const char *fmt, unsigned long MyFlags,...);
+  void (*my_printv_error_func)(unsigned int error, const char *format, unsigned long MyFlags, va_list ap);
+} *my_print_error_service;
+extern void my_error(unsigned int nr, unsigned long MyFlags, ...);
+extern void my_printf_error(unsigned int my_err, const char *format, unsigned long MyFlags, ...);
+extern void my_printv_error(unsigned int error, const char *format, unsigned long MyFlags,va_list ap);
 extern struct my_snprintf_service_st {
   size_t (*my_snprintf_type)(char*, size_t, const char*, ...);
   size_t (*my_vsnprintf_type)(char *, size_t, const char*, va_list);
@@ -233,23 +270,31 @@ struct st_mysql_lex_string
   size_t length;
 };
 typedef struct st_mysql_lex_string MYSQL_LEX_STRING;
+struct st_mysql_const_lex_string
+{
+  const char *str;
+  size_t length;
+};
+typedef struct st_mysql_const_lex_string MYSQL_CONST_LEX_STRING;
 extern struct thd_alloc_service_st {
-  void *(*thd_alloc_func)(void*, unsigned int);
-  void *(*thd_calloc_func)(void*, unsigned int);
+  void *(*thd_alloc_func)(void*, size_t);
+  void *(*thd_calloc_func)(void*, size_t);
   char *(*thd_strdup_func)(void*, const char *);
-  char *(*thd_strmake_func)(void*, const char *, unsigned int);
-  void *(*thd_memdup_func)(void*, const void*, unsigned int);
-  MYSQL_LEX_STRING *(*thd_make_lex_string_func)(void*, MYSQL_LEX_STRING *,
-                                        const char *, unsigned int, int);
+  char *(*thd_strmake_func)(void*, const char *, size_t);
+  void *(*thd_memdup_func)(void*, const void*, size_t);
+  MYSQL_CONST_LEX_STRING *(*thd_make_lex_string_func)(void*,
+                                        MYSQL_CONST_LEX_STRING *,
+                                        const char *, size_t, int);
 } *thd_alloc_service;
-void *thd_alloc(void* thd, unsigned int size);
-void *thd_calloc(void* thd, unsigned int size);
+void *thd_alloc(void* thd, size_t size);
+void *thd_calloc(void* thd, size_t size);
 char *thd_strdup(void* thd, const char *str);
-char *thd_strmake(void* thd, const char *str, unsigned int size);
-void *thd_memdup(void* thd, const void* str, unsigned int size);
-MYSQL_LEX_STRING *thd_make_lex_string(void* thd, MYSQL_LEX_STRING *lex_str,
-                                      const char *str, unsigned int size,
-                                      int allocate_lex_string);
+char *thd_strmake(void* thd, const char *str, size_t size);
+void *thd_memdup(void* thd, const void* str, size_t size);
+MYSQL_CONST_LEX_STRING
+*thd_make_lex_string(void* thd, MYSQL_CONST_LEX_STRING *lex_str,
+                     const char *str, size_t size,
+                     int allocate_lex_string);
 extern struct thd_autoinc_service_st {
   void (*thd_get_autoinc_func)(const void* thd,
                                unsigned long* off, unsigned long* inc);
@@ -427,7 +472,6 @@ void **thd_ha_data(const void* thd, const struct handlerton *hton);
 void thd_storage_lock_wait(void* thd, long long value);
 int thd_tx_isolation(const void* thd);
 int thd_tx_is_read_only(const void* thd);
-int thd_rpl_is_parallel(const void* thd);
 int mysql_tmpfile(const char *prefix);
 unsigned long thd_get_thread_id(const void* thd);
 void thd_get_xid(const void* thd, MYSQL_XID *xid);

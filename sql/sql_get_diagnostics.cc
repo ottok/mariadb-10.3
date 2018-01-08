@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02111-1307  USA */
 
+#include "mariadb.h"
 #include "sql_list.h"                 // Sql_alloc, List, List_iterator
 #include "sql_cmd.h"                  // Sql_cmd
 #include "sql_class.h"                // Diagnostics_area
@@ -108,6 +109,9 @@ Diagnostics_information_item::set_value(THD *thd, Item **value)
   srp= m_target->get_settable_routine_parameter();
 
   DBUG_ASSERT(srp);
+
+  /* GET DIAGNOSTICS is not allowed in prepared statements */
+  DBUG_ASSERT(srp->get_item_param() == NULL);
 
   /* Set variable/parameter value. */
   rv= srp->set_value(thd, thd->spcont, value);

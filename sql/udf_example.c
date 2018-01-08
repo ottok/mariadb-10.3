@@ -125,7 +125,7 @@ typedef unsigned long long ulonglong;
 typedef long long longlong;
 #endif /*__WIN__*/
 #else
-#include <my_global.h>
+#include "mariadb.h"
 #include <my_sys.h>
 #if defined(MYSQL_SERVER)
 #include <m_string.h>		/* To get strmov() */
@@ -1095,7 +1095,7 @@ my_bool is_const_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     strmov(message, "IS_CONST accepts only one argument");
     return 1;
   }
-  initid->ptr= (char*)((args->args[0] != NULL) ? 1UL : 0);
+  initid->ptr= (char*)((args->args[0] != NULL) ? (size_t)1 : (size_t)0);
   return 0;
 }
 

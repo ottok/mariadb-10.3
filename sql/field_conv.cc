@@ -25,7 +25,7 @@
     gives much more speed.
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_class.h"                          // THD
 #include <m_ctype.h>
@@ -122,10 +122,11 @@ static int set_bad_null_error(Field *field, int err)
     field->set_warning(Sql_condition::WARN_LEVEL_WARN, err, 1);
     /* fall through */
   case CHECK_FIELD_IGNORE:
+  case CHECK_FIELD_EXPRESSION:
     return 0;
   case CHECK_FIELD_ERROR_FOR_NULL:
     if (!field->table->in_use->no_errors)
-      my_error(ER_BAD_NULL_ERROR, MYF(0), field->field_name);
+      my_error(ER_BAD_NULL_ERROR, MYF(0), field->field_name.str);
     return -1;
   }
   DBUG_ASSERT(0); // impossible
@@ -417,6 +418,13 @@ void Field::do_field_decimal(Copy_field *copy)
 }
 
 
+void Field::do_field_timestamp(Copy_field *copy)
+{
+  // XXX why couldn't we do it everywhere?
+  copy->from_field->save_in_field(copy->to_field);
+}
+
+
 void Field::do_field_temporal(Copy_field *copy)
 {
   MYSQL_TIME ltime;
@@ -521,7 +529,8 @@ static void do_varstring1(Copy_field *copy)
   if (length > copy->to_length- 1)
   {
     length=copy->to_length - 1;
-    if (copy->from_field->table->in_use->count_cuted_fields &&
+    if (copy->from_field->table->in_use->count_cuted_fields >
+        CHECK_FIELD_EXPRESSION &&
         copy->to_field)
       copy->to_field->set_warning(Sql_condition::WARN_LEVEL_WARN,
                                   WARN_DATA_TRUNCATED, 1);
@@ -540,7 +549,7 @@ static void do_varstring1_mb(Copy_field *copy)
   Well_formed_prefix prefix(cs, (char*) from_ptr, from_length, to_char_length);
   if (prefix.length() < from_length)
   {
-    if (current_thd->count_cuted_fields)
+    if (current_thd->count_cuted_fields > CHECK_FIELD_EXPRESSION)
       copy->to_field->set_warning(Sql_condition::WARN_LEVEL_WARN,
                                   WARN_DATA_TRUNCATED, 1);
   }
@@ -555,7 +564,8 @@ static void do_varstring2(Copy_field *copy)
   if (length > copy->to_length- HA_KEY_BLOB_LENGTH)
   {
     length=copy->to_length-HA_KEY_BLOB_LENGTH;
-    if (copy->from_field->table->in_use->count_cuted_fields &&
+    if (copy->from_field->table->in_use->count_cuted_fields >
+        CHECK_FIELD_EXPRESSION &&
         copy->to_field)
       copy->to_field->set_warning(Sql_condition::WARN_LEVEL_WARN,
                                   WARN_DATA_TRUNCATED, 1);
@@ -575,7 +585,7 @@ static void do_varstring2_mb(Copy_field *copy)
   Well_formed_prefix prefix(cs, (char*) from_beg, from_length, char_length);
   if (prefix.length() < from_length)
   {
-    if (current_thd->count_cuted_fields)
+    if (current_thd->count_cuted_fields > CHECK_FIELD_EXPRESSION)
       copy->to_field->set_warning(Sql_condition::WARN_LEVEL_WARN,
                                   WARN_DATA_TRUNCATED, 1);
   }  
@@ -706,6 +716,16 @@ void Copy_field::set(Field *to,Field *from,bool save)
 }
 
 
+Field::Copy_func *Field_timestamp::get_copy_func(const Field *from) const
+{
+  Field::Copy_func *copy= Field_temporal::get_copy_func(from);
+  if (copy == do_field_temporal && from->type() == MYSQL_TYPE_TIMESTAMP)
+    return do_field_timestamp;
+  else
+    return copy;
+}
+
+
 Field::Copy_func *Field_temporal::get_copy_func(const Field *from) const
 {
   /* If types are not 100 % identical then convert trough get_date() */
@@ -737,7 +757,8 @@ Field::Copy_func *Field_varstring::get_copy_func(const Field *from) const
     return do_field_varbinary_pre50;
   if (Field_varstring::real_type() != from->real_type() ||
       Field_varstring::charset() != from->charset() ||
-      length_bytes != ((const Field_varstring*) from)->length_bytes)
+      length_bytes != ((const Field_varstring*) from)->length_bytes ||
+      !compression_method() != !from->compression_method())
     return do_field_string;
   return length_bytes == 1 ?
          (from->charset()->mbmaxlen == 1 ? do_varstring1 : do_varstring1_mb) :

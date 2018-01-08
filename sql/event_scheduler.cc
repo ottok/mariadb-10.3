@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "event_scheduler.h"
@@ -85,7 +85,7 @@ Event_worker_thread::print_warnings(THD *thd, Event_job_data *et)
   char prefix_buf[5 * STRING_BUFFER_USUAL_SIZE];
   String prefix(prefix_buf, sizeof(prefix_buf), system_charset_info);
   prefix.length(0);
-  prefix.append("Event Scheduler: [");
+  prefix.append(STRING_WITH_LEN("Event Scheduler: ["));
 
   prefix.append(et->definer.str, et->definer.length, system_charset_info);
   prefix.append("][", 2);
@@ -295,13 +295,12 @@ Event_worker_thread::run(THD *thd, Event_queue_element_for_exec *event)
   res= post_init_event_thread(thd);
 
   DBUG_ENTER("Event_worker_thread::run");
-  DBUG_PRINT("info", ("Time is %ld, THD: 0x%lx", (long) my_time(0), (long) thd));
+  DBUG_PRINT("info", ("Time is %u, THD: %p", (uint)my_time(0), thd));
 
-  inc_thread_running();
   if (res)
     goto end;
 
-  if ((res= db_repository->load_named_event(thd, event->dbname, event->name,
+  if ((res= db_repository->load_named_event(thd, &event->dbname, &event->name,
                                             &job_data)))
   {
     DBUG_PRINT("error", ("Got error from load_named_event"));
@@ -326,7 +325,6 @@ end:
              event->name.str));
 
   delete event;
-  dec_thread_running();
   deinit_event_thread(thd);
 
   DBUG_VOID_RETURN;
@@ -420,7 +418,7 @@ Event_scheduler::start(int *err_no)
   scheduler_thd= new_thd;
   DBUG_PRINT("info", ("Setting state go RUNNING"));
   state= RUNNING;
-  DBUG_PRINT("info", ("Forking new thread for scheduler. THD: 0x%lx", (long) new_thd));
+  DBUG_PRINT("info", ("Forking new thread for scheduler. THD: %p", new_thd));
   if ((*err_no= mysql_thread_create(key_thread_event_scheduler,
                                     &th, &connection_attrib,
                                     event_scheduler_thread,
@@ -485,7 +483,7 @@ Event_scheduler::run(THD *thd)
     }
 
     DBUG_PRINT("info", ("get_top_for_execution_if_time returned "
-                        "event_name=0x%lx", (long) event_name));
+                        "event_name=%p", event_name));
     if (event_name)
     {
       if ((res= execute_top(event_name)))
@@ -566,7 +564,7 @@ Event_scheduler::execute_top(Event_queue_element_for_exec *event_name)
   started_events++;
   executed_events++;                            // For SHOW STATUS
 
-  DBUG_PRINT("info", ("Event is in THD: 0x%lx", (long) new_thd));
+  DBUG_PRINT("info", ("Event is in THD: %p", new_thd));
   DBUG_RETURN(FALSE);
 
 error:
@@ -617,7 +615,7 @@ Event_scheduler::stop()
 {
   THD *thd= current_thd;
   DBUG_ENTER("Event_scheduler::stop");
-  DBUG_PRINT("enter", ("thd: 0x%lx", (long) thd));
+  DBUG_PRINT("enter", ("thd: %p", thd));
 
   LOCK_DATA();
   DBUG_PRINT("info", ("state before action %s", scheduler_states_names[state].str));
@@ -648,14 +646,11 @@ Event_scheduler::stop()
     state= STOPPING;
     DBUG_PRINT("info", ("Scheduler thread has id %lu",
                         (ulong) scheduler_thd->thread_id));
-    /* Lock from delete */
-    mysql_mutex_lock(&scheduler_thd->LOCK_thd_data);
     /* This will wake up the thread if it waits on Queue's conditional */
     sql_print_information("Event Scheduler: Killing the scheduler thread, "
                           "thread id %lu",
                           (ulong) scheduler_thd->thread_id);
     scheduler_thd->awake(KILL_CONNECTION);
-    mysql_mutex_unlock(&scheduler_thd->LOCK_thd_data);
 
     /* thd could be 0x0, when shutting down */
     sql_print_information("Event Scheduler: "

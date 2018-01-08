@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -172,7 +173,6 @@ row_undo_search_clust_to_pcur(
 	rec_offs_init(offsets_);
 
 	mtr_start(&mtr);
-	dict_disable_redo_if_temporary(node->table, &mtr);
 
 	clust_index = dict_table_get_first_index(node->table);
 
@@ -185,7 +185,7 @@ row_undo_search_clust_to_pcur(
 
 	rec = btr_pcur_get_rec(&node->pcur);
 
-	offsets = rec_get_offsets(rec, clust_index, offsets,
+	offsets = rec_get_offsets(rec, clust_index, offsets, true,
 				  ULINT_UNDEFINED, &heap);
 
 	found = row_get_rec_roll_ptr(rec, clust_index, offsets)
@@ -195,11 +195,10 @@ row_undo_search_clust_to_pcur(
 		ut_ad(row_get_rec_trx_id(rec, clust_index, offsets)
 		      == node->trx->id);
 
-		if (dict_table_get_format(node->table) >= UNIV_FORMAT_B) {
-			/* In DYNAMIC or COMPRESSED format, there is
-			no prefix of externally stored columns in the
-			clustered index record. Build a cache of
-			column prefixes. */
+		if (dict_table_has_atomic_blobs(node->table)) {
+			/* There is no prefix of externally stored
+			columns in the clustered index record. Build a
+			cache of column prefixes. */
 			ext = &node->ext;
 		} else {
 			/* REDUNDANT and COMPACT formats store a local
@@ -227,10 +226,14 @@ row_undo_search_clust_to_pcur(
 		}
 
 		if (node->rec_type == TRX_UNDO_UPD_EXIST_REC) {
+			ut_ad(node->row->info_bits == REC_INFO_MIN_REC_FLAG
+			      || node->row->info_bits == 0);
 			node->undo_row = dtuple_copy(node->row, node->heap);
 			row_upd_replace(node->undo_row, &node->undo_ext,
 					clust_index, node->update, node->heap);
 		} else {
+			ut_ad((node->row->info_bits == REC_INFO_MIN_REC_FLAG)
+			      == (node->rec_type == TRX_UNDO_INSERT_DEFAULT));
 			node->undo_row = NULL;
 			node->undo_ext = NULL;
 		}
@@ -339,6 +342,13 @@ row_undo_step(
 	node = static_cast<undo_node_t*>(thr->run_node);
 
 	ut_ad(que_node_get_type(node) == QUE_NODE_UNDO);
+
+	if (UNIV_UNLIKELY(trx == trx_roll_crash_recv_trx)
+	    && trx_roll_must_shutdown()) {
+		/* Shutdown has been initiated. */
+		trx->error_state = DB_INTERRUPTED;
+		return(NULL);
+	}
 
 	err = row_undo(node, thr);
 

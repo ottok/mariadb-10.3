@@ -15,6 +15,7 @@
  along with this program; if not, write to the Free Software
  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#include <my_global.h>
 #include <my_time.h>
 #include <m_string.h>
 #include <m_ctype.h>
@@ -202,7 +203,7 @@ static uint skip_digits(const char **str, const char *end)
   while (s < end && my_isdigit(&my_charset_latin1, *s))
     s++;
   *str= s;
-  return s - start;
+  return (uint)(s - start);
 }
 
 
@@ -236,7 +237,7 @@ static void get_microseconds(ulong *val, MYSQL_TIME_STATUS *status,
   uint tmp= 0; /* For the case '10:10:10.' */
   if (get_digits(&tmp, number_of_fields, str, end, 6))
     status->warnings|= MYSQL_TIME_WARN_TRUNCATED;
-  if ((status->precision= (*str - start)) < 6)
+  if ((status->precision= (uint)(*str - start)) < 6)
     *val= (ulong) (tmp * log_10_int[6 - (*str - start)]);
   else
     *val= tmp;
@@ -358,7 +359,7 @@ str_to_datetime(const char *str, uint length, MYSQL_TIME *l_time,
     const char *start= str;
     if (get_number(&l_time->year, &number_of_fields, &str, end))
       status->warnings|= MYSQL_TIME_WARN_TRUNCATED;
-    year_length= str - start;
+    year_length= (uint)(str - start);
 
     if (!status->warnings &&
         (get_punct(&str, end)

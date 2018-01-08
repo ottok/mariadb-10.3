@@ -16,7 +16,7 @@
 
 /* Functions to handle keys and fields in forms */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "key.h"                                // key_rec_cmp
 #include "field.h"                              // Field
@@ -112,7 +112,7 @@ int find_ref_key(KEY *key, uint key_count, uchar *record, Field *field,
   @param with_zerofill  skipped bytes in the key buffer to be filled with 0
 */
 
-void key_copy(uchar *to_key, uchar *from_record, KEY *key_info,
+void key_copy(uchar *to_key, const uchar *from_record, KEY *key_info,
               uint key_length, bool with_zerofill)
 {
   uint length;
@@ -374,7 +374,7 @@ void field_unpack(String *to, Field *field, const uchar *rec, uint max_length,
     {
       const char *tmp_end= tmp.ptr() + tmp.length();
       while (tmp_end > tmp.ptr() && !*--tmp_end) ;
-      tmp.length(tmp_end - tmp.ptr() + 1);
+      tmp.length((uint32)(tmp_end - tmp.ptr() + 1));
     }
     if (cs->mbmaxlen > 1 && prefix_key)
     {

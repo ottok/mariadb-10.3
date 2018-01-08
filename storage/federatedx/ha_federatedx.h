@@ -215,6 +215,7 @@ public:
                              void *ref)=0;
   virtual int seek_position(FEDERATEDX_IO_RESULT **io_result,
                             const void *ref)=0;
+  virtual void set_thd(void *thd) { }
 
 };
 
@@ -233,7 +234,7 @@ public:
 
   bool has_connections() const { return txn_list != NULL; }
   bool in_transaction() const { return savepoint_next != 0; }
-  int acquire(FEDERATEDX_SHARE *share, bool readonly, federatedx_io **io);
+  int acquire(FEDERATEDX_SHARE *share, void *thd, bool readonly, federatedx_io **io);
   void release(federatedx_io **io);
   void close(FEDERATEDX_SERVER *);
 
@@ -330,7 +331,7 @@ public:
     return (HA_PRIMARY_KEY_IN_READ_INDEX | HA_FILE_BASED
             | HA_REC_NOT_IN_SEQ | HA_AUTO_PART_KEY | HA_CAN_INDEX_BLOBS |
             HA_BINLOG_ROW_CAPABLE | HA_BINLOG_STMT_CAPABLE | HA_CAN_REPAIR |
-            HA_NO_PREFIX_CHAR_KEYS | HA_PRIMARY_KEY_REQUIRED_FOR_DELETE |
+            HA_PRIMARY_KEY_REQUIRED_FOR_DELETE |
             HA_PARTIAL_COLUMN_READ | HA_NULL_IN_KEY);
   }
   /*
@@ -394,7 +395,7 @@ public:
   void start_bulk_insert(ha_rows rows, uint flags);
   int end_bulk_insert();
   int write_row(uchar *buf);
-  int update_row(const uchar *old_data, uchar *new_data);
+  int update_row(const uchar *old_data, const uchar *new_data);
   int delete_row(const uchar *buf);
   int index_init(uint keynr, bool sorted);
   ha_rows estimate_rows_upper_bound();

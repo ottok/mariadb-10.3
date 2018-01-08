@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2015, 2017 MariaDB Corporation.
+Copyright (c) 2015, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -27,28 +27,6 @@ Created 31/03/2015 Jan Lindström
 #define fil0fil_ic
 
 /*******************************************************************//**
-Return space name */
-UNIV_INLINE
-char*
-fil_space_name(
-/*===========*/
-	fil_space_t*	space)	/*!< in: space */
-{
-	return (space->name);
-}
-
-/*******************************************************************//**
-Return space flags */
-UNIV_INLINE
-ulint
-fil_space_flags(
-/*===========*/
-	fil_space_t*	space)	/*!< in: space */
-{
-	return (space->flags);
-}
-
-/*******************************************************************//**
 Return page type name */
 UNIV_INLINE
 const char*
@@ -61,6 +39,7 @@ fil_get_page_type_name(
 		return "PAGE_COMPRESSED_ENRYPTED";
 	case FIL_PAGE_PAGE_COMPRESSED:
 		return "PAGE_COMPRESSED";
+	case FIL_PAGE_TYPE_INSTANT:
 	case FIL_PAGE_INDEX:
 		return "INDEX";
 	case FIL_PAGE_RTREE:
@@ -97,19 +76,6 @@ fil_get_page_type_name(
 }
 
 /****************************************************************//**
-Get block size from fil node
-@return block size*/
-UNIV_INLINE
-ulint
-fil_node_get_block_size(
-/*====================*/
-	fil_node_t*     node)		/*!< in: Node where to get block
-					size */
-{
-	return (node->block_size);
-}
-
-/****************************************************************//**
 Validate page type.
 @return true if valid, false if not */
 UNIV_INLINE
@@ -124,6 +90,7 @@ fil_page_type_validate(
 	if (!((page_type == FIL_PAGE_PAGE_COMPRESSED ||
 		page_type == FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED ||
 		page_type == FIL_PAGE_INDEX ||
+		page_type == FIL_PAGE_TYPE_INSTANT ||
 		page_type == FIL_PAGE_RTREE ||
 		page_type == FIL_PAGE_UNDO_LOG ||
 		page_type == FIL_PAGE_INODE ||

@@ -18,13 +18,12 @@
 #pragma implementation                         // gcc: Class implementation
 #endif
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "transaction.h"
-#include "rpl_handler.h"
 #include "debug_sync.h"         // DEBUG_SYNC
 #include "sql_acl.h"
-
+#include "semisync_master.h"
 
 #ifndef EMBEDDED_LIBRARY
 /**
@@ -198,11 +197,10 @@ bool trans_begin(THD *thd, uint flags)
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
 
   /*
-    The following set should not be needed as the flag should always be 0
-    when we come here.  We should at some point change this to an assert.
+    The following set should not be needed as transaction state should
+    already be reset. We should at some point change this to an assert.
   */
-  thd->transaction.all.modified_non_trans_table= FALSE;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
   thd->has_waiter= false;
   thd->waiting_on_group_commit= false;
 
@@ -319,12 +317,19 @@ bool trans_commit(THD *thd)
       transaction, so the hooks for rollback will be called.
     */
   if (res)
-    (void) RUN_HOOK(transaction, after_rollback, (thd, FALSE));
+  {
+#ifdef HAVE_REPLICATION
+    repl_semisync_master.wait_after_rollback(thd, FALSE);
+#endif
+  }
   else
-    (void) RUN_HOOK(transaction, after_commit, (thd, FALSE));
+  {
+#ifdef HAVE_REPLICATION
+    repl_semisync_master.wait_after_commit(thd, FALSE);
+#endif
+  }
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
-  thd->transaction.all.modified_non_trans_table= FALSE;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
   thd->lex->start_transaction_opt= 0;
 
   trans_track_end_trx(thd);
@@ -373,8 +378,7 @@ bool trans_commit_implicit(THD *thd)
   }
 
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
-  thd->transaction.all.modified_non_trans_table= FALSE;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
 
   /*
     Upon implicit commit, reset the current transaction
@@ -416,12 +420,13 @@ bool trans_rollback(THD *thd)
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
   DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
   res= ha_rollback_trans(thd, TRUE);
-  (void) RUN_HOOK(transaction, after_rollback, (thd, FALSE));
+#ifdef HAVE_REPLICATION
+  repl_semisync_master.wait_after_rollback(thd, FALSE);
+#endif
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
   /* Reset the binlog transaction marker */
   thd->variables.option_bits&= ~OPTION_GTID_BEGIN;
-  thd->transaction.all.modified_non_trans_table= FALSE;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
   thd->lex->start_transaction_opt= 0;
 
   trans_track_end_trx(thd);
@@ -467,8 +472,7 @@ bool trans_rollback_implicit(THD *thd)
     preserve backward compatibility.
   */
   thd->variables.option_bits&= ~(OPTION_KEEP_LOG);
-  thd->transaction.all.modified_non_trans_table= false;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
 
   /* Rollback should clear transaction_rollback_request flag. */
   DBUG_ASSERT(! thd->transaction_rollback_request);
@@ -506,6 +510,8 @@ bool trans_commit_stmt(THD *thd)
   */
   DBUG_ASSERT(! thd->in_sub_stmt);
 
+  thd->merge_unsafe_rollback_flags();
+
   if (thd->transaction.stmt.ha_list)
   {
     if (WSREP_ON)
@@ -529,9 +535,17 @@ bool trans_commit_stmt(THD *thd)
       transaction, so the hooks for rollback will be called.
     */
   if (res)
-    (void) RUN_HOOK(transaction, after_rollback, (thd, FALSE));
+  {
+#ifdef HAVE_REPLICATION
+    repl_semisync_master.wait_after_rollback(thd, FALSE);
+#endif
+  }
   else
-    (void) RUN_HOOK(transaction, after_commit, (thd, FALSE));
+  {
+#ifdef HAVE_REPLICATION
+    repl_semisync_master.wait_after_commit(thd, FALSE);
+#endif
+  }
 
   thd->transaction.stmt.reset();
 
@@ -559,6 +573,8 @@ bool trans_rollback_stmt(THD *thd)
   */
   DBUG_ASSERT(! thd->in_sub_stmt);
 
+  thd->merge_unsafe_rollback_flags();
+
   if (thd->transaction.stmt.ha_list)
   {
     if (WSREP_ON)
@@ -568,7 +584,9 @@ bool trans_rollback_stmt(THD *thd)
       trans_reset_one_shot_chistics(thd);
   }
 
-  (void) RUN_HOOK(transaction, after_rollback, (thd, FALSE));
+#ifdef HAVE_REPLICATION
+  repl_semisync_master.wait_after_rollback(thd, FALSE);
+#endif
 
   thd->transaction.stmt.reset();
 
@@ -577,7 +595,7 @@ bool trans_rollback_stmt(THD *thd)
 
 /* Find a named savepoint in the current transaction. */
 static SAVEPOINT **
-find_savepoint(THD *thd, LEX_STRING name)
+find_savepoint(THD *thd, LEX_CSTRING name)
 {
   SAVEPOINT **sv= &thd->transaction.savepoints;
 
@@ -603,7 +621,7 @@ find_savepoint(THD *thd, LEX_STRING name)
   @retval TRUE   Failure
 */
 
-bool trans_savepoint(THD *thd, LEX_STRING name)
+bool trans_savepoint(THD *thd, LEX_CSTRING name)
 {
   SAVEPOINT **sv, *newsv;
   DBUG_ENTER("trans_savepoint");
@@ -680,7 +698,7 @@ bool trans_savepoint(THD *thd, LEX_STRING name)
   @retval TRUE   Failure
 */
 
-bool trans_rollback_to_savepoint(THD *thd, LEX_STRING name)
+bool trans_rollback_to_savepoint(THD *thd, LEX_CSTRING name)
 {
   int res= FALSE;
   SAVEPOINT *sv= *find_savepoint(thd, name);
@@ -757,7 +775,7 @@ bool trans_rollback_to_savepoint(THD *thd, LEX_STRING name)
   @retval TRUE   Failure
 */
 
-bool trans_release_savepoint(THD *thd, LEX_STRING name)
+bool trans_release_savepoint(THD *thd, LEX_CSTRING name)
 {
   int res= FALSE;
   SAVEPOINT *sv= *find_savepoint(thd, name);
@@ -979,8 +997,7 @@ bool trans_xa_commit(THD *thd)
   }
 
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
-  thd->transaction.all.modified_non_trans_table= FALSE;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
   thd->server_status&=
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
   DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
@@ -1037,8 +1054,7 @@ bool trans_xa_rollback(THD *thd)
   res= xa_trans_force_rollback(thd);
 
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
-  thd->transaction.all.modified_non_trans_table= FALSE;
-  thd->transaction.all.m_unsafe_rollback_flags&= ~THD_TRANS::DID_WAIT;
+  thd->transaction.all.reset();
   thd->server_status&=
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
   DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));

@@ -1,7 +1,7 @@
 // Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-// This source code is licensed under the BSD-style license found in the
-// LICENSE file in the root directory of this source tree. An additional grant
-// of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
@@ -37,11 +37,11 @@ enum CompactionStyle : char {
   kCompactionStyleNone = 0x3,
 };
 
-// In Level-based comapction, it Determines which file from a level to be
+// In Level-based compaction, it Determines which file from a level to be
 // picked to merge to the next level. We suggest people try
 // kMinOverlappingRatio first when you tune your database.
 enum CompactionPri : char {
-  // Slightly Priotize larger files by size compensated by #deletes
+  // Slightly prioritize larger files by size compensated by #deletes
   kByCompensatedSize = 0x0,
   // First compact files whose data's latest update time is oldest.
   // Try this if you only update some hot keys in small ranges.
@@ -62,7 +62,27 @@ struct CompactionOptionsFIFO {
   // Default: 1GB
   uint64_t max_table_files_size;
 
+  // Drop files older than TTL. TTL based deletion will take precedence over
+  // size based deletion if ttl > 0.
+  // delete if sst_file_creation_time < (current_time - ttl)
+  // unit: seconds. Ex: 1 day = 1 * 24 * 60 * 60
+  // Default: 0 (disabled)
+  uint64_t ttl = 0;
+
+  // If true, try to do compaction to compact smaller files into larger ones.
+  // Minimum files to compact follows options.level0_file_num_compaction_trigger
+  // and compaction won't trigger if average compact bytes per del file is
+  // larger than options.write_buffer_size. This is to protect large files
+  // from being compacted again.
+  // Default: false;
+  bool allow_compaction = false;
+
   CompactionOptionsFIFO() : max_table_files_size(1 * 1024 * 1024 * 1024) {}
+  CompactionOptionsFIFO(uint64_t _max_table_files_size, bool _allow_compaction,
+                        uint64_t _ttl = 0)
+      : max_table_files_size(_max_table_files_size),
+        ttl(_ttl),
+        allow_compaction(_allow_compaction) {}
 };
 
 // Compression options for different compression algorithms like Zlib
@@ -240,7 +260,7 @@ struct AdvancedColumnFamilyOptions {
   // ignore the option.
   //
   // The option is best suited for workloads where keys will likely to insert
-  // to a location close the the last inserted key with the same prefix.
+  // to a location close the last inserted key with the same prefix.
   // One example could be inserting keys of the form (prefix + timestamp),
   // and keys of the same prefix always comes in with time order. Another
   // example would be updating the same key over and over again, in which case
@@ -262,7 +282,7 @@ struct AdvancedColumnFamilyOptions {
   // If <= 0, a proper value is automatically calculated (usually 1/8 of
   // writer_buffer_size, rounded up to a multiple of 4KB).
   //
-  // There are two additional restriction of the The specified size:
+  // There are two additional restriction of the specified size:
   // (1) size should be in the range of [4096, 2 << 30] and
   // (2) be the multiple of the CPU word (which helps with the memory
   // alignment).
@@ -390,8 +410,6 @@ struct AdvancedColumnFamilyOptions {
   //
   // Turning this feature on or off for an existing DB can cause unexpected
   // LSM tree structure so it's not recommended.
-  //
-  // NOTE: this option is experimental
   //
   // Default: false
   bool level_compaction_dynamic_level_bytes = false;
@@ -529,13 +547,13 @@ struct AdvancedColumnFamilyOptions {
   // Create ColumnFamilyOptions from Options
   explicit AdvancedColumnFamilyOptions(const Options& options);
 
-  // ---------------- DEPRECATED OPTIONS ----------------
+  // ---------------- OPTIONS NOT SUPPORTED ANYMORE ----------------
 
-  // DEPRECATED
+  // NOT SUPPORTED ANYMORE
   // This does not do anything anymore.
   int max_mem_compaction_level;
 
-  // DEPRECATED -- this options is no longer used
+  // NOT SUPPORTED ANYMORE -- this options is no longer used
   // Puts are delayed to options.delayed_write_rate when any level has a
   // compaction score that exceeds soft_rate_limit. This is ignored when == 0.0.
   //
@@ -544,13 +562,13 @@ struct AdvancedColumnFamilyOptions {
   // Dynamically changeable through SetOptions() API
   double soft_rate_limit = 0.0;
 
-  // DEPRECATED -- this options is no longer used
+  // NOT SUPPORTED ANYMORE -- this options is no longer used
   double hard_rate_limit = 0.0;
 
-  // DEPRECATED -- this options is no longer used
+  // NOT SUPPORTED ANYMORE -- this options is no longer used
   unsigned int rate_limit_delay_max_milliseconds = 100;
 
-  // DEPREACTED
+  // NOT SUPPORTED ANYMORE
   // Does not have any effect.
   bool purge_redundant_kvs_while_flush = true;
 };

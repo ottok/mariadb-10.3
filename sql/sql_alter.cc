@@ -14,6 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#include "mariadb.h"
 #include "sql_parse.h"                       // check_access
 #include "sql_table.h"                       // mysql_alter_table,
                                              // mysql_exchange_partition
@@ -50,7 +51,7 @@ Alter_info::Alter_info(const Alter_info &rhs, MEM_ROOT *mem_root)
 }
 
 
-bool Alter_info::set_requested_algorithm(const LEX_STRING *str)
+bool Alter_info::set_requested_algorithm(const LEX_CSTRING *str)
 {
   // To avoid adding new keywords to the grammar, we match strings here.
   if (!my_strcasecmp(system_charset_info, str->str, "INPLACE"))
@@ -65,7 +66,7 @@ bool Alter_info::set_requested_algorithm(const LEX_STRING *str)
 }
 
 
-bool Alter_info::set_requested_lock(const LEX_STRING *str)
+bool Alter_info::set_requested_lock(const LEX_CSTRING *str)
 {
   // To avoid adding new keywords to the grammar, we match strings here.
   if (!my_strcasecmp(system_charset_info, str->str, "NONE"))
@@ -89,22 +90,27 @@ Alter_table_ctx::Alter_table_ctx()
     new_db(NULL), new_name(NULL), new_alias(NULL),
     fk_error_if_delete_row(false), fk_error_id(NULL),
     fk_error_table(NULL)
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
     , tmp_table(false)
 #endif
 {
 }
 
+/*
+  TODO: new_name_arg changes if lower case table names.
+  Should be copied or converted before call
+*/
 
 Alter_table_ctx::Alter_table_ctx(THD *thd, TABLE_LIST *table_list,
                                  uint tables_opened_arg,
-                                 char *new_db_arg, char *new_name_arg)
+                                 const char *new_db_arg,
+                                 const char *new_name_arg)
   : datetime_field(NULL), error_if_not_empty(false),
     tables_opened(tables_opened_arg),
     new_db(new_db_arg), new_name(new_name_arg),
     fk_error_if_delete_row(false), fk_error_id(NULL),
     fk_error_table(NULL)
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
     , tmp_table(false)
 #endif
 {
@@ -126,13 +132,14 @@ Alter_table_ctx::Alter_table_ctx(THD *thd, TABLE_LIST *table_list,
 
     if (lower_case_table_names == 1) // Convert new_name/new_alias to lower case
     {
-      my_casedn_str(files_charset_info, new_name);
+      my_casedn_str(files_charset_info, (char*) new_name);
       new_alias= new_name;
     }
     else if (lower_case_table_names == 2) // Convert new_name to lower case
     {
-      strmov(new_alias= new_alias_buff, new_name);
-      my_casedn_str(files_charset_info, new_name);
+      new_alias= new_alias_buff;
+      strmov(new_alias_buff, new_name);
+      my_casedn_str(files_charset_info, (char*) new_name);
     }
     else
       new_alias= new_name; // LCTN=0 => case sensitive + case preserving
@@ -154,7 +161,7 @@ Alter_table_ctx::Alter_table_ctx(THD *thd, TABLE_LIST *table_list,
     new_name= table_name;
   }
 
-  my_snprintf(tmp_name, sizeof(tmp_name), "%s-%lx_%lx", tmp_file_prefix,
+  my_snprintf(tmp_name, sizeof(tmp_name), "%s-%lx_%llx", tmp_file_prefix,
               current_pid, thd->thread_id);
   /* Safety fix for InnoDB */
   if (lower_case_table_names)
@@ -180,7 +187,7 @@ Alter_table_ctx::Alter_table_ctx(THD *thd, TABLE_LIST *table_list,
       this case. This fact is enforced with assert.
     */
     build_tmptable_filename(thd, tmp_path, sizeof(tmp_path));
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
     tmp_table= true;
 #endif
   }
@@ -303,7 +310,7 @@ bool Sql_cmd_alter_table::execute(THD *thd)
                         "INDEX DIRECTORY");
   create_info.data_file_name= create_info.index_file_name= NULL;
 
-  thd->enable_slow_log= opt_log_slow_admin_statements;
+  thd->prepare_logs_for_admin_command();
 
 #ifdef WITH_WSREP
   if ((!thd->is_current_stmt_binlog_format_row() ||
@@ -348,7 +355,7 @@ bool Sql_cmd_discard_import_tablespace::execute(THD *thd)
   if (check_grant(thd, ALTER_ACL, table_list, false, UINT_MAX, false))
     return true;
 
-  thd->enable_slow_log= opt_log_slow_admin_statements;
+  thd->prepare_logs_for_admin_command();
 
   /*
     Check if we attempt to alter mysql.slow_log or

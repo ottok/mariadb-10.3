@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, MariaDB Corporation. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -54,6 +54,9 @@ extern ulong innodb_lock_schedule_algorithm;
 
 // Forward declaration
 class ReadView;
+
+/** The value of innodb_deadlock_detect */
+extern my_bool	innobase_deadlock_detect;
 
 /*********************************************************************//**
 Gets the size of a lock struct.
@@ -187,7 +190,7 @@ lock_update_merge_left(
 	const buf_block_t*	right_block);	/*!< in: merged index page
 						which will be discarded */
 /*************************************************************//**
-Updates the lock table when a page is splited and merged to
+Updates the lock table when a page is split and merged to
 two pages. */
 UNIV_INTERN
 void
@@ -961,11 +964,6 @@ struct lock_sys_t{
 						in the waiting_threads array,
 						protected by
 						lock_sys->wait_mutex */
-	ibool		rollback_complete;
-						/*!< TRUE if rollback of all
-						recovered transactions is
-						complete. Protected by
-						lock_sys->mutex */
 
 	ulint		n_lock_max_wait_time;	/*!< Max wait time */
 
@@ -1070,16 +1068,9 @@ std::string
 lock_get_info(
 	const lock_t*);
 
-/*************************************************************//**
-Updates the lock table when a page is split and merged to
-two pages. */
-UNIV_INTERN
-void
-lock_update_split_and_merge(
-	const buf_block_t* left_block,	/*!< in: left page to which merged */
-	const rec_t* orig_pred,		/*!< in: original predecessor of
-					supremum on the left page before merge*/
-	const buf_block_t* right_block);/*!< in: right page from which merged */
+/*******************************************************************//**
+@return whether wsrep_on is true on trx->mysql_thd*/
+#define wsrep_on_trx(trx) ((trx)->mysql_thd && wsrep_on((trx)->mysql_thd))
 
 #endif /* WITH_WSREP */
 

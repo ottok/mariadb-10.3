@@ -35,6 +35,11 @@ fi
 # git clean -fdX removes all ignored (build) files
 commands="\
 git clean -fdX
+cd ./libmariadb
+git submodule update
+cd ../storage/rocksdb/rocksdb
+git submodule update
+cd ../../..
 
 path=`dirname $0`
 . \"$path/autorun.sh\""
@@ -42,6 +47,7 @@ path=`dirname $0`
 if [ -z "$just_clean" ]
 then
 commands="$commands
+git submodule update
 CC=\"$CC\" CFLAGS=\"$cflags\" CXX=\"$CXX\" CXXFLAGS=\"$cxxflags\" CXXLDFLAGS=\"$CXXLDFLAGS\" $configure"
 fi
 

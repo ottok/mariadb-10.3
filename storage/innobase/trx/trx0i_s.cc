@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2007, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -588,10 +589,6 @@ thd_done:
 		row->trx_foreign_key_error = NULL;
 	}
 
-#ifdef BTR_CUR_HASH_ADAPT
-	row->trx_has_search_latch = (ibool) trx->has_search_latch;
-#endif /* BTR_CUR_HASH_ADAPT */
-
 	row->trx_is_read_only = trx->read_only;
 
 	row->trx_is_autocommit_non_locking = trx_is_autocommit_non_locking(trx);
@@ -729,8 +726,7 @@ fill_lock_data(
 	ut_a(n_fields > 0);
 
 	heap = NULL;
-	offsets = rec_get_offsets(rec, index, offsets, n_fields,
-				  &heap);
+	offsets = rec_get_offsets(rec, index, offsets, true, n_fields, &heap);
 
 	/* format and store the data */
 
@@ -1611,16 +1607,17 @@ trx_i_s_create_lock_id(
 
 	if (row->lock_space != ULINT_UNDEFINED) {
 		/* record lock */
-		res_len = ut_snprintf(lock_id, lock_id_size,
-				      TRX_ID_FMT ":%lu:%lu:%lu",
-				      row->lock_trx_id, row->lock_space,
-				      row->lock_page, row->lock_rec);
+		res_len = snprintf(lock_id, lock_id_size,
+				   TRX_ID_FMT
+				   ":" ULINTPF ":" ULINTPF ":" ULINTPF,
+				   row->lock_trx_id, row->lock_space,
+				   row->lock_page, row->lock_rec);
 	} else {
 		/* table lock */
-		res_len = ut_snprintf(lock_id, lock_id_size,
-				      TRX_ID_FMT":" UINT64PF,
-				      row->lock_trx_id,
-				      row->lock_table_id);
+		res_len = snprintf(lock_id, lock_id_size,
+				   TRX_ID_FMT":" UINT64PF,
+				   row->lock_trx_id,
+				   row->lock_table_id);
 	}
 
 	/* the typecast is safe because snprintf(3) never returns

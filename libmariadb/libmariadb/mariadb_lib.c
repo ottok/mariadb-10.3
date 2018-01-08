@@ -68,6 +68,9 @@
 #include <ma_tls.h>
 #endif
 #include <mysql/client_plugin.h>
+#ifdef _WIN32
+#include "Shlwapi.h"
+#endif
 
 #define ASYNC_CONTEXT_DEFAULT_STACK_SIZE (4096*15)
 #define MA_RPL_VERSION_HACK "5.5.5-"
@@ -80,6 +83,8 @@ extern ulong net_buffer_length;  /* net.c */
 static MYSQL_PARAMETERS mariadb_internal_parameters= {&max_allowed_packet, &net_buffer_length, 0};
 static my_bool mysql_client_init=0;
 static void mysql_close_options(MYSQL *mysql);
+extern void release_configuration_dirs();
+extern char **get_default_configuration_dirs();
 extern my_bool  ma_init_done;
 extern my_bool  mysql_ps_subsystem_initialized;
 extern my_bool mysql_handle_local_infile(MYSQL *mysql, const char *filename);
@@ -130,7 +135,7 @@ struct st_mariadb_methods MARIADB_DEFAULT_METHODS;
 #define native_password_plugin_name "mysql_native_password"
 
 #define IS_CONNHDLR_ACTIVE(mysql)\
-  (((mysql)->extension->conn_hdlr))
+  ((mysql)->extension && (mysql)->extension->conn_hdlr)
 
 static void end_server(MYSQL *mysql);
 static void mysql_close_memory(MYSQL *mysql);
@@ -207,7 +212,7 @@ restart:
 
       if (last_errno== 65535 &&
           ((mariadb_connection(mysql) && (mysql->server_capabilities & CLIENT_PROGRESS)) ||
-           (!(mysql->extension->mariadb_server_capabilities & MARIADB_CLIENT_PROGRESS >> 32))))
+           (!(mysql->extension->mariadb_server_capabilities & MARIADB_CLIENT_PROGRESS << 32))))
       {
         if (cli_report_progress(mysql, (uchar *)pos, (uint) (len-1)))
         {
@@ -639,7 +644,8 @@ struct st_default_options mariadb_defaults[] =
   {MARIADB_OPT_SSL_FP, MARIADB_OPTION_STR, "ssl-fp"},
   {MARIADB_OPT_SSL_FP_LIST, MARIADB_OPTION_STR, "ssl-fp-list"},
   {MARIADB_OPT_SSL_FP_LIST, MARIADB_OPTION_STR, "ssl-fplist"},
-  {MARIADB_OPT_TLS_PASSPHRASE, MARIADB_OPTION_STR, "ssl_passphrase"},
+  {MARIADB_OPT_TLS_PASSPHRASE, MARIADB_OPTION_STR, "ssl-passphrase"},
+  {MARIADB_OPT_TLS_VERSION, MARIADB_OPTION_STR, "tls_version"},
   {MYSQL_OPT_BIND, MARIADB_OPTION_STR, "bind-address"},
   {0, 0, NULL}
 };
@@ -657,9 +663,11 @@ struct st_default_options mariadb_defaults[] =
     else                                                         \
       (OPTS)->extension->KEY= NULL
 
-#define OPT_SET_EXTENDED_VALUE_INT(OPTS, KEY, VAL)                \
+#define OPT_SET_EXTENDED_VALUE(OPTS, KEY, VAL)                \
     CHECK_OPT_EXTENSION_SET(OPTS)                                 \
     (OPTS)->extension->KEY= (VAL)
+
+#define OPT_SET_EXTENDED_VALUE_INT(A,B,C) OPT_SET_EXTENDED_VALUE(A,B,C)
 
 #define OPT_SET_VALUE_STR(OPTS, KEY, VAL)                        \
     free((OPTS)->KEY);                                           \
@@ -694,35 +702,35 @@ my_bool _mariadb_set_conf_option(MYSQL *mysql, const char *config_option, const 
     {
       if (!strcmp(mariadb_defaults[i].conf_key, config_option))
       {
+        my_bool val_bool;
+        int     val_int;
+        size_t  val_sizet;
         int rc;
         void *option_val= NULL;
         switch (mariadb_defaults[i].type) {
         case MARIADB_OPTION_BOOL:
-          {
-            my_bool val= 0;
-            if (config_value)
-              val= atoi(config_value);
-            option_val= &val;
-            break;
-          }
+          val_bool= 0;
+          if (config_value)
+            val_bool= atoi(config_value);
+          option_val= &val_bool;
+          break;
         case MARIADB_OPTION_INT:
-          {
-            int val= 0;
-            if (config_value)
-              val= atoi(config_value);
-            option_val= &val;
-            break;
-          }
+          val_int= 0;
+          if (config_value)
+            val_int= atoi(config_value);
+          option_val= &val_int;
+          break;
         case MARIADB_OPTION_SIZET:
-          {
-            size_t val= 0;
-            if (config_value)
-              val= strtol(config_value, NULL, 10);
-            option_val= &val;
-            break;
-          }
-        default:
-          option_val= (void *)config_value;
+          val_sizet= 0;
+          if (config_value)
+            val_sizet= strtol(config_value, NULL, 10);
+          option_val= &val_sizet;
+          break;
+        case MARIADB_OPTION_STR:
+          option_val= (void*)config_value;
+          break;
+        case MARIADB_OPTION_NONE:
+          break;
         }
         rc= mysql_optionsv(mysql, mariadb_defaults[i].option, option_val);
         return(test(rc));
@@ -1303,6 +1311,17 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
     goto error;
   }
 
+  if (mysql->options.extension && mysql->options.extension->proxy_header)
+  {
+    char *hdr = mysql->options.extension->proxy_header;
+    size_t len = mysql->options.extension->proxy_header_len;
+    if (ma_pvio_write(pvio, (unsigned char *)hdr, len) <= 0)
+    {
+      ma_pvio_close(pvio);
+      goto error;
+    }
+  }
+
   if (ma_net_init(net, pvio))
     goto error;
 
@@ -1483,7 +1502,8 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
     net->compress= 1;
 
   /* last part: select default db */
-  if (db && !mysql->db)
+  if (!(mysql->server_capabilities & CLIENT_CONNECT_WITH_DB) &&
+      (db && !mysql->db))
   {
     if (mysql_select_db(mysql, db))
     {
@@ -1937,7 +1957,7 @@ mysql_close(MYSQL *mysql)
 int STDCALL
 mysql_query(MYSQL *mysql, const char *query)
 {
-  return mysql_real_query(mysql,query, (uint) strlen(query));
+  return mysql_real_query(mysql,query, (unsigned long) strlen(query));
 }
 
 /*
@@ -1947,7 +1967,7 @@ mysql_query(MYSQL *mysql, const char *query)
 */
 
 int STDCALL
-mysql_send_query(MYSQL* mysql, const char* query, size_t length)
+mysql_send_query(MYSQL* mysql, const char* query, unsigned long length)
 {
   return ma_simple_command(mysql, COM_QUERY, query, length, 1,0);
 }
@@ -2144,11 +2164,11 @@ mysql_read_query_result(MYSQL *mysql)
 }
 
 int STDCALL
-mysql_real_query(MYSQL *mysql, const char *query, size_t length)
+mysql_real_query(MYSQL *mysql, const char *query, unsigned long length)
 {
   my_bool skip_result= OPT_EXT_VAL(mysql, multi_command);
 
-  if (length == (size_t)-1)
+  if (length == (unsigned long)-1)
     length= strlen(query);
 
   free_old_query(mysql);
@@ -2641,6 +2661,25 @@ mysql_optionsv(MYSQL *mysql,enum mysql_option option, ...)
     OPT_SET_VALUE_STR(&mysql->options, my_cnf_file, (char *)arg1);
     break;
   case MYSQL_READ_DEFAULT_GROUP:
+    if (!arg1 || !((char *)arg1)[0])
+    {
+#if defined(HAVE_PROGRAM_INVOCATION_SHORT_NAME)
+      const char * appname = program_invocation_short_name;
+#elif defined(HAVE_GETPROGNAME)
+      const char * appname = getprogname();
+#elif defined(WIN32)
+      char module_filename[MAX_PATH];
+      char appname[MAX_PATH]="";
+      if (GetModuleFileName(NULL, module_filename, MAX_PATH))
+      {
+        _splitpath(module_filename,NULL, NULL, appname, NULL);
+      }
+#else
+      const char * appname = "";
+#endif
+      OPT_SET_VALUE_STR(&mysql->options, my_cnf_group, appname);
+      break;
+    }
     OPT_SET_VALUE_STR(&mysql->options, my_cnf_group, (char *)arg1);
     break;
   case MYSQL_SET_CHARSET_DIR:
@@ -2944,16 +2983,29 @@ mysql_optionsv(MYSQL *mysql,enum mysql_option option, ...)
   case MARIADB_OPT_SSL_FP:
   case MARIADB_OPT_TLS_PEER_FP:
     OPT_SET_EXTENDED_VALUE_STR(&mysql->options, tls_fp, (char *)arg1);
+    mysql->options.use_ssl= 1;
     break;
   case MARIADB_OPT_SSL_FP_LIST:
   case MARIADB_OPT_TLS_PEER_FP_LIST:
     OPT_SET_EXTENDED_VALUE_STR(&mysql->options, tls_fp_list, (char *)arg1);
+    mysql->options.use_ssl= 1;
     break;
   case MARIADB_OPT_TLS_PASSPHRASE:
     OPT_SET_EXTENDED_VALUE_STR(&mysql->options, tls_pw, (char *)arg1);
     break;
   case MARIADB_OPT_CONNECTION_READ_ONLY:
     OPT_SET_EXTENDED_VALUE_INT(&mysql->options, read_only, *(my_bool *)arg1);
+    break;
+  case MARIADB_OPT_PROXY_HEADER:
+    {
+    size_t arg2 = va_arg(ap, size_t);
+    OPT_SET_EXTENDED_VALUE(&mysql->options, proxy_header, (char *)arg1);
+    OPT_SET_EXTENDED_VALUE(&mysql->options, proxy_header_len, arg2);
+    }
+    break;
+  case MARIADB_OPT_TLS_VERSION:
+  case MYSQL_OPT_TLS_VERSION:
+    OPT_SET_EXTENDED_VALUE_STR(&mysql->options, tls_version, (char *)arg1);
     break;
   default:
     va_end(ap);
@@ -3255,12 +3307,12 @@ my_bool STDCALL mysql_autocommit(MYSQL *mysql, my_bool mode)
 
 my_bool STDCALL mysql_commit(MYSQL *mysql)
 {
-  return((my_bool)mysql_real_query(mysql, "COMMIT", sizeof("COMMIT")));
+  return((my_bool)mysql_real_query(mysql, "COMMIT", (unsigned long) sizeof("COMMIT")));
 }
 
 my_bool STDCALL mysql_rollback(MYSQL *mysql)
 {
-  return((my_bool)mysql_real_query(mysql, "ROLLBACK", sizeof("ROLLBACK")));
+  return((my_bool)mysql_real_query(mysql, "ROLLBACK", (unsigned long)sizeof("ROLLBACK")));
 }
 
 my_ulonglong STDCALL mysql_insert_id(MYSQL *mysql)
@@ -3390,7 +3442,7 @@ int STDCALL mysql_set_character_set(MYSQL *mysql, const char *csname)
     char buff[64];
 
     snprintf(buff, 63, "SET NAMES %s", cs->csname);
-    if (!mysql_real_query(mysql, buff, (uint)strlen(buff)))
+    if (!mysql_real_query(mysql, buff, (unsigned long)strlen(buff)))
     {
       mysql->charset= cs;
       return(0);
@@ -3431,6 +3483,7 @@ static void mysql_once_init()
 {
   ma_init();					/* Will init threads */
   init_client_errs();
+  get_default_configuration_dirs();
   if (mysql_client_plugin_init())
   {
 #ifdef _WIN32
@@ -3464,6 +3517,9 @@ static void mysql_once_init()
   }
   if (!mysql_ps_subsystem_initialized)
     mysql_init_ps_subsystem();
+#ifdef HAVE_TLS
+  ma_tls_start(0, 0);
+#endif
   ignore_sigpipe();
   mysql_client_init = 1;
 #ifdef _WIN32
@@ -3501,6 +3557,7 @@ void STDCALL mysql_server_end(void)
   if (!mysql_client_init)
     return;
 
+  release_configuration_dirs();
   mysql_client_plugin_deinit();
 
   list_free(pvio_callback, 0);
@@ -3535,7 +3592,7 @@ ulong STDCALL mysql_get_client_version(void)
   return MARIADB_VERSION_ID;
 }
 
-ulong STDCALL mysql_hex_string(char *to, const char *from, size_t len)
+ulong STDCALL mysql_hex_string(char *to, const char *from, unsigned long len)
 {
   char *start= to;
   char hexdigits[]= "0123456789ABCDEF";
@@ -3632,11 +3689,7 @@ my_bool STDCALL mariadb_get_infov(MYSQL *mysql, enum mariadb_value value, void *
   case MARIADB_CONNECTION_TLS_VERSION:
     #ifdef HAVE_TLS
     if (mysql && mysql->net.pvio && mysql->net.pvio->ctls)
-    {
-      struct st_ssl_version version;
-      if (!ma_pvio_tls_get_protocol_version(mysql->net.pvio->ctls, &version))
-      *((char **)arg)= version.cversion;
-    }
+      *((char **)arg)= (char *)ma_pvio_tls_get_protocol_version(mysql->net.pvio->ctls);
     else
     #endif
       goto error;
@@ -3644,26 +3697,16 @@ my_bool STDCALL mariadb_get_infov(MYSQL *mysql, enum mariadb_value value, void *
   case MARIADB_CONNECTION_TLS_VERSION_ID:
     #ifdef HAVE_TLS
     if (mysql && mysql->net.pvio && mysql->net.pvio->ctls)
-    {
-      struct st_ssl_version version;
-      if (!ma_pvio_tls_get_protocol_version(mysql->net.pvio->ctls, &version))
-      *((unsigned int *)arg)= version.iversion;
-    }
+      *((unsigned int *)arg)= ma_pvio_tls_get_protocol_version_id(mysql->net.pvio->ctls);
     else
     #endif
       goto error;
     break;
   case MARIADB_TLS_LIBRARY:
 #ifdef HAVE_TLS
-#ifdef HAVE_GNUTLS
-    *((const char **)arg)= "GNUTLS";
-#elif HAVE_OPENSSL
-    *((const char **)arg)= "OPENSSL";
-#elif HAVE_SCHANNEL
-    *((const char **)arg)= "SCHANNEL";
-#endif
+    *((const char **)arg)= tls_library_version;
 #else
-    *((char **)arg)= "OFF";
+    *((char **)arg)= "Off";
 #endif
     break;
   case MARIADB_CLIENT_VERSION:
@@ -3821,6 +3864,7 @@ my_bool STDCALL mariadb_get_infov(MYSQL *mysql, enum mariadb_value value, void *
       *((unsigned long *)arg)= mysql->client_flag;
     else
       goto error;
+    break;
   default:
     va_end(ap);
     return(-1);

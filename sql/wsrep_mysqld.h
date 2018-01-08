@@ -51,6 +51,7 @@ struct wsrep_thd_shadow {
   char                 *db;
   size_t               db_length;
   my_hrtime_t          user_time;
+  longlong             row_count_func;
 };
 
 // Global wsrep parameters
@@ -98,11 +99,12 @@ enum enum_wsrep_OSU_method {
 
 enum enum_wsrep_sync_wait {
     WSREP_SYNC_WAIT_NONE = 0x0,
-    // show, select, begin
+    // select, begin
     WSREP_SYNC_WAIT_BEFORE_READ = 0x1,
     WSREP_SYNC_WAIT_BEFORE_UPDATE_DELETE = 0x2,
     WSREP_SYNC_WAIT_BEFORE_INSERT_REPLACE = 0x4,
-    WSREP_SYNC_WAIT_MAX = 0x7
+    WSREP_SYNC_WAIT_BEFORE_SHOW = 0x8,
+    WSREP_SYNC_WAIT_MAX = 0xF
 };
 
 // MySQL status variables
@@ -191,13 +193,8 @@ extern wsrep_seqno_t wsrep_locked_seqno;
     ? wsrep_forced_binlog_format : (ulong)(my_format))
 
 // prefix all messages with "WSREP"
-#define WSREP_LOG(fun, ...)                                       \
-    do {                                                          \
-        char msg[1024] = {'\0'};                                  \
-        snprintf(msg, sizeof(msg) - 1, ## __VA_ARGS__);           \
-        fun("WSREP: %s", msg);                                    \
-    } while(0)
-
+void wsrep_log(void (*fun)(const char *, ...), const char *format, ...);
+#define WSREP_LOG(fun, ...) wsrep_log(fun,  ## __VA_ARGS__)
 #define WSREP_LOG_CONFLICT_THD(thd, role)                                      \
     WSREP_LOG(sql_print_information, 	                                       \
       "%s: \n "       	                                                       \
@@ -221,6 +218,8 @@ extern wsrep_seqno_t wsrep_locked_seqno;
 
 #define WSREP_PROVIDER_EXISTS                                                  \
   (wsrep_provider && strncasecmp(wsrep_provider, WSREP_NONE, FN_REFLEN))
+
+#define WSREP_QUERY(thd) (thd->query())
 
 extern void wsrep_ready_wait();
 
@@ -280,7 +279,7 @@ extern PSI_mutex_key key_LOCK_wsrep_desync;
 extern PSI_file_key key_file_wsrep_gra_log;
 #endif /* HAVE_PSI_INTERFACE */
 struct TABLE_LIST;
-int wsrep_to_isolation_begin(THD *thd, char *db_, char *table_,
+int wsrep_to_isolation_begin(THD *thd, const char *db_, const char *table_,
                              const TABLE_LIST* table_list);
 void wsrep_to_isolation_end(THD *thd);
 void wsrep_cleanup_transaction(THD *thd);
@@ -316,6 +315,10 @@ bool wsrep_create_like_table(THD* thd, TABLE_LIST* table,
 bool wsrep_node_is_donor();
 bool wsrep_node_is_synced();
 
+#define WSREP_BINLOG_FORMAT(my_format)                         \
+   ((wsrep_forced_binlog_format != BINLOG_FORMAT_UNSPEC) ?     \
+   wsrep_forced_binlog_format : my_format)
+
 #else /* WITH_WSREP */
 
 #define WSREP(T)  (0)
@@ -345,6 +348,7 @@ bool wsrep_node_is_synced();
 #define wsrep_thr_init() do {} while(0)
 #define wsrep_thr_deinit() do {} while(0)
 #define wsrep_running_threads (0)
+#define WSREP_BINLOG_FORMAT(my_format) my_format
 
 #endif /* WITH_WSREP */
 #endif /* WSREP_MYSQLD_H */

@@ -85,7 +85,8 @@ eval SHOW COLUMNS FROM information_schema.$is_table;
 SELECT * FROM information_schema.triggers
 WHERE trigger_catalog IS NOT NULL OR event_object_catalog IS NOT NULL
    OR action_condition IS NOT NULL OR action_reference_old_table IS NOT NULL
-   OR action_reference_new_table IS NOT NULL;
+   OR action_reference_new_table IS NOT NULL
+ORDER BY trigger_schema, trigger_name;
 
 
 --echo ##################################################################################
@@ -236,7 +237,7 @@ ON db_datadict.t1 FOR EACH ROW SET @test_before = 2, new.f1 = @test_before;
 INSERT INTO information_schema.triggers
 SELECT * FROM information_schema.triggers;
 
---error ER_DBACCESS_DENIED_ERROR
+--error ER_DBACCESS_DENIED_ERROR,ER_NON_UPDATABLE_TABLE
 UPDATE information_schema.triggers SET trigger_schema = 'test'
 WHERE table_name = 't1';
 

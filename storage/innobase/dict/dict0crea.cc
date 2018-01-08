@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -66,6 +67,7 @@ dict_create_sys_tables_tuple(
 
 	ut_ad(table);
 	ut_ad(heap);
+	ut_ad(table->n_cols >= DATA_N_SYS_COLS);
 
 	sys_tables = dict_sys->sys_tables;
 
@@ -99,10 +101,12 @@ dict_create_sys_tables_tuple(
 
 	/* If there is any virtual column, encode it in N_COLS */
 	mach_write_to_4(ptr, dict_table_encode_n_col(
-				static_cast<ulint>(table->n_def),
+				static_cast<ulint>(table->n_cols
+						   - DATA_N_SYS_COLS),
 				static_cast<ulint>(table->n_v_def))
 			| ((table->flags & DICT_TF_COMPACT) << 31));
 	dfield_set_data(dfield, ptr, 4);
+
 
 	/* 5: TYPE (table flags) -----------------------------*/
 	dfield = dtuple_get_nth_field(
@@ -402,9 +406,8 @@ dict_build_tablespace_for_table(
 		ut_ad(!dict_table_is_temporary(table));
 		/* This table will need a new tablespace. */
 
-		ut_ad(dict_table_get_format(table) <= UNIV_FORMAT_MAX);
 		ut_ad(DICT_TF_GET_ZIP_SSIZE(table->flags) == 0
-		      || dict_table_get_format(table) >= UNIV_FORMAT_B);
+		      || dict_table_has_atomic_blobs(table));
 
 		/* Get a new tablespace ID */
 		dict_hdr_get_new_id(NULL, NULL, &space, table, false);
@@ -460,14 +463,9 @@ dict_build_tablespace_for_table(
 		mtr_start(&mtr);
 		mtr.set_named_space(table->space);
 
-		bool ret = fsp_header_init(table->space,
-					   FIL_IBD_FILE_INITIAL_SIZE,
-					   &mtr);
+		fsp_header_init(table->space, FIL_IBD_FILE_INITIAL_SIZE, &mtr);
 
 		mtr_commit(&mtr);
-		if (!ret) {
-			return(DB_ERROR);
-		}
 	} else {
 		ut_ad(dict_tf_get_rec_format(table->flags)
 		      != REC_FORMAT_COMPRESSED);
@@ -482,21 +480,6 @@ dict_build_tablespace_for_table(
 	}
 
 	return(DB_SUCCESS);
-}
-
-/***************************************************************//**
-Builds a column definition to insert. */
-static
-void
-dict_build_col_def_step(
-/*====================*/
-	tab_node_t*	node)	/*!< in: table create node */
-{
-	dtuple_t*	row;
-
-	row = dict_create_sys_columns_tuple(node->table, node->col_no,
-					    node->heap);
-	ins_node_set_new_row(node->col_def, row);
 }
 
 /** Builds a SYS_VIRTUAL row definition to insert.
@@ -890,7 +873,7 @@ dict_create_index_tree_step(
 
 	mtr_start(&mtr);
 
-	const bool	missing = index->table->ibd_file_missing
+	const bool	missing = !index->is_readable()
 		|| dict_table_is_discarded(index->table);
 
 	if (!missing) {
@@ -963,8 +946,8 @@ dict_create_index_tree_in_mem(
 
 	/* Currently this function is being used by temp-tables only.
 	Import/Discard of temp-table is blocked and so this assert. */
-	ut_ad(index->table->ibd_file_missing == 0
-	      && !dict_table_is_discarded(index->table));
+	ut_ad(index->is_readable());
+	ut_ad(!dict_table_is_discarded(index->table));
 
 	page_no = btr_create(
 		index->type, index->space,
@@ -1246,7 +1229,7 @@ tab_create_graph_create(
 				structure */
 	mem_heap_t*	heap,	/*!< in: heap where created */
 	fil_encryption_t mode,	/*!< in: encryption mode */
-	ulint		key_id)	/*!< in: encryption key_id */
+	uint32_t	key_id)	/*!< in: encryption key_id */
 {
 	tab_node_t*	node;
 
@@ -1360,12 +1343,19 @@ dict_create_table_step(
 
 	if (node->state == TABLE_BUILD_COL_DEF) {
 
-		if (node->col_no < (static_cast<ulint>(node->table->n_def)
-				    + static_cast<ulint>(node->table->n_v_def))) {
+		if (node->col_no + DATA_N_SYS_COLS
+		    < (static_cast<ulint>(node->table->n_def)
+		       + static_cast<ulint>(node->table->n_v_def))) {
 
-			dict_build_col_def_step(node);
+			ulint i = node->col_no++;
+			if (i + DATA_N_SYS_COLS >= node->table->n_def) {
+				i += DATA_N_SYS_COLS;
+			}
 
-			node->col_no++;
+			ins_node_set_new_row(
+				node->col_def,
+				dict_create_sys_columns_tuple(node->table, i,
+							      node->heap));
 
 			thr->run_node = node->col_def;
 
@@ -1423,7 +1413,8 @@ dict_create_table_step(
 	if (node->state == TABLE_ADD_TO_CACHE) {
 		DBUG_EXECUTE_IF("ib_ddl_crash_during_create", DBUG_SUICIDE(););
 
-		dict_table_add_to_cache(node->table, TRUE, node->heap);
+		node->table->can_be_evicted = true;
+		node->table->add_to_cache();
 
 		err = DB_SUCCESS;
 	}
@@ -1523,6 +1514,14 @@ dict_create_index_step(
 			goto function_exit;
 		}
 
+		ut_ad(!node->index->is_instant());
+		ut_ad(node->index->n_core_null_bytes
+		      == ((dict_index_is_clust(node->index)
+			   && node->table->supports_instant())
+			  ? dict_index_t::NO_CORE_NULL_BYTES
+			  : UT_BITS_IN_BYTES(node->index->n_nullable)));
+		node->index->n_core_null_bytes = UT_BITS_IN_BYTES(
+			node->index->n_nullable);
 		node->state = INDEX_CREATE_INDEX_TREE;
 	}
 
@@ -2054,7 +2053,7 @@ dict_foreign_def_get_fields(
 	trx_t*		trx,	/*!< in: trx */
 	char**		field,  /*!< out: foreign column */
 	char**		field2, /*!< out: referenced column */
-	int		col_no) /*!< in: column number */
+	ulint		col_no) /*!< in: column number */
 {
 	char* bufend;
 	char* fieldbuf = (char *)mem_heap_alloc(foreign->heap, MAX_TABLE_NAME_LEN+1);
@@ -2511,6 +2510,7 @@ dict_create_or_check_sys_tablespace(void)
 			<< ". Dropping incompletely created tables.";
 
 		ut_a(err == DB_OUT_OF_FILE_SPACE
+		     || err == DB_DUPLICATE_KEY
 		     || err == DB_TOO_MANY_CONCURRENT_TRXS);
 
 		row_drop_table_for_mysql("SYS_TABLESPACES", trx, TRUE, TRUE);
@@ -2538,11 +2538,11 @@ dict_create_or_check_sys_tablespace(void)
 
 	sys_tablespaces_err = dict_check_if_system_table_exists(
 		"SYS_TABLESPACES", DICT_NUM_FIELDS__SYS_TABLESPACES + 1, 1);
-	ut_a(sys_tablespaces_err == DB_SUCCESS);
+	ut_a(sys_tablespaces_err == DB_SUCCESS || err != DB_SUCCESS);
 
 	sys_datafiles_err = dict_check_if_system_table_exists(
 		"SYS_DATAFILES", DICT_NUM_FIELDS__SYS_DATAFILES + 1, 1);
-	ut_a(sys_datafiles_err == DB_SUCCESS);
+	ut_a(sys_datafiles_err == DB_SUCCESS || err != DB_SUCCESS);
 
 	return(err);
 }
@@ -2554,7 +2554,6 @@ replacing what was there previously.
 @param[in]	flags	Tablespace flags
 @param[in]	path	Tablespace path
 @param[in]	trx	Transaction
-@param[in]	commit	If true, commit the transaction
 @return error code or DB_SUCCESS */
 dberr_t
 dict_replace_tablespace_in_dictionary(
@@ -2562,8 +2561,7 @@ dict_replace_tablespace_in_dictionary(
 	const char*	name,
 	ulint		flags,
 	const char*	path,
-	trx_t*		trx,
-	bool		commit)
+	trx_t*		trx)
 {
 	if (!srv_sys_tablespaces_open) {
 		/* Startup procedure is not yet ready for updates. */
@@ -2610,11 +2608,6 @@ dict_replace_tablespace_in_dictionary(
 
 	if (error != DB_SUCCESS) {
 		return(error);
-	}
-
-	if (commit) {
-		trx->op_info = "committing tablespace and datafile definition";
-		trx_commit(trx);
 	}
 
 	trx->op_info = "";

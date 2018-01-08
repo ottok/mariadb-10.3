@@ -449,7 +449,7 @@ static void set_table_share_key(PFS_table_share_key *key,
   ptr+= table_name_length;
   ptr[0]= 0;
   ptr++;
-  key->m_key_length= ptr - &key->m_hash_key[0];
+  key->m_key_length= (uint)(ptr - &key->m_hash_key[0]);
 
   if (lower_case_table_names)
   {
@@ -1193,8 +1193,8 @@ static void set_keys(PFS_table_share *pfs, const TABLE_SHARE *share)
 
   for ( ; pfs_key < pfs_key_last; pfs_key++, key_info++)
   {
-    len= strlen(key_info->name);
-    memcpy(pfs_key->m_name, key_info->name, len);
+    len= key_info->name.length;
+    memcpy(pfs_key->m_name, key_info->name.str, len);
     pfs_key->m_name_length= len;
   }
 
@@ -1215,11 +1215,11 @@ static int compare_keys(PFS_table_share *pfs, const TABLE_SHARE *share)
 
   for ( ; pfs_key < pfs_key_last; pfs_key++, key_info++)
   {
-    len= strlen(key_info->name);
+    len= key_info->name.length;
     if (len != pfs_key->m_name_length)
       return 1;
 
-    if (memcmp(pfs_key->m_name, key_info->name, len) != 0)
+    if (memcmp(pfs_key->m_name, key_info->name.str, len) != 0)
       return 1;
   }
 

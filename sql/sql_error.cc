@@ -41,7 +41,7 @@ This file contains the implementation of error and warnings related
 
 ***********************************************************************/
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_error.h"
@@ -994,7 +994,7 @@ uint32 convert_error_message(char *to, uint32 to_length, CHARSET_INFO *to_cs,
   @retval false if it's bad.
 */
 
-bool is_sqlstate_valid(const LEX_STRING *sqlstate)
+bool is_sqlstate_valid(const LEX_CSTRING *sqlstate)
 {
   if (sqlstate->length != 5)
     return false;

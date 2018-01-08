@@ -1,9 +1,15 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 
 #ifndef ROCKSDB_LITE
+
+#ifndef __STDC_FORMAT_MACROS
+#define __STDC_FORMAT_MACROS
+#endif
+
+#include "utilities/transactions/transaction_test.h"
 
 #include <algorithm>
 #include <functional>
@@ -17,7 +23,6 @@
 #include "rocksdb/utilities/transaction_db.h"
 #include "table/mock_table.h"
 #include "util/fault_injection_test_env.h"
-#include "util/logging.h"
 #include "util/random.h"
 #include "util/string_util.h"
 #include "util/sync_point.h"
@@ -26,6 +31,7 @@
 #include "util/transaction_test_util.h"
 #include "utilities/merge_operators.h"
 #include "utilities/merge_operators/string_append/stringappend.h"
+#include "utilities/transactions/pessimistic_transaction_db.h"
 
 #include "port/port.h"
 
@@ -33,96 +39,20 @@ using std::string;
 
 namespace rocksdb {
 
-class TransactionTest : public ::testing::TestWithParam<bool> {
- public:
-  TransactionDB* db;
-  FaultInjectionTestEnv* env;
-  string dbname;
-  Options options;
-
-  TransactionDBOptions txn_db_options;
-
-  TransactionTest() {
-    options.create_if_missing = true;
-    options.max_write_buffer_number = 2;
-    options.write_buffer_size = 4 * 1024;
-    options.level0_file_num_compaction_trigger = 2;
-    options.merge_operator = MergeOperators::CreateFromStringId("stringappend");
-    env = new FaultInjectionTestEnv(Env::Default());
-    options.env = env;
-    dbname = test::TmpDir() + "/transaction_testdb";
-
-    DestroyDB(dbname, options);
-    txn_db_options.transaction_lock_timeout = 0;
-    txn_db_options.default_lock_timeout = 0;
-    Status s;
-    if (GetParam() == false) {
-      s = TransactionDB::Open(options, txn_db_options, dbname, &db);
-    } else {
-      s = OpenWithStackableDB();
-    }
-    assert(s.ok());
-  }
-
-  ~TransactionTest() {
-    delete db;
-    DestroyDB(dbname, options);
-    delete env;
-  }
-
-  Status ReOpenNoDelete() {
-    delete db;
-    db = nullptr;
-    env->AssertNoOpenFile();
-    env->DropUnsyncedFileData();
-    env->ResetState();
-    Status s;
-    if (GetParam() == false) {
-      s = TransactionDB::Open(options, txn_db_options, dbname, &db);
-    } else {
-      s = OpenWithStackableDB();
-    }
-    return s;
-  }
-
-  Status ReOpen() {
-    delete db;
-    DestroyDB(dbname, options);
-    Status s;
-    if (GetParam() == false) {
-      s = TransactionDB::Open(options, txn_db_options, dbname, &db);
-    } else {
-      s = OpenWithStackableDB();
-    }
-    return s;
-  }
-
-  Status OpenWithStackableDB() {
-    std::vector<size_t> compaction_enabled_cf_indices;
-    std::vector<ColumnFamilyDescriptor> column_families{ColumnFamilyDescriptor(
-        kDefaultColumnFamilyName, ColumnFamilyOptions(options))};
-
-    TransactionDB::PrepareWrap(&options, &column_families,
-                               &compaction_enabled_cf_indices);
-    std::vector<ColumnFamilyHandle*> handles;
-    DB* root_db;
-    Options options_copy(options);
-    Status s =
-        DB::Open(options_copy, dbname, column_families, &handles, &root_db);
-    if (s.ok()) {
-      assert(handles.size() == 1);
-      s = TransactionDB::WrapStackableDB(
-          new StackableDB(root_db), txn_db_options,
-          compaction_enabled_cf_indices, handles, &db);
-      delete handles[0];
-    }
-    return s;
-  }
-};
-
-INSTANTIATE_TEST_CASE_P(DBAsBaseDB, TransactionTest, ::testing::Values(false));
+// TODO(myabandeh): Instantiate the tests with other write policies
+INSTANTIATE_TEST_CASE_P(DBAsBaseDB, TransactionTest,
+                        ::testing::Values(std::make_tuple(false, false,
+                                                          WRITE_COMMITTED)));
 INSTANTIATE_TEST_CASE_P(StackableDBAsBaseDB, TransactionTest,
-                        ::testing::Values(true));
+                        ::testing::Values(std::make_tuple(true, false,
+                                                          WRITE_COMMITTED)));
+INSTANTIATE_TEST_CASE_P(
+    MySQLStyleTransactionTest, MySQLStyleTransactionTest,
+    ::testing::Values(std::make_tuple(false, false, WRITE_COMMITTED),
+                      std::make_tuple(false, true, WRITE_COMMITTED),
+                      std::make_tuple(true, false, WRITE_COMMITTED),
+                      std::make_tuple(true, true, WRITE_COMMITTED)));
+
 
 TEST_P(TransactionTest, DoubleEmptyWrite) {
   WriteOptions write_options;
@@ -136,6 +66,8 @@ TEST_P(TransactionTest, DoubleEmptyWrite) {
 }
 
 TEST_P(TransactionTest, SuccessTest) {
+  ASSERT_OK(db->ResetStats());
+
   WriteOptions write_options;
   ReadOptions read_options;
   string value;
@@ -230,7 +162,7 @@ TEST_P(TransactionTest, WaitingTxn) {
 
   // Column family is 1 or 0 (cfa).
   if (cf_iterator->first != 1 && cf_iterator->first != 0) {
-    ASSERT_FALSE(true);
+    FAIL();
   }
   // The locked key is "foo" and is locked by txn1
   ASSERT_EQ(cf_iterator->second.key, "foo");
@@ -241,7 +173,7 @@ TEST_P(TransactionTest, WaitingTxn) {
 
   // Column family is 0 (default) or 1.
   if (cf_iterator->first != 1 && cf_iterator->first != 0) {
-    ASSERT_FALSE(true);
+    FAIL();
   }
   // The locked key is "foo" and is locked by txn1
   ASSERT_EQ(cf_iterator->second.key, "foo");
@@ -332,6 +264,43 @@ TEST_P(TransactionTest, SharedLocks) {
   txn2->Rollback();
   txn3->Rollback();
 
+  // Test txn1 and txn2 sharing a lock and txn2 trying to upgrade lock.
+  s = txn1->GetForUpdate(read_options, "foo", nullptr, false /* exclusive */);
+  ASSERT_OK(s);
+
+  s = txn2->GetForUpdate(read_options, "foo", nullptr, false /* exclusive */);
+  ASSERT_OK(s);
+
+  s = txn2->GetForUpdate(read_options, "foo", nullptr);
+  ASSERT_TRUE(s.IsTimedOut());
+  ASSERT_EQ(s.ToString(), "Operation timed out: Timeout waiting to lock key");
+
+  txn1->UndoGetForUpdate("foo");
+  s = txn2->GetForUpdate(read_options, "foo", nullptr);
+  ASSERT_OK(s);
+
+  txn1->Rollback();
+  txn2->Rollback();
+
+  // Test txn1 trying to downgrade its lock.
+  s = txn1->GetForUpdate(read_options, "foo", nullptr, true /* exclusive */);
+  ASSERT_OK(s);
+
+  s = txn2->GetForUpdate(read_options, "foo", nullptr, false /* exclusive */);
+  ASSERT_TRUE(s.IsTimedOut());
+  ASSERT_EQ(s.ToString(), "Operation timed out: Timeout waiting to lock key");
+
+  // Should still fail after "downgrading".
+  s = txn1->GetForUpdate(read_options, "foo", nullptr, false /* exclusive */);
+  ASSERT_OK(s);
+
+  s = txn2->GetForUpdate(read_options, "foo", nullptr, false /* exclusive */);
+  ASSERT_TRUE(s.IsTimedOut());
+  ASSERT_EQ(s.ToString(), "Operation timed out: Timeout waiting to lock key");
+
+  txn1->Rollback();
+  txn2->Rollback();
+
   // Test txn1 holding an exclusive lock and txn2 trying to obtain shared
   // access.
   s = txn1->GetForUpdate(read_options, "foo", nullptr);
@@ -413,6 +382,37 @@ TEST_P(TransactionTest, DeadlockCycleShared) {
     auto s =
         txns[i]->GetForUpdate(read_options, "0", nullptr, true /* exclusive */);
     ASSERT_TRUE(s.IsDeadlock());
+
+    // Calculate next buffer len, plateau at 5 when 5 records are inserted.
+    const uint32_t curr_dlock_buffer_len_ =
+        (i - 14 > kInitialMaxDeadlocks) ? kInitialMaxDeadlocks : (i - 14);
+
+    auto dlock_buffer = db->GetDeadlockInfoBuffer();
+    ASSERT_EQ(dlock_buffer.size(), curr_dlock_buffer_len_);
+    auto dlock_entry = dlock_buffer[0].path;
+    ASSERT_EQ(dlock_entry.size(), kInitialMaxDeadlocks);
+
+    int64_t curr_waiting_key = 0;
+
+    // Offset of each txn id from the root of the shared dlock tree's txn id.
+    int64_t offset_root = dlock_entry[0].m_txn_id - 1;
+    // Offset of the final entry in the dlock path from the root's txn id.
+    TransactionID leaf_id =
+        dlock_entry[dlock_entry.size() - 1].m_txn_id - offset_root;
+
+    for (auto it = dlock_entry.rbegin(); it != dlock_entry.rend(); it++) {
+      auto dl_node = *it;
+      ASSERT_EQ(dl_node.m_txn_id, offset_root + leaf_id);
+      ASSERT_EQ(dl_node.m_cf_id, 0);
+      ASSERT_EQ(dl_node.m_waiting_key, ToString(curr_waiting_key));
+      ASSERT_EQ(dl_node.m_exclusive, true);
+
+      if (curr_waiting_key == 0) {
+        curr_waiting_key = leaf_id;
+      }
+      curr_waiting_key /= 2;
+      leaf_id /= 2;
+    }
   }
 
   // Rollback the leaf transaction.
@@ -424,6 +424,102 @@ TEST_P(TransactionTest, DeadlockCycleShared) {
   for (auto& t : threads) {
     t.join();
   }
+
+  // Downsize the buffer and verify the 3 latest deadlocks are preserved.
+  auto dlock_buffer_before_resize = db->GetDeadlockInfoBuffer();
+  db->SetDeadlockInfoBufferSize(3);
+  auto dlock_buffer_after_resize = db->GetDeadlockInfoBuffer();
+  ASSERT_EQ(dlock_buffer_after_resize.size(), 3);
+
+  for (uint32_t i = 0; i < dlock_buffer_after_resize.size(); i++) {
+    for (uint32_t j = 0; j < dlock_buffer_after_resize[i].path.size(); j++) {
+      ASSERT_EQ(dlock_buffer_after_resize[i].path[j].m_txn_id,
+                dlock_buffer_before_resize[i].path[j].m_txn_id);
+    }
+  }
+
+  // Upsize the buffer and verify the 3 latest dealocks are preserved.
+  dlock_buffer_before_resize = db->GetDeadlockInfoBuffer();
+  db->SetDeadlockInfoBufferSize(5);
+  dlock_buffer_after_resize = db->GetDeadlockInfoBuffer();
+  ASSERT_EQ(dlock_buffer_after_resize.size(), 3);
+
+  for (uint32_t i = 0; i < dlock_buffer_before_resize.size(); i++) {
+    for (uint32_t j = 0; j < dlock_buffer_before_resize[i].path.size(); j++) {
+      ASSERT_EQ(dlock_buffer_after_resize[i].path[j].m_txn_id,
+                dlock_buffer_before_resize[i].path[j].m_txn_id);
+    }
+  }
+
+  // Downsize to 0 and verify the size is consistent.
+  dlock_buffer_before_resize = db->GetDeadlockInfoBuffer();
+  db->SetDeadlockInfoBufferSize(0);
+  dlock_buffer_after_resize = db->GetDeadlockInfoBuffer();
+  ASSERT_EQ(dlock_buffer_after_resize.size(), 0);
+
+  // Upsize from 0 to verify the size is persistent.
+  dlock_buffer_before_resize = db->GetDeadlockInfoBuffer();
+  db->SetDeadlockInfoBufferSize(3);
+  dlock_buffer_after_resize = db->GetDeadlockInfoBuffer();
+  ASSERT_EQ(dlock_buffer_after_resize.size(), 0);
+
+  // Contrived case of shared lock of cycle size 2 to verify that a shared
+  // lock causing a deadlock is correctly reported as "shared" in the buffer.
+  std::vector<Transaction*> txns_shared(2);
+
+  // Create a cycle of size 2.
+  for (uint32_t i = 0; i < 2; i++) {
+    txns_shared[i] = db->BeginTransaction(write_options, txn_options);
+    ASSERT_TRUE(txns_shared[i]);
+    auto s = txns_shared[i]->GetForUpdate(read_options, ToString(i), nullptr);
+    ASSERT_OK(s);
+  }
+
+  std::atomic<uint32_t> checkpoints_shared(0);
+  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+      "TransactionLockMgr::AcquireWithTimeout:WaitingTxn",
+      [&](void* arg) { checkpoints_shared.fetch_add(1); });
+  rocksdb::SyncPoint::GetInstance()->EnableProcessing();
+
+  std::vector<port::Thread> threads_shared;
+  for (uint32_t i = 0; i < 1; i++) {
+    std::function<void()> blocking_thread = [&, i] {
+      auto s =
+          txns_shared[i]->GetForUpdate(read_options, ToString(i + 1), nullptr);
+      ASSERT_OK(s);
+      txns_shared[i]->Rollback();
+      delete txns_shared[i];
+    };
+    threads_shared.emplace_back(blocking_thread);
+  }
+
+  // Wait until all threads are waiting on each other.
+  while (checkpoints_shared.load() != 1) {
+    /* sleep override */
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  rocksdb::SyncPoint::GetInstance()->DisableProcessing();
+  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
+
+  // Complete the cycle T2 -> T1 with a shared lock.
+  auto s = txns_shared[1]->GetForUpdate(read_options, "0", nullptr, false);
+  ASSERT_TRUE(s.IsDeadlock());
+
+  auto dlock_buffer = db->GetDeadlockInfoBuffer();
+
+  // Verify the size of the buffer and the single path.
+  ASSERT_EQ(dlock_buffer.size(), 1);
+  ASSERT_EQ(dlock_buffer[0].path.size(), 2);
+
+  // Verify the exclusivity field of the transactions in the deadlock path.
+  ASSERT_TRUE(dlock_buffer[0].path[0].m_exclusive);
+  ASSERT_FALSE(dlock_buffer[0].path[1].m_exclusive);
+  txns_shared[1]->Rollback();
+  delete txns_shared[1];
+
+  for (auto& t : threads_shared) {
+    t.join();
+  }
 }
 
 TEST_P(TransactionTest, DeadlockCycle) {
@@ -431,7 +527,8 @@ TEST_P(TransactionTest, DeadlockCycle) {
   ReadOptions read_options;
   TransactionOptions txn_options;
 
-  const uint32_t kMaxCycleLength = 50;
+  // offset by 2 from the max depth to test edge case
+  const uint32_t kMaxCycleLength = 52;
 
   txn_options.lock_timeout = 1000000;
   txn_options.deadlock_detect = true;
@@ -440,6 +537,7 @@ TEST_P(TransactionTest, DeadlockCycle) {
     // Set up a long wait for chain like this:
     //
     // T1 -> T2 -> T3 -> ... -> Tlen
+
     std::vector<Transaction*> txns(len);
 
     for (uint32_t i = 0; i < len; i++) {
@@ -460,8 +558,7 @@ TEST_P(TransactionTest, DeadlockCycle) {
     std::vector<port::Thread> threads;
     for (uint32_t i = 0; i < len - 1; i++) {
       std::function<void()> blocking_thread = [&, i] {
-        auto s =
-            txns[i]->GetForUpdate(read_options, ToString(i + 1), nullptr);
+        auto s = txns[i]->GetForUpdate(read_options, ToString(i + 1), nullptr);
         ASSERT_OK(s);
         txns[i]->Rollback();
         delete txns[i];
@@ -481,6 +578,39 @@ TEST_P(TransactionTest, DeadlockCycle) {
     auto s = txns[len - 1]->GetForUpdate(read_options, "0", nullptr);
     ASSERT_TRUE(s.IsDeadlock());
 
+    const uint32_t dlock_buffer_size_ = (len - 1 > 5) ? 5 : (len - 1);
+    uint32_t curr_waiting_key = 0;
+    TransactionID curr_txn_id = txns[0]->GetID();
+
+    auto dlock_buffer = db->GetDeadlockInfoBuffer();
+    ASSERT_EQ(dlock_buffer.size(), dlock_buffer_size_);
+    uint32_t check_len = len;
+    bool check_limit_flag = false;
+
+    // Special case for a deadlock path that exceeds the maximum depth.
+    if (len > 50) {
+      check_len = 0;
+      check_limit_flag = true;
+    }
+    auto dlock_entry = dlock_buffer[0].path;
+    ASSERT_EQ(dlock_entry.size(), check_len);
+    ASSERT_EQ(dlock_buffer[0].limit_exceeded, check_limit_flag);
+
+    // Iterates backwards over path verifying decreasing txn_ids.
+    for (auto it = dlock_entry.rbegin(); it != dlock_entry.rend(); it++) {
+      auto dl_node = *it;
+      ASSERT_EQ(dl_node.m_txn_id, len + curr_txn_id - 1);
+      ASSERT_EQ(dl_node.m_cf_id, 0);
+      ASSERT_EQ(dl_node.m_waiting_key, ToString(curr_waiting_key));
+      ASSERT_EQ(dl_node.m_exclusive, true);
+
+      curr_txn_id--;
+      if (curr_waiting_key == 0) {
+        curr_waiting_key = len;
+      }
+      curr_waiting_key--;
+    }
+
     // Rollback the last transaction.
     txns[len - 1]->Rollback();
     delete txns[len - 1];
@@ -494,7 +624,7 @@ TEST_P(TransactionTest, DeadlockCycle) {
 TEST_P(TransactionTest, DeadlockStress) {
   const uint32_t NUM_TXN_THREADS = 10;
   const uint32_t NUM_KEYS = 100;
-  const uint32_t NUM_ITERS = 100000;
+  const uint32_t NUM_ITERS = 10000;
 
   WriteOptions write_options;
   ReadOptions read_options;
@@ -916,6 +1046,7 @@ TEST_P(TransactionTest, PersistentTwoPhaseTransactionTest) {
   s = db->Get(read_options, Slice("foo"), &value);
   ASSERT_TRUE(s.IsNotFound());
 
+  db->FlushWAL(false);
   delete txn;
   // kill and reopen
   s = ReOpenNoDelete();
@@ -980,7 +1111,8 @@ TEST_P(TransactionTest, PersistentTwoPhaseTransactionTest) {
   ASSERT_EQ(db->GetTransactionByName("xid"), nullptr);
 }
 
-TEST_P(TransactionTest, TwoPhaseMultiThreadTest) {
+// TODO this test needs to be updated with serial commits
+TEST_P(TransactionTest, DISABLED_TwoPhaseMultiThreadTest) {
   // mix transaction writes and regular writes
   const uint32_t NUM_TXN_THREADS = 50;
   std::atomic<uint32_t> txn_thread_num(0);
@@ -1029,7 +1161,7 @@ TEST_P(TransactionTest, TwoPhaseMultiThreadTest) {
             env->SleepForMicroseconds(10);
           }
         } else {
-          ASSERT_TRUE(false);
+          FAIL();
         }
       });
 
@@ -1429,7 +1561,7 @@ TEST_P(TransactionTest, TwoPhaseLogRollingTest2) {
 
   // request a flush for all column families such that the earliest
   // alive log file can be killed
-  db_impl->TEST_MaybeFlushColumnFamilies();
+  db_impl->TEST_HandleWALFull();
   // log cannot be flushed because txn2 has not been commited
   ASSERT_TRUE(!db_impl->TEST_IsLogGettingFlushed());
   ASSERT_TRUE(db_impl->TEST_UnableToFlushOldestLog());
@@ -1444,7 +1576,7 @@ TEST_P(TransactionTest, TwoPhaseLogRollingTest2) {
   s = txn2->Commit();
   ASSERT_OK(s);
 
-  db_impl->TEST_MaybeFlushColumnFamilies();
+  db_impl->TEST_HandleWALFull();
   ASSERT_TRUE(!db_impl->TEST_UnableToFlushOldestLog());
 
   // we should see that cfb now has a flush requested
@@ -1504,6 +1636,8 @@ TEST_P(TransactionTest, TwoPhaseOutOfOrderDelete) {
 
   s = db->Put(wal_on, "cats", "dogs4");
   ASSERT_OK(s);
+
+  db->FlushWAL(false);
 
   // kill and reopen
   env->SetFilesystemActive(false);
@@ -2072,6 +2206,7 @@ TEST_P(TransactionTest, ColumnFamiliesTest) {
   delete cfa;
   delete cfb;
   delete db;
+  db = nullptr;
 
   // open DB with three column families
   std::vector<ColumnFamilyDescriptor> column_families;
@@ -2088,6 +2223,7 @@ TEST_P(TransactionTest, ColumnFamiliesTest) {
 
   s = TransactionDB::Open(options, txn_db_options, dbname, column_families,
                           &handles, &db);
+  assert(db != nullptr);
   ASSERT_OK(s);
 
   Transaction* txn = db->BeginTransaction(write_options);
@@ -2769,10 +2905,12 @@ TEST_P(TransactionTest, LockLimitTest) {
   Status s;
 
   delete db;
+  db = nullptr;
 
   // Open DB with a lock limit of 3
   txn_db_options.max_num_locks = 3;
   s = TransactionDB::Open(options, txn_db_options, dbname, &db);
+  assert(db != nullptr);
   ASSERT_OK(s);
 
   // Create a txn and verify we can only lock up to 3 keys
@@ -3695,6 +3833,7 @@ TEST_P(TransactionTest, TimeoutTest) {
   Status s;
 
   delete db;
+  db = nullptr;
 
   // transaction writes have an infinite timeout,
   // but we will override this when we start a txn
@@ -3703,6 +3842,7 @@ TEST_P(TransactionTest, TimeoutTest) {
   txn_db_options.default_lock_timeout = -1;
 
   s = TransactionDB::Open(options, txn_db_options, dbname, &db);
+  assert(db != nullptr);
   ASSERT_OK(s);
 
   s = db->Put(write_options, "aaa", "aaa");
@@ -4440,7 +4580,7 @@ Status TransactionStressTestInserter(TransactionDB* db,
 }
 }  // namespace
 
-TEST_P(TransactionTest, TransactionStressTest) {
+TEST_P(MySQLStyleTransactionTest, TransactionStressTest) {
   const size_t num_threads = 4;
   const size_t num_transactions_per_thread = 10000;
   const size_t num_sets = 3;
@@ -4469,6 +4609,35 @@ TEST_P(TransactionTest, TransactionStressTest) {
   // Verify that data is consistent
   Status s = RandomTransactionInserter::Verify(db, num_sets);
   ASSERT_OK(s);
+}
+
+TEST_P(TransactionTest, MemoryLimitTest) {
+  TransactionOptions txn_options;
+  // Header (12 bytes) + NOOP (1 byte) + 2 * 8 bytes for data.
+  txn_options.max_write_batch_size = 29;
+  string value;
+  Status s;
+
+  Transaction* txn = db->BeginTransaction(WriteOptions(), txn_options);
+  ASSERT_TRUE(txn);
+
+  ASSERT_EQ(0, txn->GetNumPuts());
+  ASSERT_LE(0, txn->GetID());
+
+  s = txn->Put(Slice("a"), Slice("...."));
+  ASSERT_OK(s);
+  ASSERT_EQ(1, txn->GetNumPuts());
+
+  s = txn->Put(Slice("b"), Slice("...."));
+  ASSERT_OK(s);
+  ASSERT_EQ(2, txn->GetNumPuts());
+
+  s = txn->Put(Slice("b"), Slice("...."));
+  ASSERT_TRUE(s.IsMemoryLimit());
+  ASSERT_EQ(2, txn->GetNumPuts());
+
+  txn->Rollback();
+  delete txn;
 }
 
 }  // namespace rocksdb

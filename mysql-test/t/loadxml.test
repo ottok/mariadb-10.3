@@ -130,3 +130,35 @@ CREATE TABLE t1 (col1 VARCHAR(3), col2 VARCHAR(3), col3 INTEGER);
 LOAD XML INFILE '../../std_data/bug16171518_2.dat' INTO TABLE t1;
 SELECT * FROM t1 ORDER BY col1, col2, col3;
 DROP TABLE t1;
+
+--echo #
+--echo # MDEV-12696 Crash with LOAD XML and non-updatable VIEW column
+--echo #
+
+CREATE TABLE t1 (c1 TEXT);
+CREATE VIEW v1 AS SELECT CONCAT(c1,'') AS c1, NULL AS c2 FROM t1;
+--error ER_NONUPDATEABLE_COLUMN
+LOAD XML INFILE '../../std_data/loaddata/mdev12696.xml' INTO TABLE v1 (c1);
+--error ER_NONUPDATEABLE_COLUMN
+LOAD XML INFILE '../../std_data/loaddata/mdev12696.xml' INTO TABLE v1 (c2);
+DROP VIEW v1;
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-14628 Wrong autoinc value assigned by LOAD XML in the NO_AUTO_VALUE_ON_ZERO mode
+--echo #
+
+SET sql_mode=NO_AUTO_VALUE_ON_ZERO;
+CREATE TABLE t1 (a INT AUTO_INCREMENT PRIMARY KEY, b TEXT);
+LOAD XML INFILE '../../std_data/loaddata/mdev14628a.xml' INTO TABLE t1 ROWS IDENTIFIED BY '<row>';
+SELECT * FROM t1 ORDER BY b;
+DROP TABLE t1;
+SET sql_mode=DEFAULT;
+
+SET sql_mode='';
+CREATE  TABLE t1 (id INT, g GEOMETRY NOT NULL);
+--error ER_WARN_NULL_TO_NOTNULL
+LOAD XML INFILE '../../std_data/loaddata/mdev14628b.xml' INTO TABLE t1 ROWS IDENTIFIED BY '<row>';
+SELECT * FROM t1;
+DROP TABLE t1;
+SET sql_mode=DEFAULT;

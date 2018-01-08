@@ -105,6 +105,7 @@ my_bool	net_flush(NET *net);
 #endif
 
 #include "client_settings.h"
+#include <ssl_compat.h>
 #include <sql_common.h>
 #include <mysql/client_plugin.h>
 #include <my_context.h>
@@ -951,7 +952,7 @@ void STDCALL
 mysql_free_result(MYSQL_RES *result)
 {
   DBUG_ENTER("mysql_free_result");
-  DBUG_PRINT("enter",("mysql_res: 0x%lx", (long) result));
+  DBUG_PRINT("enter",("mysql_res: %p", result));
   if (result)
   {
     MYSQL *mysql= result->handle;
@@ -1149,6 +1150,7 @@ void mysql_read_default_options(struct st_mysql_options *options,
 	  break;
         case OPT_pipe:
           options->protocol = MYSQL_PROTOCOL_PIPE;
+          break;
         case OPT_connect_timeout: 
 	case OPT_timeout:
 	  if (opt_arg)
@@ -1651,7 +1653,7 @@ mysql_init(MYSQL *mysql)
   */
   mysql->reconnect= 0;
 
-  DBUG_PRINT("mysql",("mysql: 0x%lx", (long) mysql));
+  DBUG_PRINT("mysql",("mysql: %p", mysql));
   return mysql;
 }
 
@@ -1679,8 +1681,8 @@ mysql_ssl_set(MYSQL *mysql __attribute__((unused)) ,
            mysql_options(mysql, MYSQL_OPT_SSL_CAPATH, capath) |
            mysql_options(mysql, MYSQL_OPT_SSL_CIPHER, cipher) ?
            1 : 0);
-  mysql->options.use_ssl= TRUE;
 #endif /* HAVE_OPENSSL && !EMBEDDED_LIBRARY */
+  mysql->options.use_ssl= TRUE;
   DBUG_RETURN(result);
 }
 
@@ -1769,15 +1771,21 @@ mysql_get_ssl_cipher(MYSQL *mysql __attribute__((unused)))
 
 #if defined(HAVE_OPENSSL)
 
+#ifdef HAVE_X509_check_host
+#include <openssl/x509v3.h>
+#endif
+
 static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const char **errptr)
 {
   SSL *ssl;
   X509 *server_cert= NULL;
+#ifndef HAVE_X509_check_host
   char *cn= NULL;
   int cn_loc= -1;
   ASN1_STRING *cn_asn1= NULL;
   X509_NAME_ENTRY *cn_entry= NULL;
   X509_NAME *subject= NULL;
+#endif
   int ret_validation= 1;
 
   DBUG_ENTER("ssl_verify_server_cert");
@@ -1812,14 +1820,9 @@ static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const c
     are what we expect.
   */
 
-  /*
-   Some notes for future development
-   We should check host name in alternative name first and then if needed check in common name.
-   Currently yssl doesn't support alternative name.
-   openssl 1.0.2 support X509_check_host method for host name validation, we may need to start using
-   X509_check_host in the future.
-  */
-
+#ifdef HAVE_X509_check_host
+  ret_validation= X509_check_host(server_cert, server_hostname, 0, 0, 0) != 1;
+#else
   subject= X509_get_subject_name(server_cert);
   cn_loc= X509_NAME_get_index_by_NID(subject, NID_commonName, -1);
   if (cn_loc < 0)
@@ -1827,7 +1830,6 @@ static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const c
     *errptr= "Failed to get CN location in the certificate subject";
     goto error;
   }
-
   cn_entry= X509_NAME_get_entry(subject, cn_loc);
   if (cn_entry == NULL)
   {
@@ -1842,7 +1844,7 @@ static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const c
     goto error;
   }
 
-  cn= (char *) ASN1_STRING_data(cn_asn1);
+  cn= (char *) ASN1_STRING_get0_data(cn_asn1);
 
   if ((size_t)ASN1_STRING_length(cn_asn1) != strlen(cn))
   {
@@ -1856,7 +1858,7 @@ static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const c
     /* Success */
     ret_validation= 0;
   }
-
+#endif
   *errptr= "SSL certificate validation failure";
 
 error:
@@ -2541,7 +2543,6 @@ static int send_client_reply_packet(MCPVIO_EXT *mpvio,
     int3store(buff+2, net->max_packet_size);
     end= buff+5;
   }
-#ifdef HAVE_OPENSSL
 
   /*
      If client uses ssl and client also has to verify the server
@@ -2559,6 +2560,7 @@ static int send_client_reply_packet(MCPVIO_EXT *mpvio,
     goto error;
   }
 
+#ifdef HAVE_OPENSSL
   if (mysql->client_flag & CLIENT_SSL)
   {
     /* Do the SSL layering. */
@@ -2805,11 +2807,11 @@ void mpvio_info(Vio *vio, MYSQL_PLUGIN_VIO_INFO *info)
   switch (vio->type) {
   case VIO_TYPE_TCPIP:
     info->protocol= MYSQL_VIO_TCP;
-    info->socket= vio_fd(vio);
+    info->socket= (int)vio_fd(vio);
     return;
   case VIO_TYPE_SOCKET:
     info->protocol= MYSQL_VIO_SOCKET;
-    info->socket= vio_fd(vio);
+    info->socket= (int)vio_fd(vio);
     return;
   case VIO_TYPE_SSL:
     {
@@ -2819,7 +2821,7 @@ void mpvio_info(Vio *vio, MYSQL_PLUGIN_VIO_INFO *info)
         return;
       info->protocol= addr.sa_family == AF_UNIX ?
         MYSQL_VIO_SOCKET : MYSQL_VIO_TCP;
-      info->socket= vio_fd(vio);
+      info->socket= (int)vio_fd(vio);
       return;
     }
 #ifdef _WIN32
@@ -3377,7 +3379,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
     }
     DBUG_PRINT("info",
                ("End of connect attempts, sock: %d  status: %d  error: %d",
-                sock, status, saved_error));
+                (int)sock, status, saved_error));
 
     freeaddrinfo(res_lst);
 
@@ -3408,7 +3410,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
   if (mysql->options.extension && mysql->options.extension->async_context)
     net->vio->async_context= mysql->options.extension->async_context;
 
-  if (my_net_init(net, net->vio, 0, MYF(0)))
+  if (my_net_init(net, net->vio, _current_thd(), MYF(0)))
   {
     vio_delete(net->vio);
     net->vio = 0;
@@ -3556,11 +3558,11 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
       scramble_data_len= pkt_scramble_len;
       scramble_plugin= scramble_data + scramble_data_len;
       if (scramble_data + scramble_data_len > pkt_end)
-        scramble_data_len= pkt_end - scramble_data;
+        scramble_data_len= (int)(pkt_end - scramble_data);
     }
     else
     {
-      scramble_data_len= pkt_end - scramble_data;
+      scramble_data_len= (int)(pkt_end - scramble_data);
       scramble_plugin= native_password_plugin_name;
     }
   }
@@ -3631,7 +3633,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
   }
 #endif
 
-  DBUG_PRINT("exit", ("Mysql handler: 0x%lx", (long) mysql));
+  DBUG_PRINT("exit", ("Mysql handler: %p",mysql));
   DBUG_RETURN(mysql);
 
 error:
@@ -3953,7 +3955,7 @@ void STDCALL mysql_close_slow_part(MYSQL *mysql)
 void STDCALL mysql_close(MYSQL *mysql)
 {
   DBUG_ENTER("mysql_close");
-  DBUG_PRINT("enter", ("mysql: 0x%lx", (long) mysql));
+  DBUG_PRINT("enter", ("mysql: %p",  mysql));
 
   if (mysql)					/* Some simple safety */
   {
@@ -4064,7 +4066,7 @@ int STDCALL
 mysql_real_query(MYSQL *mysql, const char *query, ulong length)
 {
   DBUG_ENTER("mysql_real_query");
-  DBUG_PRINT("enter",("handle: 0x%lx", (long) mysql));
+  DBUG_PRINT("enter",("handle: %p", mysql));
   DBUG_PRINT("query",("Query = '%-.4096s'",query));
 
   if (mysql_send_query(mysql,query,length))

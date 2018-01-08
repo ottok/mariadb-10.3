@@ -20,13 +20,12 @@
   Text .frm files management routines
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "parse_file.h"
 #include "unireg.h"                            // CREATE_MODE
 #include "sql_table.h"                        // build_table_filename
 #include <m_ctype.h>
-#include <my_sys.h>
 #include <my_dir.h>
 
 /* from sql_db.cc */
@@ -136,7 +135,7 @@ static ulonglong view_algo_from_frm(ulonglong val)
 
 
 static my_bool
-write_parameter(IO_CACHE *file, uchar* base, File_option *parameter)
+write_parameter(IO_CACHE *file, const uchar* base, File_option *parameter)
 {
   char num_buf[20];			// buffer for numeric operations
   // string for numeric operations
@@ -248,19 +247,20 @@ write_parameter(IO_CACHE *file, uchar* base, File_option *parameter)
 
 
 my_bool
-sql_create_definition_file(const LEX_STRING *dir, const LEX_STRING *file_name,
-			   const LEX_STRING *type,
+sql_create_definition_file(const LEX_CSTRING *dir,
+                           const LEX_CSTRING *file_name,
+			   const LEX_CSTRING *type,
 			   uchar* base, File_option *parameters)
 {
   File handler;
   IO_CACHE file;
   char path[FN_REFLEN+1];	// +1 to put temporary file name for sure
-  int path_end;
+  size_t path_end;
   File_option *param;
   DBUG_ENTER("sql_create_definition_file");
-  DBUG_PRINT("enter", ("Dir: %s, file: %s, base 0x%lx",
+  DBUG_PRINT("enter", ("Dir: %s, file: %s, base %p",
 		       dir ? dir->str : "",
-                       file_name->str, (ulong) base));
+                       file_name->str, base));
 
   if (dir)
   {
@@ -399,7 +399,7 @@ my_bool rename_in_schema_file(THD *thd,
 */
 
 File_parser * 
-sql_parse_prepare(const LEX_STRING *file_name, MEM_ROOT *mem_root,
+sql_parse_prepare(const LEX_CSTRING *file_name, MEM_ROOT *mem_root,
 		  bool bad_format_errors)
 {
   MY_STAT stat_info;
@@ -437,7 +437,7 @@ sql_parse_prepare(const LEX_STRING *file_name, MEM_ROOT *mem_root,
     DBUG_RETURN(0);
   }
   
-  if ((len= mysql_file_read(file, (uchar *)buff, stat_info.st_size,
+  if ((len= mysql_file_read(file, (uchar *)buff, (size_t)stat_info.st_size,
                             MYF(MY_WME))) == MY_FILE_ERROR)
   {
     mysql_file_close(file, MYF(MY_WME));
@@ -598,13 +598,13 @@ read_escaped_string(const char *ptr, const char *eol, LEX_STRING *str)
 
 const char *
 parse_escaped_string(const char *ptr, const char *end, MEM_ROOT *mem_root,
-                     LEX_STRING *str)
+                     LEX_CSTRING *str)
 {
   const char *eol= strchr(ptr, '\n');
 
   if (eol == 0 || eol >= end ||
       !(str->str= (char*) alloc_root(mem_root, (eol - ptr) + 1)) ||
-      read_escaped_string(ptr, eol, str))
+      read_escaped_string(ptr, eol, (LEX_STRING*) str))
     return 0;
     
   return eol+1;
@@ -802,7 +802,7 @@ File_parser::parse(uchar* base, MEM_ROOT *mem_root,
 	case FILE_OPTIONS_ESTRING:
 	{
 	  if (!(ptr= parse_escaped_string(ptr, end, mem_root,
-					  (LEX_STRING *)
+					  (LEX_CSTRING *)
 					  (base + parameter->offset))))
 	  {
 	    my_error(ER_FPARSER_ERROR_IN_PARAMETER, MYF(0),

@@ -972,7 +972,7 @@ def	information_schema	COLUMNS	COLUMNS	TABLE_CATALOG	TABLE_CATALOG	253	1536	3	N	
 def	information_schema	COLUMNS	COLUMNS	TABLE_SCHEMA	TABLE_SCHEMA	253	192	4	N	1	0	33
 def	information_schema	COLUMNS	COLUMNS	TABLE_NAME	TABLE_NAME	253	192	2	N	1	0	33
 def	information_schema	COLUMNS	COLUMNS	COLUMN_NAME	COLUMN_NAME	253	192	1	N	1	0	33
-def	information_schema	COLUMNS	COLUMNS	COLUMN_DEFAULT	COLUMN_DEFAULT	252	589815	0	Y	16	0	33
+def	information_schema	COLUMNS	COLUMNS	COLUMN_DEFAULT	COLUMN_DEFAULT	252	589788	0	Y	16	0	33
 def	information_schema	COLUMNS	COLUMNS	IS_NULLABLE	IS_NULLABLE	253	9	2	N	1	0	33
 def	information_schema	COLUMNS	COLUMNS	DATA_TYPE	DATA_TYPE	253	192	3	N	1	0	33
 def	information_schema	COLUMNS	COLUMNS	CHARACTER_SET_NAME	CHARACTER_SET_NAME	253	96	0	Y	0	0	33
@@ -997,7 +997,7 @@ def	information_schema	COLUMNS	COLUMNS	COLUMN_NAME	Field	253	192	1	N	1	0	33
 def	information_schema	COLUMNS	COLUMNS	COLUMN_TYPE	Type	252	589815	7	N	17	0	33
 def	information_schema	COLUMNS	COLUMNS	IS_NULLABLE	Null	253	9	2	N	1	0	33
 def	information_schema	COLUMNS	COLUMNS	COLUMN_KEY	Key	253	9	3	N	1	0	33
-def	information_schema	COLUMNS	COLUMNS	COLUMN_DEFAULT	Default	252	589815	0	Y	16	0	33
+def	information_schema	COLUMNS	COLUMNS	COLUMN_DEFAULT	Default	252	589788	0	Y	16	0	33
 def	information_schema	COLUMNS	COLUMNS	EXTRA	Extra	253	90	0	N	1	0	33
 Field	Type	Null	Key	Default	Extra
 c	int(11)	NO	PRI	NULL	
@@ -1206,26 +1206,6 @@ DROP TABLE t1;
 DROP VIEW v1;
 DROP PROCEDURE p1;
 DROP FUNCTION f1;
-set names koi8r;
-DROP DATABASE IF EXISTS mysqltest1;
-CREATE DATABASE mysqltest1;
-use mysqltest1;
-CREATE TABLE t1(колонка1 INT);
-
----> Dumping mysqltest1 to outfile1
-
-
-DROP DATABASE mysqltest1;
-
-
----> Restoring mysqltest1...
-SHOW CREATE TABLE mysqltest1.t1;
-Table	Create Table
-t1	CREATE TABLE `t1` (
-  `колонка1` int(11) DEFAULT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1
-DROP DATABASE mysqltest1;
-use test;
 flush status;
 show variables like "log_queries_not_using_indexes";
 Variable_name	Value
@@ -1236,7 +1216,7 @@ select 1 from information_schema.tables limit 1;
 show status like 'slow_queries';
 Variable_name	Value
 Slow_queries	1
-set global log_queries_not_using_indexes=OFF;
+set session log_queries_not_using_indexes=OFF;
 show variables like "log_queries_not_using_indexes";
 Variable_name	Value
 log_queries_not_using_indexes	OFF
@@ -1246,7 +1226,7 @@ select 1 from information_schema.tables limit 1;
 show status like 'slow_queries';
 Variable_name	Value
 Slow_queries	1
-set global log_queries_not_using_indexes=ON;
+set session log_queries_not_using_indexes=ON;
 show variables like "log_queries_not_using_indexes";
 Variable_name	Value
 log_queries_not_using_indexes	ON
@@ -1273,8 +1253,8 @@ PRIMARY KEY  (Codigo)
 ) ENGINE=MyISAM AUTO_INCREMENT=11 DEFAULT CHARSET=utf8;
 show create table t1;
 Catalog	Database	Table	Table_alias	Column	Column_alias	Type	Length	Max length	Is_null	Flags	Decimals	Charsetnr
-def					Table	253	64	2	N	1	39	7
-def					Create Table	253	1024	458	N	1	39	7
+def					Table	253	192	2	N	1	39	33
+def					Create Table	253	3072	458	N	1	39	33
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `Codigo` int(10) unsigned NOT NULL AUTO_INCREMENT,

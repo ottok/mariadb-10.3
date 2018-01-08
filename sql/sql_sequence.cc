@@ -15,20 +15,23 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 */
 
+#include "mariadb.h"
 #include "sql_class.h"
 #include "sql_list.h"
 #include "sql_sequence.h"
 #include "ha_sequence.h"
 #include "sql_base.h"
+#include "sql_table.h"                          // write_bin_log
 #include "transaction.h"
 #include "lock.h"
+#include "sql_acl.h"
 
 struct Field_definition
 {
   const char *field_name;
   uint length;
-  enum enum_field_types sql_type;
-  LEX_STRING comment;
+  const Type_handler *type_handler;
+  LEX_CSTRING comment;
   ulong flags;
 };
 
@@ -45,19 +48,20 @@ struct Field_definition
 
 static Field_definition sequence_structure[]=
 {
-  {"next_value", 21, MYSQL_TYPE_LONGLONG, {C_STRING_WITH_LEN("next not cached value")},
-   FL},
-  {"min_value", 21, MYSQL_TYPE_LONGLONG, {C_STRING_WITH_LEN("min value")}, FL},
-  {"max_value", 21, MYSQL_TYPE_LONGLONG, {C_STRING_WITH_LEN("max value")}, FL},
-  {"start", 21, MYSQL_TYPE_LONGLONG, {C_STRING_WITH_LEN("start value")},  FL},
-  {"increment", 21, MYSQL_TYPE_LONGLONG,
+  {"next_not_cached_value", 21, &type_handler_longlong,
+   {STRING_WITH_LEN("")}, FL},
+  {"minimum_value", 21, &type_handler_longlong, STRING_WITH_LEN(""), FL},
+  {"maximum_value", 21, &type_handler_longlong, STRING_WITH_LEN(""), FL},
+  {"start_value", 21, &type_handler_longlong, {STRING_WITH_LEN("start value when sequences is created or value if RESTART is used")},  FL},
+  {"increment", 21, &type_handler_longlong,
    {C_STRING_WITH_LEN("increment value")}, FL},
-  {"cache", 21, MYSQL_TYPE_LONGLONG, {C_STRING_WITH_LEN("cache size")}, FL},
-  {"cycle", 1, MYSQL_TYPE_TINY, {C_STRING_WITH_LEN("cycle state")},
+  {"cache_size", 21, &type_handler_longlong, STRING_WITH_LEN(""),
+   FL | UNSIGNED_FLAG},
+  {"cycle_option", 1, &type_handler_tiny, {STRING_WITH_LEN("0 if no cycles are allowed, 1 if the sequence should begin a new cycle when maximum_value is passed")},
    FL | UNSIGNED_FLAG },
-  {"round", 21, MYSQL_TYPE_LONGLONG,
-   {C_STRING_WITH_LEN("How many cycles has been done")}, FL},
-  {NULL, 0, MYSQL_TYPE_LONGLONG, {C_STRING_WITH_LEN("")}, 0}
+  {"cycle_count", 21, &type_handler_longlong,
+   {STRING_WITH_LEN("How many cycles have been done")}, FL},
+  {NULL, 0, &type_handler_longlong, {STRING_WITH_LEN("")}, 0}
 };
 
 #undef FL
@@ -69,50 +73,60 @@ static Field_definition sequence_structure[]=
   Check whether sequence values are valid.
   Sets default values for fields that are not used, according to Oracle spec.
 
-  Note that reserved_until is not checked as it's ok that it's outside of
-  the range (to indicate that sequence us used up).
-
   RETURN VALUES
      false      valid
      true       invalid
 */
 
-bool sequence_definition::check_and_adjust()
+bool sequence_definition::check_and_adjust(bool set_reserved_until)
 {
   longlong max_increment;
   DBUG_ENTER("sequence_definition::check");
+
+  if (!(real_increment= increment))
+    real_increment= global_system_variables.auto_increment_increment;
 
   /*
     If min_value is not set, set it to LONGLONG_MIN or 1, depending on
     increment
   */
   if (!(used_fields & seq_field_used_min_value))
-    min_value= increment < 0 ? LONGLONG_MIN+1 : 1;
+    min_value= real_increment < 0 ? LONGLONG_MIN+1 : 1;
 
   /*
     If min_value is not set, set it to LONGLONG_MAX or -1, depending on
-    increment
+    real_increment
   */
   if (!(used_fields & seq_field_used_max_value))
-    max_value= increment < 0 ? -1 : LONGLONG_MAX-1;
+    max_value= real_increment < 0 ? -1 : LONGLONG_MAX-1;
 
   if (!(used_fields & seq_field_used_start))
   {
-    /* Use min_value or max_value for start depending on increment */
-    start= increment < 0 ? max_value : min_value;
+    /* Use min_value or max_value for start depending on real_increment */
+    start= real_increment < 0 ? max_value : min_value;
   }
 
-  /* To ensure that cache * increment will never overflow */
-  max_increment= increment ? labs(increment) : MAX_AUTO_INCREMENT_VALUE;
+  if (set_reserved_until)
+    reserved_until= start;
+
+  adjust_values(reserved_until);
+
+  /* To ensure that cache * real_increment will never overflow */
+  max_increment= (real_increment ?
+                  llabs(real_increment) :
+                  MAX_AUTO_INCREMENT_VALUE);
 
   if (max_value >= start &&
       max_value > min_value &&
       start >= min_value &&
       max_value != LONGLONG_MAX &&
       min_value != LONGLONG_MIN &&
-      cache < (LONGLONG_MAX - max_increment) / max_increment)
+      cache < (LONGLONG_MAX - max_increment) / max_increment &&
+      ((real_increment > 0 && reserved_until >= min_value) ||
+       (real_increment < 0 && reserved_until <= max_value)))
     DBUG_RETURN(FALSE);
-  DBUG_RETURN(TRUE);
+
+  DBUG_RETURN(TRUE);                           // Error
 }
 
 
@@ -162,7 +176,7 @@ void sequence_definition::store_fields(TABLE *table)
 
 
 /*
-  Check the sequence fields through seq_fields when create sequence.qq
+  Check the sequence fields through seq_fields when createing a sequence.
 
   RETURN VALUES
     false       Success
@@ -194,11 +208,11 @@ bool check_sequence_fields(LEX *lex, List<Create_field> *fields)
   {
     Field_definition *field_def= &sequence_structure[field_no];
     if (my_strcasecmp(system_charset_info, field_def->field_name,
-                      field->field_name) ||
+                      field->field_name.str) ||
         field->flags != field_def->flags ||
-        field->sql_type != field_def->sql_type)
+        field->type_handler() != field_def->type_handler)
     {
-      reason= field->field_name;
+      reason= field->field_name.str;
       goto err;
     }
   }
@@ -228,11 +242,14 @@ bool prepare_sequence_fields(THD *thd, List<Create_field> *fields)
   for (field_info= sequence_structure; field_info->field_name ; field_info++)
   {
     Create_field *new_field;
+    LEX_CSTRING field_name= {field_info->field_name,
+                             strlen(field_info->field_name)};
+
     if (unlikely(!(new_field= new Create_field())))
       DBUG_RETURN(TRUE); /* purify inspected */
 
-    new_field->field_name=  field_info->field_name;
-    new_field->sql_type=    field_info->sql_type;
+    new_field->field_name=  field_name;
+    new_field->set_handler(field_info->type_handler);
     new_field->length=      field_info->length;
     new_field->char_length= field_info->length;
     new_field->comment=     field_info->comment;
@@ -266,7 +283,6 @@ bool sequence_insert(THD *thd, LEX *lex, TABLE_LIST *table_list)
   Reprepare_observer *save_reprepare_observer;
   sequence_definition *seq= lex->create_info.seq_create_info;
   bool temporary_table= table_list->table != 0;
-  MY_BITMAP *save_write_set;
   DBUG_ENTER("sequence_insert");
 
   /* If not temporary table */
@@ -313,71 +329,77 @@ bool sequence_insert(THD *thd, LEX *lex, TABLE_LIST *table_list)
   }
 
   seq->reserved_until= seq->start;
-  seq->store_fields(table);
-  /* Store the sequence values in table share */
-  table->s->sequence->copy(seq);
-
-  /*
-    Sequence values will be replicated as a statement
-    like 'create sequence'. So disable binary log temporarily
-  */
-  tmp_disable_binlog(thd);
-  save_write_set= table->write_set;
-  table->write_set= &table->s->all_set;
-  error= table->file->ha_write_row(table->record[0]);
-  reenable_binlog(thd);
-  table->write_set= save_write_set;
-
-  if (error)
-    table->file->print_error(error, MYF(0));
-  else
-  {
-    /*
-      Sequence structure is up to date and table has one row,
-      sequence is now usable
-    */
-    table->s->sequence->initialized= 1;
-  }
+  error= seq->write_initial_sequence(table);
 
   trans_commit_stmt(thd);
   trans_commit_implicit(thd);
   if (!temporary_table)
     close_thread_tables(thd);
-  thd->mdl_context.release_transactional_locks();
   DBUG_RETURN(error);
 }
 
 
 /* Create a SQUENCE object */
 
-SEQUENCE::SEQUENCE() :initialized(0), all_values_used(0), table(0)
+SEQUENCE::SEQUENCE() :all_values_used(0), initialized(SEQ_UNINTIALIZED)
 {
-  mysql_mutex_init(key_LOCK_SEQUENCE, &mutex, MY_MUTEX_INIT_SLOW);
+  mysql_rwlock_init(key_LOCK_SEQUENCE, &mutex);
 }
 
 SEQUENCE::~SEQUENCE()
 {
-  mysql_mutex_destroy(&mutex);
+  mysql_rwlock_destroy(&mutex);
 }
 
+/*
+  The following functions is to ensure that we when reserve new values
+  trough sequence object sequence we have only one writer at at time.
+  A sequence table can have many readers (trough normal SELECT's).
+
+  We mark that we have a write lock in the table object so that
+  ha_sequence::ha_write() can check if we have a lock. If already locked, then
+  ha_write() knows that we are running a sequence operation. If not, then
+  ha_write() knows that it's an INSERT.
+*/
+
+void SEQUENCE::write_lock(TABLE *table)
+{
+  DBUG_ASSERT(((ha_sequence*) table->file)->is_locked() == 0);
+  mysql_rwlock_wrlock(&mutex);
+  ((ha_sequence*) table->file)->write_lock();
+}
+void SEQUENCE::write_unlock(TABLE *table)
+{
+  ((ha_sequence*) table->file)->unlock();
+  mysql_rwlock_unlock(&mutex);
+}
+void SEQUENCE::read_lock(TABLE *table)
+{
+  if (!((ha_sequence*) table->file)->is_locked())
+    mysql_rwlock_rdlock(&mutex);
+}
+void SEQUENCE::read_unlock(TABLE *table)
+{
+  if (!((ha_sequence*) table->file)->is_locked())
+    mysql_rwlock_unlock(&mutex);
+}
 
 /**
    Read values from the sequence tables to table_share->sequence.
    This is called from ha_open() when the table is not yet locked
 */
 
-int SEQUENCE::read_initial_values(TABLE *table_arg)
+int SEQUENCE::read_initial_values(TABLE *table)
 {
   int error= 0;
   enum thr_lock_type save_lock_type;
   MDL_request mdl_request;                      // Empty constructor!
   DBUG_ENTER("SEQUENCE::read_initial_values");
 
-  if (likely(initialized))
+  if (likely(initialized != SEQ_UNINTIALIZED))
     DBUG_RETURN(0);
-  table= table_arg;
-  mysql_mutex_lock(&mutex);
-  if (unlikely(!initialized))
+  write_lock(table);
+  if (likely(initialized == SEQ_UNINTIALIZED))
   {
     MYSQL_LOCK *lock;
     bool mdl_lock_used= 0;
@@ -415,8 +437,9 @@ int SEQUENCE::read_initial_values(TABLE *table_arg)
         thd->mdl_context.release_lock(mdl_request.ticket);
       DBUG_RETURN(HA_ERR_LOCK_WAIT_TIMEOUT);
     }
-    if (!(error= read_stored_values()))
-      initialized= 1;
+    DBUG_ASSERT(table->reginfo.lock_type == TL_READ);
+    if (!(error= read_stored_values(table)))
+      initialized= SEQ_READY_TO_USE;
     mysql_unlock_tables(thd, lock, 0);
     if (mdl_lock_used)
       thd->mdl_context.release_lock(mdl_request.ticket);
@@ -432,21 +455,23 @@ int SEQUENCE::read_initial_values(TABLE *table_arg)
     if (!has_active_transaction && !thd->transaction.stmt.is_empty())
       trans_commit_stmt(thd);
   }
-  mysql_mutex_unlock(&mutex);
+  write_unlock(table);
   DBUG_RETURN(error);
 }
 
+
 /*
-  Read data from sequence table and update values
-  Done when table is opened
+  Do the actiual reading of data from sequence table and
+  update values in the sequence object.
+
+  Called once from when table is opened
 */
 
-int SEQUENCE::read_stored_values()
+int SEQUENCE::read_stored_values(TABLE *table)
 {
   int error;
   my_bitmap_map *save_read_set;
   DBUG_ENTER("SEQUENCE::read_stored_values");
-  mysql_mutex_assert_owner(&mutex);
 
   save_read_set= tmp_use_all_columns(table, table->read_set);
   error= table->file->ha_read_first_row(table->record[0], MAX_KEY);
@@ -458,7 +483,7 @@ int SEQUENCE::read_stored_values()
     DBUG_RETURN(error);
   }
   read_fields(table);
-  adjust_values();
+  adjust_values(reserved_until);
 
   all_values_used= 0;
   DBUG_RETURN(0);
@@ -469,12 +494,12 @@ int SEQUENCE::read_stored_values()
   Adjust values after reading a the stored state
 */
 
-void SEQUENCE::adjust_values()
+void sequence_definition::adjust_values(longlong next_value)
 {
-  offset= 0;
-  next_free_value= reserved_until;
+  next_free_value= next_value;
   if (!(real_increment= increment))
   {
+    longlong offset= 0;
     longlong off, to_add;
     /* Use auto_increment_increment and auto_increment_offset */
 
@@ -510,6 +535,83 @@ void SEQUENCE::adjust_values()
 
 
 /**
+   Write initial sequence information for CREATE and ALTER to sequence table
+*/
+
+int sequence_definition::write_initial_sequence(TABLE *table)
+{
+  int error;
+  THD *thd= table->in_use;
+  MY_BITMAP *save_write_set;
+
+  store_fields(table);
+  /* Store the sequence values in table share */
+  table->s->sequence->copy(this);
+  /*
+    Sequence values will be replicated as a statement
+    like 'create sequence'. So disable binary log temporarily
+  */
+  tmp_disable_binlog(thd);
+  save_write_set= table->write_set;
+  table->write_set= &table->s->all_set;
+  table->s->sequence->initialized= SEQUENCE::SEQ_IN_PREPARE;
+  error= table->file->ha_write_row(table->record[0]);
+  table->s->sequence->initialized= SEQUENCE::SEQ_UNINTIALIZED;
+  reenable_binlog(thd);
+  table->write_set= save_write_set;
+  if (error)
+    table->file->print_error(error, MYF(0));
+  else
+  {
+    /*
+      Sequence structure is up to date and table has one row,
+      sequence is now usable
+    */
+    table->s->sequence->initialized= SEQUENCE::SEQ_READY_TO_USE;
+  }
+  return error;
+}
+
+
+/**
+   Store current sequence values into the sequence table
+*/
+
+int sequence_definition::write(TABLE *table, bool all_fields)
+{
+  int error;
+  MY_BITMAP *save_rpl_write_set, *save_write_set, *save_read_set;
+  DBUG_ASSERT(((ha_sequence*) table->file)->is_locked());
+
+  save_rpl_write_set= table->rpl_write_set;
+  if (likely(!all_fields))
+  {
+    /* Only write next_value and round to binary log */
+    table->rpl_write_set= &table->def_rpl_write_set;
+    bitmap_clear_all(table->rpl_write_set);
+    bitmap_set_bit(table->rpl_write_set, NEXT_FIELD_NO);
+    bitmap_set_bit(table->rpl_write_set, ROUND_FIELD_NO);
+  }
+  else
+    table->rpl_write_set= &table->s->all_set;
+
+  /* Update table */
+  save_write_set= table->write_set;
+  save_read_set=  table->read_set;
+  table->read_set= table->write_set= &table->s->all_set;
+  table->file->column_bitmaps_signal();
+  store_fields(table);
+  if ((error= table->file->ha_write_row(table->record[0])))
+    table->file->print_error(error, MYF(0));
+  table->rpl_write_set= save_rpl_write_set;
+  table->read_set=  save_read_set;
+  table->write_set= save_write_set;
+  table->file->column_bitmaps_signal();
+  return error;
+}
+
+
+/**
    Get next value for sequence
 
    @param in   table  Sequence table
@@ -519,7 +621,7 @@ void SEQUENCE::adjust_values()
                       push_warning_printf(WARN_LEVEL_WARN) has been called
 
 
-   @retval     0      Next number or error. Check error variable
+   @retval     0      Next number or error. Check error variable
                #      Next sequence number
 
    NOTES:
@@ -541,37 +643,19 @@ longlong SEQUENCE::next_value(TABLE *table, bool second_round, int *error)
 {
   longlong res_value, org_reserved_until, add_to;
   bool out_of_values;
-  MY_BITMAP *save_rpl_write_set, *save_write_set;
   DBUG_ENTER("SEQUENCE::next_value");
 
   *error= 0;
   if (!second_round)
-    lock();
+    write_lock(table);
 
   res_value= next_free_value;
-
-  /* Increment next_free_value */
-  if (real_increment > 0)
-  {
-    if (next_free_value + real_increment > max_value ||
-        next_free_value > max_value - real_increment)
-      next_free_value= max_value + 1;
-    else
-      next_free_value+= real_increment;
-  }
-  else
-  {
-    if (next_free_value + real_increment < min_value ||
-        next_free_value < min_value - real_increment)
-      next_free_value= min_value - 1;
-    else
-      next_free_value+= real_increment;
-  }
+  next_free_value= increment_value(next_free_value);
 
   if ((real_increment > 0 && res_value < reserved_until) ||
       (real_increment < 0 && res_value > reserved_until))
   {
-    unlock();
+    write_unlock(table);
     DBUG_RETURN(res_value);
   }
 
@@ -585,7 +669,7 @@ longlong SEQUENCE::next_value(TABLE *table, bool second_round, int *error)
     The cache value is checked on insert so the following can't
     overflow
   */
-  add_to= cache ? real_increment * cache : 1;
+  add_to= cache ? real_increment * cache : real_increment;
   out_of_values= 0;
 
   if (real_increment > 0)
@@ -616,7 +700,7 @@ longlong SEQUENCE::next_value(TABLE *table, bool second_round, int *error)
       goto err;
     round++;
     reserved_until= real_increment >0 ? min_value : max_value;
-    adjust_values();                            // Fix next_free_value
+    adjust_values(reserved_until);              // Fix next_free_value
     /*
       We have to do everything again to ensure that the given range was
       not empty, which could happen if increment == 0
@@ -624,31 +708,17 @@ longlong SEQUENCE::next_value(TABLE *table, bool second_round, int *error)
     DBUG_RETURN(next_value(table, 1, error));
   }
 
-  /* Log a full insert (ok as table is small) */
-  save_rpl_write_set= table->rpl_write_set;
-
-  /* Update table */
-  save_write_set= table->write_set;
-  table->rpl_write_set= table->write_set= &table->s->all_set;
-  store_fields(table);
-  /* Tell ha_sequence::write_row that we already hold the mutex */
-  ((ha_sequence*) table->file)->sequence_locked= 1;
-  if ((*error= table->file->ha_write_row(table->record[0])))
+  if ((*error= write(table, 0)))
   {
-    table->file->print_error(*error, MYF(0));
-    /* Restore original range */
     reserved_until= org_reserved_until;
     next_free_value= res_value;
   }
-  ((ha_sequence*) table->file)->sequence_locked= 0;
-  table->rpl_write_set= save_rpl_write_set;
-  table->write_set= save_write_set;
 
-  unlock();
+  write_unlock(table);
   DBUG_RETURN(res_value);
 
 err:
-  unlock();
+  write_unlock(table);
   my_error(ER_SEQUENCE_RUN_OUT, MYF(0), table->s->db.str,
            table->s->table_name.str);
   *error= ER_SEQUENCE_RUN_OUT;
@@ -675,4 +745,194 @@ bool SEQUENCE_LAST_VALUE::check_version(TABLE *table)
 void SEQUENCE_LAST_VALUE::set_version(TABLE *table)
 {
   memcpy(table_version, table->s->tabledef_version.str, MY_UUID_SIZE);
+}
+
+/**
+   Set the next value for sequence
+
+   @param in   table       Sequence table
+   @param in   next_val    Next free value
+   @param in   next_round  Round for 'next_value' (in case of cycles)
+   @param in   is_used     1 if next_val is already used
+
+   @retval     0      ok, value adjusted
+               -1     value was less than current value
+               1      error when storing value
+
+   @comment
+   A new value is set only if "nextval,next_round" is less than
+   "next_free_value,round". This is needed as in replication
+   setvalue() calls may come out to the slave out-of-order.
+   Storing only the highest value ensures that sequence object will always
+   contain the highest used value when the slave is promoted to a master.
+*/
+
+int SEQUENCE::set_value(TABLE *table, longlong next_val, ulonglong next_round,
+                         bool is_used)
+{
+  int error= -1;
+  bool needs_to_be_stored= 0;
+  longlong org_reserved_until=  reserved_until;
+  longlong org_next_free_value= next_free_value;
+  ulonglong org_round= round;
+  DBUG_ENTER("SEQUENCE::set_value");
+
+  write_lock(table);
+  if (is_used)
+    next_val= increment_value(next_val);
+
+  if (round > next_round)
+    goto end;                                   // error = -1
+  if (round == next_round)
+  {
+    if (real_increment > 0  ?
+        next_val < next_free_value :
+        next_val > next_free_value)
+      goto end;                                 // error = -1
+    if (next_val == next_free_value)
+    {
+      error= 0;
+      goto end;
+    }
+  }
+  else if (cycle == 0)
+  {
+    // round < next_round && no cycles, which is impossible
+    my_error(ER_SEQUENCE_RUN_OUT, MYF(0), table->s->db.str,
+             table->s->table_name.str);
+    error= 1;
+    goto end;
+  }
+  else
+    needs_to_be_stored= 1;
+
+  round= next_round;
+  adjust_values(next_val);
+  if ((real_increment > 0 ?
+       next_free_value > reserved_until :
+       next_free_value < reserved_until) ||
+      needs_to_be_stored)
+  {
+    reserved_until= next_free_value;
+    if (write(table, 0))
+    {
+      reserved_until=  org_reserved_until;
+      next_free_value= org_next_free_value;
+      round= org_round;
+      error= 1;
+      goto end;
+    }
+  }
+  error= 0;
+
+end:
+  write_unlock(table);
+  DBUG_RETURN(error);
+}
+
+
+bool Sql_cmd_alter_sequence::execute(THD *thd)
+{
+  int error= 0;
+  int trapped_errors= 0;
+  LEX *lex= thd->lex;
+  TABLE_LIST *first_table= lex->query_tables;
+  TABLE *table;
+  sequence_definition *new_seq= lex->create_info.seq_create_info;
+  SEQUENCE *seq;
+  No_such_table_error_handler no_such_table_handler;
+  DBUG_ENTER("Sql_cmd_alter_sequence::execute");
+
+  if (check_access(thd, ALTER_ACL, first_table->db,
+                   &first_table->grant.privilege,
+                   &first_table->grant.m_internal,
+                   0, 0))
+    DBUG_RETURN(TRUE);                  /* purecov: inspected */
+
+  if (check_grant(thd, ALTER_ACL, first_table, FALSE, 1, FALSE))
+    DBUG_RETURN(TRUE);                  /* purecov: inspected */
+
+  if (if_exists())
+    thd->push_internal_handler(&no_such_table_handler);
+  error= open_and_lock_tables(thd, first_table, FALSE, 0);
+  if (if_exists())
+  {
+    trapped_errors= no_such_table_handler.safely_trapped_errors();
+    thd->pop_internal_handler();
+  }
+  if (error)
+  {
+    if (trapped_errors)
+    {
+      StringBuffer<FN_REFLEN> tbl_name;
+      tbl_name.append(first_table->db);
+      tbl_name.append('.');
+      tbl_name.append(first_table->table_name);
+      push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
+                          ER_UNKNOWN_SEQUENCES,
+                          ER_THD(thd, ER_UNKNOWN_SEQUENCES),
+                          tbl_name.c_ptr_safe());
+      my_ok(thd);
+      DBUG_RETURN(FALSE);
+    }
+    DBUG_RETURN(TRUE);
+  }
+
+  table= first_table->table;
+  seq= table->s->sequence;
+  new_seq->reserved_until= seq->reserved_until;
+
+  /* Copy from old sequence those fields that the user didn't specified */
+  if (!(new_seq->used_fields & seq_field_used_increment))
+    new_seq->increment= seq->increment;
+  if (!(new_seq->used_fields & seq_field_used_min_value))
+    new_seq->min_value= seq->min_value;
+  if (!(new_seq->used_fields & seq_field_used_max_value))
+    new_seq->max_value= seq->max_value;
+  if (!(new_seq->used_fields & seq_field_used_start))
+    new_seq->start=          seq->start;
+  if (!(new_seq->used_fields & seq_field_used_cache))
+    new_seq->cache= seq->cache;
+  if (!(new_seq->used_fields & seq_field_used_cycle))
+    new_seq->cycle= seq->cycle;
+
+  /* If we should restart from a new value */
+  if (new_seq->used_fields & seq_field_used_restart)
+  {
+    if (!(new_seq->used_fields & seq_field_used_restart_value))
+      new_seq->restart=      new_seq->start;
+    new_seq->reserved_until= new_seq->restart;
+  }
+
+  /* Let check_and_adjust think all fields are used */
+  new_seq->used_fields= ~0;
+  if (new_seq->check_and_adjust(0))
+  {
+    my_error(ER_SEQUENCE_INVALID_DATA, MYF(0),
+             first_table->db,
+             first_table->table_name);
+    error= 1;
+    goto end;
+  }
+
+  table->s->sequence->write_lock(table);
+  if (!(error= new_seq->write(table, 1)))
+  {
+    /* Store the sequence values in table share */
+    table->s->sequence->copy(new_seq);
+  }
+  else
+    table->file->print_error(error, MYF(0));
+  table->s->sequence->write_unlock(table);
+  if (trans_commit_stmt(thd))
+    error= 1;
+  if (trans_commit_implicit(thd))
+    error= 1;
+  if (!error)
+    error= write_bin_log(thd, 1, thd->query(), thd->query_length());
+  if (!error)
+    my_ok(thd);
+
+end:
+  DBUG_RETURN(error);
 }

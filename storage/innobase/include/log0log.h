@@ -1,8 +1,8 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2016, Oracle and/or its affiliates. All rights reserved.
+Copyright (c) 1995, 2017, Oracle and/or its affiliates. All rights reserved.
 Copyright (c) 2009, Google Inc.
-Copyright (c) 2017, MariaDB Corporation. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -39,12 +39,19 @@ Created 12/9/1995 Heikki Tuuri
 #include "sync0rw.h"
 #include "log0types.h"
 #include "os0event.h"
+#include "os0file.h"
 
 /** Redo log group */
 struct log_group_t;
 
 /** Magic value to use instead of log checksums when they are disabled */
 #define LOG_NO_CHECKSUM_MAGIC 0xDEADBEEFUL
+
+/* Margin for the free space in the smallest log group, before a new query
+step which modifies the database, is started */
+
+#define LOG_CHECKPOINT_FREE_PER_THREAD	(4 * UNIV_PAGE_SIZE)
+#define LOG_CHECKPOINT_EXTRA_FREE	(8 * UNIV_PAGE_SIZE)
 
 typedef ulint (*log_checksum_func_t)(const byte* log_block);
 
@@ -145,24 +152,24 @@ UNIV_INLINE
 lsn_t
 log_get_max_modified_age_async(void);
 /*================================*/
-/******************************************************//**
-Initializes the log. */
+/** Initializes the redo logging subsystem. */
 void
-log_init(void);
-/*==========*/
-/******************************************************************//**
-Inits a log group to the log system.
-@return true if success, false if not */
-MY_ATTRIBUTE((warn_unused_result))
+log_sys_init();
+
+/** Initialize the redo log.
+@param[in]	n_files		number of files */
+void
+log_init(ulint n_files);
+/** Calculate the recommended highest values for lsn - last_checkpoint_lsn
+and lsn - buf_get_oldest_modification().
+@param[in]	file_size	requested innodb_log_file_size
+@retval true on success
+@retval false if the smallest log group is too small to
+accommodate the number of OS threads in the database server */
 bool
-log_group_init(
-/*===========*/
-	ulint	id,			/*!< in: group id */
-	ulint	n_files,		/*!< in: number of log files */
-	lsn_t	file_size,		/*!< in: log file size in bytes */
-	ulint	space_id);		/*!< in: space id of the file space
-					which contains the log files of this
-					group */
+log_set_capacity(ulonglong file_size)
+	MY_ATTRIBUTE((warn_unused_result));
+
 /******************************************************//**
 Completes an i/o to a log file. */
 void
@@ -401,16 +408,9 @@ Closes all log groups. */
 void
 log_group_close_all(void);
 /*=====================*/
-/********************************************************//**
-Shutdown the log system but do not release all the memory. */
+/** Shut down the redo log subsystem. */
 void
-log_shutdown(void);
-/*==============*/
-/********************************************************//**
-Free the log system data structures. */
-void
-log_mem_free(void);
-/*==============*/
+log_shutdown();
 
 /** Whether to generate and require checksums on the redo log pages */
 extern my_bool	innodb_log_checksums;
@@ -510,9 +510,13 @@ or the MySQL version that created the redo log file. */
 	IB_TO_STR(MYSQL_VERSION_MINOR) "."	\
 	IB_TO_STR(MYSQL_VERSION_PATCH)
 
+/** The original (not version-tagged) InnoDB redo log format */
+#define LOG_HEADER_FORMAT_3_23		0
+/** The MySQL 5.7.9/MariaDB 10.2.2 log format */
+#define LOG_HEADER_FORMAT_10_2		1
 /** The redo log format identifier corresponding to the current format version.
 Stored in LOG_HEADER_FORMAT. */
-#define LOG_HEADER_FORMAT_CURRENT	1
+#define LOG_HEADER_FORMAT_CURRENT	103
 /** Encrypted MariaDB redo log */
 #define LOG_HEADER_FORMAT_ENCRYPTED	(1U<<31)
 
@@ -546,16 +550,12 @@ Currently, this is only protected by log_sys->mutex. However, in the case
 of log_write_up_to(), we will access some members only with the protection
 of log_sys->write_mutex, which should affect nothing for now. */
 struct log_group_t{
-	/** log group identifier (always 0) */
-	ulint				id;
 	/** number of files in the group */
 	ulint				n_files;
 	/** format of the redo log: e.g., LOG_HEADER_FORMAT_CURRENT */
 	ulint				format;
 	/** individual log file size in bytes, including the header */
-	lsn_t				file_size
-	/** file space which implements the log group */;
-	ulint				space_id;
+	lsn_t				file_size;
 	/** corruption status */
 	log_group_state_t		state;
 	/** lsn used to fix coordinates within the log group */
@@ -574,13 +574,17 @@ struct log_group_t{
 	byte*				checkpoint_buf_ptr;
 	/** buffer for writing a checkpoint header */
 	byte*				checkpoint_buf;
-	/** list of log groups */
-	UT_LIST_NODE_T(log_group_t)	log_groups;
 
 	/** @return whether the redo log is encrypted */
 	bool is_encrypted() const
 	{
 		return((format & LOG_HEADER_FORMAT_ENCRYPTED) != 0);
+	}
+
+	/** @return capacity in bytes */
+	inline lsn_t capacity() const
+	{
+		return((file_size - LOG_FILE_HDR_SIZE) * n_files);
 	}
 };
 
@@ -633,8 +637,8 @@ struct log_t{
 					max_checkpoint_age; this flag is
 					peeked at by log_free_check(), which
 					does not reserve the log mutex */
-	UT_LIST_BASE_NODE_T(log_group_t)
-			log_groups;	/*!< log groups */
+	/** the redo log */
+	log_group_t			log;
 
 	/** The fields involved in the log buffer flush @{ */
 
@@ -723,7 +727,7 @@ struct log_t{
 	/** @return whether the redo log is encrypted */
 	bool is_encrypted() const
 	{
-		return(UT_LIST_GET_FIRST(log_groups)->is_encrypted());
+		return(log.is_encrypted());
 	}
 };
 

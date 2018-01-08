@@ -319,8 +319,8 @@ fid	ST_IsClosed(g)
 116	0
 SELECT fid, ST_AsText(ST_Centroid(g)) FROM gis_multi_polygon;
 fid	ST_AsText(ST_Centroid(g))
-117	POINT(55.58852775304245 17.426536064113982)
-118	POINT(55.58852775304245 17.426536064113982)
+117	POINT(57.98031067576927 17.854754130800433)
+118	POINT(57.98031067576927 17.854754130800433)
 119	POINT(2 2)
 SELECT fid, ST_Area(g) FROM gis_multi_polygon;
 fid	ST_Area(g)
@@ -652,11 +652,11 @@ insert into t1 values ('85984',ST_GeomFromText('MULTIPOLYGON(((-115.006363
 select object_id, ST_geometrytype(geo), ST_ISSIMPLE(GEO), ST_ASTEXT(ST_centroid(geo)) from
 t1 where object_id=85998;
 object_id	ST_geometrytype(geo)	ST_ISSIMPLE(GEO)	ST_ASTEXT(ST_centroid(geo))
-85998	MULTIPOLYGON	1	POINT(115.31877315203187 -36.23747282102153)
+85998	MULTIPOLYGON	1	POINT(115.2970604672862 -36.23335610879993)
 select object_id, ST_geometrytype(geo), ST_ISSIMPLE(GEO), ST_ASTEXT(ST_centroid(geo)) from
 t1 where object_id=85984;
 object_id	ST_geometrytype(geo)	ST_ISSIMPLE(GEO)	ST_ASTEXT(ST_centroid(geo))
-85984	MULTIPOLYGON	1	POINT(-114.87787186923313 36.33101763469059)
+85984	MULTIPOLYGON	1	POINT(-114.86854472054372 36.34725218253213)
 drop table t1;
 create table t1 (fl geometry not null);
 insert into t1 values (1);
@@ -681,7 +681,7 @@ def	test	t1	t1	g	g	255	4294967295	0	Y	144	0	63
 g
 select ST_asbinary(g) from t1;
 Catalog	Database	Table	Table_alias	Column	Column_alias	Type	Length	Max length	Is_null	Flags	Decimals	Charsetnr
-def					ST_asbinary(g)	252	4294967295	0	Y	128	0	63
+def					ST_asbinary(g)	251	4294967295	0	Y	128	0	63
 ST_asbinary(g)
 drop table t1;
 create table t1 (a TEXT, b GEOMETRY NOT NULL, SPATIAL KEY(b));
@@ -1020,9 +1020,9 @@ f5	datetime	YES		NULL
 drop view v1;
 drop table t1;
 SELECT MultiPoint(12345,'');
-ERROR 22007: Illegal non geometric '12345' value found during parsing
+ERROR HY000: Illegal parameter data type int for operation 'geometrycollection'
 SELECT 1 FROM (SELECT GREATEST(1,GEOMETRYCOLLECTION('00000','00000')) b FROM DUAL) AS d WHERE (LINESTRING(d.b));
-ERROR 22007: Illegal non geometric ''00000'' value found during parsing
+ERROR HY000: Illegal parameter data type varchar for operation 'geometrycollection'
 #
 # BUG#51875: crash when loading data into geometry function ST_polyfromwkb
 #
@@ -1091,7 +1091,7 @@ ST_ISCLOSED(CONVERT(CONCAT('     ', 0x2), BINARY(20)))
 # GEOMETRY FUNCTION ARGUMENTS
 #
 SELECT GEOMETRYCOLLECTION((SELECT @@OLD));
-ERROR 22007: Illegal non geometric '' value found during parsing
+ERROR HY000: Illegal parameter data type bigint for operation 'geometrycollection'
 End of 5.1 tests
 #
 # Bug#11908153: CRASH AND/OR VALGRIND ERRORS IN FIELD_BLOB::GET_KEY_IMAGE
@@ -1481,5 +1481,4 @@ DROP DATABASE gis_ogs;
 # Bug#13362660 ASSERTION `FIELD_POS < FIELD_COUNT' FAILED. IN PROTOCOL_TEXT::STORE
 #
 SELECT ST_Union('', ''), md5(1);
-ST_Union('', '')	md5(1)
-NULL	c4ca4238a0b923820dcc509a6f75849b
+ERROR HY000: Illegal parameter data type varchar for operation 'st_union'

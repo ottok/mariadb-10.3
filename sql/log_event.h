@@ -1300,7 +1300,6 @@ public:
     constructor and pass description_event as an argument.
   */
   static Log_event* read_log_event(IO_CACHE* file,
-                                   mysql_mutex_t* log_lock,
                                    const Format_description_log_event
                                    *description_event,
                                    my_bool crc_check);
@@ -2013,8 +2012,8 @@ protected:
 */
 class Query_log_event: public Log_event
 {
-  LEX_STRING user;
-  LEX_STRING host;
+  LEX_CSTRING user;
+  LEX_CSTRING host;
 protected:
   Log_event::Byte* data_buf;
 public:
@@ -3041,9 +3040,9 @@ public:
     UNDEF_F= 0,
     UNSIGNED_F= 1
   };
-  char *name;
+  const char *name;
   uint name_len;
-  char *val;
+  const char *val;
   ulong val_len;
   Item_result type;
   uint charset_number;
@@ -3052,8 +3051,8 @@ public:
 #ifdef MYSQL_SERVER
   bool deferred;
   query_id_t query_id;
-  User_var_log_event(THD* thd_arg, char *name_arg, uint name_len_arg,
-                     char *val_arg, ulong val_len_arg, Item_result type_arg,
+  User_var_log_event(THD* thd_arg, const char *name_arg, uint name_len_arg,
+                     const char *val_arg, ulong val_len_arg, Item_result type_arg,
 		     uint charset_number_arg, uchar flags_arg,
                      bool using_trans, bool direct)
     :Log_event(thd_arg, 0, using_trans),
@@ -3459,7 +3458,7 @@ public:
 
   The three elements in the body repeat COUNT times to form the GTID list.
 
-  At the time of writing, only one flag bit is in use.
+  At the time of writing, only two flag bit are in use.
 
   Bit 28 of `count' is used for flag FLAG_UNTIL_REACHED, which is sent in a
   Gtid_list event from the master to the slave to indicate that the START
@@ -3477,9 +3476,12 @@ public:
   uint64 *sub_id_list;
 
   static const uint element_size= 4+4+8;
-  static const uint32 FLAG_UNTIL_REACHED= (1<<28);
-  static const uint32 FLAG_IGN_GTIDS= (1<<29);
-
+  /* Upper bits stored in 'count'. See comment above */
+  enum gtid_flags
+  {
+    FLAG_UNTIL_REACHED= (1<<28),
+    FLAG_IGN_GTIDS= (1<<29),
+  };
 #ifdef MYSQL_SERVER
   Gtid_list_log_event(rpl_binlog_state *gtid_set, uint32 gl_flags);
   Gtid_list_log_event(slave_connection_state *gtid_set, uint32 gl_flags);
@@ -4422,6 +4424,7 @@ public:
   void set_flags(flag_set flags_arg) { m_flags |= flags_arg; }
   void clear_flags(flag_set flags_arg) { m_flags &= ~flags_arg; }
   flag_set get_flags(flag_set flags_arg) const { return m_flags & flags_arg; }
+  void update_flags() { int2store(temp_buf + m_flags_pos, m_flags); }
 
   Log_event_type get_type_code() { return m_type; } /* Specific type (_V1 etc) */
   enum_logged_status logged_status() { return LOGGED_ROW_EVENT; }
@@ -4581,6 +4584,7 @@ protected:
   uchar    *m_rows_end;		/* One-after the end of the allocated space */
 
   size_t   m_rows_before_size;  /* The length before m_rows_buf */
+  size_t   m_flags_pos; /* The position of the m_flags */
 
   flag_set m_flags;		/* Flags for row-level events */
 
@@ -4603,6 +4607,7 @@ protected:
   int find_key(); // Find a best key to use in find_row()
   int find_row(rpl_group_info *);
   int write_row(rpl_group_info *, const bool);
+  int update_sequence();
 
   // Unpack the current row into m_table->record[0], but with
   // a different columns bitmap.
@@ -5121,7 +5126,7 @@ static inline bool copy_event_cache_to_string_and_reinit(IO_CACHE *cache, LEX_ST
   String tmp;
 
   reinit_io_cache(cache, READ_CACHE, 0L, FALSE, FALSE);
-  if (tmp.append(cache, cache->end_of_file))
+  if (tmp.append(cache, (uint32)cache->end_of_file))
     goto err;
   reinit_io_cache(cache, WRITE_CACHE, 0, FALSE, TRUE);
 
@@ -5199,10 +5204,6 @@ inline int Log_event_writer::write(Log_event *ev)
 */
 bool slave_execute_deferred_events(THD *thd);
 #endif
-
-bool rpl_get_position_info(const char **log_file_name, ulonglong *log_pos,
-                           const char **group_relay_log_name,
-                           ulonglong *relay_log_pos);
 
 bool event_that_should_be_ignored(const char *buf);
 bool event_checksum_test(uchar *buf, ulong event_len, enum_binlog_checksum_alg alg);

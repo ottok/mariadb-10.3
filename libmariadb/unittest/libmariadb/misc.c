@@ -30,6 +30,9 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 /*
   Bug#28075 "COM_DEBUG crashes mysqld"
 */
+#ifdef _WIN32
+#define R_OK 4
+#endif
 
 static int test_bug28075(MYSQL *mysql)
 {
@@ -295,6 +298,7 @@ static int test_frm_bug(MYSQL *mysql)
 
   fclose(test_file);
   mysql_query(mysql, "drop table if exists test_frm_bug");
+  unlink(test_frm);
   return OK;
 }
 
@@ -1051,6 +1055,47 @@ static int test_remote2(MYSQL *my)
 }
 #endif
 
+#ifndef _WIN32
+static int test_mdev12965(MYSQL *unused __attribute__((unused)))
+{
+  MYSQL *mysql;
+  my_bool reconnect = 0;
+  FILE *fp= NULL;
+  const char *env= getenv("MYSQL_TMP_DIR");
+  char cnf_file1[FN_REFLEN + 1];
+
+  if (!env)
+    env= "/tmp";
+
+  setenv("HOME", env, 1);
+
+  snprintf(cnf_file1, FN_REFLEN, "%s%c.my.cnf", env, FN_LIBCHAR);
+
+  diag("Config file: %s", cnf_file1);
+
+  FAIL_IF(!access(cnf_file1, R_OK), "access");
+
+  mysql= mysql_init(NULL);
+  fp= fopen(cnf_file1, "w");
+  FAIL_IF(!fp, "fopen");
+
+  fprintf(fp, "[misc]\ndefault-character-set=latin2\n[client]\nreconnect=1\n");
+  fclose(fp);
+
+  mysql_options(mysql, MYSQL_READ_DEFAULT_GROUP, NULL);
+  my_test_connect(mysql, hostname, username, password,
+                  schema, 0, socketname, 0);
+
+  remove(cnf_file1);
+
+  FAIL_IF(strcmp(mysql_character_set_name(mysql), "latin2"), "expected charset latin2");
+  mysql_get_optionv(mysql, MYSQL_OPT_RECONNECT, &reconnect);
+  FAIL_IF(reconnect != 1, "expected reconnect=1");
+  mysql_close(mysql);
+  return OK;
+}
+#endif
+
 static int test_get_info(MYSQL *mysql)
 {
   size_t sval;
@@ -1063,16 +1108,16 @@ static int test_get_info(MYSQL *mysql)
    
   rc= mariadb_get_infov(mysql, MARIADB_MAX_ALLOWED_PACKET, &sval);
   FAIL_IF(rc, "mysql_get_info failed");
-  diag("max_allowed_packet: %lu", sval);
+  diag("max_allowed_packet: %lu", (unsigned long)sval);
   rc= mariadb_get_infov(mysql, MARIADB_NET_BUFFER_LENGTH, &sval);
   FAIL_IF(rc, "mysql_get_info failed");
-  diag("net_buffer_length: %lu", sval);
+  diag("net_buffer_length: %lu", (unsigned long)sval);
   rc= mariadb_get_infov(mysql, MARIADB_CLIENT_VERSION_ID, &sval);
   FAIL_IF(rc, "mysql_get_info failed");
-  diag("client_version_id: %lu", sval);
+  diag("client_version_id: %lu", (unsigned long)sval);
   rc= mariadb_get_infov(mysql, MARIADB_CONNECTION_SERVER_VERSION_ID, &sval);
   FAIL_IF(rc, "mysql_get_info failed");
-  diag("server_version_id: %lu", sval);
+  diag("server_version_id: %lu", (unsigned long)sval);
   rc= mariadb_get_infov(mysql, MARIADB_CONNECTION_MARIADB_CHARSET_INFO, &cs);
   FAIL_IF(rc, "mysql_get_info failed");
   diag("charset name: %s", cs.csname);
@@ -1143,7 +1188,7 @@ static int test_zerofill(MYSQL *mysql)
 static int test_server_status(MYSQL *mysql)
 {
   int rc;
-  unsigned long server_status;
+  unsigned int server_status;
   MYSQL_STMT *stmt= mysql_stmt_init(mysql);
 
   rc= mysql_autocommit(mysql, 1);
@@ -1267,6 +1312,9 @@ static int test_wl6797(MYSQL *mysql)
 }
 
 struct my_tests_st my_tests[] = {
+#ifndef _WIN32
+  {"test_mdev12965", test_mdev12965, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
+#endif
   {"test_wl6797", test_wl6797, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_server_status", test_server_status, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_read_timeout", test_read_timeout, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},

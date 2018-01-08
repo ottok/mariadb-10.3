@@ -758,6 +758,74 @@ deallocate prepare stmt;
 drop view v1;
 drop table t1,t2;
 
+--echo #
+--echo #MDEV-10053: EXIST to IN transformation turned down
+--echo #
+
+CREATE TABLE t1 (
+ pk INT, f1 INT NOT NULL, f2 VARCHAR(3), f3 INT NULL, PRIMARY KEY(pk))
+ENGINE=MyISAM;
+INSERT INTO t1 VALUES (1,1,'foo',8), (2,5,'bar',7);
+
+let $q=
+SELECT STRAIGHT_JOIN sq1.f2 
+  FROM ( SELECT * FROM t1 ) AS sq1
+    WHERE EXISTS ( SELECT * FROM t1 AS sq2 
+                     WHERE sq1.`pk` IN ( SELECT f1 FROM t1 ) AND sq2.f1 = sq1.f1 );
+
+set @optimizer_switch_save=@@optimizer_switch;
+
+set optimizer_switch='exists_to_in=off';
+eval explain extended $q;
+eval $q;
+set optimizer_switch='exists_to_in=on';
+eval explain extended $q;
+eval $q;
+
+set optimizer_switch= @optimizer_switch_save;
+ 
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-14164: Unknown column error when adding aggregate to function
+--echo # in oracle style procedure FOR loop
+--echo #
+
+CREATE TABLE t1(id INT, val INT);
+DELIMITER //;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE cur1 CURSOR FOR SELECT * FROM (
+  SELECT DISTINCT id FROM t1) a
+  WHERE NOT EXISTS (SELECT * FROM ( SELECT id FROM t1) b
+                    WHERE a.id=b.id);
+  OPEN cur1;
+  CLOSE cur1;
+  OPEN cur1;
+  CLOSE cur1;
+END;
+//
+DELIMITER ;//
+CALL p1();
+DROP PROCEDURE p1;
+DROP TABLE t1;
+
+CREATE TABLE t1(id INT, val INT);
+DELIMITER //;
+CREATE PROCEDURE p1()
+BEGIN
+  SELECT * FROM (SELECT DISTINCT id FROM t1) a
+  WHERE NOT a.id IN (SELECT b.id FROM t1 b);
+  SELECT * FROM (SELECT DISTINCT id FROM t1) a
+  WHERE NOT EXISTS (SELECT * FROM t1 b WHERE a.id=b.id);
+END;
+//
+DELIMITER ;//
+CALL p1();
+CALL p1();
+DROP PROCEDURE p1;
+DROP TABLE t1;
+
 --echo # End of 10.0 tests
 
 #restore defaults

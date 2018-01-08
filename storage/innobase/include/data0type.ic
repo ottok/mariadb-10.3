@@ -387,79 +387,79 @@ dtype_sql_name(
 #define APPEND_UNSIGNED()					\
 	do {							\
 		if (prtype & DATA_UNSIGNED) {			\
-			ut_snprintf(name + strlen(name),	\
+			snprintf(name + strlen(name),	\
 				    name_sz - strlen(name),	\
 				    " UNSIGNED");		\
 		}						\
 	} while (0)
 
-	ut_snprintf(name, name_sz, "UNKNOWN");
+	snprintf(name, name_sz, "UNKNOWN");
 
 	switch (mtype) {
 	case DATA_INT:
 		switch (len) {
 		case 1:
-			ut_snprintf(name, name_sz, "TINYINT");
+			snprintf(name, name_sz, "TINYINT");
 			break;
 		case 2:
-			ut_snprintf(name, name_sz, "SMALLINT");
+			snprintf(name, name_sz, "SMALLINT");
 			break;
 		case 3:
-			ut_snprintf(name, name_sz, "MEDIUMINT");
+			snprintf(name, name_sz, "MEDIUMINT");
 			break;
 		case 4:
-			ut_snprintf(name, name_sz, "INT");
+			snprintf(name, name_sz, "INT");
 			break;
 		case 8:
-			ut_snprintf(name, name_sz, "BIGINT");
+			snprintf(name, name_sz, "BIGINT");
 			break;
 		}
 		APPEND_UNSIGNED();
 		break;
 	case DATA_FLOAT:
-		ut_snprintf(name, name_sz, "FLOAT");
+		snprintf(name, name_sz, "FLOAT");
 		APPEND_UNSIGNED();
 		break;
 	case DATA_DOUBLE:
-		ut_snprintf(name, name_sz, "DOUBLE");
+		snprintf(name, name_sz, "DOUBLE");
 		APPEND_UNSIGNED();
 		break;
 	case DATA_FIXBINARY:
-		ut_snprintf(name, name_sz, "BINARY(%u)", len);
+		snprintf(name, name_sz, "BINARY(%u)", len);
 		break;
 	case DATA_CHAR:
 	case DATA_MYSQL:
-		ut_snprintf(name, name_sz, "CHAR(%u)", len);
+		snprintf(name, name_sz, "CHAR(%u)", len);
 		break;
 	case DATA_VARCHAR:
 	case DATA_VARMYSQL:
-		ut_snprintf(name, name_sz, "VARCHAR(%u)", len);
+		snprintf(name, name_sz, "VARCHAR(%u)", len);
 		break;
 	case DATA_BINARY:
-		ut_snprintf(name, name_sz, "VARBINARY(%u)", len);
+		snprintf(name, name_sz, "VARBINARY(%u)", len);
 		break;
 	case DATA_GEOMETRY:
-		ut_snprintf(name, name_sz, "GEOMETRY");
+		snprintf(name, name_sz, "GEOMETRY");
 		break;
 	case DATA_BLOB:
 		switch (len) {
 		case 9:
-			ut_snprintf(name, name_sz, "TINYBLOB");
+			snprintf(name, name_sz, "TINYBLOB");
 			break;
 		case 10:
-			ut_snprintf(name, name_sz, "BLOB");
+			snprintf(name, name_sz, "BLOB");
 			break;
 		case 11:
-			ut_snprintf(name, name_sz, "MEDIUMBLOB");
+			snprintf(name, name_sz, "MEDIUMBLOB");
 			break;
 		case 12:
-			ut_snprintf(name, name_sz, "LONGBLOB");
+			snprintf(name, name_sz, "LONGBLOB");
 			break;
 		}
 	}
 
 	if (prtype & DATA_NOT_NULL) {
-		ut_snprintf(name + strlen(name),
+		snprintf(name + strlen(name),
 			    name_sz - strlen(name),
 			    " NOT NULL");
 	}
@@ -504,7 +504,6 @@ dtype_get_fixed_size_low(
 	case DATA_INT:
 	case DATA_FLOAT:
 	case DATA_DOUBLE:
-	case DATA_POINT:
 		return(len);
 	case DATA_MYSQL:
 		if (prtype & DATA_BINARY_TYPE) {
@@ -527,12 +526,12 @@ dtype_get_fixed_size_low(
 				return(len);
 			}
 		}
-		/* fall through for variable-length charsets */
+		/* Treat as variable-length. */
+		/* fall through */
 	case DATA_VARCHAR:
 	case DATA_BINARY:
 	case DATA_DECIMAL:
 	case DATA_VARMYSQL:
-	case DATA_VAR_POINT:
 	case DATA_GEOMETRY:
 	case DATA_BLOB:
 		return(0);
@@ -579,7 +578,6 @@ dtype_get_min_size_low(
 	case DATA_INT:
 	case DATA_FLOAT:
 	case DATA_DOUBLE:
-	case DATA_POINT:
 		return(len);
 	case DATA_MYSQL:
 		if (prtype & DATA_BINARY_TYPE) {
@@ -602,7 +600,6 @@ dtype_get_min_size_low(
 	case DATA_BINARY:
 	case DATA_DECIMAL:
 	case DATA_VARMYSQL:
-	case DATA_VAR_POINT:
 	case DATA_GEOMETRY:
 	case DATA_BLOB:
 		return(0);
@@ -636,9 +633,7 @@ dtype_get_max_size_low(
 	case DATA_BINARY:
 	case DATA_DECIMAL:
 	case DATA_VARMYSQL:
-	case DATA_POINT:
 		return(len);
-	case DATA_VAR_POINT:
 	case DATA_GEOMETRY:
 	case DATA_BLOB:
 		break;

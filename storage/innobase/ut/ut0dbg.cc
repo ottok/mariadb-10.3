@@ -30,6 +30,7 @@ Created 1/30/1994 Heikki Tuuri
 
 /*************************************************************//**
 Report a failed assertion. */
+ATTRIBUTE_NORETURN
 void
 ut_dbg_assertion_failed(
 /*====================*/
@@ -47,7 +48,7 @@ ut_dbg_assertion_failed(
 
 	fputs("InnoDB: We intentionally generate a memory trap.\n"
 	      "InnoDB: Submit a detailed bug report"
-	      " to http://bugs.mysql.com.\n"
+	      " to https://jira.mariadb.org/\n"
 	      "InnoDB: If you get repeated assertion failures"
 	      " or crashes, even\n"
 	      "InnoDB: immediately after the mysqld startup, there may be\n"

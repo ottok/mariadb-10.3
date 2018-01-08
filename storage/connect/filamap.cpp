@@ -247,7 +247,7 @@ int MAPFAM::GetRowID(void)
 /***********************************************************************/
 int MAPFAM::GetPos(void)
   {
-  return Fpos - Memory;
+  return (int)(Fpos - Memory);
   } // end of GetPos
 
 /***********************************************************************/
@@ -255,7 +255,7 @@ int MAPFAM::GetPos(void)
 /***********************************************************************/
 int MAPFAM::GetNextPos(void)
   {
-  return Mempos - Memory;
+  return (int)(Mempos - Memory);
   } // end of GetNextPos
 
 /***********************************************************************/
@@ -301,10 +301,9 @@ int MAPFAM::SkipRecord(PGLOBAL g, bool header)
   PDBUSER dup = (PDBUSER)g->Activityp->Aptr;
 
   // Skip this record
-  while (*Mempos++ != '\n') ;      // What about Unix ???
-
-  if (Mempos >= Top)
-    return RC_EF;
+  while (*Mempos++ != '\n')					 		// What about Unix ???
+		if (Mempos == Top)
+      return RC_EF;
 
   // Update progress information
   dup->ProgCur = GetPos();
@@ -320,7 +319,7 @@ int MAPFAM::SkipRecord(PGLOBAL g, bool header)
 /***********************************************************************/
 int MAPFAM::ReadBuffer(PGLOBAL g)
   {
-  int rc, len;
+  int rc, len, n = 1;
 
   // Are we at the end of the memory
 	if (Mempos >= Top) {
@@ -362,10 +361,14 @@ int MAPFAM::ReadBuffer(PGLOBAL g)
     Placed = false;
 
   // Immediately calculate next position (Used by DeleteDB)
-  while (*Mempos++ != '\n') ;        // What about Unix ???
+  while (*Mempos++ != '\n')          // What about Unix ???
+		if (Mempos == Top) {
+			n = 0;
+			break;
+		}	// endif Mempos
 
   // Set caller line buffer
-  len = (Mempos - Fpos) - 1;
+  len = (int)(Mempos - Fpos) - n;
 
   // Don't rely on ENDING setting
   if (len > 0 && *(Mempos - 2) == '\r')
@@ -425,7 +428,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
     /*  not required here, just setting of future Spos and Tpos.       */
     /*******************************************************************/
     Tpos = Spos = Fpos;
-  } else if ((n = Fpos - Spos) > 0) {
+  } else if ((n = (int)(Fpos - Spos)) > 0) {
     /*******************************************************************/
     /*  Non consecutive line to delete. Move intermediate lines.       */
     /*******************************************************************/
@@ -458,7 +461,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
       /*****************************************************************/
       /*  Remove extra records.                                        */
       /*****************************************************************/
-      n = Tpos - Memory;
+      n = (int)(Tpos - Memory);
 
 #if defined(__WIN__)
       DWORD drc = SetFilePointer(fp->Handle, n, NULL, FILE_BEGIN);
@@ -619,10 +622,12 @@ int MBKFAM::ReadBuffer(PGLOBAL g)
   } // endif's
 
   // Immediately calculate next position (Used by DeleteDB)
-  while (*Mempos++ != '\n') ;        // What about Unix ???
+	while (*Mempos++ != '\n')          // What about Unix ???
+		if (Mempos == Top)
+			break;
 
   // Set caller line buffer
-  len = (Mempos - Fpos) - Ending;
+  len = (int)(Mempos - Fpos) - Ending;
   memcpy(Tdbp->GetLine(), Fpos, len);
   Tdbp->GetLine()[len] = '\0';
   return RC_OK;

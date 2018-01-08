@@ -1,7 +1,7 @@
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//  This source code is licensed under both the GPLv2 (found in the
+//  COPYING file in the root directory) and Apache 2.0 License
+//  (found in the LICENSE.Apache file in the root directory).
 //
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -28,6 +28,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -35,6 +36,8 @@
 #include "db/db_impl.h"
 #include "db/version_set.h"
 #include "hdfs/env_hdfs.h"
+#include "monitoring/histogram.h"
+#include "monitoring/statistics.h"
 #include "port/port.h"
 #include "port/stack_trace.h"
 #include "rocksdb/cache.h"
@@ -55,12 +58,11 @@
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb/write_batch.h"
+#include "util/cast_util.h"
 #include "util/compression.h"
 #include "util/crc32c.h"
-#include "util/histogram.h"
 #include "util/mutexlock.h"
 #include "util/random.h"
-#include "util/statistics.h"
 #include "util/stderr_logger.h"
 #include "util/string_util.h"
 #include "util/testutil.h"
@@ -95,6 +97,7 @@ DEFINE_string(
     "readseq,"
     "readreverse,"
     "compact,"
+    "compactall,"
     "readrandom,"
     "multireadrandom,"
     "readseq,"
@@ -174,8 +177,10 @@ DEFINE_string(
     "\ttimeseries            -- 1 writer generates time series data "
     "and multiple readers doing random reads on id\n\n"
     "Meta operations:\n"
-    "\tcompact     -- Compact the entire DB\n"
+    "\tcompact     -- Compact the entire DB; If multiple, randomly choose one\n"
+    "\tcompactall  -- Compact the entire DB\n"
     "\tstats       -- Print DB stats\n"
+    "\tresetstats  -- Reset DB stats\n"
     "\tlevelstats  -- Print the number of files and bytes per level\n"
     "\tsstables    -- Print sstable info\n"
     "\theapprofile -- Dump a heap profile (if supported by this"
@@ -200,6 +205,15 @@ DEFINE_int32(
     "number of column families. After finishing all the writes to them, "
     "create new set of column families and insert to them. Only used "
     "when num_column_families > 1.");
+
+DEFINE_string(column_family_distribution, "",
+              "Comma-separated list of percentages, where the ith element "
+              "indicates the probability of an op using the ith column family. "
+              "The number of elements must be `num_hot_column_families` if "
+              "specified; otherwise, it must be `num_column_families`. The "
+              "sum of elements must be 100. E.g., if `num_column_families=4`, "
+              "and `num_hot_column_families=0`, a valid list could be "
+              "\"10,20,30,40\".");
 
 DEFINE_int64(reads, -1, "Number of read operations to do.  "
              "If negative, do FLAGS_num reads.");
@@ -272,6 +286,9 @@ DEFINE_bool(enable_numa, false,
 DEFINE_int64(db_write_buffer_size, rocksdb::Options().db_write_buffer_size,
              "Number of bytes to buffer in all memtables before compacting");
 
+DEFINE_bool(cost_write_buffer_to_cache, false,
+            "The usage of memtable is costed to the block cache");
+
 DEFINE_int64(write_buffer_size, rocksdb::Options().write_buffer_size,
              "Number of bytes to buffer in memtable before compacting");
 
@@ -305,15 +322,29 @@ DEFINE_int32(max_write_buffer_number_to_maintain,
              "after they are flushed.  If this value is set to -1, "
              "'max_write_buffer_number' will be used.");
 
+DEFINE_int32(max_background_jobs,
+             rocksdb::Options().max_background_jobs,
+             "The maximum number of concurrent background jobs that can occur "
+             "in parallel.");
+
+DEFINE_int32(num_bottom_pri_threads, 0,
+             "The number of threads in the bottom-priority thread pool (used "
+             "by universal compaction only).");
+
+DEFINE_int32(num_high_pri_threads, 0,
+             "The maximum number of concurrent background compactions"
+             " that can occur in parallel.");
+
+DEFINE_int32(num_low_pri_threads, 0,
+             "The maximum number of concurrent background compactions"
+             " that can occur in parallel.");
+
 DEFINE_int32(max_background_compactions,
              rocksdb::Options().max_background_compactions,
              "The maximum number of concurrent background compactions"
              " that can occur in parallel.");
 
-DEFINE_int32(base_background_compactions,
-             rocksdb::Options().base_background_compactions,
-             "The base number of concurrent background compactions"
-             " to occur in parallel.");
+DEFINE_int32(base_background_compactions, -1, "DEPRECATED");
 
 DEFINE_uint64(subcompactions, 1,
               "Maximum number of subcompactions to divide L0-L1 compactions "
@@ -329,7 +360,7 @@ DEFINE_int32(max_background_flushes,
 
 static rocksdb::CompactionStyle FLAGS_compaction_style_e;
 DEFINE_int32(compaction_style, (int32_t) rocksdb::Options().compaction_style,
-             "style of compaction: level-based vs universal");
+             "style of compaction: level-based, universal and fifo");
 
 static rocksdb::CompactionPri FLAGS_compaction_pri_e;
 DEFINE_int32(compaction_pri, (int32_t)rocksdb::Options().compaction_pri,
@@ -378,6 +409,18 @@ DEFINE_int64(simcache_size, -1,
 DEFINE_bool(cache_index_and_filter_blocks, false,
             "Cache index/filter blocks in block cache.");
 
+DEFINE_bool(partition_index_and_filters, false,
+            "Partition index and filter blocks.");
+
+DEFINE_int64(metadata_block_size,
+             rocksdb::BlockBasedTableOptions().metadata_block_size,
+             "Max partition size when partitioning index/filters");
+
+// The default reduces the overhead of reading time with flash. With HDD, which
+// offers much less throughput, however, this number better to be set to 1.
+DEFINE_int32(ops_between_duration_checks, 1000,
+             "Check duration limit every x ops");
+
 DEFINE_bool(pin_l0_filter_and_index_blocks_in_cache, false,
             "Pin index/filter blocks of L0 files in block cache.");
 
@@ -414,7 +457,7 @@ DEFINE_int32(file_opening_threads, rocksdb::Options().max_file_opening_threads,
              "If open_files is set to -1, this option set the number of "
              "threads that will be used to open files during DB::Open()");
 
-DEFINE_int32(new_table_reader_for_compaction_inputs, true,
+DEFINE_bool(new_table_reader_for_compaction_inputs, true,
              "If true, uses a separate file handle for compaction inputs");
 
 DEFINE_int32(compaction_readahead_size, 0, "Compaction readahead size");
@@ -424,9 +467,6 @@ DEFINE_int32(random_access_max_buffer_size, 1024 * 1024,
 
 DEFINE_int32(writable_file_max_buffer_size, 1024 * 1024,
              "Maximum write buffer for Writable File");
-
-DEFINE_bool(skip_table_builder_flush, false, "Skip flushing block in "
-            "table builder ");
 
 DEFINE_int32(bloom_bits, -1, "Bloom filter bits per key. Negative means"
              " use default settings.");
@@ -470,7 +510,8 @@ static bool ValidateCacheNumshardbits(const char* flagname, int32_t value) {
   return true;
 }
 
-DEFINE_bool(verify_checksum, false, "Verify checksum for every block read"
+DEFINE_bool(verify_checksum, true,
+            "Verify checksum for every block read"
             " from storage");
 
 DEFINE_bool(statistics, false, "Database statistics");
@@ -480,6 +521,8 @@ static class std::shared_ptr<rocksdb::Statistics> dbstats;
 DEFINE_int64(writes, -1, "Number of write operations to do. If negative, do"
              " --num reads.");
 
+DEFINE_bool(finish_after_writes, false, "Write thread terminates after all writes are finished");
+
 DEFINE_bool(sync, false, "Sync all writes to disk");
 
 DEFINE_bool(use_fsync, false, "If true, issue fsync instead of fdatasync");
@@ -488,14 +531,21 @@ DEFINE_bool(disable_wal, false, "If true, do not write WAL for write.");
 
 DEFINE_string(wal_dir, "", "If not empty, use the given dir for WAL");
 
+DEFINE_string(truth_db, "/dev/shm/truth_db/dbbench",
+              "Truth key/values used when using verify");
+
 DEFINE_int32(num_levels, 7, "The total number of levels");
 
-DEFINE_int64(target_file_size_base, 2 * 1048576, "Target file size at level-1");
+DEFINE_int64(target_file_size_base, rocksdb::Options().target_file_size_base,
+             "Target file size at level-1");
 
-DEFINE_int32(target_file_size_multiplier, 1,
+DEFINE_int32(target_file_size_multiplier,
+             rocksdb::Options().target_file_size_multiplier,
              "A multiplier to compute target level-N file size (N >= 2)");
 
-DEFINE_uint64(max_bytes_for_level_base,  10 * 1048576, "Max bytes for level-1");
+DEFINE_uint64(max_bytes_for_level_base,
+              rocksdb::Options().max_bytes_for_level_base,
+              "Max bytes for level-1");
 
 DEFINE_bool(level_compaction_dynamic_level_bytes, false,
             "Whether level size base is dynamic");
@@ -572,6 +622,10 @@ DEFINE_bool(optimistic_transaction_db, false,
             "Open a OptimisticTransactionDB instance. "
             "Required for randomtransaction benchmark.");
 
+DEFINE_bool(use_blob_db, false,
+            "Open a BlobDB instance. "
+            "Required for largevalue benchmark.");
+
 DEFINE_bool(transaction_db, false,
             "Open a TransactionDB instance. "
             "Required for randomtransaction benchmark.");
@@ -606,6 +660,12 @@ DEFINE_string(
     "\t--enable_io_prio\n"
     "\t--dump_malloc_stats\n"
     "\t--num_multi_db\n");
+
+DEFINE_uint64(fifo_compaction_max_table_files_size_mb, 0,
+              "The limit of total table file sizes to trigger FIFO compaction");
+DEFINE_bool(fifo_compaction_allow_compaction, true,
+            "Allow compaction in FIFO compaction.");
+DEFINE_uint64(fifo_compaction_ttl, 0, "TTL for the SST Files in seconds.");
 #endif  // ROCKSDB_LITE
 
 DEFINE_bool(report_bg_io_stats, false,
@@ -613,8 +673,6 @@ DEFINE_bool(report_bg_io_stats, false,
 
 DEFINE_bool(use_stderr_info_logger, false,
             "Write info logs to stderr instead of to LOG file. ");
-
-DEFINE_bool(use_blob_db, false, "Whether to use BlobDB. ");
 
 static enum rocksdb::CompressionType StringToCompressionType(const char* ctype) {
   assert(ctype);
@@ -745,10 +803,13 @@ DEFINE_uint64(delayed_write_rate, 8388608u,
               "Limited bytes allowed to DB when soft_rate_limit or "
               "level0_slowdown_writes_trigger triggers");
 
-DEFINE_bool(allow_concurrent_memtable_write, false,
+DEFINE_bool(enable_pipelined_write, true,
+            "Allow WAL and memtable writes to be pipelined");
+
+DEFINE_bool(allow_concurrent_memtable_write, true,
             "Allow multi-writers to update mem tables in parallel.");
 
-DEFINE_bool(enable_write_thread_adaptive_yield, false,
+DEFINE_bool(enable_write_thread_adaptive_yield, true,
             "Use a yielding spin loop for brief writer thread waits.");
 
 DEFINE_uint64(
@@ -764,6 +825,9 @@ DEFINE_int32(rate_limit_delay_max_milliseconds, 1000,
              " be stalled.");
 
 DEFINE_uint64(rate_limiter_bytes_per_sec, 0, "Set options.rate_limiter value.");
+
+DEFINE_bool(rate_limit_bg_reads, false,
+            "Use options.rate_limiter on compaction reads");
 
 DEFINE_uint64(
     benchmark_write_rate_limit, 0,
@@ -789,17 +853,18 @@ DEFINE_uint64(wal_size_limit_MB, 0, "Set the size limit for the WAL Files"
               " in MB.");
 DEFINE_uint64(max_total_wal_size, 0, "Set total max WAL size");
 
-DEFINE_bool(mmap_read, rocksdb::EnvOptions().use_mmap_reads,
+DEFINE_bool(mmap_read, rocksdb::Options().allow_mmap_reads,
             "Allow reads to occur via mmap-ing files");
 
-DEFINE_bool(mmap_write, rocksdb::EnvOptions().use_mmap_writes,
+DEFINE_bool(mmap_write, rocksdb::Options().allow_mmap_writes,
             "Allow writes to occur via mmap-ing files");
 
-DEFINE_bool(use_direct_reads, rocksdb::EnvOptions().use_direct_reads,
+DEFINE_bool(use_direct_reads, rocksdb::Options().use_direct_reads,
             "Use O_DIRECT for reading data");
 
-DEFINE_bool(use_direct_writes, rocksdb::EnvOptions().use_direct_writes,
-            "Use O_DIRECT for writing data");
+DEFINE_bool(use_direct_io_for_flush_and_compaction,
+            rocksdb::Options().use_direct_io_for_flush_and_compaction,
+            "Use O_DIRECT for background flush and compaction I/O");
 
 DEFINE_bool(advise_random_on_open, rocksdb::Options().advise_random_on_open,
             "Advise random access on table file open");
@@ -1111,6 +1176,15 @@ class RandomGenerator {
     pos_ += len;
     return Slice(data_.data() + pos_ - len, len);
   }
+
+  Slice GenerateWithTTL(unsigned int len) {
+    assert(len <= data_.size());
+    if (pos_ + len > data_.size()) {
+      pos_ = 0;
+    }
+    pos_ += len;
+    return Slice(data_.data() + pos_ - len, len);
+  }
 };
 
 static void AppendWithSpace(std::string* str, Slice msg) {
@@ -1133,6 +1207,8 @@ struct DBWithColumnFamilies {
                    // After each CreateNewCf(), another num_hot number of new
                    // Column families will be created and used to be queried.
   port::Mutex create_cf_mutex;  // Only one thread can execute CreateNewCf()
+  std::vector<int> cfh_idx_to_prob;  // ith index holds probability of operating
+                                     // on cfh[i].
 
   DBWithColumnFamilies()
       : db(nullptr)
@@ -1152,7 +1228,9 @@ struct DBWithColumnFamilies {
         opt_txn_db(other.opt_txn_db),
 #endif  // ROCKSDB_LITE
         num_created(other.num_created.load()),
-        num_hot(other.num_hot) {}
+        num_hot(other.num_hot),
+        cfh_idx_to_prob(other.cfh_idx_to_prob) {
+  }
 
   void DeleteDBs() {
     std::for_each(cfh.begin(), cfh.end(),
@@ -1174,8 +1252,20 @@ struct DBWithColumnFamilies {
 
   ColumnFamilyHandle* GetCfh(int64_t rand_num) {
     assert(num_hot > 0);
+    size_t rand_offset = 0;
+    if (!cfh_idx_to_prob.empty()) {
+      assert(cfh_idx_to_prob.size() == num_hot);
+      int sum = 0;
+      while (sum + cfh_idx_to_prob[rand_offset] < rand_num % 100) {
+        sum += cfh_idx_to_prob[rand_offset];
+        ++rand_offset;
+      }
+      assert(rand_offset < cfh_idx_to_prob.size());
+    } else {
+      rand_offset = rand_num % num_hot;
+    }
     return cfh[num_created.load(std::memory_order_acquire) - num_hot +
-               rand_num % num_hot];
+               rand_offset];
   }
 
   // stage: assume CF from 0 to stage * num_hot has be created. Need to create
@@ -1735,7 +1825,8 @@ class Duration {
 
     if (max_seconds_) {
       // Recheck every appx 1000 ops (exact iff increment is factor of 1000)
-      if ((ops_/1000) != ((ops_-increment)/1000)) {
+      auto granularity = FLAGS_ops_between_duration_checks;
+      if ((ops_ / granularity) != ((ops_ - increment) / granularity)) {
         uint64_t now = FLAGS_env->NowMicros();
         return ((now - start_at_) / 1000000) >= max_seconds_;
       } else {
@@ -1780,6 +1871,7 @@ class Benchmark {
   int64_t readwrites_;
   int64_t merge_keys_;
   bool report_file_operations_;
+  bool use_blob_db_;
 
   bool SanityCheck() {
     if (FLAGS_compression_ratio > 1) {
@@ -2039,7 +2131,12 @@ class Benchmark {
                 ? FLAGS_num
                 : ((FLAGS_writes > FLAGS_reads) ? FLAGS_writes : FLAGS_reads)),
         merge_keys_(FLAGS_merge_keys < 0 ? FLAGS_num : FLAGS_merge_keys),
-        report_file_operations_(FLAGS_report_file_operations) {
+        report_file_operations_(FLAGS_report_file_operations),
+#ifndef ROCKSDB_LITE
+        use_blob_db_(FLAGS_use_blob_db) {
+#else
+        use_blob_db_(false) {
+#endif  // !ROCKSDB_LITE
     // use simcache instead of cache
     if (FLAGS_simcache_size >= 0) {
       if (FLAGS_cache_numshardbits >= 1) {
@@ -2077,6 +2174,11 @@ class Benchmark {
       if (!FLAGS_wal_dir.empty()) {
         options.wal_dir = FLAGS_wal_dir;
       }
+#ifndef ROCKSDB_LITE
+      if (use_blob_db_) {
+        blob_db::DestroyBlobDB(FLAGS_db, options, blob_db::BlobDBOptions());
+      }
+#endif  // !ROCKSDB_LITE
       DestroyDB(FLAGS_db, options);
       if (!FLAGS_wal_dir.empty()) {
         FLAGS_env->DeleteDir(FLAGS_wal_dir);
@@ -2168,6 +2270,37 @@ class Benchmark {
     }
     return base_name + ToString(id);
   }
+
+void VerifyDBFromDB(std::string& truth_db_name) {
+  DBWithColumnFamilies truth_db;
+  auto s = DB::OpenForReadOnly(open_options_, truth_db_name, &truth_db.db);
+  if (!s.ok()) {
+    fprintf(stderr, "open error: %s\n", s.ToString().c_str());
+    exit(1);
+  }
+  ReadOptions ro;
+  ro.total_order_seek = true;
+  std::unique_ptr<Iterator> truth_iter(truth_db.db->NewIterator(ro));
+  std::unique_ptr<Iterator> db_iter(db_.db->NewIterator(ro));
+  // Verify that all the key/values in truth_db are retrivable in db with ::Get
+  fprintf(stderr, "Verifying db >= truth_db with ::Get...\n");
+  for (truth_iter->SeekToFirst(); truth_iter->Valid(); truth_iter->Next()) {
+      std::string value;
+      s = db_.db->Get(ro, truth_iter->key(), &value);
+      assert(s.ok());
+      // TODO(myabandeh): provide debugging hints
+      assert(Slice(value) == truth_iter->value());
+  }
+  // Verify that the db iterator does not give any extra key/value
+  fprintf(stderr, "Verifying db == truth_db...\n");
+  for (db_iter->SeekToFirst(), truth_iter->SeekToFirst(); db_iter->Valid(); db_iter->Next(), truth_iter->Next()) {
+    assert(truth_iter->Valid());
+    assert(truth_iter->value() == db_iter->value());
+  }
+  // No more key should be left unchecked in truth_db
+  assert(!truth_iter->Valid());
+  fprintf(stderr, "...Verified\n");
+}
 
   void Run() {
     if (!SanityCheck()) {
@@ -2358,6 +2491,8 @@ class Benchmark {
         method = &Benchmark::WriteSeqSeekSeq;
       } else if (name == "compact") {
         method = &Benchmark::Compact;
+      } else if (name == "compactall") {
+        CompactAll();
       } else if (name == "crc32c") {
         method = &Benchmark::Crc32c;
       } else if (name == "xxhash") {
@@ -2387,6 +2522,10 @@ class Benchmark {
         method = &Benchmark::TimeSeries;
       } else if (name == "stats") {
         PrintStats("rocksdb.stats");
+      } else if (name == "resetstats") {
+        ResetStats();
+      } else if (name == "verify") {
+        VerifyDBFromDB(FLAGS_truth_db);
       } else if (name == "levelstats") {
         PrintStats("rocksdb.levelstats");
       } else if (name == "sstables") {
@@ -2451,7 +2590,9 @@ class Benchmark {
     }
     if (FLAGS_simcache_size >= 0) {
       fprintf(stdout, "SIMULATOR CACHE STATISTICS:\n%s\n",
-              std::dynamic_pointer_cast<SimCache>(cache_)->ToString().c_str());
+              static_cast_with_check<SimCache, Cache>(cache_.get())
+                  ->ToString()
+                  .c_str());
     }
   }
 
@@ -2506,8 +2647,9 @@ class Benchmark {
           NewGenericRateLimiter(FLAGS_benchmark_write_rate_limit));
     }
     if (FLAGS_benchmark_read_rate_limit > 0) {
-      shared.read_rate_limiter.reset(
-          NewGenericRateLimiter(FLAGS_benchmark_read_rate_limit));
+      shared.read_rate_limiter.reset(NewGenericRateLimiter(
+          FLAGS_benchmark_read_rate_limit, 100000 /* refill_period_us */,
+          10 /* fairness */, RateLimiter::Mode::kReadsOnly));
     }
 
     std::unique_ptr<ReporterAgent> reporter_agent;
@@ -2751,16 +2893,18 @@ class Benchmark {
 
     assert(db_.db == nullptr);
 
-    options.create_missing_column_families = FLAGS_num_column_families > 1;
     options.max_open_files = FLAGS_open_files;
-    options.db_write_buffer_size = FLAGS_db_write_buffer_size;
+    if (FLAGS_cost_write_buffer_to_cache || FLAGS_db_write_buffer_size != 0) {
+      options.write_buffer_manager.reset(
+          new WriteBufferManager(FLAGS_db_write_buffer_size, cache_));
+    }
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_write_buffer_number = FLAGS_max_write_buffer_number;
     options.min_write_buffer_number_to_merge =
       FLAGS_min_write_buffer_number_to_merge;
     options.max_write_buffer_number_to_maintain =
         FLAGS_max_write_buffer_number_to_maintain;
-    options.base_background_compactions = FLAGS_base_background_compactions;
+    options.max_background_jobs = FLAGS_max_background_jobs;
     options.max_background_compactions = FLAGS_max_background_compactions;
     options.max_subcompactions = static_cast<uint32_t>(FLAGS_subcompactions);
     options.max_background_flushes = FLAGS_max_background_flushes;
@@ -2769,7 +2913,13 @@ class Benchmark {
     options.allow_mmap_reads = FLAGS_mmap_read;
     options.allow_mmap_writes = FLAGS_mmap_write;
     options.use_direct_reads = FLAGS_use_direct_reads;
-    options.use_direct_writes = FLAGS_use_direct_writes;
+    options.use_direct_io_for_flush_and_compaction =
+        FLAGS_use_direct_io_for_flush_and_compaction;
+#ifndef ROCKSDB_LITE
+    options.compaction_options_fifo = CompactionOptionsFIFO(
+        FLAGS_fifo_compaction_max_table_files_size_mb * 1024 * 1024,
+        FLAGS_fifo_compaction_allow_compaction, FLAGS_fifo_compaction_ttl);
+#endif  // ROCKSDB_LITE
     if (FLAGS_prefix_size != 0) {
       options.prefix_extractor.reset(
           NewFixedPrefixTransform(FLAGS_prefix_size));
@@ -2848,10 +2998,6 @@ class Benchmark {
           FLAGS_rep_factory != kHashLinkedList) {
         fprintf(stderr, "Waring: plain table is used with skipList\n");
       }
-      if (!FLAGS_mmap_read && !FLAGS_mmap_write) {
-        fprintf(stderr, "plain table format requires mmap to operate\n");
-        exit(1);
-      }
 
       int bloom_bits_per_key = FLAGS_bloom_bits;
       if (bloom_bits_per_key < 0) {
@@ -2895,6 +3041,17 @@ class Benchmark {
       } else {
         block_based_options.index_type = BlockBasedTableOptions::kBinarySearch;
       }
+      if (FLAGS_partition_index_and_filters) {
+        if (FLAGS_use_hash_search) {
+          fprintf(stderr,
+                  "use_hash_search is incompatible with "
+                  "partition_index_and_filters and is ignored");
+        }
+        block_based_options.index_type =
+            BlockBasedTableOptions::kTwoLevelIndexSearch;
+        block_based_options.partition_filters = true;
+        block_based_options.metadata_block_size = FLAGS_metadata_block_size;
+      }
       if (cache_ == nullptr) {
         block_based_options.no_block_cache = true;
       }
@@ -2913,8 +3070,6 @@ class Benchmark {
       block_based_options.index_block_restart_interval =
           FLAGS_index_block_restart_interval;
       block_based_options.filter_policy = filter_policy_;
-      block_based_options.skip_table_builder_flush =
-          FLAGS_skip_table_builder_flush;
       block_based_options.format_version = 2;
       block_based_options.read_amp_bytes_per_bit = FLAGS_read_amp_bytes_per_bit;
       if (FLAGS_read_cache_path != "") {
@@ -3003,6 +3158,7 @@ class Benchmark {
         FLAGS_allow_concurrent_memtable_write;
     options.enable_write_thread_adaptive_yield =
         FLAGS_enable_write_thread_adaptive_yield;
+    options.enable_pipelined_write = FLAGS_enable_pipelined_write;
     options.write_thread_max_yield_usec = FLAGS_write_thread_max_yield_usec;
     options.write_thread_slow_yield_usec = FLAGS_write_thread_slow_yield_usec;
     options.rate_limit_delay_max_milliseconds =
@@ -3057,8 +3213,18 @@ class Benchmark {
       options.enable_thread_tracking = true;
     }
     if (FLAGS_rate_limiter_bytes_per_sec > 0) {
-      options.rate_limiter.reset(
-          NewGenericRateLimiter(FLAGS_rate_limiter_bytes_per_sec));
+      if (FLAGS_rate_limit_bg_reads &&
+          !FLAGS_new_table_reader_for_compaction_inputs) {
+        fprintf(stderr,
+                "rate limit compaction reads must have "
+                "new_table_reader_for_compaction_inputs set\n");
+        exit(1);
+      }
+      options.rate_limiter.reset(NewGenericRateLimiter(
+          FLAGS_rate_limiter_bytes_per_sec, 100 * 1000 /* refill_period_us */,
+          10 /* fairness */,
+          FLAGS_rate_limit_bg_reads ? RateLimiter::Mode::kReadsOnly
+                                    : RateLimiter::Mode::kWritesOnly));
     }
 
 #ifndef ROCKSDB_LITE
@@ -3073,6 +3239,7 @@ class Benchmark {
   void InitializeOptionsGeneral(Options* opts) {
     Options& options = *opts;
 
+    options.create_missing_column_families = FLAGS_num_column_families > 1;
     options.statistics = dbstats;
     options.wal_dir = FLAGS_wal_dir;
     options.create_if_missing = !FLAGS_use_existing_db;
@@ -3116,7 +3283,7 @@ class Benchmark {
     InitializeOptionsGeneral(opts);
   }
 
-  void OpenDb(const Options& options, const std::string& db_name,
+  void OpenDb(Options options, const std::string& db_name,
       DBWithColumnFamilies* db) {
     Status s;
     // Open with column families if necessary.
@@ -3132,6 +3299,28 @@ class Benchmark {
       for (size_t i = 0; i < num_hot; i++) {
         column_families.push_back(ColumnFamilyDescriptor(
               ColumnFamilyName(i), ColumnFamilyOptions(options)));
+      }
+      std::vector<int> cfh_idx_to_prob;
+      if (!FLAGS_column_family_distribution.empty()) {
+        std::stringstream cf_prob_stream(FLAGS_column_family_distribution);
+        std::string cf_prob;
+        int sum = 0;
+        while (std::getline(cf_prob_stream, cf_prob, ',')) {
+          cfh_idx_to_prob.push_back(std::stoi(cf_prob));
+          sum += cfh_idx_to_prob.back();
+        }
+        if (sum != 100) {
+          fprintf(stderr, "column_family_distribution items must sum to 100\n");
+          exit(1);
+        }
+        if (cfh_idx_to_prob.size() != num_hot) {
+          fprintf(stderr,
+                  "got %" ROCKSDB_PRIszt
+                  " column_family_distribution items; expected "
+                  "%" ROCKSDB_PRIszt "\n",
+                  cfh_idx_to_prob.size(), num_hot);
+          exit(1);
+        }
       }
 #ifndef ROCKSDB_LITE
       if (FLAGS_readonly) {
@@ -3160,6 +3349,7 @@ class Benchmark {
       db->cfh.resize(FLAGS_num_column_families);
       db->num_created = num_hot;
       db->num_hot = num_hot;
+      db->cfh_idx_to_prob = std::move(cfh_idx_to_prob);
 #ifndef ROCKSDB_LITE
     } else if (FLAGS_readonly) {
       s = DB::OpenForReadOnly(options, db_name, &db->db);
@@ -3171,13 +3361,21 @@ class Benchmark {
     } else if (FLAGS_transaction_db) {
       TransactionDB* ptr;
       TransactionDBOptions txn_db_options;
-      s = TransactionDB::Open(options, txn_db_options, db_name, &ptr);
+      s = CreateLoggerFromOptions(db_name, options, &options.info_log);
+      if (s.ok()) {
+        s = TransactionDB::Open(options, txn_db_options, db_name, &ptr);
+      }
+      if (s.ok()) {
+        db->db = ptr;
+      }
+    } else if (FLAGS_use_blob_db) {
+      blob_db::BlobDBOptions blob_db_options;
+      blob_db::BlobDB* ptr;
+      s = blob_db::BlobDB::Open(options, blob_db_options, db_name, &ptr);
       if (s.ok()) {
         db->db = ptr;
       }
 #endif  // ROCKSDB_LITE
-    } else if (FLAGS_use_blob_db) {
-      s = NewBlobDB(options, db_name, &db->db);
     } else {
       s = DB::Open(options, db_name, &db->db);
     }
@@ -3342,8 +3540,8 @@ class Benchmark {
 
       if (thread->shared->write_rate_limiter.get() != nullptr) {
         thread->shared->write_rate_limiter->Request(
-            entries_per_batch_ * (value_size_ + key_size_),
-            Env::IO_HIGH);
+            entries_per_batch_ * (value_size_ + key_size_), Env::IO_HIGH,
+            nullptr /* stats */, RateLimiter::OpType::kWrite);
         // Set time at which last op finished to Now() to hide latency and
         // sleep from rate limiter. Also, do the check once per batch, not
         // once per write.
@@ -3353,9 +3551,14 @@ class Benchmark {
       for (int64_t j = 0; j < entries_per_batch_; j++) {
         int64_t rand_num = key_gens[id]->Next();
         GenerateKeyFromInt(rand_num, FLAGS_num, &key);
-        if (FLAGS_use_blob_db) {
-          s = db_with_cfh->db->Put(write_options_, key,
-                                   gen.Generate(value_size_));
+        if (use_blob_db_) {
+#ifndef ROCKSDB_LITE
+          Slice val = gen.Generate(value_size_);
+          int ttl = rand() % 86400;
+          blob_db::BlobDB* blobdb =
+              static_cast<blob_db::BlobDB*>(db_with_cfh->db);
+          s = blobdb->PutWithTTL(write_options_, key, val, ttl);
+#endif  //  ROCKSDB_LITE
         } else if (FLAGS_num_column_families <= 1) {
           batch.Put(key, gen.Generate(value_size_));
         } else {
@@ -3368,7 +3571,7 @@ class Benchmark {
         bytes += value_size_ + key_size_;
         ++num_written;
         if (writes_per_range_tombstone_ > 0 &&
-            num_written / writes_per_range_tombstone_ <
+            num_written / writes_per_range_tombstone_ <=
                 max_num_range_tombstones_ &&
             num_written % writes_per_range_tombstone_ == 0) {
           int64_t begin_num = key_gens[id]->Next();
@@ -3377,9 +3580,11 @@ class Benchmark {
                  ++offset) {
               GenerateKeyFromInt(begin_num + offset, FLAGS_num,
                                  &expanded_keys[offset]);
-              if (FLAGS_use_blob_db) {
+              if (use_blob_db_) {
+#ifndef ROCKSDB_LITE
                 s = db_with_cfh->db->Delete(write_options_,
                                             expanded_keys[offset]);
+#endif  //  ROCKSDB_LITE
               } else if (FLAGS_num_column_families <= 1) {
                 batch.Delete(expanded_keys[offset]);
               } else {
@@ -3391,10 +3596,12 @@ class Benchmark {
             GenerateKeyFromInt(begin_num, FLAGS_num, &begin_key);
             GenerateKeyFromInt(begin_num + range_tombstone_width_, FLAGS_num,
                                &end_key);
-            if (FLAGS_use_blob_db) {
+            if (use_blob_db_) {
+#ifndef ROCKSDB_LITE
               s = db_with_cfh->db->DeleteRange(
                   write_options_, db_with_cfh->db->DefaultColumnFamily(),
                   begin_key, end_key);
+#endif  //  ROCKSDB_LITE
             } else if (FLAGS_num_column_families <= 1) {
               batch.DeleteRange(begin_key, end_key);
             } else {
@@ -3404,8 +3611,10 @@ class Benchmark {
           }
         }
       }
-      if (!FLAGS_use_blob_db) {
+      if (!use_blob_db_) {
+#ifndef ROCKSDB_LITE
         s = db_with_cfh->db->Write(write_options_, &batch);
+#endif  //  ROCKSDB_LITE
       }
       thread->stats.FinishedOps(db_with_cfh, db_with_cfh->db,
                                 entries_per_batch_, kWrite);
@@ -3433,9 +3642,13 @@ class Benchmark {
     std::vector<Options> options_list;
     for (auto db : db_list) {
       options_list.push_back(db->GetOptions());
-      db->SetOptions({{"disable_auto_compactions", "1"},
-                      {"level0_slowdown_writes_trigger", "400000000"},
-                      {"level0_stop_writes_trigger", "400000000"}});
+      if (compaction_style != kCompactionStyleFIFO) {
+        db->SetOptions({{"disable_auto_compactions", "1"},
+                        {"level0_slowdown_writes_trigger", "400000000"},
+                        {"level0_stop_writes_trigger", "400000000"}});
+      } else {
+        db->SetOptions({{"disable_auto_compactions", "1"}});
+      }
     }
 
     assert(!db_list.empty());
@@ -3444,7 +3657,6 @@ class Benchmark {
     size_t output_level = open_options_.num_levels - 1;
     std::vector<std::vector<std::vector<SstFileMetaData>>> sorted_runs(num_db);
     std::vector<size_t> num_files_at_level0(num_db, 0);
-
     if (compaction_style == kCompactionStyleLevel) {
       if (num_levels == 0) {
         return Status::InvalidArgument("num_levels should be larger than 1");
@@ -3556,7 +3768,37 @@ class Benchmark {
         }
       }
     } else if (compaction_style == kCompactionStyleFIFO) {
-      return Status::InvalidArgument("FIFO compaction is not supported");
+      if (num_levels != 1) {
+        return Status::InvalidArgument(
+          "num_levels should be 1 for FIFO compaction");
+      }
+      if (FLAGS_num_multi_db != 0) {
+        return Status::InvalidArgument("Doesn't support multiDB");
+      }
+      auto db = db_list[0];
+      std::vector<std::string> file_names;
+      while (true) {
+        if (sorted_runs[0].empty()) {
+          DoWrite(thread, write_mode);
+        } else {
+          DoWrite(thread, UNIQUE_RANDOM);
+        }
+        db->Flush(FlushOptions());
+        db->GetColumnFamilyMetaData(&meta);
+        auto total_size = meta.levels[0].size;
+        if (total_size >=
+          db->GetOptions().compaction_options_fifo.max_table_files_size) {
+          for (auto file_meta : meta.levels[0].files) {
+            file_names.emplace_back(file_meta.name);
+          }
+          break;
+        }
+      }
+      // TODO(shuzhang1989): Investigate why CompactFiles not working
+      // auto compactionOptions = CompactionOptions();
+      // db->CompactFiles(compactionOptions, file_names, 0);
+      auto compactionOptions = CompactRangeOptions();
+      db->CompactRange(compactionOptions, nullptr, nullptr);
     } else {
       fprintf(stdout,
               "%-12s : skipped (-compaction_stype=kCompactionStyleNone)\n",
@@ -3579,6 +3821,11 @@ class Benchmark {
                sorted_runs[k].size());
       } else if (compaction_style == kCompactionStyleFIFO) {
         // TODO(gzh): FIFO compaction
+        db->GetColumnFamilyMetaData(&meta);
+        auto total_size = meta.levels[0].size;
+        assert(total_size <=
+          db->GetOptions().compaction_options_fifo.max_table_files_size);
+          break;
       }
 
       // verify smallest/largest seqno and key range of each sorted run
@@ -3703,14 +3950,16 @@ class Benchmark {
 
       if (thread->shared->read_rate_limiter.get() != nullptr &&
           i % 1024 == 1023) {
-        thread->shared->read_rate_limiter->Request(1024, Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(1024, Env::IO_HIGH,
+                                                   nullptr /* stats */,
+                                                   RateLimiter::OpType::kRead);
       }
     }
 
     delete iter;
     thread->stats.AddBytes(bytes);
     if (FLAGS_perf_level > rocksdb::PerfLevel::kDisable) {
-      thread->stats.AddMessage(perf_context.ToString());
+      thread->stats.AddMessage(get_perf_context()->ToString());
     }
   }
 
@@ -3734,7 +3983,9 @@ class Benchmark {
       ++i;
       if (thread->shared->read_rate_limiter.get() != nullptr &&
           i % 1024 == 1023) {
-        thread->shared->read_rate_limiter->Request(1024, Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(1024, Env::IO_HIGH,
+                                                   nullptr /* stats */,
+                                                   RateLimiter::OpType::kRead);
       }
     }
     delete iter;
@@ -3775,7 +4026,8 @@ class Benchmark {
         }
       }
       if (thread->shared->read_rate_limiter.get() != nullptr) {
-        thread->shared->read_rate_limiter->Request(100, Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(
+            100, Env::IO_HIGH, nullptr /* stats */, RateLimiter::OpType::kRead);
       }
 
       thread->stats.FinishedOps(nullptr, db, 100, kRead);
@@ -3789,7 +4041,7 @@ class Benchmark {
     thread->stats.AddMessage(msg);
 
     if (FLAGS_perf_level > rocksdb::PerfLevel::kDisable) {
-      thread->stats.AddMessage(perf_context.ToString());
+      thread->stats.AddMessage(get_perf_context()->ToString());
     }
   }
 
@@ -3821,7 +4073,7 @@ class Benchmark {
     ReadOptions options(FLAGS_verify_checksum, true);
     std::unique_ptr<const char[]> key_guard;
     Slice key = AllocateKey(&key_guard);
-    std::string value;
+    PinnableSlice pinnable_val;
 
     Duration duration(FLAGS_duration, reads_);
     while (!duration.Done(1)) {
@@ -3835,13 +4087,16 @@ class Benchmark {
       Status s;
       if (FLAGS_num_column_families > 1) {
         s = db_with_cfh->db->Get(options, db_with_cfh->GetCfh(key_rand), key,
-                                 &value);
+                                 &pinnable_val);
       } else {
-        s = db_with_cfh->db->Get(options, key, &value);
+        pinnable_val.Reset();
+        s = db_with_cfh->db->Get(options,
+                                 db_with_cfh->db->DefaultColumnFamily(), key,
+                                 &pinnable_val);
       }
       if (s.ok()) {
         found++;
-        bytes += key.size() + value.size();
+        bytes += key.size() + pinnable_val.size();
       } else if (!s.IsNotFound()) {
         fprintf(stderr, "Get returned an error: %s\n", s.ToString().c_str());
         abort();
@@ -3849,7 +4104,8 @@ class Benchmark {
 
       if (thread->shared->read_rate_limiter.get() != nullptr &&
           read % 256 == 255) {
-        thread->shared->read_rate_limiter->Request(256, Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(
+            256, Env::IO_HIGH, nullptr /* stats */, RateLimiter::OpType::kRead);
       }
 
       thread->stats.FinishedOps(db_with_cfh, db_with_cfh->db, 1, kRead);
@@ -3863,7 +4119,7 @@ class Benchmark {
     thread->stats.AddMessage(msg);
 
     if (FLAGS_perf_level > rocksdb::PerfLevel::kDisable) {
-      thread->stats.AddMessage(perf_context.ToString());
+      thread->stats.AddMessage(get_perf_context()->ToString());
     }
   }
 
@@ -3904,8 +4160,9 @@ class Benchmark {
       }
       if (thread->shared->read_rate_limiter.get() != nullptr &&
           num_multireads % 256 == 255) {
-        thread->shared->read_rate_limiter->Request(256 * entries_per_batch_,
-                                                   Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(
+            256 * entries_per_batch_, Env::IO_HIGH, nullptr /* stats */,
+            RateLimiter::OpType::kRead);
       }
       thread->stats.FinishedOps(nullptr, db, entries_per_batch_, kRead);
     }
@@ -4002,7 +4259,8 @@ class Benchmark {
 
       if (thread->shared->read_rate_limiter.get() != nullptr &&
           read % 256 == 255) {
-        thread->shared->read_rate_limiter->Request(256, Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(
+            256, Env::IO_HIGH, nullptr /* stats */, RateLimiter::OpType::kRead);
       }
 
       thread->stats.FinishedOps(&db_, db_.db, 1, kSeek);
@@ -4018,7 +4276,7 @@ class Benchmark {
     thread->stats.AddBytes(bytes);
     thread->stats.AddMessage(msg);
     if (FLAGS_perf_level > rocksdb::PerfLevel::kDisable) {
-      thread->stats.AddMessage(perf_context.ToString());
+      thread->stats.AddMessage(get_perf_context()->ToString());
     }
   }
 
@@ -4103,14 +4361,30 @@ class Benchmark {
 
     std::unique_ptr<const char[]> key_guard;
     Slice key = AllocateKey(&key_guard);
+    uint32_t written = 0;
+    bool hint_printed = false;
 
     while (true) {
       DB* db = SelectDB(thread);
       {
         MutexLock l(&thread->shared->mu);
+        if (FLAGS_finish_after_writes && written == writes_) {
+          fprintf(stderr, "Exiting the writer after %u writes...\n", written);
+          break;
+        }
         if (thread->shared->num_done + 1 >= thread->shared->num_initialized) {
           // Other threads have finished
-          break;
+          if (FLAGS_finish_after_writes) {
+            // Wait for the writes to be finished
+            if (!hint_printed) {
+              fprintf(stderr, "Reads are finished. Have %d more writes to do\n",
+                      (int)writes_ - written);
+              hint_printed = true;
+            }
+          } else {
+            // Finish the write immediately
+            break;
+          }
         }
       }
 
@@ -4122,6 +4396,7 @@ class Benchmark {
       } else {
         s = db->Merge(write_options_, key, gen.Generate(value_size_));
       }
+      written++;
 
       if (!s.ok()) {
         fprintf(stderr, "put or merge error: %s\n", s.ToString().c_str());
@@ -4132,8 +4407,8 @@ class Benchmark {
 
       if (FLAGS_benchmark_write_rate_limit > 0) {
         write_rate_limiter->Request(
-            entries_per_batch_ * (value_size_ + key_size_),
-            Env::IO_HIGH);
+            entries_per_batch_ * (value_size_ + key_size_), Env::IO_HIGH,
+            nullptr /* stats */, RateLimiter::OpType::kWrite);
       }
     }
     thread->stats.AddBytes(bytes);
@@ -4284,7 +4559,7 @@ class Benchmark {
         thread->stats.FinishedOps(&db_, db_.db, 1, kDelete);
       }
     }
-    char msg[100];
+    char msg[128];
     snprintf(msg, sizeof(msg),
              "( get:%" PRIu64 " put:%" PRIu64 " del:%" PRIu64 " total:%" \
              PRIu64 " found:%" PRIu64 ")",
@@ -4375,6 +4650,12 @@ class Benchmark {
         fprintf(stderr, "Get returned an error: %s\n",
                 status.ToString().c_str());
         abort();
+      }
+
+      if (thread->shared->write_rate_limiter) {
+        thread->shared->write_rate_limiter->Request(
+            key.size() + value_size_, Env::IO_HIGH, nullptr /*stats*/,
+            RateLimiter::OpType::kWrite);
       }
 
       Status s = db->Put(write_options_, key, gen.Generate(value_size_));
@@ -4655,7 +4936,7 @@ class Benchmark {
     thread->stats.AddMessage(msg);
 
     if (FLAGS_perf_level > rocksdb::PerfLevel::kDisable) {
-      thread->stats.AddMessage(perf_context.ToString());
+      thread->stats.AddMessage(get_perf_context()->ToString());
     }
   }
 
@@ -4804,7 +5085,8 @@ class Benchmark {
       found += key_found;
 
       if (thread->shared->read_rate_limiter.get() != nullptr) {
-        thread->shared->read_rate_limiter->Request(1, Env::IO_HIGH);
+        thread->shared->read_rate_limiter->Request(
+            1, Env::IO_HIGH, nullptr /* stats */, RateLimiter::OpType::kRead);
       }
     }
     delete iter;
@@ -4815,7 +5097,7 @@ class Benchmark {
     thread->stats.AddBytes(bytes);
     thread->stats.AddMessage(msg);
     if (FLAGS_perf_level > rocksdb::PerfLevel::kDisable) {
-      thread->stats.AddMessage(perf_context.ToString());
+      thread->stats.AddMessage(get_perf_context()->ToString());
     }
   }
 
@@ -4874,7 +5156,8 @@ class Benchmark {
 
       if (FLAGS_benchmark_write_rate_limit > 0) {
         write_rate_limiter->Request(
-            entries_per_batch_ * (value_size_ + key_size_), Env::IO_HIGH);
+            entries_per_batch_ * (value_size_ + key_size_), Env::IO_HIGH,
+            nullptr /* stats */, RateLimiter::OpType::kWrite);
       }
     }
   }
@@ -4894,6 +5177,24 @@ class Benchmark {
   void Compact(ThreadState* thread) {
     DB* db = SelectDB(thread);
     db->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+  }
+
+  void CompactAll() {
+    if (db_.db != nullptr) {
+      db_.db->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+    }
+    for (const auto& db_with_cfh : multi_dbs_) {
+      db_with_cfh.db->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+    }
+  }
+
+  void ResetStats() {
+    if (db_.db != nullptr) {
+      db_.db->ResetStats();
+    }
+    for (const auto& db_with_cfh : multi_dbs_) {
+      db_with_cfh.db->ResetStats();
+    }
   }
 
   void PrintStats(const char* key) {
@@ -4926,7 +5227,6 @@ int db_bench_tool(int argc, char** argv) {
     initialized = true;
   }
   ParseCommandLineFlags(&argc, &argv, true);
-
   FLAGS_compaction_style_e = (rocksdb::CompactionStyle) FLAGS_compaction_style;
 #ifndef ROCKSDB_LITE
   if (FLAGS_statistics && !FLAGS_statistics_string.empty()) {
@@ -4997,11 +5297,14 @@ int db_bench_tool(int argc, char** argv) {
 
   FLAGS_rep_factory = StringToRepFactory(FLAGS_memtablerep.c_str());
 
-  // The number of background threads should be at least as much the
-  // max number of concurrent compactions.
-  FLAGS_env->SetBackgroundThreads(FLAGS_max_background_compactions);
-  FLAGS_env->SetBackgroundThreads(FLAGS_max_background_flushes,
+  // Note options sanitization may increase thread pool sizes according to
+  // max_background_flushes/max_background_compactions/max_background_jobs
+  FLAGS_env->SetBackgroundThreads(FLAGS_num_high_pri_threads,
                                   rocksdb::Env::Priority::HIGH);
+  FLAGS_env->SetBackgroundThreads(FLAGS_num_bottom_pri_threads,
+                                  rocksdb::Env::Priority::BOTTOM);
+  FLAGS_env->SetBackgroundThreads(FLAGS_num_low_pri_threads,
+                                  rocksdb::Env::Priority::LOW);
 
   // Choose a location for the test database if none given with --db=<path>
   if (FLAGS_db.empty()) {

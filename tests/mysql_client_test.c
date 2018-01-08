@@ -33,6 +33,9 @@
 */
 
 #include "mysql_client_fw.c"
+#ifndef _WIN32
+#include <arpa/inet.h>
+#endif
 
 static const my_bool my_true= 1;
 
@@ -1096,6 +1099,7 @@ static void test_wl4435_2()
   \
   rs_metadata= mysql_stmt_result_metadata(ps); \
   fields= mysql_fetch_fields(rs_metadata); \
+  mysql_free_result(rs_metadata);               \
   \
   rc= mysql_stmt_bind_result(ps, &psp); \
   check_execute(ps, rc); \
@@ -11820,7 +11824,7 @@ static void test_bug5194()
     }
     *query_ptr= '\0';
 
-    rc= mysql_stmt_prepare(stmt, query, query_ptr - query);
+    rc= mysql_stmt_prepare(stmt, query, (ulong)(query_ptr - query));
     if (rc && nrows * COLUMN_COUNT > uint16_max)
     {
       if (!opt_silent)
@@ -15802,7 +15806,7 @@ static void test_bug21206()
   for (fetch= fetch_array; fetch < fetch_array + cursor_count; ++fetch)
   {
     /* Init will exit(1) in case of error */
-    stmt_fetch_init(fetch, fetch - fetch_array, query);
+    stmt_fetch_init(fetch, (uint)(fetch - fetch_array), query);
   }
 
   for (fetch= fetch_array; fetch < fetch_array + cursor_count; ++fetch)
@@ -16004,7 +16008,7 @@ static void test_bug21635()
     rc= mysql_query(mysql, "INSERT INTO t1 VALUES (1)");
     myquery(rc);
 
-    rc= mysql_real_query(mysql, query, query_end - query);
+    rc= mysql_real_query(mysql, query, (ulong)(query_end - query));
     myquery(rc);
 
     result= mysql_use_result(mysql);
@@ -19600,6 +19604,518 @@ static void test_prepare_analyze()
   check_execute(stmt, rc);
 }
 
+static void test_mdev12579()
+{
+  MYSQL_STMT *stmt= mysql_stmt_init(mysql);
+  MYSQL_BIND bind[2];
+  int rc;
+  long l=3;
+  const char *data = "123456";
+
+  rc= mysql_query(mysql, "CREATE TABLE mdev12579 (k integer,t LONGTEXT,b LONGBLOB,x integer)");
+  myquery(rc);
+
+  rc= mysql_stmt_prepare(stmt, "INSERT INTO mdev12579 VALUES (1,?,NULL,?)", -1);
+  myquery(rc);
+
+  rc= mysql_stmt_send_long_data(stmt, 0, data, 6);
+  rc= mysql_stmt_send_long_data(stmt, 0, data, 6);
+  rc= mysql_stmt_send_long_data(stmt, 0, data, 6);
+
+  memset(bind, 0, sizeof(MYSQL_BIND) * 2);
+  bind[0].buffer_type= MYSQL_TYPE_VAR_STRING;
+  bind[1].buffer_type= MYSQL_TYPE_LONG;
+  bind[1].buffer= &l;
+  mysql_stmt_bind_param(stmt, bind);
+
+  rc= mysql_stmt_execute(stmt);
+  check_execute(stmt, rc);
+
+  mysql_stmt_close(stmt);
+
+  rc= mysql_query(mysql, "DROP TABLE mdev12579");
+  myquery(rc);
+}
+
+/* Test test_mdev14013 sql_mode=EMPTY_STRING_IS_NULL */
+
+static void test_mdev14013()
+{
+  MYSQL *lmysql;
+  MYSQL_STMT *stmt1;
+  MYSQL_BIND  my_bind[2];
+  MYSQL_RES   *result;
+  char       str_data[20];
+  unsigned int  count;
+  int   rc;
+  char query[MAX_TEST_QUERY_LENGTH];
+
+  myheader("test_mdev14013");
+
+  if (!opt_silent)
+    fprintf(stdout, "\n Establishing a test connection ...");
+  if (!(lmysql= mysql_client_init(NULL)))
+  {
+    myerror("mysql_client_init() failed");
+    exit(1);
+  }
+  if (!(mysql_real_connect(lmysql, opt_host, opt_user,
+                           opt_password, current_db, opt_port,
+                           opt_unix_socket, 0)))
+  {
+    myerror("connection failed");
+    exit(1);
+  }
+  mysql_options(lmysql, MYSQL_OPT_RECONNECT, &my_true);
+  if (!opt_silent)
+    fprintf(stdout, "OK");
+
+  /* set AUTOCOMMIT to ON*/
+  mysql_autocommit(lmysql, TRUE);
+
+  strmov(query, "SET SQL_MODE= \"EMPTY_STRING_IS_NULL\"");
+  if (!opt_silent)
+    fprintf(stdout, "\n With %s", query);
+  rc= mysql_query(mysql, query);
+  myquery(rc);
+
+  rc= mysql_query(lmysql, "DROP TABLE IF EXISTS test_mdev14013");
+  myquery(rc);
+
+  rc= mysql_query(lmysql, "CREATE TABLE test_mdev14013(id int, val varchar(10))");
+  myquery(rc);
+
+  strmov(query, "INSERT INTO test_mdev14013(id,val) VALUES(?,?)");
+  stmt1= mysql_simple_prepare(mysql, query);
+  check_stmt(stmt1);
+
+  verify_param_count(stmt1, 2);
+
+  /*
+    We need to bzero bind structure because mysql_stmt_bind_param checks all
+    its members.
+  */
+  bzero((char*) my_bind, sizeof(my_bind));
+
+  my_bind[0].buffer= (void *)&count;
+  my_bind[0].buffer_type= MYSQL_TYPE_LONG;
+  count= 100;
+
+  strcpy(str_data,"");
+  my_bind[1].buffer_type= MYSQL_TYPE_STRING;
+  my_bind[1].buffer= (char *) str_data;
+  my_bind[1].buffer_length= strlen(str_data);
+
+  rc= mysql_stmt_bind_param(stmt1, my_bind);
+
+  rc= mysql_stmt_execute(stmt1);
+  check_execute(stmt1, rc);
+
+  verify_st_affected_rows(stmt1, 1);
+
+  rc= mysql_stmt_close(stmt1);
+
+  strmov(query, "SET SQL_MODE= default");
+  if (!opt_silent)
+    fprintf(stdout, "\n With %s\n", query);
+  rc= mysql_query(mysql, query);
+  myquery(rc);
+
+  strmov(query, "INSERT INTO test_mdev14013(id,val) VALUES(?,?)");
+  stmt1= mysql_simple_prepare(mysql, query);
+  check_stmt(stmt1);
+
+  count= 200;
+  rc= mysql_stmt_bind_param(stmt1, my_bind);
+
+  rc= mysql_stmt_execute(stmt1);
+  check_execute(stmt1, rc);
+
+  verify_st_affected_rows(stmt1, 1);
+
+  rc= mysql_stmt_close(stmt1);
+  if (!opt_silent)
+    fprintf(stdout, "\n test_mdev14013(x) returned: %d", rc);
+  DIE_UNLESS( rc == 0);
+
+  rc= mysql_query(mysql, "SELECT id, val FROM test_mdev14013 order by id");
+  myquery(rc);
+
+  result= mysql_store_result(mysql);
+  mytest(result);
+
+  rc= my_process_result_set(result);
+  DIE_UNLESS(rc == 2);
+  mysql_free_result(result);
+
+  rc= mysql_query(mysql, "SELECT id, val FROM test_mdev14013 where val is null");
+  myquery(rc);
+
+  result= mysql_store_result(mysql);
+  mytest(result);
+
+  rc= my_process_result_set(result);
+  DIE_UNLESS(rc == 1);
+  mysql_free_result(result);
+
+  myquery(mysql_query(mysql, "drop table test_mdev14013"));
+  mysql_close(lmysql);
+}
+
+static void test_mdev14013_1()
+{
+  MYSQL *lmysql;
+  MYSQL_STMT *stmt1;
+  MYSQL_BIND  my_bind[3];
+  char       str_data[3][255];
+  int  rc;
+  char query[MAX_TEST_QUERY_LENGTH];
+
+  myheader("test_mdev14013_1");
+
+  if (!opt_silent)
+    fprintf(stdout, "\n Establishing a test connection ...");
+  if (!(lmysql= mysql_client_init(NULL)))
+  {
+    myerror("mysql_client_init() failed");
+    exit(1);
+  }
+  if (!(mysql_real_connect(lmysql, opt_host, opt_user,
+                           opt_password, current_db, opt_port,
+                           opt_unix_socket, 0)))
+  {
+    myerror("connection failed");
+    exit(1);
+  }
+  mysql_options(lmysql, MYSQL_OPT_RECONNECT, &my_true);
+  if (!opt_silent)
+    fprintf(stdout, "OK");
+
+  /* set AUTOCOMMIT to ON*/
+  mysql_autocommit(lmysql, TRUE);
+
+  strmov(query, "SET SQL_MODE= \"EMPTY_STRING_IS_NULL\"");
+  if (!opt_silent)
+    fprintf(stdout, "\n With %s", query);
+  rc= mysql_query(mysql, query);
+  myquery(rc);
+
+  rc= mysql_query(mysql,
+    "CREATE OR REPLACE PROCEDURE test_mdev14013_p1("
+    "   IN i1 VARCHAR(255) , "
+    "   INOUT io1 VARCHAR(255), "
+    "   OUT o2 VARBINARY(255)) "
+    "BEGIN "
+    "   SET o2 = concat(concat(coalesce(i1,'i1 is null'),' - '),coalesce(i1,'io1 is null')); "
+    "END");
+  myquery(rc);
+
+  strmov(query, "CALL test_mdev14013_p1(?, ?, ?)");
+  stmt1= mysql_simple_prepare(mysql, query);
+  check_stmt(stmt1);
+
+  /* Init PS-parameters. */
+
+  bzero((char *) my_bind, sizeof (my_bind));
+
+  strcpy(str_data[0],"");
+  my_bind[0].buffer_type= MYSQL_TYPE_STRING;
+  my_bind[0].buffer= (char *) str_data[0];
+  my_bind[0].buffer_length= strlen(str_data[0]);
+
+  strcpy(str_data[1],"");
+  my_bind[1].buffer_type= MYSQL_TYPE_STRING;
+  my_bind[1].buffer= (char *) str_data[1];
+  my_bind[1].buffer_length= strlen(str_data[1]);
+
+  strcpy(str_data[2],"");
+  my_bind[2].buffer_type= MYSQL_TYPE_STRING;
+  my_bind[2].buffer= (char *) str_data[2];
+  my_bind[2].buffer_length= strlen(str_data[2]);
+
+  /* Bind parameters. */
+
+  rc= mysql_stmt_bind_param(stmt1, my_bind);
+  check_execute(stmt1, rc);
+  /* Execute */
+
+  rc= mysql_stmt_execute(stmt1);
+  check_execute(stmt1, rc);
+
+  my_bind[0].buffer_length= sizeof(str_data[0]);
+  my_bind[1].buffer_length= sizeof(str_data[1]);
+
+  mysql_stmt_bind_result(stmt1, my_bind);
+  rc= mysql_stmt_fetch(stmt1);
+
+  if (!opt_silent)
+    fprintf(stdout,"\nstr_data[1]=%s\n",str_data[1]);
+
+  DIE_UNLESS(strcmp(str_data[1], "i1 is null - io1 is null") == 0);
+
+  rc= mysql_stmt_close(stmt1);
+  DIE_UNLESS( rc == 0);
+
+  myquery(mysql_query(mysql, "drop procedure test_mdev14013_p1"));
+  mysql_close(lmysql);
+}
+
+
+static void test_mdev14454_internal(const char *init,
+                                    unsigned int csid,
+                                    const char *value)
+{
+  MYSQL_STMT *stmt;
+  MYSQL_BIND bind;
+  const char *stmtstr= "CALL P1(?)";
+  char res[20];
+  int rc;
+
+  if ((rc= mysql_query_or_error(mysql, init)) ||
+      (rc= mysql_query_or_error(mysql, "DROP PROCEDURE IF EXISTS p1")) ||
+      (rc= mysql_query_or_error(mysql,
+                               "CREATE PROCEDURE p1"
+                               "("
+                               "  OUT param1 TEXT CHARACTER SET utf8"
+                               ")"
+                               "BEGIN "
+                               "  SET param1 = _latin1'test\xFF'; "
+                               "END")))
+    DIE("Initiation failed");
+
+  stmt= mysql_stmt_init(mysql);
+  rc= mysql_stmt_prepare(stmt, stmtstr, strlen(stmtstr));
+  DIE_UNLESS(rc == 0);
+  DIE_UNLESS(mysql_stmt_param_count(stmt) == 1);
+
+  bind.buffer_type= MYSQL_TYPE_NULL;
+  rc= mysql_stmt_bind_param(stmt, &bind);
+  DIE_UNLESS(rc == 0);
+
+  rc= mysql_stmt_execute(stmt);
+  DIE_UNLESS(rc == 0);
+
+  memset(res, 0, sizeof(res));
+  memset(&bind, 0, sizeof(bind));
+  bind.buffer_type= MYSQL_TYPE_STRING;
+  bind.buffer_length= sizeof(res);
+  bind.buffer= res;
+
+  do {
+    if (mysql->server_status & SERVER_PS_OUT_PARAMS)
+    {
+      MYSQL_FIELD *field;
+      printf("\nOUT param result set:\n");
+      DIE_UNLESS(mysql_stmt_field_count(stmt) == 1);
+      field= &stmt->fields[0];
+      printf("Field: %s\n", field->name);
+      printf("Type: %d\n", field->type);
+      printf("Collation: %d\n", field->charsetnr);
+      printf("Length: %lu\n", field->length);
+      DIE_UNLESS(stmt->fields[0].charsetnr == csid);
+
+      rc= mysql_stmt_bind_result(stmt, &bind);
+      DIE_UNLESS(rc == 0);
+      rc= mysql_stmt_fetch(stmt);
+      DIE_UNLESS(rc == 0);
+      printf("Value: %s\n", res);
+      DIE_UNLESS(strcmp(res, value) == 0);
+    }
+    else if (mysql_stmt_field_count(stmt))
+    {
+      printf("sp result set\n");
+    }
+  } while (mysql_stmt_next_result(stmt) == 0);
+
+  mysql_stmt_close(stmt);
+  DIE_UNLESS(mysql_query_or_error(mysql, "DROP PROCEDURE p1") == 0);
+}
+
+
+static void test_mdev14454()
+{
+  myheader("test_mdev14454");
+  test_mdev14454_internal("SET NAMES latin1", 8, "test\xFF");
+  test_mdev14454_internal("SET NAMES utf8", 33, "test\xC3\xBF");
+}
+
+
+typedef struct {
+  char sig[12];
+  char ver_cmd;
+  char fam;
+  short len;
+  union {
+    struct {  /* for TCP/UDP over IPv4, len = 12 */
+      int src_addr;
+      int dst_addr;
+      short src_port;
+      short dst_port;
+    } ip4;
+    struct {  /* for TCP/UDP over IPv6, len = 36 */
+      char  src_addr[16];
+      char  dst_addr[16];
+      short src_port;
+      short dst_port;
+    } ip6;
+    struct {  /* for AF_UNIX sockets, len = 216 */
+      char src_addr[108];
+      char dst_addr[108];
+    } unx;
+  } addr;
+} v2_proxy_header;
+
+#ifndef EMBEDDED_LIBRARY
+static void test_proxy_header_tcp(const char *ipaddr, int port)
+{
+ 
+  int rc;
+  MYSQL_RES *result;
+  int family = (strchr(ipaddr,':') == NULL)?AF_INET:AF_INET6;
+  char query[256];
+  char text_header[256];
+  char addr_bin[16];
+  v2_proxy_header v2_header;
+  void *header_data[2];
+  size_t header_lengths[2];
+  int i;
+
+  // normalize IPv4-mapped IPv6 addresses, e.g ::ffff:127.0.0.2 to 127.0.0.2
+  const char *normalized_addr= strncmp(ipaddr, "::ffff:", 7)?ipaddr : ipaddr + 7;
+
+  memset(&v2_header, 0, sizeof(v2_header));
+  sprintf(text_header,"PROXY %s %s %s %d 3306\r\n",family == AF_INET?"TCP4":"TCP6", ipaddr, ipaddr, port);
+ 
+  inet_pton(family,ipaddr,addr_bin);
+
+  memcpy(v2_header.sig, "\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A", 12);
+  v2_header.ver_cmd = (0x2 << 4) | 0x1; /* Version (0x2) , Command = PROXY (0x1) */
+  if(family == AF_INET)
+  {
+    v2_header.fam= 0x11;
+    v2_header.len= htons(12);
+    v2_header.addr.ip4.src_port= htons(port);
+    v2_header.addr.ip4.dst_port= htons(3306);
+    memcpy(&v2_header.addr.ip4.src_addr,addr_bin, sizeof (v2_header.addr.ip4.src_addr));
+    memcpy(&v2_header.addr.ip4.dst_addr,addr_bin, sizeof (v2_header.addr.ip4.dst_addr));
+  }
+  else
+  {
+    v2_header.fam= 0x21;
+    v2_header.len= htons(36);
+    v2_header.addr.ip6.src_port= htons(port);
+    v2_header.addr.ip6.dst_port= htons(3306);
+    memcpy(v2_header.addr.ip6.src_addr,addr_bin, sizeof (v2_header.addr.ip6.src_addr));
+    memcpy(v2_header.addr.ip6.dst_addr,addr_bin, sizeof (v2_header.addr.ip6.dst_addr));
+  }
+
+  sprintf(query,"CREATE USER 'u'@'%s' IDENTIFIED BY 'password'",normalized_addr);
+  rc= mysql_query(mysql, query);
+  myquery(rc);
+
+  header_data[0]= text_header;
+  header_data[1]= &v2_header;
+
+  header_lengths[0]= strlen(text_header);
+  header_lengths[1]= family == AF_INET ? 28 : 52;
+
+  for (i = 0; i < 2; i++)
+  {
+    MYSQL *m;
+    size_t addrlen;
+    MYSQL_ROW row;
+    m = mysql_client_init(NULL);
+    DIE_UNLESS(m);
+    mysql_optionsv(m, MARIADB_OPT_PROXY_HEADER, header_data[i], header_lengths[i]);
+    if (!mysql_real_connect(m, opt_host, "u", "password", NULL, opt_port, opt_unix_socket, 0))
+    {
+       DIE_UNLESS(0);
+    }
+    rc= mysql_query(m, "select host from information_schema.processlist WHERE ID = connection_id()");
+    myquery(rc);
+    /* get the result */
+    result= mysql_store_result(m);
+    mytest(result);
+    row = mysql_fetch_row(result);
+    addrlen = strlen(normalized_addr);
+    printf("%.*s %.*s\n", (int)addrlen, row[0], (int)addrlen, normalized_addr);
+    DIE_UNLESS(strncmp(row[0], normalized_addr, addrlen) == 0);
+    DIE_UNLESS(atoi(row[0] + addrlen+1) == port);
+    mysql_close(m);
+  }
+  sprintf(query,"DROP USER 'u'@'%s'",normalized_addr);
+  rc = mysql_query(mysql, query);
+  myquery(rc);
+}
+
+
+/* Test proxy protocol with AF_UNIX (localhost) */
+static void test_proxy_header_localhost()
+{
+  v2_proxy_header v2_header;
+  void *header_data = &v2_header;
+  size_t header_length= 216 + 16;
+  MYSQL *m;
+  MYSQL_RES *result;
+  MYSQL_ROW row;
+  int rc;
+
+  memset(&v2_header, 0, sizeof(v2_header));
+  memcpy(v2_header.sig, "\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A", 12);
+  v2_header.ver_cmd = (0x2 << 4) | 0x1; /* Version (0x2) , Command = PROXY (0x1) */
+  v2_header.fam= 0x31;
+  v2_header.len= htons(216);
+  strcpy(v2_header.addr.unx.src_addr,"/tmp/mysql.sock");
+  strcpy(v2_header.addr.unx.dst_addr,"/tmp/mysql.sock");
+  rc = mysql_query(mysql, "CREATE USER 'u'@'localhost' IDENTIFIED BY 'password'");
+  myquery(rc);
+  m = mysql_client_init(NULL);
+  DIE_UNLESS(m != NULL);
+  mysql_optionsv(m, MARIADB_OPT_PROXY_HEADER, header_data, header_length);
+  DIE_UNLESS(mysql_real_connect(m, opt_host, "u", "password", NULL, opt_port, opt_unix_socket, 0) == m);
+  DIE_UNLESS(mysql_query(m, "select host from information_schema.processlist WHERE ID = connection_id()") == 0);
+  /* get the result */
+  result= mysql_store_result(m);
+  mytest(result);
+  row = mysql_fetch_row(result);
+  DIE_UNLESS(strcmp(row[0], "localhost") == 0);
+  mysql_close(m);
+  rc = mysql_query(mysql,  "DROP USER 'u'@'localhost'");
+  myquery(rc);
+}
+
+/* Proxy header ignoring */
+static void test_proxy_header_ignore()
+{
+  MYSQL *m = mysql_client_init(NULL);
+  v2_proxy_header v2_header;
+  DIE_UNLESS(m != NULL);
+  mysql_optionsv(m, MARIADB_OPT_PROXY_HEADER, "PROXY UNKNOWN\r\n",15);
+  DIE_UNLESS(mysql_real_connect(m, opt_host, "root", "", NULL, opt_port, opt_unix_socket, 0) == m);
+  mysql_close(m);
+
+  memcpy(v2_header.sig, "\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A", 12);
+  v2_header.ver_cmd = (0x2 << 4) | 0x0; /* Version (0x2) , Command = LOCAL (0x0) */
+  v2_header.fam= 0x0; /* AF_UNSPEC*/
+  v2_header.len= htons(0);
+  m = mysql_client_init(NULL);
+  mysql_optionsv(m, MARIADB_OPT_PROXY_HEADER, &v2_header,16);
+  DIE_UNLESS(mysql_real_connect(m, opt_host, "root", "", NULL, opt_port, opt_unix_socket, 0) == m);
+  mysql_close(m);
+}
+
+
+static void test_proxy_header()
+{
+  test_proxy_header_tcp("192.0.2.1",3333);
+  test_proxy_header_tcp("2001:db8:85a3::8a2e:370:7334",2222);
+  test_proxy_header_tcp("::ffff:192.0.2.1",2222);
+  test_proxy_header_localhost();
+  test_proxy_header_ignore();
+}
+
+#endif
+
 static struct my_tests_st my_tests[]= {
   { "disable_query_logs", disable_query_logs },
   { "test_view_sp_list_fields", test_view_sp_list_fields },
@@ -19878,6 +20394,13 @@ static struct my_tests_st my_tests[]= {
   { "test_compressed_protocol", test_compressed_protocol },
   { "test_big_packet", test_big_packet },
   { "test_prepare_analyze", test_prepare_analyze },
+  { "test_mdev12579", test_mdev12579 },
+  { "test_mdev14013", test_mdev14013 },
+  { "test_mdev14013_1", test_mdev14013_1 },
+  { "test_mdev14454", test_mdev14454 },
+#ifndef EMBEDDED_LIBRARY
+  { "test_proxy_header", test_proxy_header},
+#endif
   { 0, 0 }
 };
 

@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2006, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2016, MariaDB
+   Copyright (c) 2010, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -166,8 +166,8 @@ static struct my_option my_long_options[]=
    "server with which it was built/distributed.",
    &opt_version_check, &opt_version_check, 0,
    GET_BOOL, NO_ARG, 1, 0, 0, 0, 0, 0},
-  {"write-binlog", OPT_WRITE_BINLOG, "All commands including those, "
-   "issued by mysqlcheck, are written to the binary log.",
+  {"write-binlog", OPT_WRITE_BINLOG, "All commands including those "
+   "issued by mysqlcheck are written to the binary log.",
    &opt_write_binlog, &opt_write_binlog, 0, GET_BOOL, NO_ARG,
    0, 0, 0, 0, 0, 0},
   {0, 0, 0, 0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0}
@@ -501,7 +501,7 @@ static void find_tool(char *tool_executable_name, const char *tool_name,
       last_fn_libchar -= 6;
     }
 
-    len= last_fn_libchar - self_name;
+    len= (int)(last_fn_libchar - self_name);
 
     my_snprintf(tool_executable_name, FN_REFLEN, "%.*s%c%s",
                 len, self_name, FN_LIBCHAR, tool_name);
@@ -673,7 +673,7 @@ static int get_upgrade_info_file_name(char* name)
 
 */
 
-static int upgrade_already_done(void)
+static int upgrade_already_done(myf flags)
 {
   FILE *in;
   char upgrade_info_file[FN_REFLEN]= {0};
@@ -681,17 +681,23 @@ static int upgrade_already_done(void)
   if (get_upgrade_info_file_name(upgrade_info_file))
     return 0; /* Could not get filename => not sure */
 
-  if (!(in= my_fopen(upgrade_info_file, O_RDONLY, MYF(0))))
+  if (!(in= my_fopen(upgrade_info_file, O_RDONLY, flags)))
     return 0; /* Could not open file => not sure */
 
   bzero(upgrade_from_version, sizeof(upgrade_from_version));
   if (!fgets(upgrade_from_version, sizeof(upgrade_from_version), in))
   {
-    /* Ignore, will be detected by strncmp() below */
+    /* Preserve errno for caller */
+    int save_errno= errno;
+    (void) my_fclose(in, flags);
+    errno= save_errno;
+    return 0;
   }
 
-  my_fclose(in, MYF(0));
+  if (my_fclose(in, flags))
+    return 0;
 
+  errno= 0;
   return (strncmp(upgrade_from_version, MYSQL_SERVER_VERSION,
                   sizeof(MYSQL_SERVER_VERSION)-1)==0);
 }
@@ -720,23 +726,24 @@ static void create_mysql_upgrade_info_file(void)
   {
     fprintf(stderr,
             "Could not create the upgrade info file '%s' in "
-            "the MySQL Servers datadir, errno: %d\n",
+            "the MariaDB Servers datadir, errno: %d\n",
             upgrade_info_file, errno);
     return;
   }
 
   /* Write new version to file */
-  fputs(MYSQL_SERVER_VERSION, out);
-  my_fclose(out, MYF(0));
+  my_fwrite(out, (uchar*) MYSQL_SERVER_VERSION,
+            sizeof(MYSQL_SERVER_VERSION), MY_WME);
+  my_fclose(out, MYF(MY_WME));
 
   /*
     Check if the upgrad_info_file was properly created/updated
     It's not a fatal error -> just print a message if it fails
   */
-  if (!upgrade_already_done())
+  if (!upgrade_already_done(MY_WME))
     fprintf(stderr,
-            "Could not write to the upgrade info file '%s' in "
-            "the MySQL Servers datadir, errno: %d\n",
+            "Upgrade file '%s' was not properly created. "
+            "Got error errno while checking file content: %d\n",
             upgrade_info_file, errno);
   return;
 }
@@ -958,8 +965,9 @@ static int install_used_engines(void)
 {
   char buf[512];
   DYNAMIC_STRING ds_result;
-  const char *query = "SELECT DISTINCT LOWER(engine) FROM information_schema.tables"
-                      " WHERE table_comment LIKE 'Unknown storage engine%'";
+  const char *query = "SELECT DISTINCT LOWER(engine) AS c1 FROM information_schema.tables"
+                      " WHERE table_comment LIKE 'Unknown storage engine%'"
+                      " ORDER BY c1";
 
   if (opt_systables_only || !from_before_10_1())
   {
@@ -1130,7 +1138,7 @@ static int check_version_match(void)
 
 int main(int argc, char **argv)
 {
-  char self_name[FN_REFLEN];
+  char self_name[FN_REFLEN + 1];
 
   MY_INIT(argv[0]);
 
@@ -1138,7 +1146,7 @@ int main(int argc, char **argv)
   if (GetModuleFileName(NULL, self_name, FN_REFLEN) == 0)
 #endif
   {
-    strncpy(self_name, argv[0], FN_REFLEN);
+    strmake_buf(self_name, argv[0]);
   }
 
   if (init_dynamic_string(&ds_args, "", 512, 256) ||
@@ -1171,6 +1179,8 @@ int main(int argc, char **argv)
   {
     int fd= create_temp_file(cnf_file_path, opt_tmpdir[0] ? opt_tmpdir : NULL,
                              "mysql_upgrade-", O_CREAT | O_WRONLY, MYF(MY_FAE));
+    if (fd < 0)
+      die(NULL);
     my_write(fd, USTRING_WITH_LEN( "[client]\n"), MYF(MY_FAE));
     my_write(fd, (uchar*)ds_args.str, ds_args.length, MYF(MY_FAE));
     my_close(fd, MYF(0));
@@ -1189,7 +1199,7 @@ int main(int argc, char **argv)
     Read the mysql_upgrade_info file to check if mysql_upgrade
     already has been run for this installation of MySQL
   */
-  if (!opt_force && upgrade_already_done())
+  if (!opt_force && upgrade_already_done(0))
   {
     printf("This installation of MySQL is already upgraded to %s, "
            "use --force if you still need to run mysql_upgrade\n",

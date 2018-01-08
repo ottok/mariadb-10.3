@@ -65,6 +65,7 @@ struct fil_addr_t;
 #define BUF_GET_POSSIBLY_FREED		16
 					/*!< Like BUF_GET, but do not mind
 					if the file page has been freed. */
+#define BUF_EVICT_IF_IN_POOL	20	/*!< evict a clean block if found */
 /* @} */
 /** @name Modes for buf_page_get_known_nowait */
 /* @{ */
@@ -211,6 +212,7 @@ struct buf_pools_list_size_t {
 	ulint	unzip_LRU_bytes;	/*!< unzip_LRU size in bytes */
 	ulint	flush_list_bytes;	/*!< flush_list size in bytes */
 };
+#endif /* !UNIV_INNOCHECKSUM */
 
 /** Page identifier. */
 class page_id_t {
@@ -333,6 +335,7 @@ operator<<(
 	std::ostream&		out,
 	const page_id_t&	page_id);
 
+#ifndef UNIV_INNOCHECKSUM
 /********************************************************************//**
 Acquire mutex on all buffer pool instances */
 UNIV_INLINE
@@ -769,10 +772,6 @@ buf_block_unfix(
 @param[in]	read_buf		database page
 @param[in]	checksum_field1		new checksum field
 @param[in]	checksum_field2		old checksum field
-@param[in]	page_no			page number of given read_buf
-@param[in]	is_log_enabled		true if log option is enabled
-@param[in]	log_file		file pointer to log_file
-@param[in]	curr_algo		current checksum algorithm
 @param[in]	use_legacy_big_endian   use legacy big endian algorithm
 @return true if the page is in crc32 checksum format. */
 bool
@@ -780,12 +779,6 @@ buf_page_is_checksum_valid_crc32(
 	const byte*			read_buf,
 	ulint				checksum_field1,
 	ulint				checksum_field2,
-#ifdef UNIV_INNOCHECKSUM
-	uintmax_t			page_no,
-	bool				is_log_enabled,
-	FILE*				log_file,
-	const srv_checksum_algorithm_t	curr_algo,
-#endif /* UNIV_INNOCHECKSUM */
 	bool				use_legacy_big_endian)
 	MY_ATTRIBUTE((nonnull(1), warn_unused_result));
 
@@ -793,58 +786,25 @@ buf_page_is_checksum_valid_crc32(
 @param[in]	read_buf	database page
 @param[in]	checksum_field1	new checksum field
 @param[in]	checksum_field2	old checksum field
-@param[in]	page_no		page number of given read_buf
-@param[in]	is_log_enabled	true if log option is enabled
-@param[in]	log_file	file pointer to log_file
-@param[in]	curr_algo	current checksum algorithm
 @return true if the page is in innodb checksum format. */
 bool
 buf_page_is_checksum_valid_innodb(
 	const byte*			read_buf,
 	ulint				checksum_field1,
-	ulint				checksum_field2
-#ifdef UNIV_INNOCHECKSUM
-	,uintmax_t			page_no,
-	bool				is_log_enabled,
-	FILE*				log_file,
-	const srv_checksum_algorithm_t	curr_algo
-#endif /* UNIV_INNOCHECKSUM */
-	)
+	ulint				checksum_field2)
 	MY_ATTRIBUTE((nonnull(1), warn_unused_result));
 
 /** Checks if the page is in none checksum format.
 @param[in]	read_buf	database page
 @param[in]	checksum_field1	new checksum field
 @param[in]	checksum_field2	old checksum field
-@param[in]	page_no		page number of given read_buf
-@param[in]	is_log_enabled	true if log option is enabled
-@param[in]	log_file	file pointer to log_file
-@param[in]	curr_algo	current checksum algorithm
 @return true if the page is in none checksum format. */
 bool
 buf_page_is_checksum_valid_none(
 	const byte*			read_buf,
 	ulint				checksum_field1,
-	ulint				checksum_field2
-#ifdef	UNIV_INNOCHECKSUM
-	,uintmax_t			page_no,
-	bool				is_log_enabled,
-	FILE*				log_file,
-	const srv_checksum_algorithm_t	curr_algo
-#endif	/* UNIV_INNOCHECKSUM */
-	)
+	ulint				checksum_field2)
 	MY_ATTRIBUTE((nonnull(1), warn_unused_result));
-
-/********************************************************************//**
-Check if page is maybe compressed, encrypted or both when we encounter
-corrupted page. Note that we can't be 100% sure if page is corrupted
-or decrypt/decompress just failed.
-@param[in]	bpage		Page
-@return true if page corrupted, false if not */
-bool
-buf_page_check_corrupt(
-	buf_page_t*	bpage)	/*!< in/out: buffer page read from disk */
-	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /** Checks if a page contains only zeroes.
 @param[in]	read_buf	database page
@@ -855,31 +815,27 @@ buf_page_is_zeroes(
 	const byte*		read_buf,
 	const page_size_t&	page_size);
 
-/** Checks if a page is corrupt.
-@param[in]	check_lsn	true if we need to check and complain about
-the LSN
+/** Check if a page is corrupt.
+@param[in]	check_lsn	whether the LSN should be checked
 @param[in]	read_buf	database page
 @param[in]	page_size	page size
 @param[in]	space		tablespace
-@param[in]	page_no		page number of given read_buf
-@param[in]	strict_check	true if strict-check option is enabled
-@param[in]	is_log_enabled	true if log option is enabled
-@param[in]	log_file	file pointer to log_file
 @return whether the page is corrupted */
 bool
 buf_page_is_corrupted(
 	bool			check_lsn,
 	const byte*		read_buf,
 	const page_size_t&	page_size,
-	const fil_space_t* 	space = NULL
-#ifdef UNIV_INNOCHECKSUM
-	,uintmax_t		page_no = 0,
-	bool			strict_check = false,
-	bool			is_log_enabled = false,
-	FILE*			log_file = NULL
-#endif /* UNIV_INNOCHECKSUM */
-) MY_ATTRIBUTE((warn_unused_result));
 #ifndef UNIV_INNOCHECKSUM
+	const fil_space_t* 	space = NULL)
+#else
+	const void* 	 	space = NULL)
+#endif
+	MY_ATTRIBUTE((warn_unused_result));
+
+
+#ifndef UNIV_INNOCHECKSUM
+
 /**********************************************************************//**
 Gets the space id, page offset, and byte offset within page of a
 pointer pointing to a buffer frame containing a file page. */
@@ -938,24 +894,13 @@ buf_print(void);
 /*============*/
 #endif /* UNIV_DEBUG_PRINT || UNIV_DEBUG || UNIV_BUF_DEBUG */
 
-enum buf_page_print_flags {
-	/** Do not crash at the end of buf_page_print(). */
-	BUF_PAGE_PRINT_NO_CRASH	= 1,
-	/** Do not print the full page dump. */
-	BUF_PAGE_PRINT_NO_FULL = 2
-};
-
-/** Prints a page to stderr.
-@param[in]	read_buf	a database page
-@param[in]	page_size	page size
-@param[in]	flags		0 or BUF_PAGE_PRINT_NO_CRASH or
-BUF_PAGE_PRINT_NO_FULL */
+/** Dump a page to stderr.
+@param[in]	read_buf	database page
+@param[in]	page_size	page size */
+UNIV_INTERN
 void
-buf_page_print(
-	const byte*		read_buf,
-	const page_size_t&	page_size,
-	ulint			flags);
-
+buf_page_print(const byte* read_buf, const page_size_t& page_size)
+	ATTRIBUTE_COLD __attribute__((nonnull));
 /********************************************************************//**
 Decompress a block.
 @return TRUE if successful */
@@ -1302,7 +1247,7 @@ buf_pointer_is_block_field(
 #define buf_pool_is_block_lock(l)			\
 	buf_pointer_is_block_field((const void*)(l))
 
-/** Inits a page for read to the buffer buf_pool. If the page is
+/** Initialize a page for read to the buffer buf_pool. If the page is
 (1) already in buf_pool, or
 (2) if we specify to read only ibuf pages and the page is not an ibuf page, or
 (3) if the space is deleted or being deleted,
@@ -1313,26 +1258,33 @@ and the lock released later.
 @param[out]	err			DB_SUCCESS or DB_TABLESPACE_DELETED
 @param[in]	mode			BUF_READ_IBUF_PAGES_ONLY, ...
 @param[in]	page_id			page id
-@param[in]	unzip			TRUE=request uncompressed page
-@return pointer to the block or NULL */
+@param[in]	unzip			whether the uncompressed page is
+					requested (for ROW_FORMAT=COMPRESSED)
+@return pointer to the block
+@retval	NULL	in case of an error */
 buf_page_t*
 buf_page_init_for_read(
 	dberr_t*		err,
 	ulint			mode,
 	const page_id_t&	page_id,
 	const page_size_t&	page_size,
-	ibool			unzip);
+	bool			unzip);
 
-/********************************************************************//**
-Completes an asynchronous read or write request of a file page to or from
-the buffer pool.
-@return true if successful */
-bool
-buf_page_io_complete(
-/*=================*/
-	buf_page_t*	bpage,	/*!< in: pointer to the block in question */
-	bool		evict = false);/*!< in: whether or not to evict
-				the page from LRU list. */
+/** Complete a read or write request of a file page to or from the buffer pool.
+@param[in,out]		bpage		Page to complete
+@param[in]		evict		whether or not to evict the page
+					from LRU list.
+@return whether the operation succeeded
+@retval	DB_SUCCESS		always when writing, or if a read page was OK
+@retval	DB_PAGE_CORRUPTED	if the checksum fails on a page read
+@retval	DB_DECRYPTION_FAILED	if page post encryption checksum matches but
+				after decryption normal page checksum does
+				not match */
+UNIV_INTERN
+dberr_t
+buf_page_io_complete(buf_page_t* bpage, bool evict = false)
+	MY_ATTRIBUTE((nonnull));
+
 /********************************************************************//**
 Calculates the index of a buffer pool to the buf_pool[] array.
 @return the position of the buffer pool in buf_pool[] */
@@ -1544,17 +1496,19 @@ buf_flush_update_zip_checksum(
 	ulint		size,
 	lsn_t		lsn);
 
-/********************************************************************//**
-The hook that is called just before a page is written to disk.
-The function encrypts the content of the page and returns a pointer
-to a frame that will be written instead of the real frame. */
+/** Encryption and page_compression hook that is called just before
+a page is written to disk.
+@param[in,out]	space		tablespace
+@param[in,out]	bpage		buffer page
+@param[in]	src_frame	physical page frame that is being encrypted
+@return	page frame to be written to file
+(may be src_frame or an encrypted/compressed copy of it) */
 UNIV_INTERN
 byte*
 buf_page_encrypt_before_write(
-/*==========================*/
-	buf_page_t*	page,		/*!< in/out: buffer page to be flushed */
-	byte*		frame,		/*!< in: src frame */
-	ulint		space_id);	/*!< in: space id */
+	fil_space_t*	space,
+	buf_page_t*	bpage,
+	byte*		src_frame);
 
 /** @brief The temporary memory structure.
 
@@ -1564,20 +1518,13 @@ directory (buf) to see it. Do not use from outside! */
 typedef struct {
 	bool		reserved;	/*!< true if this slot is reserved
 					*/
-#ifdef HAVE_LZO
-	byte*		lzo_mem;	/*!< Temporal memory used by LZO */
-#endif
 	byte*           crypt_buf;	/*!< for encryption the data needs to be
 					copied to a separate buffer before it's
 					encrypted&written. this as a page can be
 					read while it's being flushed */
-	byte*		crypt_buf_free; /*!< for encryption, allocated buffer
-					that is then alligned */
 	byte*		comp_buf;	/*!< for compression we need
 					temporal buffer because page
 					can be read while it's being flushed */
-	byte*		comp_buf_free;	/*!< for compression, allocated
-					buffer that is then alligned */
 	byte*		out_buf;	/*!< resulting buffer after
 					encryption/compression. This is a
 					pointer and not allocated. */
@@ -1637,7 +1584,6 @@ public:
 					if written again we check is TRIM
 					operation needed. */
 
-	unsigned        key_version;	/*!< key version for this block */
 	bool            encrypted;	/*!< page is still encrypted */
 
 	ulint           real_size;	/*!< Real size of the page
@@ -1834,23 +1780,58 @@ struct buf_block_t{
 	/* @} */
 
 	/** @name Hash search fields
-	These 5 fields may only be modified when we have
-	an x-latch on search system AND
-	- we are holding an s-latch or x-latch on buf_block_t::lock or
-	- we know that buf_block_t::buf_fix_count == 0.
+	These 5 fields may only be modified when:
+	we are holding the appropriate x-latch in btr_search_latches[], and
+	one of the following holds:
+	(1) the block state is BUF_BLOCK_FILE_PAGE, and
+	we are holding an s-latch or x-latch on buf_block_t::lock, or
+	(2) buf_block_t::buf_fix_count == 0, or
+	(3) the block state is BUF_BLOCK_REMOVE_HASH.
 
 	An exception to this is when we init or create a page
 	in the buffer pool in buf0buf.cc.
 
-	Another exception is that assigning block->index = NULL
-	is allowed whenever holding an x-latch on search system. */
+	Another exception for buf_pool_clear_hash_index() is that
+	assigning block->index = NULL (and block->n_pointers = 0)
+	is allowed whenever btr_search_own_all(RW_LOCK_X).
+
+	Another exception is that ha_insert_for_fold_func() may
+	decrement n_pointers without holding the appropriate latch
+	in btr_search_latches[]. Thus, n_pointers must be
+	protected by atomic memory access.
+
+	This implies that the fields may be read without race
+	condition whenever any of the following hold:
+	- the btr_search_latches[] s-latch or x-latch is being held, or
+	- the block state is not BUF_BLOCK_FILE_PAGE or BUF_BLOCK_REMOVE_HASH,
+	and holding some latch prevents the state from changing to that.
+
+	Some use of assert_block_ahi_empty() or assert_block_ahi_valid()
+	is prone to race conditions while buf_pool_clear_hash_index() is
+	executing (the adaptive hash index is being disabled). Such use
+	is explicitly commented. */
 
 	/* @{ */
 
 # if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
 	ulint		n_pointers;	/*!< used in debugging: the number of
 					pointers in the adaptive hash index
-					pointing to this frame */
+					pointing to this frame;
+					protected by atomic memory access
+					or btr_search_own_all(). */
+#  define assert_block_ahi_empty(block)					\
+	ut_a(my_atomic_addlint(&(block)->n_pointers, 0) == 0)
+#  define assert_block_ahi_empty_on_init(block) do {			\
+	UNIV_MEM_VALID(&(block)->n_pointers, sizeof (block)->n_pointers); \
+	assert_block_ahi_empty(block);					\
+} while (0)
+#  define assert_block_ahi_valid(block)					\
+	ut_a((block)->index						\
+	     || my_atomic_addlint(&(block)->n_pointers, 0) == 0)
+# else /* UNIV_AHI_DEBUG || UNIV_DEBUG */
+#  define assert_block_ahi_empty(block) /* nothing */
+#  define assert_block_ahi_empty_on_init(block) /* nothing */
+#  define assert_block_ahi_valid(block) /* nothing */
 # endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
 	unsigned	curr_n_fields:10;/*!< prefix length for hash indexing:
 					number of full fields */
@@ -1866,11 +1847,15 @@ struct buf_block_t{
 					complete, though: there may
 					have been hash collisions,
 					record deletions, etc. */
+	/* @} */
+#else /* BTR_CUR_HASH_ADAPT */
+# define assert_block_ahi_empty(block) /* nothing */
+# define assert_block_ahi_empty_on_init(block) /* nothing */
+# define assert_block_ahi_valid(block) /* nothing */
 #endif /* BTR_CUR_HASH_ADAPT */
 	bool		skip_flush_check;
 					/*!< Skip check in buf_dblwr_check_block
 					during bulk load, protected by lock.*/
-	/* @} */
 # ifdef UNIV_DEBUG
 	/** @name Debug fields */
 	/* @{ */

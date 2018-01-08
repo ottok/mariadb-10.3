@@ -5,13 +5,7 @@
 
 call mtr.add_suppression("InnoDB: Cannot add field .* in table .* because after adding it, the row size is .* which is greater than maximum allowed size (.*) for a record on index leaf page.");
 
---disable_query_log
 let $MYSQLD_DATADIR= `select @@datadir`;
-# These values can change during the test
-let $innodb_large_prefix_orig = `SELECT @@innodb_large_prefix`;
---enable_query_log
-
-SET GLOBAL innodb_large_prefix = OFF;
 
 --echo # Test 1) Show the page size from Information Schema
 SELECT variable_value FROM information_schema.global_status
@@ -324,10 +318,10 @@ UPDATE t1 SET a=@c,b=@c,c=@c,d=@c,e=@c,f=@c,g=@c,h=@c,i=@c,j=@c,
 # because the UNDO records will be smaller.
 
 CREATE INDEX t1f ON t1 (f(767));
---error 1713
+BEGIN;
 UPDATE t1 SET a=@d,b=@d,c=@d,d=@d,e=@d,f=@d,g=@d,h=@d,i=@d,j=@d,
               k=@d,l=@d,m=@d,n=@d,o=@d,p=@d,q=@d,r=@d,s=@d,t=@d,u=@d;
-
+ROLLBACK;
 BEGIN;
 UPDATE t1 SET a=@d,b=@d,c=@d,d=@d,e=@d;
 UPDATE t1 SET f=@d,g=@d,h=@d,i=@d,j=@d,k=@d,l=@d,m=@d,
@@ -367,8 +361,9 @@ UPDATE t1 SET s=@e;
 # that CANNOT be updated.
 
 CREATE INDEX t1t ON t1 (t(767));
---error 1713
+BEGIN;
 UPDATE t1 SET t=@e;
+ROLLBACK;
 
 SHOW CREATE TABLE t1;
 DROP TABLE t1;
@@ -496,9 +491,10 @@ INSERT INTO bug12547647 VALUES (5,REPEAT('khdfo5AlOq',1900),REPEAT('g',7751));
 COMMIT;
 
 # The following used to cause a hang while doing infinite undo log allocation.
---error 1713
+BEGIN;
 UPDATE bug12547647 SET c = REPEAT('b',16928);
 SHOW WARNINGS;
+ROLLBACK;
 DROP TABLE bug12547647;
 
 SET SESSION innodb_strict_mode = on;
@@ -942,11 +938,3 @@ COL195 TEXT,
 COL196 TEXT,
 COL197 TEXT)
 row_format=compact,ENGINE=INNODB;
-
-#
-# restore environment to the state it was before this test execution
-#
-
---disable_query_log
-EVAL SET GLOBAL innodb_large_prefix = $innodb_large_prefix_orig;
---enable_query_log

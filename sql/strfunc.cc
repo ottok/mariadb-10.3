@@ -15,7 +15,7 @@
 
 /* Some useful string utility functions used by the MySQL server */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "strfunc.h"
@@ -158,7 +158,7 @@ uint find_type2(const TYPELIB *typelib, const char *x, uint length,
   int pos;
   const char *j;
   DBUG_ENTER("find_type2");
-  DBUG_PRINT("enter",("x: '%.*s'  lib: 0x%lx", length, x, (long) typelib));
+  DBUG_PRINT("enter",("x: '%.*s'  lib: %p", length, x, typelib));
 
   if (!typelib->count)
   {
@@ -331,26 +331,26 @@ outp:
     >=0  Ordinal position
 */
 
-int find_string_in_array(LEX_STRING * const haystack, LEX_STRING * const needle,
+int find_string_in_array(LEX_CSTRING * const haystack, LEX_CSTRING * const needle,
                          CHARSET_INFO * const cs)
 {
-  const LEX_STRING *pos;
+  const LEX_CSTRING *pos;
   for (pos= haystack; pos->str; pos++)
     if (!cs->coll->strnncollsp(cs, (uchar *) pos->str, pos->length,
                                (uchar *) needle->str, needle->length))
     {
-      return (pos - haystack);
+      return (int)(pos - haystack);
     }
   return -1;
 }
 
 
-char *set_to_string(THD *thd, LEX_STRING *result, ulonglong set,
-                    const char *lib[])
+const char *set_to_string(THD *thd, LEX_CSTRING *result, ulonglong set,
+                          const char *lib[])
 {
   char buff[STRING_BUFFER_USUAL_SIZE*8];
   String tmp(buff, sizeof(buff), &my_charset_latin1);
-  LEX_STRING unused;
+  LEX_CSTRING unused;
 
   if (!result)
     result= &unused;
@@ -376,12 +376,12 @@ char *set_to_string(THD *thd, LEX_STRING *result, ulonglong set,
   return result->str;
 }
 
-char *flagset_to_string(THD *thd, LEX_STRING *result, ulonglong set,
-                        const char *lib[])
+const char *flagset_to_string(THD *thd, LEX_CSTRING *result, ulonglong set,
+                              const char *lib[])
 {
   char buff[STRING_BUFFER_USUAL_SIZE*8];
   String tmp(buff, sizeof(buff), &my_charset_latin1);
-  LEX_STRING unused;
+  LEX_CSTRING unused;
 
   if (!result) result= &unused;
 

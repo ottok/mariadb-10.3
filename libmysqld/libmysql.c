@@ -1,5 +1,5 @@
-/* Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2014, SkySQL Ab.
+/* Copyright (c) 2000, 2014, Oracle and/or its affiliates
+   Copyright (c) 2009, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -122,7 +122,9 @@ typedef struct st_mysql_stmt_extension
     1  could not initialize environment (out of memory or thread keys)
 */
 
-int STDCALL mysql_server_init(int argc, char **argv, char **groups)
+int STDCALL mysql_server_init(int argc __attribute__((unused)),
+                              char **argv __attribute__((unused)),
+                              char **groups __attribute__((unused)))
 {
   int result= 0;
   if (!mysql_client_init)
@@ -1404,7 +1406,7 @@ void set_stmt_errmsg(MYSQL_STMT *stmt, NET *net)
   DBUG_ASSERT(stmt != 0);
 
   stmt->last_errno= net->last_errno;
-  if (net->last_error && net->last_error[0])
+  if (net->last_error[0])
     strmov(stmt->last_error, net->last_error);
   strmov(stmt->sqlstate, net->sqlstate);
 
@@ -2051,9 +2053,9 @@ static my_bool store_param(MYSQL_STMT *stmt, MYSQL_BIND *param)
 {
   NET *net= &stmt->mysql->net;
   DBUG_ENTER("store_param");
-  DBUG_PRINT("enter",("type: %d  buffer: 0x%lx  length: %lu  is_null: %d",
+  DBUG_PRINT("enter",("type: %d  buffer:%p  length: %lu  is_null: %d",
 		      param->buffer_type,
-		      (long) (param->buffer ? param->buffer : NullS),
+		      param->buffer,
                       *param->length, *param->is_null));
 
   if (*param->is_null)
@@ -2977,8 +2979,8 @@ mysql_stmt_send_long_data(MYSQL_STMT *stmt, uint param_number,
   MYSQL_BIND *param;
   DBUG_ENTER("mysql_stmt_send_long_data");
   DBUG_ASSERT(stmt != 0);
-  DBUG_PRINT("enter",("param no: %d  data: 0x%lx, length : %ld",
-		      param_number, (long) data, length));
+  DBUG_PRINT("enter",("param no: %d  data: %p, length : %ld",
+		      param_number, data, length));
 
   /*
     We only need to check for stmt->param_count, if it's not null
@@ -3247,7 +3249,7 @@ static void fetch_string_with_conversion(MYSQL_BIND *param, char *value,
     ulong copy_length;
     if (start < end)
     {
-      copy_length= end - start;
+      copy_length= (ulong)(end - start);
       /* We've got some data beyond offset: copy up to buffer_length bytes */
       if (param->buffer_length)
         memcpy(buffer, start, MY_MIN(copy_length, param->buffer_length));
@@ -4373,7 +4375,7 @@ static void stmt_update_metadata(MYSQL_STMT *stmt, MYSQL_ROWS *data)
   MYSQL_FIELD *field;
   uchar *null_ptr, bit;
   uchar *row= (uchar*) data->data;
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   uchar *row_end= row + data->length;
 #endif
 
@@ -4707,8 +4709,7 @@ my_bool STDCALL mysql_stmt_close(MYSQL_STMT *stmt)
     {
       uchar buff[MYSQL_STMT_HEADER];             /* 4 bytes - stmt id */
 
-      if ((rc= reset_stmt_handle(stmt, RESET_ALL_BUFFERS | RESET_CLEAR_ERROR)))
-        return rc;
+      reset_stmt_handle(stmt, RESET_ALL_BUFFERS | RESET_CLEAR_ERROR);
 
       int4store(buff, stmt->stmt_id);
       if ((rc= stmt_command(mysql, COM_STMT_CLOSE, buff, 4, stmt)))
@@ -4918,4 +4919,3 @@ ulong STDCALL mysql_net_field_length(uchar **packet)
 {
   return net_field_length(packet);
 }
-

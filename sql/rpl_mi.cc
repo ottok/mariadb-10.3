@@ -1,5 +1,5 @@
-/* Copyright (c) 2006, 2012, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2011, Monty Program Ab
+/* Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2010, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h> // For HAVE_REPLICATION
+#include "mariadb.h" // For HAVE_REPLICATION
 #include "sql_priv.h"
 #include <my_dir.h>
 #include "rpl_mi.h"
@@ -28,7 +28,7 @@
 
 static void init_master_log_pos(Master_info* mi);
 
-Master_info::Master_info(LEX_STRING *connection_name_arg,
+Master_info::Master_info(LEX_CSTRING *connection_name_arg,
                          bool is_slave_recovery)
   :Slave_reporting_capability("I/O"),
    ssl(0), ssl_verify_server_cert(1), fd(-1), io_thd(0), 
@@ -41,9 +41,10 @@ Master_info::Master_info(LEX_STRING *connection_name_arg,
    master_id(0), prev_master_id(0),
    using_gtid(USE_GTID_NO), events_queued_since_last_gtid(0),
    gtid_reconnect_event_skip_count(0), gtid_event_seen(false),
-   in_start_all_slaves(0), in_stop_all_slaves(0),
+   in_start_all_slaves(0), in_stop_all_slaves(0), in_flush_all_relay_logs(0),
    users(0), killed(0)
 {
+  char *tmp;
   host[0] = 0; user[0] = 0; password[0] = 0;
   ssl_ca[0]= 0; ssl_capath[0]= 0; ssl_cert[0]= 0;
   ssl_cipher[0]= 0; ssl_key[0]= 0;
@@ -55,16 +56,14 @@ Master_info::Master_info(LEX_STRING *connection_name_arg,
   */
   connection_name.length= cmp_connection_name.length=
     connection_name_arg->length;
-  if ((connection_name.str= (char*) my_malloc(connection_name_arg->length*2+2,
-                                              MYF(MY_WME))))
+  if ((connection_name.str= tmp= (char*)
+       my_malloc(connection_name_arg->length*2+2, MYF(MY_WME))))
   {
-    cmp_connection_name.str= (connection_name.str +
-                              connection_name_arg->length+1);
-    strmake(connection_name.str, connection_name_arg->str,
-            connection_name.length);
-    memcpy(cmp_connection_name.str, connection_name_arg->str,
-           connection_name.length+1);
-    my_casedn_str(system_charset_info, cmp_connection_name.str);
+    strmake(tmp, connection_name_arg->str, connection_name.length);
+    tmp+= connection_name_arg->length+1;
+    cmp_connection_name.str= tmp;
+    memcpy(tmp, connection_name_arg->str, connection_name.length+1);
+    my_casedn_str(system_charset_info, tmp);
   }
   /*
     When MySQL restarted, all Rpl_filter settings which aren't in the my.cnf
@@ -124,7 +123,7 @@ Master_info::~Master_info()
 #endif
   rpl_filters.delete_element(connection_name.str, connection_name.length,
                              (void (*)(const char*, uchar*)) free_rpl_filter);
-  my_free(connection_name.str);
+  my_free(const_cast<char*>(connection_name.str));
   delete_dynamic(&ignore_server_ids);
   mysql_mutex_destroy(&run_lock);
   mysql_mutex_destroy(&data_lock);
@@ -664,7 +663,7 @@ file '%s')", fname);
     mi->connect_retry= (uint) connect_retry;
     mi->ssl= (my_bool) ssl;
     mi->ssl_verify_server_cert= ssl_verify_server_cert;
-    mi->heartbeat_period= master_heartbeat_period;
+    mi->heartbeat_period= MY_MIN(SLAVE_MAX_HEARTBEAT_PERIOD, master_heartbeat_period);
   }
   DBUG_PRINT("master_info",("log_file_name: %s  position: %ld",
                             mi->master_log_name,
@@ -799,8 +798,8 @@ int flush_master_info(Master_info* mi,
      contents of file). But because of number of lines in the first line
      of file we don't care about this garbage.
   */
-  char heartbeat_buf[sizeof(mi->heartbeat_period) * 4]; // buffer to suffice always
-  sprintf(heartbeat_buf, "%.3f", mi->heartbeat_period);
+  char heartbeat_buf[FLOATING_POINT_BUFFER];
+  my_fcvt(mi->heartbeat_period, 3, heartbeat_buf, NULL);
   my_b_seek(file, 0L);
   my_b_printf(file,
               "%u\n%s\n%s\n%s\n%s\n%s\n%d\n%d\n%d\n%s\n%s\n%s\n%s\n%s\n%d\n%s\n%s\n%s\n%s\n%d\n%s\n%s\n"
@@ -844,7 +843,6 @@ void end_master_info(Master_info* mi)
 
   if (!mi->inited)
     DBUG_VOID_RETURN;
-  end_relay_log_info(&mi->rli);
   if (mi->fd >= 0)
   {
     end_io_cache(&mi->file);
@@ -883,6 +881,7 @@ void free_key_master_info(Master_info *mi)
   /* We use 2 here instead of 1 just to make it easier when debugging */
   mi->killed= 2;
   end_master_info(mi);
+  end_relay_log_info(&mi->rli);
   mi->unlock_slave_threads();
   delete mi;
 
@@ -901,7 +900,7 @@ void free_key_master_info(Master_info *mi)
    1 error
 */
 
-bool check_master_connection_name(LEX_STRING *name)
+bool check_master_connection_name(LEX_CSTRING *name)
 {
   if (name->length >= MAX_CONNECTION_NAME)
     return 1;
@@ -931,7 +930,7 @@ bool check_master_connection_name(LEX_STRING *name)
 
 void create_logfile_name_with_suffix(char *res_file_name, size_t length,
                                      const char *info_file, bool append,
-                                     LEX_STRING *suffix)
+                                     LEX_CSTRING *suffix)
 {
   char buff[MAX_CONNECTION_NAME+1],
     res[MAX_CONNECTION_NAME * MAX_FILENAME_MBWIDTH+1], *p;
@@ -1124,7 +1123,7 @@ bool Master_info_index::init_all_master_info()
   while (!init_strvar_from_file(sign, sizeof(sign),
                                 &index_file, NULL))
   {
-    LEX_STRING connection_name;
+    LEX_CSTRING connection_name;
     Master_info *mi;
     char buf_master_info_file[FN_REFLEN];
     char buf_relay_log_info_file[FN_REFLEN];
@@ -1253,7 +1252,7 @@ error:
 
 
 /* Write new master.info to master.info.index File */
-bool Master_info_index::write_master_name_to_index_file(LEX_STRING *name,
+bool Master_info_index::write_master_name_to_index_file(LEX_CSTRING *name,
                                                         bool do_sync)
 {
   DBUG_ASSERT(my_b_inited(&index_file) != 0);
@@ -1290,7 +1289,7 @@ bool Master_info_index::write_master_name_to_index_file(LEX_STRING *name,
 			WARN_LEVEL_ERROR-> Issue error if not exists
 */
 
-Master_info *get_master_info(const LEX_STRING *connection_name,
+Master_info *get_master_info(const LEX_CSTRING *connection_name,
                              Sql_condition::enum_warning_level warning)
 {
   Master_info *mi;
@@ -1356,7 +1355,7 @@ void Master_info::release()
 */
 
 Master_info *
-Master_info_index::get_master_info(const LEX_STRING *connection_name,
+Master_info_index::get_master_info(const LEX_CSTRING *connection_name,
                                    Sql_condition::enum_warning_level warning)
 {
   Master_info *mi;
@@ -1387,7 +1386,7 @@ Master_info_index::get_master_info(const LEX_STRING *connection_name,
 
 
 /* Check Master_host & Master_port is duplicated or not */
-bool Master_info_index::check_duplicate_master_info(LEX_STRING *name_arg,
+bool Master_info_index::check_duplicate_master_info(LEX_CSTRING *name_arg,
                                                     const char *host,
                                                     uint port)
 {
@@ -1558,6 +1557,9 @@ bool give_error_if_slave_running(bool already_locked)
 /**
    any_slave_sql_running()
 
+   @param
+   already_locked  0 if we need to lock, 1 if we have LOCK_active_mi_locked
+
    @return
    0            No Slave SQL thread is running
    #		Number of slave SQL thread running
@@ -1568,26 +1570,28 @@ bool give_error_if_slave_running(bool already_locked)
    hash entries can't be accessed.
 */
 
-uint any_slave_sql_running()
+uint any_slave_sql_running(bool already_locked)
 {
   uint count= 0;
   HASH *hash;
   DBUG_ENTER("any_slave_sql_running");
 
-  mysql_mutex_lock(&LOCK_active_mi);
+  if (!already_locked)
+    mysql_mutex_lock(&LOCK_active_mi);
   if (unlikely(shutdown_in_progress || !master_info_index))
+    count= 1;
+  else
   {
+    hash= &master_info_index->master_info_hash;
+    for (uint i= 0; i< hash->records; ++i)
+    {
+      Master_info *mi= (Master_info *)my_hash_element(hash, i);
+      if (mi->rli.slave_running != MYSQL_SLAVE_NOT_RUN)
+        count++;
+    }
+  }
+  if (!already_locked)
     mysql_mutex_unlock(&LOCK_active_mi);
-    DBUG_RETURN(1);
-  }
-  hash= &master_info_index->master_info_hash;
-  for (uint i= 0; i< hash->records; ++i)
-  {
-    Master_info *mi= (Master_info *)my_hash_element(hash, i);
-    if (mi->rli.slave_running != MYSQL_SLAVE_NOT_RUN)
-      count++;
-  }
-  mysql_mutex_unlock(&LOCK_active_mi);
   DBUG_RETURN(count);
 }
 
@@ -1917,7 +1921,7 @@ char *Domain_id_filter::as_string(enum_list_type type)
   {
     ulong domain_id;
     get_dynamic(ids, (void *) &domain_id, i);
-    cur_len+= my_snprintf(buf + cur_len, sz, " %u", domain_id);
+    cur_len+= my_snprintf(buf + cur_len, sz, " %lu", domain_id);
     sz-= cur_len;
   }
   return buf;
@@ -1978,6 +1982,55 @@ void prot_store_ids(THD *thd, DYNAMIC_ARRAY *ids)
   }
   thd->protocol->store(buff, &my_charset_bin);
   return;
+}
+
+bool Master_info_index::flush_all_relay_logs()
+{
+  DBUG_ENTER("flush_all_relay_logs");
+  bool result= false;
+  int error= 0;
+  mysql_mutex_lock(&LOCK_active_mi);
+  for (uint i= 0; i< master_info_hash.records; i++)
+  {
+    Master_info *mi;
+    mi= (Master_info *) my_hash_element(&master_info_hash, i);
+    mi->in_flush_all_relay_logs= 0;
+  }
+  for (uint i=0; i < master_info_hash.records;)
+  {
+    Master_info *mi;
+    mi= (Master_info *)my_hash_element(&master_info_hash, i);
+    DBUG_ASSERT(mi);
+
+    if (mi->in_flush_all_relay_logs)
+    {
+      i++;
+      continue;
+    }
+    mi->in_flush_all_relay_logs= 1;
+
+    mysql_mutex_lock(&mi->sleep_lock);
+    mi->users++;                                // Mark used
+    mysql_mutex_unlock(&mi->sleep_lock);
+    mysql_mutex_unlock(&LOCK_active_mi);
+
+    mysql_mutex_lock(&mi->data_lock);
+    error= rotate_relay_log(mi);
+    mysql_mutex_unlock(&mi->data_lock);
+    mi->release();
+    mysql_mutex_lock(&LOCK_active_mi);
+
+    if (error)
+    {
+      result= true;
+      break;
+    }
+    /* Restart from first element as master_info_hash may have changed */
+    i= 0;
+    continue;
+  }
+  mysql_mutex_unlock(&LOCK_active_mi);
+  DBUG_RETURN(result);
 }
 
 #endif /* HAVE_REPLICATION */

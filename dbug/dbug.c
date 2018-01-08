@@ -128,7 +128,6 @@
 #define SANITY_CHECK_ON (1U << 12) /* Check memory on every DBUG_ENTER/RETURN */
 #define TRACE_ON        (1U << 31) /* Trace enabled. MUST be the highest bit!*/
 
-#define sf_sanity() (0)
 #define TRACING (cs->stack->flags & TRACE_ON)
 #define DEBUGGING (cs->stack->flags & DEBUG_ON)
 
@@ -259,7 +258,7 @@ typedef struct _db_code_state_ {
 #define ListDel(A,B,C) ListAddDel(A,B,C,EXCLUDE)
 static struct link *ListAddDel(struct link *, const char *, const char *, int);
 static struct link *ListCopy(struct link *);
-static int InList(struct link *linkp,const char *cp, int exact_match);
+static int InList(struct link *linkp,const char *cp,int exact_match);
 static uint ListFlags(struct link *linkp);
 static void FreeList(struct link *linkp);
 
@@ -272,6 +271,11 @@ static void PushState(CODE_STATE *cs);
 static void FreeState (CODE_STATE *cs, int free_state);
         /* Test for tracing enabled */
 static int DoTrace(CODE_STATE *cs);
+static int default_my_dbug_sanity(void);
+
+int (*dbug_sanity)(void)= default_my_dbug_sanity;
+
+
 /*
   return values of DoTrace.
   Can also be used as bitmask: ret & DO_TRACE
@@ -458,8 +462,8 @@ static int DbugParse(CODE_STATE *cs, const char *control)
 
   if (!(org_cs_locked= cs->locked))
   {
-    cs->locked= 1;
     pthread_mutex_lock(&THR_LOCK_dbug);
+    cs->locked= 1;
   }
 
   if (control[0] == '-' && control[1] == '#')
@@ -666,8 +670,8 @@ static int DbugParse(CODE_STATE *cs, const char *control)
   }
   if (!org_cs_locked)
   {
-    pthread_mutex_unlock(&THR_LOCK_dbug);
     cs->locked= 0;
+    pthread_mutex_unlock(&THR_LOCK_dbug);
   }
   return !rel || f_used;
 }
@@ -1096,7 +1100,7 @@ int _db_explain_init_(char *buf, size_t len)
 void _db_enter_(const char *_func_, const char *_file_,
                 uint _line_, struct _db_stack_frame_ *_stack_frame_)
 {
-  int save_errno;
+  int save_errno, org_cs_locked;
   CODE_STATE *cs;
   if (!((cs=code_state())))
   {
@@ -1121,16 +1125,24 @@ void _db_enter_(const char *_func_, const char *_file_,
     if (!TRACING) break;
     /* fall through */
   case DO_TRACE:
-    if ((cs->stack->flags & SANITY_CHECK_ON) && sf_sanity())
+    if ((cs->stack->flags & SANITY_CHECK_ON) && (*dbug_sanity)())
       cs->stack->flags &= ~SANITY_CHECK_ON;
     if (TRACING)
     {
-      if (!cs->locked)
+      if (!(org_cs_locked= cs->locked))
+      {
         pthread_mutex_lock(&THR_LOCK_dbug);
+        cs->locked= 1;
+      }
       DoPrefix(cs, _line_);
       Indent(cs, cs->level);
       (void) fprintf(cs->stack->out_file->file, ">%s\n", cs->func);
       DbugFlush(cs);                       /* This does a unlock */
+      if (!org_cs_locked)
+      {
+        cs->locked= 0;
+        pthread_mutex_unlock(&THR_LOCK_dbug);
+      }
     }
     break;
   case DISABLE_TRACE:
@@ -1181,16 +1193,25 @@ void _db_return_(struct _db_stack_frame_ *_stack_frame_)
 
   if (DoTrace(cs) & DO_TRACE)
   {
-    if ((cs->stack->flags & SANITY_CHECK_ON) && sf_sanity())
+    int org_cs_locked;
+    if ((cs->stack->flags & SANITY_CHECK_ON) && (*dbug_sanity)())
       cs->stack->flags &= ~SANITY_CHECK_ON;
     if (TRACING)
     {
-      if (!cs->locked)
+      if (!(org_cs_locked= cs->locked))
+      {
         pthread_mutex_lock(&THR_LOCK_dbug);
+        cs->locked= 1;
+      }
       DoPrefix(cs, _stack_frame_->line);
       Indent(cs, cs->level);
       (void) fprintf(cs->stack->out_file->file, "<%s\n", cs->func);
       DbugFlush(cs);
+      if (!org_cs_locked)
+      {
+        cs->locked= 0;
+        pthread_mutex_unlock(&THR_LOCK_dbug);
+      }
     }
   }
   /*
@@ -1267,14 +1288,17 @@ void _db_doprnt_(const char *format,...)
 {
   va_list args;
   CODE_STATE *cs;
-  int save_errno;
+  int save_errno, org_cs_locked;
 
   get_code_state_or_return;
 
   va_start(args,format);
 
-  if (!cs->locked)
+  if (!(org_cs_locked= cs->locked))
+  {
     pthread_mutex_lock(&THR_LOCK_dbug);
+    cs->locked= 1;
+  }
   save_errno=errno;
   DoPrefix(cs, cs->u_line);
   if (TRACING)
@@ -1284,6 +1308,11 @@ void _db_doprnt_(const char *format,...)
   (void) fprintf(cs->stack->out_file->file, "%s: ", cs->u_keyword);
   DbugVfprintf(cs->stack->out_file->file, format, args);
   DbugFlush(cs);
+  if (!org_cs_locked)
+  {
+    cs->locked= 0;
+    pthread_mutex_unlock(&THR_LOCK_dbug);
+  }
   errno=save_errno;
 
   va_end(args);
@@ -1323,12 +1352,15 @@ static void DbugVfprintf(FILE *stream, const char* format, va_list args)
 void _db_dump_(uint _line_, const char *keyword,
                const unsigned char *memory, size_t length)
 {
-  int pos;
+  int pos, org_cs_locked;
   CODE_STATE *cs;
   get_code_state_or_return;
 
-  if (!cs->locked)
+  if (!(org_cs_locked= cs->locked))
+  {
     pthread_mutex_lock(&THR_LOCK_dbug);
+    cs->locked= 1;
+  }
   if (_db_keyword_(cs, keyword, 0))
   {
     DoPrefix(cs, _line_);
@@ -1341,8 +1373,8 @@ void _db_dump_(uint _line_, const char *keyword,
     {
       fprintf(cs->stack->out_file->file, "%s: ", cs->func);
     }
-    (void) fprintf(cs->stack->out_file->file, "%s: Memory: 0x%lx  Bytes: (%ld)\n",
-            keyword, (ulong) memory, (long) length);
+    (void) fprintf(cs->stack->out_file->file, "%s: Memory: %p  Bytes: (%ld)\n",
+            keyword, memory, (long) length);
 
     pos=0;
     while (length-- > 0)
@@ -1360,8 +1392,11 @@ void _db_dump_(uint _line_, const char *keyword,
     (void) fputc('\n',cs->stack->out_file->file);
     DbugFlush(cs);
   }
-  else if (!cs->locked)
+  if (!org_cs_locked)
+  {
+    cs->locked= 0;
     pthread_mutex_unlock(&THR_LOCK_dbug);
+  }
 }
 
 
@@ -1509,11 +1544,13 @@ static struct link *ListCopy(struct link *orig)
 static int InList(struct link *linkp, const char *cp, int exact_match)
 {
   int result;
-
   for (result=MATCHED; linkp != NULL; linkp= linkp->next_link)
   {
     if (!(exact_match ? strcmp(linkp->str,cp) : fnmatch(linkp->str, cp, 0)))
-      return linkp->flags;
+    {
+      result= linkp->flags;
+      break;
+    }
     if (!(linkp->flags & EXCLUDE))
       result=NOT_MATCHED;
     if (linkp->flags & SUBDIR)
@@ -1647,6 +1684,7 @@ void _db_end_()
   FreeState(cs, 0);
   pthread_mutex_destroy(&THR_LOCK_dbug);
   init_done= 0;
+  _dbug_on_= 0;
 }
 
 
@@ -1665,21 +1703,38 @@ void _db_end_()
 
 static int DoTrace(CODE_STATE *cs)
 {
+  int res= DONT_TRACE;
+  if (!cs->locked)
+    pthread_mutex_lock(&THR_LOCK_dbug);
   if ((cs->stack->maxdepth == 0 || cs->level <= cs->stack->maxdepth) &&
       InList(cs->stack->processes, cs->process, 0) & (MATCHED|INCLUDE))
+  {
     switch(InList(cs->stack->functions, cs->func, 0)) {
-    case INCLUDE|SUBDIR:  return ENABLE_TRACE;
-    case INCLUDE:         return DO_TRACE;
+    case INCLUDE|SUBDIR:
+      res= ENABLE_TRACE;
+      break;
+    case INCLUDE:
+      res= DO_TRACE;
+      break;
     case MATCHED|SUBDIR:
     case NOT_MATCHED|SUBDIR:
-    case MATCHED:         return framep_trace_flag(cs, cs->framep) ?
-                                           DO_TRACE : DONT_TRACE;
+    case MATCHED:
+      res= (framep_trace_flag(cs, cs->framep) ? DO_TRACE : DONT_TRACE);
+      break;
     case EXCLUDE:
-    case NOT_MATCHED:     return DONT_TRACE;
-    case EXCLUDE|SUBDIR:  return DISABLE_TRACE;
+    case NOT_MATCHED:
+      res= DONT_TRACE;
+      break;
+    case EXCLUDE|SUBDIR:
+      res= DISABLE_TRACE;
+      break;
     }
-  return DONT_TRACE;
+  }
+  if (!cs->locked)
+    pthread_mutex_unlock(&THR_LOCK_dbug);
+  return res;
 }
+
 
 FILE *_db_fp_(void)
 {
@@ -1711,10 +1766,17 @@ FILE *_db_fp_(void)
 BOOLEAN _db_keyword_(CODE_STATE *cs, const char *keyword, int strict)
 {
   int match= strict ? INCLUDE : INCLUDE|MATCHED;
+  int res;
   get_code_state_if_not_set_or_return FALSE;
 
-  return (DEBUGGING && DoTrace(cs) & DO_TRACE &&
-          InList(cs->stack->keywords, keyword, strict) & match);
+  if (!(DEBUGGING && (DoTrace(cs) & DO_TRACE)))
+    return 0;
+  if (!cs->locked)
+    pthread_mutex_lock(&THR_LOCK_dbug);
+  res= (InList(cs->stack->keywords, keyword, strict) & match);
+  if (!cs->locked)
+    pthread_mutex_unlock(&THR_LOCK_dbug);
+  return res != 0;
 }
 
 /*
@@ -2130,8 +2192,6 @@ static void DbugFlush(CODE_STATE *cs)
     if (cs->stack->delay)
       (void) Delay(cs->stack->delay);
   }
-  if (!cs->locked)
-    pthread_mutex_unlock(&THR_LOCK_dbug);
 } /* DbugFlush */
 
 
@@ -2141,7 +2201,12 @@ void _db_flush_()
 {
   CODE_STATE *cs;
   get_code_state_or_return;
-  (void) fflush(cs->stack->out_file->file);
+  if (DEBUGGING)
+  {
+    pthread_mutex_lock(&THR_LOCK_dbug);
+    (void) fflush(cs->stack->out_file->file);
+    pthread_mutex_unlock(&THR_LOCK_dbug);
+  }
 }
 
 
@@ -2187,6 +2252,12 @@ const char* _db_get_func_(void)
   return cs->func;
 }
 
+
+static int default_my_dbug_sanity(void)
+{
+  return 0;
+}
+
 #else
 
 /*
@@ -2198,3 +2269,23 @@ int i_am_a_dummy_function() {
 }
 
 #endif /* DBUG_OFF */
+
+/*
+  This function is called by default on DBUG_ASSERT() when compiled with
+  DBUG_ASSERT_AS_PRINTF
+*/
+
+#ifdef DBUG_ASSERT_AS_PRINTF
+
+static void default_my_dbug_assert_failed(const char *assert_expr,
+                                          const char *file,
+                                          unsigned long line)
+{
+  fprintf(stderr, "Warning: assertion failed: %s at %s line %lu\n",
+          assert_expr, file, line);
+}
+
+void (*my_dbug_assert_failed)(const char *assert_expr, const char* file,
+                              unsigned long line)= default_my_dbug_assert_failed;
+
+#endif /* DBUG_ASSERT_AS_PRINTF */

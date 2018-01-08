@@ -122,7 +122,7 @@
 #define OPTION_AUTOCOMMIT       (1ULL << 8)    // THD, user
 #define OPTION_BIG_SELECTS      (1ULL << 9)     // THD, user
 #define OPTION_LOG_OFF          (1ULL << 10)    // THD, user
-#define OPTION_QUOTE_SHOW_CREATE (1ULL << 11)   // THD, user, unused
+#define OPTION_QUOTE_SHOW_CREATE (1ULL << 11)   // THD, user
 #define TMP_TABLE_ALL_COLUMNS   (1ULL << 12)    // SELECT, intern
 #define OPTION_WARNINGS         (1ULL << 13)    // THD, user
 #define OPTION_AUTO_IS_NULL     (1ULL << 14)    // THD, user, binlog
@@ -227,6 +227,7 @@
 #define OPTIMIZER_SWITCH_EXISTS_TO_IN              (1ULL << 28)
 #define OPTIMIZER_SWITCH_ORDERBY_EQ_PROP           (1ULL << 29)
 #define OPTIMIZER_SWITCH_COND_PUSHDOWN_FOR_DERIVED (1ULL << 30)
+#define OPTIMIZER_SWITCH_SPLIT_GROUPING_DERIVED    (1ULL << 31)
 
 #define OPTIMIZER_SWITCH_DEFAULT   (OPTIMIZER_SWITCH_INDEX_MERGE | \
                                     OPTIMIZER_SWITCH_INDEX_MERGE_UNION | \
@@ -252,7 +253,9 @@
                                     OPTIMIZER_SWITCH_LOOSE_SCAN | \
                                     OPTIMIZER_SWITCH_EXISTS_TO_IN | \
                                     OPTIMIZER_SWITCH_ORDERBY_EQ_PROP | \
-                                    OPTIMIZER_SWITCH_COND_PUSHDOWN_FOR_DERIVED)
+                                    OPTIMIZER_SWITCH_COND_PUSHDOWN_FOR_DERIVED | \
+                                    OPTIMIZER_SWITCH_SPLIT_GROUPING_DERIVED)
+
 /*
   Replication uses 8 bytes to store SQL_MODE in the binary log. The day you
   use strictly more than 64 bits by adding one more define above, you should
@@ -324,6 +327,8 @@
 /* Used to check GROUP BY list in the MODE_ONLY_FULL_GROUP_BY mode */
 #define UNDEF_POS (-1)
 
+#define IN_SUBQUERY_CONVERSION_THRESHOLD 1000
+
 #endif /* !MYSQL_CLIENT */
 
 /* BINLOG_DUMP options */
@@ -349,6 +354,8 @@ enum enum_parsing_place
   IN_ON,
   IN_GROUP_BY,
   IN_ORDER_BY,
+  IN_UPDATE_ON_DUP_KEY,
+  IN_PART_FUNC,
   PARSING_PLACE_SIZE /* always should be the last */
 };
 

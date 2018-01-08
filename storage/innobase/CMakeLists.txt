@@ -36,7 +36,6 @@ SET(INNOBASE_SOURCES
 	buf/buf0flu.cc
 	buf/buf0lru.cc
 	buf/buf0rea.cc
-	buf/buf0mtflu.cc
 	data/data0data.cc
 	data/data0type.cc
 	dict/dict0boot.cc
@@ -74,7 +73,6 @@ SET(INNOBASE_SOURCES
 	gis/gis0sea.cc
 	fts/fts0plugin.cc
 	handler/ha_innodb.cc
-#	handler/ha_innopart.cc
 	handler/handler0alter.cc
 	handler/i_s.cc
 	ibuf/ibuf0ibuf.cc
@@ -151,25 +149,20 @@ SET(INNOBASE_SOURCES
 	ut/ut0wqueue.cc
 	ut/ut0timer.cc)
 
-IF(WITH_INNODB)
-  # Legacy option
-  SET(WITH_INNOBASE_STORAGE_ENGINE TRUE)
-ENDIF()
-
 MYSQL_ADD_PLUGIN(innobase ${INNOBASE_SOURCES} STORAGE_ENGINE
-#  MODULE_ONLY
-#  MODULE_OUTPUT_NAME ha_innodb
   DEFAULT RECOMPILE_FOR_EMBEDDED
   LINK_LIBRARIES
 	${ZLIB_LIBRARY}
 	${CRC32_VPMSUM_LIBRARY}
 	${NUMA_LIBRARY}
+	${LIBSYSTEMD}
 	${LINKER_SCRIPT})
 
-IF(WITH_INNOBASE_STORAGE_ENGINE)
-  ADD_DEPENDENCIES(innobase GenError)
+IF(NOT TARGET innobase)
+  RETURN()
 ENDIF()
 
+INCLUDE(${MYSQL_CMAKE_SCRIPT_DIR}/compile_flags.cmake)
 # A GCC bug causes crash when compiling these files on ARM64 with -O1+
 # Compile them with -O0 as a workaround.
 IF(CMAKE_COMPILER_IS_GNUCXX AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
@@ -177,7 +170,6 @@ IF(CMAKE_COMPILER_IS_GNUCXX AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   EXECUTE_PROCESS(COMMAND ${CMAKE_C_COMPILER} -dumpversion
                   OUTPUT_VARIABLE GCC_VERSION)
   IF(GCC_VERSION VERSION_LESS 5.2)
-    INCLUDE(${MYSQL_CMAKE_SCRIPT_DIR}/compile_flags.cmake)
     ADD_COMPILE_FLAGS(
       btr/btr0btr.cc
       btr/btr0cur.cc
@@ -187,3 +179,10 @@ IF(CMAKE_COMPILER_IS_GNUCXX AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
       )
   ENDIF()
 ENDIF()
+IF(MSVC)
+  # silence "switch statement contains 'default' but no 'case' label
+  # on generated file.
+  TARGET_COMPILE_OPTIONS(innobase PRIVATE "/wd4065")
+ENDIF()
+
+ADD_SUBDIRECTORY(${CMAKE_SOURCE_DIR}/extra/mariabackup ${CMAKE_BINARY_DIR}/extra/mariabackup)

@@ -10,5 +10,4 @@
 #
 ##############################################################################
 
-innodb_defragment_fill_factor : MDEV-10771
-innodb_bug14147491            : MDEV-12253 ut_ad(buf_pool->n_pend_reads > 0)
+create-index-debug : MDEV-13680 InnoDB may crash when btr_page_alloc() fails

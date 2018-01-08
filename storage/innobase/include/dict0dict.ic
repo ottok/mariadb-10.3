@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2013, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -88,16 +88,6 @@ dict_col_copy_type(
 	type->prtype = col->prtype;
 	type->len = col->len;
 	type->mbminmaxlen = col->mbminmaxlen;
-}
-/** Check if a column is a virtual column
-@param[in]      col     column
-@return true if it is a virtual column, false otherwise */
-UNIV_INLINE
-bool
-dict_col_is_virtual(
-	const dict_col_t*	col)
-{
-	return(col->prtype & DATA_VIRTUAL);
 }
 
 #ifdef UNIV_DEBUG
@@ -296,8 +286,7 @@ dict_index_is_clust(
 	const dict_index_t*	index)	/*!< in: index */
 {
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
-
-	return(index->type & DICT_CLUSTERED);
+	return(index->is_clust());
 }
 
 /** Check if index is auto-generated clustered index.
@@ -324,20 +313,6 @@ dict_index_is_unique(
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	return(index->type & DICT_UNIQUE);
-}
-
-/********************************************************************//**
-Check whether the index is an universal index tree.
-@return	nonzero for universal tree, zero for other indexes */
-UNIV_INLINE
-ulint
-dict_index_is_univ(
-/*===============*/
-	const dict_index_t*	index)	/*!< in: index */
-{
-	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
-
-	return(index->type & DICT_UNIVERSAL);
 }
 
 /********************************************************************//**
@@ -393,13 +368,9 @@ dict_index_is_sec_or_ibuf(
 /*======================*/
 	const dict_index_t*	index)	/*!< in: index */
 {
-	ulint	type;
-
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
-	type = index->type;
-
-	return(!(type & DICT_CLUSTERED) || (type & DICT_IBUF));
+	return((index->type & (DICT_CLUSTERED | DICT_IBUF)) != DICT_CLUSTERED);
 }
 
 /********************************************************************//**
@@ -414,24 +385,10 @@ dict_table_get_n_user_cols(
 	const dict_table_t*	table)	/*!< in: table */
 {
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
-
-	return(table->n_cols - dict_table_get_n_sys_cols(table));
-}
-
-/** Gets the number of user-defined virtual and non-virtual columns in a table
-in the dictionary cache.
-@param[in]	table	table
-@return number of user-defined (e.g., not ROW_ID) columns of a table */
-UNIV_INLINE
-ulint
-dict_table_get_n_tot_u_cols(
-	const dict_table_t*	table)
-{
-	ut_ad(table);
-	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
-
-	return(dict_table_get_n_user_cols(table)
-	       + dict_table_get_n_v_cols(table));
+	/* n_cols counts stored columns only. A table may contain
+	virtual columns and no user-specified stored columns at all. */
+	ut_ad(table->n_cols >= DATA_N_SYS_COLS);
+	return(table->n_cols - DATA_N_SYS_COLS);
 }
 
 /********************************************************************//**
@@ -563,8 +520,8 @@ dict_table_get_nth_v_col(
 	ut_ad(table);
 	ut_ad(pos < table->n_v_def);
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
-
-	return(static_cast<dict_v_col_t*>(table->v_cols) + pos);
+	ut_ad(!table->v_cols[pos].m_col.is_instant());
+	return &table->v_cols[pos];
 }
 
 /********************************************************************//**
@@ -580,11 +537,10 @@ dict_table_get_sys_col(
 	dict_col_t*	col;
 
 	ut_ad(table);
-	ut_ad(sys < dict_table_get_n_sys_cols(table));
+	ut_ad(sys < DATA_N_SYS_COLS);
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
 
-	col = dict_table_get_nth_col(table, table->n_cols
-				     - dict_table_get_n_sys_cols(table)
+	col = dict_table_get_nth_col(table, table->n_cols - DATA_N_SYS_COLS
 				     + sys);
 	ut_ad(col->mtype == DATA_SYS);
 	ut_ad(col->prtype == (sys | DATA_NOT_NULL));
@@ -604,10 +560,10 @@ dict_table_get_sys_col_no(
 	ulint			sys)	/*!< in: DATA_ROW_ID, ... */
 {
 	ut_ad(table);
-	ut_ad(sys < dict_table_get_n_sys_cols(table));
+	ut_ad(sys < DATA_N_SYS_COLS);
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
 
-	return(table->n_cols - dict_table_get_n_sys_cols(table) + sys);
+	return(table->n_cols - DATA_N_SYS_COLS + sys);
 }
 
 /********************************************************************//**
@@ -642,6 +598,48 @@ dict_table_has_fts_index(
 	return(DICT_TF2_FLAG_IS_SET(table, DICT_TF2_FTS));
 }
 
+/** Validate the flags for tables that are not ROW_FORMAT=REDUNDANT.
+@param[in]	flags		table flags
+@return whether the flags are valid */
+inline
+bool
+dict_tf_is_valid_not_redundant(ulint flags)
+{
+	const bool	atomic_blobs = DICT_TF_HAS_ATOMIC_BLOBS(flags);
+
+	ulint	zip_ssize = DICT_TF_GET_ZIP_SSIZE(flags);
+
+	if (!zip_ssize) {
+		/* Not ROW_FORMAT=COMPRESSED */
+	} else if (!atomic_blobs) {
+		/* ROW_FORMAT=COMPRESSED implies ROW_FORMAT=DYNAMIC
+		for the uncompressed page format */
+		return(false);
+	} else if (zip_ssize > PAGE_ZIP_SSIZE_MAX
+		   || zip_ssize > UNIV_PAGE_SIZE_SHIFT
+		   || UNIV_PAGE_SIZE_SHIFT > UNIV_ZIP_SIZE_SHIFT_MAX) {
+		/* KEY_BLOCK_SIZE is out of bounds, or
+		ROW_FORMAT=COMPRESSED is not supported with this
+		innodb_page_size (only up to 16KiB) */
+		return(false);
+	}
+
+	switch (DICT_TF_GET_PAGE_COMPRESSION_LEVEL(flags)) {
+	case 0:
+		/* PAGE_COMPRESSION_LEVEL=0 should imply PAGE_COMPRESSED=NO */
+		return(!DICT_TF_GET_PAGE_COMPRESSION(flags));
+	case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9:
+		/* PAGE_COMPRESSION_LEVEL requires
+		ROW_FORMAT=COMPACT or ROW_FORMAT=DYNAMIC
+		(not ROW_FORMAT=COMPRESSED or ROW_FORMAT=REDUNDANT)
+		and PAGE_COMPRESSED=YES */
+		return(!zip_ssize && DICT_TF_GET_PAGE_COMPRESSION(flags));
+	default:
+		/* Invalid PAGE_COMPRESSION_LEVEL value */
+		return(false);
+	}
+}
+
 /** Validate the table flags.
 @param[in]	flags	Table flags
 @return true if valid. */
@@ -650,75 +648,19 @@ bool
 dict_tf_is_valid(
 	ulint	flags)
 {
-	bool	compact = DICT_TF_GET_COMPACT(flags);
-	ulint	zip_ssize = DICT_TF_GET_ZIP_SSIZE(flags);
-	bool	atomic_blobs = DICT_TF_HAS_ATOMIC_BLOBS(flags);
-	bool	data_dir = DICT_TF_HAS_DATA_DIR(flags);
-	ulint	unused = DICT_TF_GET_UNUSED(flags);
-	bool	page_compression = DICT_TF_GET_PAGE_COMPRESSION(flags);
-	ulint	page_compression_level = DICT_TF_GET_PAGE_COMPRESSION_LEVEL(flags);
-	bool	flags_corrupt = false;
-
-	/* Make sure there are no bits that we do not know about. */
-	if (unused != 0) {
-		flags_corrupt = true;
+	ut_ad(flags < 1U << DICT_TF_BITS);
+	/* The DATA_DIRECTORY flag can be assigned fully independently
+	of all other persistent table flags. */
+	flags &= ~DICT_TF_MASK_DATA_DIR;
+	if (!(flags & 1)) {
+		/* Only ROW_FORMAT=REDUNDANT has 0 in the least significant
+		bit. For ROW_FORMAT=REDUNDANT, only the DATA_DIR flag
+		(which we cleared above) can be set. If any other flags
+		are set, the flags are invalid. */
+		return(flags == 0);
 	}
 
-	if (atomic_blobs) {
-		/* Barracuda row formats COMPRESSED and DYNAMIC both use
-		atomic_blobs, which build on the page structure introduced
-		for the COMPACT row format by allowing keys in secondary
-		indexes to be made from data stored off-page in the
-		clustered index. */
-
-		if (!compact) {
-			flags_corrupt = true;
-		}
-
-	} else if (zip_ssize) {
-		/* Antelope does not support COMPRESSED row format. */
-		flags_corrupt = true;
-	}
-
-	if (zip_ssize) {
-
-		/* COMPRESSED row format must have compact and atomic_blobs
-		bits set and validate the number is within allowed range. */
-
-		if (!compact
-		    || !atomic_blobs
-		    || zip_ssize > PAGE_ZIP_SSIZE_MAX) {
-			flags_corrupt = true;
-		}
-	}
-
-	if (page_compression || page_compression_level) {
-		/* Page compression format must have compact and
-		atomic_blobs and page_compression_level requires
-		page_compression */
-		if (!compact
-			|| !page_compression
-			|| !atomic_blobs) {
-			flags_corrupt = true;
-		}
-	}
-
-
-	if (flags_corrupt) {
-		ib::error()
-			<< "InnoDB: Error: table unused flags are:" << flags
-			<< " in the data dictionary and are corrupted:"
-			<< " compact:" << compact
-			<< " atomic_blobs:" << atomic_blobs
-			<< " unused:" << unused
-			<< " data_dir:" << data_dir
-			<< " zip_ssize:" << zip_ssize
-			<< " page_compression:" << page_compression
-			<< " page_compression_level:" << page_compression_level;
-		return (false);
-	} else {
-		return(true);
-	}
+	return(dict_tf_is_valid_not_redundant(flags));
 }
 
 /** Validate both table flags and table flags2 and make sure they
@@ -741,111 +683,6 @@ dict_tf2_is_valid(
 	}
 
 	return(true);
-}
-
-/********************************************************************//**
-Validate a SYS_TABLES TYPE field and return it.
-@return Same as input after validating it as a SYS_TABLES TYPE field.
-If there is an error, return ULINT_UNDEFINED. */
-UNIV_INLINE
-ulint
-dict_sys_tables_type_validate(
-/*==========================*/
-	ulint	type,		/*!< in: SYS_TABLES.TYPE */
-	ulint	n_cols)		/*!< in: SYS_TABLES.N_COLS */
-{
-	ulint	low_order_bit = DICT_TF_GET_COMPACT(type);
-	ulint	redundant = !(n_cols & DICT_N_COLS_COMPACT);
-	ulint	zip_ssize = DICT_TF_GET_ZIP_SSIZE(type);
-	ulint	atomic_blobs = DICT_TF_HAS_ATOMIC_BLOBS(type);
-	ulint	unused = DICT_TF_GET_UNUSED(type);
-	bool	page_compression = DICT_TF_GET_PAGE_COMPRESSION(type);
-	ulint	page_compression_level = DICT_TF_GET_PAGE_COMPRESSION_LEVEL(type);
-
-	/* The low order bit of SYS_TABLES.TYPE is always set to 1.
-	If the format is UNIV_FORMAT_B or higher, this field is the same
-	as dict_table_t::flags. Zero is not allowed here. */
-	if (!low_order_bit) {
-		return(ULINT_UNDEFINED);
-	}
-
-	if (redundant) {
-		if (zip_ssize || atomic_blobs) {
-			ib::error()
-				<< "SYS_TABLES::TYPE=Redundant, zip_ssize:" << zip_ssize
-				<< " atomic_blobs:" << atomic_blobs;
-			return(ULINT_UNDEFINED);
-		}
-	}
-
-	/* Make sure there are no bits that we do not know about. */
-	if (unused) {
-		ib::error()
-			<< "SYS_TABLES::TYPE=" << type << " unused:" << unused;
-		return(ULINT_UNDEFINED);
-	}
-
-	if (atomic_blobs) {
-		/* Barracuda row formats COMPRESSED and DYNAMIC build on
-		the page structure introduced for the COMPACT row format
-		by allowing keys in secondary indexes to be made from
-		data stored off-page in the clustered index.
-
-		The DICT_N_COLS_COMPACT flag should be in N_COLS,
-		but we already know that. */
-
-	} else if (zip_ssize) {
-		/* Antelope does not support COMPRESSED format. */
-		ib::error()
-			<< "SYS_TABLES::TYPE=" << type << "zip_ssize:" << zip_ssize;
-
-		return(ULINT_UNDEFINED);
-	}
-
-	if (zip_ssize) {
-		/* COMPRESSED row format must have low_order_bit and
-		atomic_blobs bits set and the DICT_N_COLS_COMPACT flag
-		should be in N_COLS, but we already know about the
-		low_order_bit and DICT_N_COLS_COMPACT flags. */
-		if (!atomic_blobs) {
-			ib::error() << "SYS_TABLES::TYPE=" << type
-				<< " zip_ssize:" << zip_ssize
-				<< " atomic_blobs:" << atomic_blobs;
-			return(ULINT_UNDEFINED);
-		}
-
-		/* Validate that the number is within allowed range. */
-		if (zip_ssize > PAGE_ZIP_SSIZE_MAX) {
-			ib::error() << "SYS_TABLES::TYPE=" << type
-				<< " zip_ssize:" << zip_ssize
-				<< " max:" << PAGE_ZIP_SSIZE_MAX;
-			return(ULINT_UNDEFINED);
-		}
-	}
-
-	/* There is nothing to validate for the data_dir field.
-	CREATE TABLE ... DATA DIRECTORY is supported for any row
-	format, so the DATA_DIR flag is compatible with any other
-	table flags. However, it is not used with TEMPORARY tables. */
-
-	if (page_compression || page_compression_level) {
-		/* page compressed row format must have low_order_bit and
-		atomic_blobs bits set and the DICT_N_COLS_COMPACT flag
-		should be in N_COLS, but we already know about the
-		low_order_bit and DICT_N_COLS_COMPACT flags. */
-
-		if (!atomic_blobs || !page_compression) {
-			ib::error() << "SYS_TABLES::TYPE=" << type
-				<< " page_compression:" << page_compression
-				<< " page_compression_level:" << page_compression_level
-				<< " atomic_blobs:" << atomic_blobs;
-
-			return(ULINT_UNDEFINED);
-		}
-	}
-
-	/* Return the validated SYS_TABLES.TYPE. */
-	return(type);
 }
 
 /********************************************************************//**
@@ -874,36 +711,6 @@ dict_tf_get_rec_format(
 	}
 
 	return(REC_FORMAT_DYNAMIC);
-}
-
-/********************************************************************//**
-Determine the file format from a dict_table_t::flags.
-@return file format version */
-UNIV_INLINE
-ulint
-dict_tf_get_format(
-/*===============*/
-	ulint		flags)	/*!< in: dict_table_t::flags */
-{
-	if (DICT_TF_HAS_ATOMIC_BLOBS(flags)) {
-		return(UNIV_FORMAT_B);
-	}
-
-	return(UNIV_FORMAT_A);
-}
-
-/********************************************************************//**
-Determine the file format of a table.
-@return file format version */
-UNIV_INLINE
-ulint
-dict_table_get_format(
-/*==================*/
-	const dict_table_t*	table)	/*!< in: table */
-{
-	ut_ad(table);
-
-	return(dict_tf_get_format(table->flags));
 }
 
 /** Set the various values in a dict_table_t::flags pointer.
@@ -981,7 +788,6 @@ dict_tf_to_fsp_flags(ulint table_flags)
 	ulint fsp_flags;
 	ulint page_compression_level = DICT_TF_GET_PAGE_COMPRESSION_LEVEL(
 		table_flags);
-	ulint atomic_writes = DICT_TF_GET_ATOMIC_WRITES(table_flags);
 
 	ut_ad((DICT_TF_GET_PAGE_COMPRESSION(table_flags) == 0)
 	      == (page_compression_level == 0));
@@ -1002,51 +808,15 @@ dict_tf_to_fsp_flags(ulint table_flags)
 		fsp_flags |= FSP_FLAGS_MASK_PAGE_COMPRESSION;
 	}
 
-	ut_a(fsp_flags_is_valid(fsp_flags));
+	ut_a(fsp_flags_is_valid(fsp_flags, false));
 
 	if (DICT_TF_HAS_DATA_DIR(table_flags)) {
 		fsp_flags |= 1U << FSP_FLAGS_MEM_DATA_DIR;
 	}
 
-	fsp_flags |= atomic_writes << FSP_FLAGS_MEM_ATOMIC_WRITES;
 	fsp_flags |= page_compression_level << FSP_FLAGS_MEM_COMPRESSION_LEVEL;
 
 	return(fsp_flags);
-}
-
-/********************************************************************//**
-Convert a 32 bit integer from SYS_TABLES.TYPE to dict_table_t::flags
-The following chart shows the translation of the low order bit.
-Other bits are the same.
-========================= Low order bit ==========================
-                    | REDUNDANT | COMPACT | COMPRESSED and DYNAMIC
-SYS_TABLES.TYPE     |     1     |    1    |     1
-dict_table_t::flags |     0     |    1    |     1
-==================================================================
-@return ulint containing SYS_TABLES.TYPE */
-UNIV_INLINE
-ulint
-dict_sys_tables_type_to_tf(
-/*=======================*/
-	ulint	type,	/*!< in: SYS_TABLES.TYPE field */
-	ulint	n_cols)	/*!< in: SYS_TABLES.N_COLS field */
-{
-	ulint	flags;
-	ulint	redundant = !(n_cols & DICT_N_COLS_COMPACT);
-
-	/* Adjust bit zero. */
-	flags = redundant ? 0 : 1;
-
-	/* ZIP_SSIZE, ATOMIC_BLOBS, DATA_DIR, PAGE_COMPRESSION,
-	PAGE_COMPRESSION_LEVEL are the same. */
-	flags |= type & (DICT_TF_MASK_ZIP_SSIZE
-			 | DICT_TF_MASK_ATOMIC_BLOBS
-			 | DICT_TF_MASK_DATA_DIR
-			 | DICT_TF_MASK_PAGE_COMPRESSION
-			 | DICT_TF_MASK_PAGE_COMPRESSION_LEVEL);
-
-	ut_ad(!DICT_TF_GET_ZIP_SSIZE(flags) || DICT_TF_HAS_ATOMIC_BLOBS(flags));
-	return(flags);
 }
 
 /********************************************************************//**
@@ -1078,7 +848,8 @@ dict_tf_to_sys_tables_type(
 			 | DICT_TF_MASK_ATOMIC_BLOBS
 			 | DICT_TF_MASK_DATA_DIR
 			 | DICT_TF_MASK_PAGE_COMPRESSION
-			 | DICT_TF_MASK_PAGE_COMPRESSION_LEVEL);
+			 | DICT_TF_MASK_PAGE_COMPRESSION_LEVEL
+			 | DICT_TF_MASK_NO_ROLLBACK);
 
 	return(type);
 }
@@ -1142,6 +913,27 @@ dict_table_x_lock_indexes(
 	}
 }
 
+/*********************************************************************//**
+Returns true if the particular FTS index in the table is still syncing
+in the background, false otherwise.
+@param [in] table      Table containing FTS index
+@return True if sync of fts index is still going in the background  */
+UNIV_INLINE
+bool
+dict_fts_index_syncing(
+	dict_table_t*   table)
+{
+	 dict_index_t*   index;
+
+	for (index = dict_table_get_first_index(table);
+	    index != NULL;
+	    index = dict_table_get_next_index(index)) {
+		if (index->index_fts_syncing) {
+			 return(true);
+		}
+	}
+	return(false);
+}
 /*********************************************************************//**
 Release the exclusive locks on all index tree. */
 UNIV_INLINE
@@ -1585,7 +1377,7 @@ dict_table_is_fts_column(
 
 /**********************************************************************//**
 Determine bytes of column prefix to be stored in the undo log. Please
-note if the table format is UNIV_FORMAT_A (< UNIV_FORMAT_B), no prefix
+note that if !dict_table_has_atomic_blobs(table), no prefix
 needs to be stored in the undo log.
 @return bytes of column prefix to be stored in the undo log */
 UNIV_INLINE
@@ -1596,16 +1388,15 @@ dict_max_field_len_store_undo(
 	const dict_col_t*	col)	/*!< in: column which index prefix
 					is based on */
 {
-	ulint	prefix_len = 0;
-
-	if (dict_table_get_format(table) >= UNIV_FORMAT_B)
-	{
-		prefix_len = col->max_prefix
-			? col->max_prefix
-			: DICT_MAX_FIELD_LEN_BY_FORMAT(table);
+	if (!dict_table_has_atomic_blobs(table)) {
+		return(0);
 	}
 
-	return(prefix_len);
+	if (col->max_prefix != 0) {
+		return(col->max_prefix);
+	}
+
+	return(REC_VERSION_56_MAX_INDEX_COL_LEN);
 }
 
 /** Determine maximum bytes of a virtual column need to be stored
@@ -1625,10 +1416,10 @@ dict_max_v_field_len_store_undo(
 
 	/* This calculation conforms to the non-virtual column
 	maximum log length calculation:
-	1) for UNIV_FORMAT_A, upto REC_ANTELOPE_MAX_INDEX_COL_LEN
-	for UNIV_FORMAT_B, upto col->max_prefix or
-	2) REC_VERSION_56_MAX_INDEX_COL_LEN, whichever is less */
-	if (dict_table_get_format(table) >= UNIV_FORMAT_B) {
+	1) if No atomic BLOB, upto REC_ANTELOPE_MAX_INDEX_COL_LEN
+	2) if atomic BLOB, upto col->max_prefix or
+	REC_VERSION_56_MAX_INDEX_COL_LEN, whichever is less */
+	if (dict_table_has_atomic_blobs(table)) {
 		if (DATA_BIG_COL(col) && col->max_prefix > 0) {
 			max_log_len = col->max_prefix;
 		} else {
@@ -1683,7 +1474,7 @@ dict_index_is_corrupted(
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	return((index->type & DICT_CORRUPT)
-	       || (index->table && index->table->corrupted));
+	        || (index->table && index->table->corrupted));
 }
 
 /********************************************************************//**
@@ -1696,32 +1487,6 @@ dict_table_is_discarded(
 	const dict_table_t*	table)	/*!< in: table to check */
 {
 	return(DICT_TF2_FLAG_IS_SET(table, DICT_TF2_DISCARDED));
-}
-
-/********************************************************************//**
-Check if it is a temporary table.
-@return true if temporary table flag is set. */
-UNIV_INLINE
-bool
-dict_table_is_temporary(
-/*====================*/
-	const dict_table_t*	table)	/*!< in: table to check */
-{
-	return(DICT_TF2_FLAG_IS_SET(table, DICT_TF2_TEMPORARY));
-}
-
-/********************************************************************//**
-Turn-off redo-logging if temporary table. */
-UNIV_INLINE
-void
-dict_disable_redo_if_temporary(
-/*===========================*/
-	const dict_table_t*	table,	/*!< in: table to check */
-	mtr_t*			mtr)	/*!< out: mini-transaction */
-{
-	if (dict_table_is_temporary(table)) {
-		mtr_set_log_mode(mtr, MTR_LOG_NO_REDO);
-	}
 }
 
 /** Check if the table is found is a file_per_table tablespace.
@@ -1776,14 +1541,15 @@ dict_table_t::acquire()
 	++n_ref_count;
 }
 
-/** Release the table handle. */
+/** Release the table handle.
+@return	whether the last handle was released */
 inline
-void
+bool
 dict_table_t::release()
 {
 	ut_ad(mutex_own(&dict_sys->mutex));
 	ut_ad(n_ref_count > 0);
-	--n_ref_count;
+	return !--n_ref_count;
 }
 
 /** Encode the number of columns and number of virtual columns in a

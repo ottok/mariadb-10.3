@@ -56,22 +56,6 @@ trx_undo_rec_get_type(
 /*==================*/
 	const trx_undo_rec_t*	undo_rec);	/*!< in: undo log record */
 /**********************************************************************//**
-Reads from an undo log record the record compiler info.
-@return compiler info */
-UNIV_INLINE
-ulint
-trx_undo_rec_get_cmpl_info(
-/*=======================*/
-	const trx_undo_rec_t*	undo_rec);	/*!< in: undo log record */
-/**********************************************************************//**
-Returns TRUE if an undo log record contains an extern storage field.
-@return TRUE if extern */
-UNIV_INLINE
-ibool
-trx_undo_rec_get_extern_storage(
-/*============================*/
-	const trx_undo_rec_t*	undo_rec);	/*!< in: undo log record */
-/**********************************************************************//**
 Reads the undo log record number.
 @return undo no */
 UNIV_INLINE
@@ -114,7 +98,7 @@ trx_undo_rec_get_row_ref(
 				used, as we do NOT copy the data in the
 				record! */
 	dict_index_t*	index,	/*!< in: clustered index */
-	dtuple_t**	ref,	/*!< out, own: row reference */
+	const dtuple_t**ref,	/*!< out, own: row reference */
 	mem_heap_t*	heap);	/*!< in: memory heap from which the memory
 				needed is allocated */
 /**********************************************************************//**
@@ -152,7 +136,6 @@ trx_undo_update_rec_get_update(
 	trx_id_t	trx_id,	/*!< in: transaction id from this undorecord */
 	roll_ptr_t	roll_ptr,/*!< in: roll pointer from this undo record */
 	ulint		info_bits,/*!< in: info bits from this undo record */
-	trx_t*		trx,	/*!< in: transaction */
 	mem_heap_t*	heap,	/*!< in: memory heap from which the memory
 				needed is allocated */
 	upd_t**		upd);	/*!< out, own: update vector */
@@ -179,6 +162,13 @@ trx_undo_rec_get_partial_row(
 	mem_heap_t*	heap)	/*!< in: memory heap from which the memory
 				needed is allocated */
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
+/** Report a RENAME TABLE operation.
+@param[in,out]	trx	transaction
+@param[in]	table	table that is being renamed
+@return	DB_SUCCESS or error code */
+dberr_t
+trx_undo_report_rename(trx_t* trx, const dict_table_t* table)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 /***********************************************************************//**
 Writes information to an undo log about an insert, update, or a delete marking
 of a clustered index record. This information is used in a rollback of the
@@ -188,28 +178,26 @@ transaction.
 dberr_t
 trx_undo_report_row_operation(
 /*==========================*/
-	ulint		flags,		/*!< in: if BTR_NO_UNDO_LOG_FLAG bit is
-					set, does nothing */
-	ulint		op_type,	/*!< in: TRX_UNDO_INSERT_OP or
-					TRX_UNDO_MODIFY_OP */
 	que_thr_t*	thr,		/*!< in: query thread */
 	dict_index_t*	index,		/*!< in: clustered index */
 	const dtuple_t*	clust_entry,	/*!< in: in the case of an insert,
 					index entry to insert into the
-					clustered index, otherwise NULL */
+					clustered index; in updates,
+					may contain a clustered index
+					record tuple that also contains
+					virtual columns of the table;
+					otherwise, NULL */
 	const upd_t*	update,		/*!< in: in the case of an update,
 					the update vector, otherwise NULL */
 	ulint		cmpl_info,	/*!< in: compiler info on secondary
 					index updates */
 	const rec_t*	rec,		/*!< in: case of an update or delete
 					marking, the record in the clustered
-					index, otherwise NULL */
+					index; NULL if insert */
 	const ulint*	offsets,	/*!< in: rec_get_offsets(rec) */
 	roll_ptr_t*	roll_ptr)	/*!< out: rollback pointer to the
-					inserted undo log record,
-					0 if BTR_NO_UNDO_LOG
-					flag was specified */
-	MY_ATTRIBUTE((nonnull(3,4,10), warn_unused_result));
+					inserted undo log record */
+	MY_ATTRIBUTE((nonnull(1,2,8), warn_unused_result));
 
 /** status bit used for trx_undo_prev_version_build() */
 
@@ -255,26 +243,6 @@ trx_undo_prev_version_build(
 				into this function by purge thread or not.
 				And if we read "after image" of undo log */
 
-/***********************************************************//**
-Parses a redo log record of adding an undo log record.
-@return end of log record or NULL */
-byte*
-trx_undo_parse_add_undo_rec(
-/*========================*/
-	byte*	ptr,	/*!< in: buffer */
-	byte*	end_ptr,/*!< in: buffer end */
-	page_t*	page);	/*!< in: page or NULL */
-/***********************************************************//**
-Parses a redo log record of erasing of an undo page end.
-@return end of log record or NULL */
-byte*
-trx_undo_parse_erase_page_end(
-/*==========================*/
-	byte*	ptr,	/*!< in: buffer */
-	byte*	end_ptr,/*!< in: buffer end */
-	page_t*	page,	/*!< in: page or NULL */
-	mtr_t*	mtr);	/*!< in: mtr or NULL */
-
 /** Read from an undo log record a non-virtual column value.
 @param[in,out]	ptr		pointer to remaining part of the undo record
 @param[in,out]	field		stored field
@@ -293,15 +261,13 @@ trx_undo_rec_get_col_val(
 @param[in]	table		the table
 @param[in]	ptr		undo log pointer
 @param[in,out]	row		the dtuple to fill
-@param[in]	in_purge        called by purge thread
-@param[in]	col_map		online rebuild column map */
+@param[in]	in_purge	whether this is called by purge */
 void
 trx_undo_read_v_cols(
 	const dict_table_t*	table,
 	const byte*		ptr,
 	const dtuple_t*		row,
-	bool			in_purge,
-	const ulint*		col_map);
+	bool			in_purge);
 
 /** Read virtual column index from undo log if the undo log contains such
 info, and verify the column is still indexed, and output its position
@@ -326,6 +292,9 @@ trx_undo_read_v_idx(
 compilation info multiplied by 16 is ORed to this value in an undo log
 record */
 
+#define	TRX_UNDO_RENAME_TABLE	9	/*!< RENAME TABLE */
+#define	TRX_UNDO_INSERT_DEFAULT	10	/*!< insert a "default value"
+					pseudo-record for instant ALTER */
 #define	TRX_UNDO_INSERT_REC	11	/* fresh insert into clustered index */
 #define	TRX_UNDO_UPD_EXIST_REC	12	/* update of a non-delete-marked
 					record */
@@ -341,9 +310,8 @@ record */
 					storage fields: used by purge to
 					free the external storage */
 
-/* Operation type flags used in trx_undo_report_row_operation */
-#define	TRX_UNDO_INSERT_OP		1U
-#define	TRX_UNDO_MODIFY_OP		2U
+/** The search tuple corresponding to TRX_UNDO_INSERT_DEFAULT */
+extern const dtuple_t trx_undo_default_rec;
 
 #include "trx0rec.ic"
 

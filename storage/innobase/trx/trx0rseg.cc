@@ -115,29 +115,16 @@ trx_rseg_mem_free(trx_rseg_t* rseg)
 	mutex_free(&rseg->mutex);
 
 	/* There can't be any active transactions. */
-	ut_a(UT_LIST_GET_LEN(rseg->update_undo_list) == 0);
-	ut_a(UT_LIST_GET_LEN(rseg->insert_undo_list) == 0);
+	ut_a(UT_LIST_GET_LEN(rseg->undo_list) == 0);
+	ut_a(UT_LIST_GET_LEN(rseg->old_insert_list) == 0);
 
-	for (undo = UT_LIST_GET_FIRST(rseg->update_undo_cached);
+	for (undo = UT_LIST_GET_FIRST(rseg->undo_cached);
 	     undo != NULL;
 	     undo = next_undo) {
 
 		next_undo = UT_LIST_GET_NEXT(undo_list, undo);
 
-		UT_LIST_REMOVE(rseg->update_undo_cached, undo);
-
-		MONITOR_DEC(MONITOR_NUM_UNDO_SLOT_CACHED);
-
-		trx_undo_mem_free(undo);
-	}
-
-	for (undo = UT_LIST_GET_FIRST(rseg->insert_undo_cached);
-	     undo != NULL;
-	     undo = next_undo) {
-
-		next_undo = UT_LIST_GET_NEXT(undo_list, undo);
-
-		UT_LIST_REMOVE(rseg->insert_undo_cached, undo);
+		UT_LIST_REMOVE(rseg->undo_cached, undo);
 
 		MONITOR_DEC(MONITOR_NUM_UNDO_SLOT_CACHED);
 
@@ -167,10 +154,9 @@ trx_rseg_mem_create(ulint id, ulint space, ulint page_no)
 		     ? LATCH_ID_REDO_RSEG : LATCH_ID_NOREDO_RSEG,
 		     &rseg->mutex);
 
-	UT_LIST_INIT(rseg->update_undo_list, &trx_undo_t::undo_list);
-	UT_LIST_INIT(rseg->update_undo_cached, &trx_undo_t::undo_list);
-	UT_LIST_INIT(rseg->insert_undo_list, &trx_undo_t::undo_list);
-	UT_LIST_INIT(rseg->insert_undo_cached, &trx_undo_t::undo_list);
+	UT_LIST_INIT(rseg->undo_list, &trx_undo_t::undo_list);
+	UT_LIST_INIT(rseg->old_insert_list, &trx_undo_t::undo_list);
+	UT_LIST_INIT(rseg->undo_cached, &trx_undo_t::undo_list);
 
 	return(rseg);
 }
@@ -204,7 +190,7 @@ trx_rseg_mem_restore(trx_rseg_t* rseg, mtr_t* mtr)
 	len = flst_get_len(rseg_header + TRX_RSEG_HISTORY);
 
 	if (len > 0) {
-		trx_sys->rseg_history_len += len;
+		my_atomic_addlint(&trx_sys->rseg_history_len, len);
 
 		node_addr = trx_purge_get_log_from_hist(
 			flst_get_last(rseg_header + TRX_RSEG_HISTORY, mtr));
@@ -218,9 +204,10 @@ trx_rseg_mem_restore(trx_rseg_t* rseg, mtr_t* mtr)
 
 		rseg->last_trx_no = mach_read_from_8(
 			undo_log_hdr + TRX_UNDO_TRX_NO);
-
-		rseg->last_del_marks = mtr_read_ulint(
-			undo_log_hdr + TRX_UNDO_DEL_MARKS, MLOG_2BYTES, mtr);
+		unsigned purge = mach_read_from_2(
+			undo_log_hdr + TRX_UNDO_NEEDS_PURGE);
+		ut_ad(purge <= 1);
+		rseg->needs_purge = purge != 0;
 
 		TrxUndoRsegs elem(rseg->last_trx_no);
 		elem.push_back(rseg);
@@ -263,7 +250,9 @@ trx_rseg_array_init()
 }
 
 /** Create a persistent rollback segment.
-@param[in]	space_id	system or undo tablespace id */
+@param[in]	space_id	system or undo tablespace id
+@return pointer to new rollback segment
+@retval	NULL	on failure */
 trx_rseg_t*
 trx_rseg_create(ulint space_id)
 {

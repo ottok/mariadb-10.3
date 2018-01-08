@@ -70,7 +70,7 @@
   in case external_lock() fails.
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "debug_sync.h"
 #include "lock.h"
@@ -294,7 +294,8 @@ MYSQL_LOCK *mysql_lock_tables(THD *thd, TABLE **tables, uint count, uint flags)
   if (lock_tables_check(thd, tables, count, flags))
     DBUG_RETURN(NULL);
 
-  if (!(thd->variables.option_bits & OPTION_TABLE_LOCK))
+  if (!(thd->variables.option_bits & OPTION_TABLE_LOCK) &&
+      !(flags & MYSQL_LOCK_USE_MALLOC))
     gld_flags|= GET_LOCK_ON_THD;
 
   if (! (sql_lock= get_lock_data(thd, tables, count, gld_flags)))
@@ -415,13 +416,18 @@ static int lock_external(THD *thd, TABLE **tables, uint count)
 void mysql_unlock_tables(THD *thd, MYSQL_LOCK *sql_lock)
 {
   mysql_unlock_tables(thd, sql_lock,
-                      thd->variables.option_bits & OPTION_TABLE_LOCK);
+                      (thd->variables.option_bits & OPTION_TABLE_LOCK) ||
+                      !(sql_lock->flags & GET_LOCK_ON_THD));
 }
 
 
 void mysql_unlock_tables(THD *thd, MYSQL_LOCK *sql_lock, bool free_lock)
 {
+  bool errors= thd->is_error();
+  PSI_stage_info org_stage;
   DBUG_ENTER("mysql_unlock_tables");
+
+  thd->backup_stage(&org_stage);
   THD_STAGE_INFO(thd, stage_unlocking_tables);
 
   if (sql_lock->table_count)
@@ -429,7 +435,13 @@ void mysql_unlock_tables(THD *thd, MYSQL_LOCK *sql_lock, bool free_lock)
   if (sql_lock->lock_count)
     thr_multi_unlock(sql_lock->locks, sql_lock->lock_count, 0);
   if (free_lock)
+  {
+    DBUG_ASSERT(!(sql_lock->flags & GET_LOCK_ON_THD));
     my_free(sql_lock);
+  }
+  if (!errors)
+    thd->clear_error();
+  THD_STAGE_INFO(thd, org_stage);
   DBUG_VOID_RETURN;
 }
 
@@ -661,6 +673,7 @@ MYSQL_LOCK *mysql_lock_merge(MYSQL_LOCK *a,MYSQL_LOCK *b)
   sql_lock->table_count=a->table_count+b->table_count;
   sql_lock->locks=(THR_LOCK_DATA**) (sql_lock+1);
   sql_lock->table=(TABLE**) (sql_lock->locks+sql_lock->lock_count*2);
+  sql_lock->flags= 0;
   memcpy(sql_lock->locks,a->locks,a->lock_count*sizeof(*a->locks));
   memcpy(sql_lock->locks+a->lock_count,b->locks,
 	 b->lock_count*sizeof(*b->locks));
@@ -775,6 +788,7 @@ MYSQL_LOCK *get_lock_data(THD *thd, TABLE **table_ptr, uint count, uint flags)
   locks= locks_buf= sql_lock->locks= (THR_LOCK_DATA**) (sql_lock + 1);
   to= table_buf= sql_lock->table= (TABLE**) (locks + lock_count * 2);
   sql_lock->table_count= table_count;
+  sql_lock->flags= flags;
 
   for (i=0 ; i < count ; i++)
   {
@@ -824,7 +838,7 @@ MYSQL_LOCK *get_lock_data(THD *thd, TABLE **table_ptr, uint count, uint flags)
     we may allocate too much, but better safe than memory overrun.
     And in the FLUSH case, the memory is released quickly anyway.
   */
-  sql_lock->lock_count= locks - locks_buf;
+  sql_lock->lock_count= (uint)(locks - locks_buf);
   DBUG_ASSERT(sql_lock->lock_count <= lock_count);
   DBUG_PRINT("info", ("sql_lock->table_count %d sql_lock->lock_count %d",
                       sql_lock->table_count, sql_lock->lock_count));
@@ -908,7 +922,7 @@ bool lock_object_name(THD *thd, MDL_key::enum_mdl_namespace mdl_type,
   MDL_request schema_request;
   MDL_request mdl_request;
 
-  DBUG_ASSERT(ok_for_lower_case_names(db));
+  DBUG_SLOW_ASSERT(ok_for_lower_case_names(db));
 
   if (thd->locked_tables_mode)
   {

@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2010, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2016, MariaDB Corporation.
+Copyright (c) 2015, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -35,6 +35,7 @@ Created 10/13/2010 Jimmy Yang
 #include "btr0cur.h"
 #include "btr0bulk.h"
 #include "fts0plugin.h"
+#include "log0crypt.h"
 
 /** Read the next record to buffer N.
 @param N index into array of merge info structure */
@@ -43,7 +44,7 @@ Created 10/13/2010 Jimmy Yang
 		b[N] = row_merge_read_rec(				\
 			block[N], buf[N], b[N], index,			\
 			fd[N], &foffs[N], &mrec[N], offsets[N],		\
-			crypt_data, crypt_block[N], space);		\
+			crypt_block[N], space);				\
 		if (UNIV_UNLIKELY(!b[N])) {				\
 			if (mrec[N]) {					\
 				goto exit;				\
@@ -94,7 +95,6 @@ row_merge_create_fts_sort_index(
 	new_index->n_def = FTS_NUM_FIELDS_SORT;
 	new_index->cached = TRUE;
 	new_index->parser = index->parser;
-	new_index->is_ngram = index->is_ngram;
 
 	idx_field = dict_index_get_nth_field(index, 0);
 	charset = fts_index_get_charset(index);
@@ -195,7 +195,6 @@ row_fts_psort_info_init(
 	fts_psort_t*		merge_info = NULL;
 	ulint			block_size;
 	ibool			ret = TRUE;
-	fil_space_crypt_t*	crypt_data = NULL;
 	bool			encrypted = false;
 
 	block_size = 3 * srv_sort_buf_size;
@@ -226,21 +225,8 @@ row_fts_psort_info_init(
 	common_info->merge_event = os_event_create(0);
 	common_info->opt_doc_id_size = opt_doc_id_size;
 
-	/* Theoretically the tablespace can be dropped straight away.
-	In practice, the DDL completion will wait for this thread to
-	finish. */
-	if (fil_space_t* space = fil_space_acquire(new_table->space)) {
-		crypt_data = space->crypt_data;
-		fil_space_release(space);
-	}
-
-	if (crypt_data && crypt_data->should_encrypt()) {
-		common_info->crypt_data = crypt_data;
+	if (log_tmp_is_encrypted()) {
 		encrypted = true;
-	} else {
-		/* Not needed */
-		common_info->crypt_data = NULL;
-		crypt_data = NULL;
 	}
 
 	ut_ad(trx->mysql_thd != NULL);
@@ -515,7 +501,6 @@ row_merge_fts_doc_tokenize(
 	ulint		data_size[FTS_NUM_AUX_INDEX];
 	ulint		n_tuple[FTS_NUM_AUX_INDEX];
 	st_mysql_ftparser*	parser;
-	bool			is_ngram;
 
 	t_str.f_n_char = 0;
 	t_ctx->buf_used = 0;
@@ -524,13 +509,11 @@ row_merge_fts_doc_tokenize(
 	memset(data_size, 0, FTS_NUM_AUX_INDEX * sizeof(ulint));
 
 	parser = sort_buf[0]->index->parser;
-	is_ngram = sort_buf[0]->index->is_ngram;
 
 	/* Tokenize the data and add each word string, its corresponding
 	doc id and position to sort buffer */
 	while (t_ctx->processed_len < doc->text.f_len) {
 		ulint		idx = 0;
-		ib_uint32_t	position;
 		ulint		cur_len;
 		doc_id_t	write_doc_id;
 		row_fts_token_t* fts_token = NULL;
@@ -570,7 +553,7 @@ row_merge_fts_doc_tokenize(
 
 		/* Ignore string whose character number is less than
 		"fts_min_token_size" or more than "fts_max_token_size" */
-		if (!fts_check_token(&str, NULL, is_ngram, NULL)) {
+		if (!fts_check_token(&str, NULL, NULL)) {
 			if (parser != NULL) {
 				UT_LIST_REMOVE(t_ctx->fts_token_list, fts_token);
 				ut_free(fts_token);
@@ -589,7 +572,7 @@ row_merge_fts_doc_tokenize(
 
 		/* if "cached_stopword" is defined, ignore words in the
 		stopword list */
-		if (!fts_check_token(&str, t_ctx->cached_stopword, is_ngram,
+		if (!fts_check_token(&str, t_ctx->cached_stopword,
 				     doc->charset)) {
 			if (parser != NULL) {
 				UT_LIST_REMOVE(t_ctx->fts_token_list, fts_token);
@@ -682,20 +665,18 @@ row_merge_fts_doc_tokenize(
 
 		++field;
 
-		/* The third field is the position */
-		if (parser != NULL) {
-			mach_write_to_4(
-				reinterpret_cast<byte*>(&position),
-				(fts_token->position + t_ctx->init_pos));
-		} else {
-			mach_write_to_4(
-				reinterpret_cast<byte*>(&position),
-				(t_ctx->processed_len + inc - str.f_len + t_ctx->init_pos));
+		/* The third field is the position.
+		MySQL 5.7 changed the fulltext parser plugin interface
+		by adding MYSQL_FTPARSER_BOOLEAN_INFO::position.
+		Below we assume that the field is always 0. */
+		unsigned	pos = t_ctx->init_pos;
+		byte		position[4];
+		if (parser == NULL) {
+			pos += t_ctx->processed_len + inc - str.f_len;
 		}
-
-		dfield_set_data(field, &position, sizeof(position));
-		len = dfield_get_len(field);
-		ut_ad(len == sizeof(ib_uint32_t));
+		len = 4;
+		mach_write_to_4(position, pos);
+		dfield_set_data(field, &position, len);
 
 		field->type.mtype = DATA_INT;
 		field->type.prtype = DATA_NOT_NULL;
@@ -704,11 +685,10 @@ row_merge_fts_doc_tokenize(
 		cur_len += len;
 		dfield_dup(field, buf->heap);
 
-		/* Reserve one byte for the end marker of row_merge_block_t
-		and we have reserved ROW_MERGE_RESERVE_SIZE (= 4) for
-		encryption key_version in the beginning of the buffer. */
+		/* Reserve one byte for the end marker of row_merge_block_t */
 		if (buf->total_size + data_size[idx] + cur_len
-			>= (srv_sort_buf_size - 1 - ROW_MERGE_RESERVE_SIZE)) {
+		    >= srv_sort_buf_size - 1) {
+
 			buf_full = TRUE;
 			break;
 		}
@@ -804,7 +784,6 @@ fts_parallel_tokenization(
 	fts_tokenize_ctx_t	t_ctx;
 	ulint			retried = 0;
 	dberr_t			error = DB_SUCCESS;
-	fil_space_crypt_t*	crypt_data = NULL;
 
 	ut_ad(psort_info->psort_common->trx->mysql_thd != NULL);
 
@@ -831,7 +810,6 @@ fts_parallel_tokenization(
 
 	block = psort_info->merge_block;
 	crypt_block = psort_info->crypt_block;
-	crypt_data = psort_info->psort_common->crypt_data;
 
 	const page_size_t&	page_size = dict_table_page_size(table);
 
@@ -924,7 +902,6 @@ loop:
 		if (!row_merge_write(merge_file[t_ctx.buf_used]->fd,
 				     merge_file[t_ctx.buf_used]->offset++,
 				     block[t_ctx.buf_used],
-				     crypt_data,
 				     crypt_block[t_ctx.buf_used],
 				     table->space)) {
 			error = DB_TEMP_FILE_WRITE_FAIL;
@@ -946,7 +923,7 @@ loop:
 			goto exit;
 		} else if (retried > 10000) {
 			ut_ad(!doc_item);
-			/* retied too many times and cannot get new record */
+			/* retried too many times and cannot get new record */
 			ib::error() << "FTS parallel sort processed "
 				<< num_doc_processed
 				<< " records, the sort queue has "
@@ -1019,7 +996,6 @@ exit:
 				if (!row_merge_write(merge_file[i]->fd,
 						merge_file[i]->offset++,
 						block[i],
-						crypt_data,
 						crypt_block[i],
 						table->space)) {
 					error = DB_TEMP_FILE_WRITE_FAIL;
@@ -1059,7 +1035,7 @@ exit:
 				       psort_info->psort_common->dup,
 				       merge_file[i], block[i], &tmpfd[i],
 				       false, 0.0/* pct_progress */, 0.0/* pct_cost */,
-				       crypt_data, crypt_block[i], table->space);
+				       crypt_block[i], table->space);
 
 		if (error != DB_SUCCESS) {
 			close(tmpfd[i]);
@@ -1144,7 +1120,7 @@ fts_parallel_merge(
 	os_event_set(psort_info->psort_common->merge_event);
 	psort_info->child_status = FTS_CHILD_EXITING;
 
-	os_thread_exit();
+	os_thread_exit(false);
 
 	OS_THREAD_DUMMY_RETURN;
 }
@@ -1157,15 +1133,16 @@ row_fts_start_parallel_merge(
 	fts_psort_t*	merge_info)	/*!< in: parallel sort info */
 {
 	int		i = 0;
-	os_thread_id_t	thd_id;
 
 	/* Kick off merge/insert threads */
 	for (i = 0; i <  FTS_NUM_AUX_INDEX; i++) {
 		merge_info[i].psort_id = i;
 		merge_info[i].child_status = 0;
 
-		merge_info[i].thread_hdl = os_thread_create(fts_parallel_merge,
-			(void*) &merge_info[i], &thd_id);
+		merge_info[i].thread_hdl = os_thread_create(
+			fts_parallel_merge,
+			(void*) &merge_info[i],
+			&merge_info[i].thread_hdl);
 	}
 }
 
@@ -1480,10 +1457,9 @@ row_fts_build_sel_tree_level(
 	int	child_left;
 	int	child_right;
 	ulint	i;
-	ulint	num_item;
+	ulint	num_item	= ulint(1) << level;
 
-	start = static_cast<ulint>((1 << level) - 1);
-	num_item = static_cast<ulint>(1 << level);
+	start = num_item - 1;
 
 	for (i = 0; i < num_item;  i++) {
 		child_left = sel_tree[(start + i) * 2 + 1];
@@ -1552,7 +1528,7 @@ row_fts_build_sel_tree(
 		treelevel++;
 	}
 
-	start = (1 << treelevel) - 1;
+	start = (ulint(1) << treelevel) - 1;
 
 	for (i = 0; i < (int) fts_sort_pll_degree; i++) {
 		sel_tree[i + start] = i;
@@ -1601,8 +1577,6 @@ row_fts_merge_insert(
 	ulint			start;
 	fts_psort_insert_t	ins_ctx;
 	ulint			count_diag = 0;
-	fil_space_crypt_t*	crypt_data = NULL;
-	ulint			space=0;
 	fts_table_t		fts_table;
 	char			aux_table_name[MAX_FULL_NAME_LEN];
 	dict_table_t*		aux_table;
@@ -1624,7 +1598,6 @@ row_fts_merge_insert(
 	trx->op_info = "inserting index entries";
 
 	ins_ctx.opt_doc_id_size = psort_info[0].psort_common->opt_doc_id_size;
-	crypt_data = psort_info[0].psort_common->crypt_data;
 
 	heap = mem_heap_create(500 + sizeof(mrec_buf_t));
 
@@ -1673,7 +1646,7 @@ row_fts_merge_insert(
 	}
 
 	if (fts_enable_diag_print) {
-		ib::info() << "InnoDB_FTS: to inserted " << count_diag
+		ib::info() << "InnoDB_FTS: to insert " << count_diag
 			<< " records";
 	}
 
@@ -1706,6 +1679,11 @@ row_fts_merge_insert(
 	dict_table_close(aux_table, FALSE, FALSE);
 	aux_index = dict_table_get_first_index(aux_table);
 
+	ut_ad(!aux_index->is_instant());
+	/* row_merge_write_fts_node() depends on the correct value */
+	ut_ad(aux_index->n_core_null_bytes
+	      == UT_BITS_IN_BYTES(aux_index->n_nullable));
+
 	FlushObserver* observer;
 	observer = psort_info[0].psort_common->trx->flush_observer;
 
@@ -1729,6 +1707,7 @@ row_fts_merge_insert(
 #ifdef UNIV_DEBUG
 	ins_ctx.aux_index_id = id;
 #endif
+	const ulint space = table->space;
 
 	for (i = 0; i < fts_sort_pll_degree; i++) {
 		if (psort_info[i].merge_file[id]->n_rec == 0) {
@@ -1742,7 +1721,6 @@ row_fts_merge_insert(
 			    && (!row_merge_read(
 					fd[i], foffs[i],
 					(row_merge_block_t*) block[i],
-					crypt_data,
 					(row_merge_block_t*) crypt_block[i],
 					space))) {
 				error = DB_CORRUPTION;

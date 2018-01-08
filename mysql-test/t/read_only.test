@@ -79,6 +79,9 @@ insert into t3 values(1);
 
 insert into t4 select * from t3;
 
+--error ER_OPTION_PREVENTS_STATEMENT
+create table t3 (a int);
+
 # a non-temp table updated:
 --error ER_OPTION_PREVENTS_STATEMENT
 update t1,t3 set t1.a=t3.a+1 where t1.a=t3.a;
@@ -109,6 +112,11 @@ drop table t1;
 
 --error ER_OPTION_PREVENTS_STATEMENT
 insert into t1 values(1);
+
+#
+# MDEV-14056 DROP TEMPORARY TABLE IF EXISTS causes error 1290 with read_only option
+#
+drop temporary table if exists t1;
 
 #
 # Bug#11733 COMMITs should not happen if read-only is set

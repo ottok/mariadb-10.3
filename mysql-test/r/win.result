@@ -2762,10 +2762,8 @@ CREATE TABLE t1 (i INT);
 INSERT INTO t1 VALUES (3), (1), (2);
 SELECT i, ROW_NUMBER() OVER () FROM t1 WHERE 1 = 2;
 i	ROW_NUMBER() OVER ()
-NULL	1
 SELECT i, COUNT(*) OVER () FROM t1 WHERE 1 = 2;
 i	COUNT(*) OVER ()
-NULL	1
 DROP TABLE t1;
 #
 # MDEV-12051: window function in query with implicit grouping 
@@ -3055,3 +3053,242 @@ name	row_cnt	pct_of_total
 Fred	2	66.67
 Joe	1	33.33
 drop table t1;
+#
+# MDEV-11990: window function over min/max aggregation
+#
+create table t1 (id int);
+insert into t1 values (1), (2), (3), (2), (4), (2);
+select sum(max(id)) over (order by max(id)) from t1;
+sum(max(id)) over (order by max(id))
+4
+explain
+select sum(max(id)) over (order by max(id)) from t1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	t1	ALL	NULL	NULL	NULL	NULL	6	Using temporary
+create index idx on t1(id);
+select sum(max(id)) over (order by max(id)) from t1;
+sum(max(id)) over (order by max(id))
+4
+explain
+select sum(max(id)) over (order by max(id)) from t1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+select sum(max(id)) over (order by max(id)) from t1 where id < 3;
+sum(max(id)) over (order by max(id))
+2
+select count(max(id)) over (order by max(id)) from t1 where id < 3;
+count(max(id)) over (order by max(id))
+1
+select max(id), rank() over (order by max(id)) from t1 where id < 3;
+max(id)	rank() over (order by max(id))
+2	1
+drop table t1;
+#
+# main.win failure post MDEV-12336
+#
+create table t(a decimal(35,10), b int);
+insert into t values (1, 10), (2, 20), (3, 30);
+prepare stmt from "SELECT (CASE WHEN sum(t.a) over (partition by t.b)=1 THEN 1000 ELSE 300 END) AS a FROM t";
+execute stmt;
+a
+1000
+300
+300
+drop table t;
+#
+# MDEV-12851 case with window functions query crashes server
+#
+create table t1(dt datetime);
+insert into t1 values ('2017-05-17'), ('2017-05-18');
+select dt,
+case when (max(dt) over (order by dt rows between 1 following and 1 following) is null)
+then '9999-12-31 12:00:00'
+       else max(dt) over (order by dt rows between 1 following and 1 following)
+end x,
+case when (max(dt) over (order by dt rows between 1 following and 1 following) is not null)
+then '9999-12-31 12:00:00'
+       else max(dt) over (order by dt rows between 1 following and 1 following)
+end x
+from t1;
+dt	x	x
+2017-05-17 00:00:00	2017-05-18 00:00:00	9999-12-31 12:00:00
+2017-05-18 00:00:00	9999-12-31 12:00:00	NULL
+drop table t1;
+create table t1(i int);
+insert into t1 values (null),(1),(2);
+select max(i) over (order by i),
+max(i) over (order by i) is null,
+max(i) over (order by i) is not null
+from t1;
+max(i) over (order by i)	max(i) over (order by i) is null	max(i) over (order by i) is not null
+NULL	1	0
+1	0	1
+2	0	1
+drop table t1;
+#
+# MDEV-13189: Window functions crash when using INTERVAL function
+#
+create table t1(i int);
+insert into t1 values (1),(2),(10),(20),(30);
+select sum(i) over (order by i), interval(sum(i) over (order by i), 10, 20)
+from t1;
+sum(i) over (order by i)	interval(sum(i) over (order by i), 10, 20)
+1	0
+3	0
+13	1
+33	2
+63	2
+drop table t1;
+#
+# MDEV-13352: Server crashes in st_join_table::remove_duplicates
+#
+CREATE TABLE t1 (i INT);
+INSERT INTO t1 VALUES (1),(2);
+SELECT DISTINCT ROW_NUMBER() OVER(), i FROM t1 WHERE 0;
+ROW_NUMBER() OVER()	i
+SELECT ROW_NUMBER() OVER(), i FROM t1 WHERE 0;
+ROW_NUMBER() OVER()	i
+DROP TABLE t1;
+#
+# MDEV-13344: Server crashes in in AGGR_OP::put_record on subquery 
+#             with window function and constant table
+# (Testcase only)
+#
+CREATE TABLE t1 (c CHAR(8)) ENGINE=MyISAM;
+INSERT IGNORE INTO t1 VALUES ('foo');
+SELECT ('bar',1) IN ( SELECT c, ROW_NUMBER() OVER (PARTITION BY c) FROM t1);
+('bar',1) IN ( SELECT c, ROW_NUMBER() OVER (PARTITION BY c) FROM t1)
+0
+DROP TABLE t1;
+#
+# MDEV-13351: Server crashes in st_select_lex::set_explain_type upon UNION with window function 
+#
+CREATE TABLE t1 (i INT);
+INSERT INTO t1 VALUES (1),(2);
+SELECT Nth_value(i,1) OVER() FROM t1 
+UNION ALL 
+( SELECT Nth_value(i,2) OVER() FROM t1 LIMIT 0 )
+;
+Nth_value(i,1) OVER()
+1
+1
+DROP TABLE t1;
+#
+# A regression after MDEV-13351:
+# MDEV-13374 : Server crashes in first_linear_tab / st_select_lex::set_explain_type 
+#              upon UNION with aggregate function	
+#
+CREATE TABLE t1 (i INT) ENGINE=MyISAM;
+INSERT INTO t1 VALUES (1),(2);
+SELECT i AS fld FROM t1 UNION SELECT COUNT(*) AS fld FROM t1;
+fld
+1
+2
+DROP TABLE t1;
+#
+# MDEV-13240 Wrong warning with MAX(datetime_field) OVER (...)
+#
+CREATE TABLE t1 (dt DATETIME);
+INSERT INTO t1 VALUES ('2017-05-17');
+SELECT MAX(dt) OVER (ORDER BY dt ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING) FROM t1;
+MAX(dt) OVER (ORDER BY dt ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING)
+NULL
+DROP TABLE t1;
+#
+# MDEV-13358 FIRST_VALUE throws SQL Error (1292): Incorrect datetime value
+#
+CREATE TABLE IF NOT EXISTS `fv_test` (
+`SOME_DATE` datetime NOT NULL
+);
+INSERT INTO `fv_test` (`SOME_DATE`) VALUES ('2017-07-20 12:47:56');
+CREATE TABLE fv_result
+SELECT
+FIRST_VALUE(SOME_DATE) OVER(ORDER BY SOME_DATE DESC) AS somedate
+FROM fv_test;
+SHOW CREATE TABLE fv_result;
+Table	Create Table
+fv_result	CREATE TABLE `fv_result` (
+  `somedate` datetime DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+SELECT * FROM fv_result;
+somedate
+2017-07-20 12:47:56
+DROP TABLE fv_test, fv_result;
+#
+# MDEV-13649: Server crashes in set_field_to_null_with_conversions or in Field::set_notnull
+#
+CREATE TABLE t1 (a int);
+INSERT INTO t1 VALUES (0),(1),(2);
+SELECT LEAD(a) OVER (PARTITION BY a) as lead,
+a AND LEAD(a) OVER (PARTITION BY a) AS a_and_lead_part
+FROM t1;
+lead	a_and_lead_part
+NULL	0
+NULL	NULL
+NULL	NULL
+SELECT a OR LEAD(a) OVER (ORDER BY a) AS a_or_lead_order
+FROM t1
+ORDER BY a;
+a_or_lead_order
+1
+1
+1
+SELECT a AND LEAD(a) OVER (ORDER BY a) AS a_and_lead_order
+FROM t1
+ORDER BY a;
+a_and_lead_order
+0
+1
+NULL
+SELECT a XOR LEAD(a) OVER (ORDER BY a) AS a_xor_lead_order
+FROM t1
+ORDER BY a;
+a_xor_lead_order
+1
+0
+NULL
+SELECT NOT LEAD(a) OVER (ORDER BY a) AS not_lead_order
+FROM t1
+ORDER BY a;
+not_lead_order
+0
+0
+NULL
+SELECT LEAD(a) OVER (ORDER BY a) is not null AS is_not_null_lead_order
+FROM t1
+ORDER BY a;
+is_not_null_lead_order
+1
+1
+0
+drop table t1;
+#
+# MDEV-13354: Server crashes in find_field_in_tables upon PS with window function and subquery
+#
+CREATE TABLE t1 (i INT, a char);
+INSERT INTO t1 VALUES (1, 'a'),(2, 'b');
+PREPARE stmt FROM "SELECT row_number() over (partition by i order by i), i FROM (SELECT * from t1) as sq";
+EXECUTE stmt;
+row_number() over (partition by i order by i)	i
+1	1
+1	2
+DROP TABLE t1;
+#
+# MDEV-13384: "window" seems like a reserved column name but it's not listed as one
+#
+# Currently we allow window as an identifier, except for table aliases.
+#
+CREATE TABLE door (id INT, window VARCHAR(10));
+SELECT id
+FROM door as window;
+ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'window' at line 2
+SELECT id, window
+FROM door;
+id	window
+SELECT id, window
+FROM door as window;
+ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'window' at line 2
+DROP TABLE door;
+#
+# Start of 10.3 tests
+#

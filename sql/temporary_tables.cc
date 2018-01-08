@@ -19,6 +19,7 @@
   All methods pertaining to temporary tables.
 */
 
+#include "mariadb.h"
 #include "sql_acl.h"                            /* TMP_TABLE_ACLS */
 #include "sql_base.h"                           /* tdc_create_key */
 #include "lock.h"                               /* mysql_lock_remove */
@@ -64,7 +65,8 @@ TABLE *THD::create_and_open_tmp_table(handlerton *hton,
                                       const char *path,
                                       const char *db,
                                       const char *table_name,
-                                      bool open_in_engine)
+                                      bool open_in_engine,
+                                      bool open_internal_tables)
 {
   DBUG_ENTER("THD::create_and_open_tmp_table");
 
@@ -89,6 +91,15 @@ TABLE *THD::create_and_open_tmp_table(handlerton *hton,
 
       /* Free the TMP_TABLE_SHARE. */
       free_tmp_table_share(share, false);
+      DBUG_RETURN(0);
+    }
+
+    /* Open any related tables */
+    if (open_internal_tables && table->internal_tables &&
+        open_and_lock_internal_tables(table, open_in_engine))
+    {
+      drop_temporary_table(table, NULL, false);
+      DBUG_RETURN(0);
     }
   }
 
@@ -323,16 +334,6 @@ bool THD::open_temporary_table(TABLE_LIST *tl)
   TABLE *table= NULL;
 
   /*
-    Since temporary tables are not safe for parallel replication, lets
-    wait for the prior commits in case the table is found to be in use.
-  */
-  if (rgi_slave &&
-      rgi_slave->is_parallel_exec &&
-      find_temporary_table(tl) &&
-      wait_for_prior_commit())
-    DBUG_RETURN(true);
-
-  /*
     Code in open_table() assumes that TABLE_LIST::table can be non-zero only
     for pre-opened temporary tables.
   */
@@ -351,6 +352,22 @@ bool THD::open_temporary_table(TABLE_LIST *tl)
     DBUG_PRINT("info", ("skip_temporary is set or no temporary tables"));
     DBUG_RETURN(false);
   }
+
+  /*
+    Temporary tables are not safe for parallel replication. They were
+    designed to be visible to one thread only, so have no table locking.
+    Thus there is no protection against two conflicting transactions
+    committing in parallel and things like that.
+
+    So for now, anything that uses temporary tables will be serialised
+    with anything before it, when using parallel replication.
+  */
+
+  if (rgi_slave &&
+      rgi_slave->is_parallel_exec &&
+      find_temporary_table(tl) &&
+      wait_for_prior_commit())
+    DBUG_RETURN(true);
 
   /*
     First check if there is a reusable open table available in the
@@ -379,26 +396,6 @@ bool THD::open_temporary_table(TABLE_LIST *tl)
     }
     DBUG_RETURN(false);
   }
-
-  /*
-    Temporary tables are not safe for parallel replication. They were
-    designed to be visible to one thread only, so have no table locking.
-    Thus there is no protection against two conflicting transactions
-    committing in parallel and things like that.
-
-    So for now, anything that uses temporary tables will be serialised
-    with anything before it, when using parallel replication.
-
-    TODO: We might be able to introduce a reference count or something
-    on temp tables, and have slave worker threads wait for it to reach
-    zero before being allowed to use the temp table. Might not be worth
-    it though, as statement-based replication using temporary tables is
-    in any case rather fragile.
-  */
-  if (rgi_slave &&
-      rgi_slave->is_parallel_exec &&
-      wait_for_prior_commit())
-    DBUG_RETURN(true);
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   if (tl->partition_names)
@@ -1132,6 +1129,7 @@ TABLE *THD::open_temporary_table(TMP_TABLE_SHARE *share,
   table->grant.privilege= TMP_TABLE_ACLS;
   share->tmp_table= (table->file->has_transaction_manager() ?
                      TRANSACTIONAL_TMP_TABLE : NON_TRANSACTIONAL_TMP_TABLE);
+  share->not_usable_by_query_cache= 1;
 
   table->pos_in_table_list= 0;
   table->query_id= query_id;
@@ -1145,8 +1143,8 @@ TABLE *THD::open_temporary_table(TMP_TABLE_SHARE *share,
     thread_safe_increment32(&slave_open_temp_tables);
   }
 
-  DBUG_PRINT("tmptable", ("Opened table: '%s'.'%s' 0x%lx", table->s->db.str,
-                          table->s->table_name.str, (long) table));
+  DBUG_PRINT("tmptable", ("Opened table: '%s'.'%s'%p", table->s->db.str,
+                          table->s->table_name.str, table));
   DBUG_RETURN(table);
 }
 
@@ -1239,9 +1237,9 @@ void THD::close_temporary_table(TABLE *table)
 {
   DBUG_ENTER("THD::close_temporary_table");
 
-  DBUG_PRINT("tmptable", ("closing table: '%s'.'%s' 0x%lx  alias: '%s'",
+  DBUG_PRINT("tmptable", ("closing table: '%s'.'%s'%p  alias: '%s'",
                           table->s->db.str, table->s->table_name.str,
-                          (long) table, table->alias.c_ptr()));
+                          table, table->alias.c_ptr()));
 
   closefrm(table);
   my_free(table);
@@ -1402,6 +1400,7 @@ bool THD::log_events_and_free_tmp_shares()
       variables.character_set_client= cs_save;
 
       get_stmt_da()->set_overwrite_status(true);
+      transaction.stmt.mark_dropped_temp_table();
       if ((error= (mysql_bin_log.write(&qinfo) || error)))
       {
         /*

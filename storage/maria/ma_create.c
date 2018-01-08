@@ -33,6 +33,27 @@
 
 static int compare_columns(MARIA_COLUMNDEF **a, MARIA_COLUMNDEF **b);
 
+
+static ulonglong update_tot_length(ulonglong tot_length, ulonglong max_rows, uint length)
+{
+  ulonglong tot_length_part;
+
+  if (tot_length == ULONGLONG_MAX)
+    return ULONGLONG_MAX;
+
+  tot_length_part= (max_rows/(ulong) ((maria_block_size -
+                    MAX_KEYPAGE_HEADER_SIZE - KEYPAGE_CHECKSUM_SIZE)/
+                    (length*2)));
+  if (tot_length_part >=  ULONGLONG_MAX / maria_block_size)
+    return ULONGLONG_MAX;
+
+  if (tot_length > ULONGLONG_MAX - tot_length_part * maria_block_size)
+    return ULONGLONG_MAX;
+
+  return tot_length + tot_length_part * maria_block_size;
+}
+
+
 /*
   Old options is used when recreating database, from maria_chk
 */
@@ -55,7 +76,7 @@ int maria_create(const char *name, enum data_file_type datafile_type,
   uint internal_table= flags & HA_CREATE_INTERNAL_TABLE;
   ulong reclength, real_reclength,min_pack_length;
   char kfilename[FN_REFLEN], klinkname[FN_REFLEN], *klinkname_ptr;
-  char dfilename[FN_REFLEN], dlinkname[FN_REFLEN], *dlinkname_ptr;
+  char dfilename[FN_REFLEN], dlinkname[FN_REFLEN], *dlinkname_ptr= 0;
   ulong pack_reclength;
   ulonglong tot_length,max_rows, tmp;
   enum en_fieldtype type;
@@ -375,18 +396,18 @@ int maria_create(const char *name, enum data_file_type datafile_type,
       if (rows_per_page > 0)
       {
         set_if_smaller(rows_per_page, MAX_ROWS_PER_PAGE);
-        ci->max_rows= data_file_length / maria_block_size * rows_per_page;
+        ci->max_rows= (data_file_length / maria_block_size+1) * rows_per_page;
       }
       else
         ci->max_rows= data_file_length / (min_pack_length +
                                           extra_header_size +
-                                          DIR_ENTRY_SIZE);
+                                          DIR_ENTRY_SIZE)+1;
     }
     else
       ci->max_rows=(ha_rows) (ci->data_file_length/(min_pack_length +
                                                     ((options &
                                                       HA_OPTION_PACK_RECORD) ?
-                                                     3 : 0)));
+                                                     3 : 0)))+1;
   }
   max_rows= (ulonglong) ci->max_rows;
   if (datafile_type == BLOCK_RECORD)
@@ -660,11 +681,8 @@ int maria_create(const char *name, enum data_file_type datafile_type,
 
     if (length > max_key_length)
       max_key_length= length;
-    tot_length+= ((max_rows/(ulong) (((uint) maria_block_size -
-                                      MAX_KEYPAGE_HEADER_SIZE -
-                                      KEYPAGE_CHECKSUM_SIZE)/
-                                     (length*2))) *
-                  maria_block_size);
+
+    tot_length= update_tot_length(tot_length, max_rows, length);
   }
 
   unique_key_parts=0;
@@ -673,11 +691,8 @@ int maria_create(const char *name, enum data_file_type datafile_type,
     uniquedef->key=keys+i;
     unique_key_parts+=uniquedef->keysegs;
     share.state.key_root[keys+i]= HA_OFFSET_ERROR;
-    tot_length+= (max_rows/(ulong) (((uint) maria_block_size -
-                                     MAX_KEYPAGE_HEADER_SIZE -
-                                     KEYPAGE_CHECKSUM_SIZE) /
-                         ((MARIA_UNIQUE_HASH_LENGTH + pointer)*2)))*
-                         (ulong) maria_block_size;
+
+    tot_length= update_tot_length(tot_length, max_rows, MARIA_UNIQUE_HASH_LENGTH + pointer);
   }
   keys+=uniques;				/* Each unique has 1 key */
   key_segs+=uniques;				/* Each unique has 1 key seg */
@@ -746,8 +761,7 @@ int maria_create(const char *name, enum data_file_type datafile_type,
     Get estimate for index file length (this may be wrong for FT keys)
     This is used for pointers to other key pages.
   */
-  tmp= (tot_length + maria_block_size * keys *
-	MARIA_INDEX_BLOCK_MARGIN) / maria_block_size;
+  tmp= (tot_length / maria_block_size + keys * MARIA_INDEX_BLOCK_MARGIN);
 
   /*
     use maximum of key_file_length we calculated and key_file_length value we
@@ -1141,7 +1155,7 @@ int maria_create(const char *name, enum data_file_type datafile_type,
     DBUG_EXECUTE_IF("maria_crash_create_table",
                     {
                       DBUG_PRINT("maria_crash_create_table", ("now"));
-                      DBUG_ABORT();
+                      DBUG_SUICIDE();
                     });
     /*
       store LSN into file, needed for Recovery to not be confused if a
@@ -1204,7 +1218,7 @@ int maria_create(const char *name, enum data_file_type datafile_type,
   if (mysql_file_chsize(file,(ulong) share.base.keystart,0,MYF(0)))
     goto err;
 
-  if (sync_dir && mysql_file_sync(file, MYF(0)))
+  if (!internal_table && sync_dir && mysql_file_sync(file, MYF(0)))
     goto err;
 
   if (! (flags & HA_DONT_TOUCH_DATA))
@@ -1214,7 +1228,7 @@ int maria_create(const char *name, enum data_file_type datafile_type,
                           share.base.min_pack_length*ci->reloc_rows,0,MYF(0)))
       goto err;
 #endif
-    if (sync_dir && mysql_file_sync(dfile, MYF(0)))
+    if (!internal_table && sync_dir && mysql_file_sync(dfile, MYF(0)))
       goto err;
     if (mysql_file_close(dfile,MYF(0)))
       goto err;

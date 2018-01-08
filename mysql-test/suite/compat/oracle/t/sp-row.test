@@ -175,20 +175,21 @@ DROP PROCEDURE p1;
 
 
 --echo #
---echo # Bad usage of a scalar variable as a row
+--echo # Scalar variable vs table alias cause no ambiguity
 --echo #
 
 DELIMITER $$;
---error ER_UNKNOWN_ERROR
 CREATE PROCEDURE p1()
 AS
   a INT;
 BEGIN
-  SELECT a.x FROM t1;
+  -- a.x is a table column here (not a row variable field)
+  SELECT a.x FROM a;
+  SELECT a.x FROM t1 a;
 END;
 $$
 DELIMITER ;$$
-
+DROP PROCEDURE p1;
 
 --echo #
 --echo # Using the entire ROW variable in select list
@@ -294,7 +295,7 @@ BEGIN
 END;
 $$
 DELIMITER ;$$
---error ER_OPERAND_COLUMNS
+--error ER_ILLEGAL_PARAMETER_DATA_TYPES2_FOR_OPERATION
 CALL p1();
 DROP PROCEDURE p1;
 
@@ -308,7 +309,7 @@ BEGIN
 END;
 $$
 DELIMITER ;$$
---error ER_OPERAND_COLUMNS
+--error ER_ILLEGAL_PARAMETER_DATA_TYPES2_FOR_OPERATION
 CALL p1();
 DROP PROCEDURE p1;
 
@@ -2288,3 +2289,123 @@ DELIMITER ;$$
 CALL p1();
 DROP TABLE t1;
 DROP PROCEDURE p1;
+
+
+--echo #
+--echo # MDEV-13273 Confusion between table alias and ROW type variable
+--echo #
+
+CREATE TABLE t1 (c1 INT, c2 INT);
+INSERT INTO t1 VALUES (0,0);
+DELIMITER $$;
+CREATE PROCEDURE p1
+AS
+  a INT;
+  b INT;
+BEGIN
+  -- a.c1 is a table column
+  SELECT a.c1 INTO b
+    FROM t1 a
+    WHERE a.c2 = 0;
+  SELECT b;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+DROP TABLE t1;
+
+CREATE TABLE t1 (c1 INT, c2 INT);
+INSERT INTO t1 VALUES (0,0);
+DELIMITER $$;
+CREATE PROCEDURE p1
+AS
+  a ROW (c1 INT, c2 INT) := ROW(101,102);
+  b INT;
+BEGIN
+  -- a.c1 is a ROW variable field
+  SELECT a.c1 INTO b
+    FROM t1 a
+    WHERE a.c2 = 102;
+  SELECT b;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+DROP TABLE t1;
+
+CREATE TABLE t1 (c1 INT, c2 INT);
+INSERT INTO t1 VALUES (0,0);
+DELIMITER $$;
+CREATE PROCEDURE p1
+AS
+  a t1%ROWTYPE := ROW (10,20);
+  b INT;
+BEGIN
+  -- a.c1 is a ROW variable field
+  SELECT a.c1 INTO b
+    FROM t1 a
+    WHERE a.c2 = 20;
+  SELECT b;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+DROP TABLE t1;
+
+CREATE TABLE t1 (c1 INT, c2 INT);
+INSERT INTO t1 VALUES (0,0);
+DELIMITER $$;
+CREATE PROCEDURE p1
+AS
+  CURSOR cur1 IS SELECT * FROM t1;
+  a cur1%ROWTYPE := ROW (10,20);
+  b INT;
+BEGIN
+  -- a.c1 is a ROW variable field
+  SELECT a.c1 INTO b
+    FROM t1 a
+    WHERE a.c2 = 20;
+  SELECT b;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+DROP TABLE t1;
+
+--echo #
+--echo # MDEV-13527 Crash when EXPLAIN SELECT .. INTO row_sp_variable.field
+--echo #
+
+DELIMITER $$;
+DECLARE
+  a ROW(a INT);
+BEGIN
+  EXPLAIN SELECT 1 INTO a.a;
+END;
+$$
+DELIMITER ;$$
+
+
+--echo #
+--echo # MDEV-14139 Anchored data types for variables
+--echo #
+
+DELIMITER $$;
+DECLARE
+  row1 ROW(int11 INT,text1 TEXT);
+  a_row1 row1%TYPE;
+  aa_row1 a_row1%TYPE;
+BEGIN
+  CREATE TABLE t1 AS SELECT a_row1.int11 AS int11, a_row1.text1 AS text1;
+  SHOW CREATE TABLE t1;
+  DROP TABLE t1;
+  CREATE TABLE t1 AS SELECT aa_row1.int11 AS int11, aa_row1.text1 AS text1;
+  SHOW CREATE TABLE t1;
+  DROP TABLE t1;
+END;
+$$
+DELIMITER ;$$

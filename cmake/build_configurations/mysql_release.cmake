@@ -88,20 +88,24 @@ ENDIF()
 OPTION(ENABLED_LOCAL_INFILE "" ON)
 SET(WITH_INNODB_SNAPPY OFF CACHE STRING "")
 IF(WIN32)
+  SET(WITH_LIBARCHIVE STATIC CACHE STRING "")
 ELSEIF(RPM)
   SET(WITH_SSL system CACHE STRING "")
   SET(WITH_ZLIB system CACHE STRING "")
   SET(CHECKMODULE /usr/bin/checkmodule CACHE STRING "")
   SET(SEMODULE_PACKAGE /usr/bin/semodule_package CACHE STRING "")
+  SET(WITH_LIBARCHIVE ON CACHE STRING "")
 ELSEIF(DEB)
   SET(WITH_SSL system CACHE STRING "")
   SET(WITH_ZLIB system CACHE STRING "")
   SET(WITH_LIBWRAP ON)
   SET(HAVE_EMBEDDED_PRIVILEGE_CONTROL ON)
+  SET(WITH_LIBARCHIVE ON CACHE STRING "")
 ELSE()
   SET(WITH_SSL bundled CACHE STRING "")
   SET(WITH_ZLIB bundled CACHE STRING "")
   SET(WITH_JEMALLOC static CACHE STRING "")
+  SET(WITH_LIBARCHIVE STATIC CACHE STRING "")
 ENDIF()
 
 IF(NOT COMPILATION_COMMENT)
@@ -134,9 +138,6 @@ IF(UNIX)
         If you really do not want it, pass -DIGNORE_AIO_CHECK to cmake.
         ")
       ENDIF()
-
-      # Remove libaio dependency from mysqld
-      #SET(XTRADB_PREFER_STATIC_LIBAIO 1)
 
       # Unfortunately, linking shared libmysqld with static aio
       # does not work,  unless we add also dynamic one. This also means

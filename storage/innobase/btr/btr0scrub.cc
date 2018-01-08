@@ -1,4 +1,5 @@
 // Copyright (c) 2014, Google Inc.
+// Copyright (c) 2017, MariaDB Corporation.
 
 /**************************************************//**
 @file btr/btr0scrub.cc
@@ -102,16 +103,9 @@ log_scrub_failure(
 		scrub_data->scrub_stat.page_split_failures_unknown++;
 	}
 
-	buf_frame_t* buf = buf_block_get_frame(block);
-	const ulint	space_id = mach_read_from_4(buf + FIL_PAGE_SPACE_ID);
-	const ulint	page_no = mach_read_from_4(buf + FIL_PAGE_OFFSET);
-	fprintf(stderr,
-		"InnoDB: Warning: Failed to scrub index %s table %s page %lu in space %lu : %s\n",
-		index->name(),
-		index->table->name.m_name,
-		page_no,
-		space_id,
-		reason);
+	ib::warn() << "Failed to scrub index " << index->name
+		   << " of table " << index->table->name
+		   << " page " << block->page.id << ": " << reason;
 }
 
 /****************************************************************
@@ -146,17 +140,17 @@ btr_scrub_lock_dict_func(ulint space_id, bool lock_to_close_table,
 		} else {
 			return false;
 		}
+
 		os_thread_sleep(250000);
 
 		time_t now = time(0);
 
 		if (now >= last + 30) {
 			fprintf(stderr,
-				"WARNING: %s:%u waited %lu seconds for"
+				"WARNING: %s:%u waited %ld seconds for"
 				" dict_sys lock, space: " ULINTPF
-				" lock_to_close_table: %u\n",
-				file, line, (unsigned long)(now - start),
-				space_id,
+				" lock_to_close_table: %d\n",
+				file, line, long(now - start), space_id,
 				lock_to_close_table);
 
 			last = now;
@@ -578,7 +572,7 @@ btr_scrub_table_needs_scrubbing(
 		return false;
 	}
 
-	if (table->corrupted) {
+	if (!table->is_readable()) {
 		return false;
 	}
 
@@ -889,17 +883,15 @@ btr_scrub_update_total_stat(btr_scrub_t *scrub_data)
 	memset(&scrub_data->scrub_stat, 0, sizeof(scrub_data->scrub_stat));
 }
 
-/**************************************************************//**
-Complete iterating a space */
+/** Complete iterating a space.
+@param[in,out]	scrub_data	 scrub data */
 UNIV_INTERN
-bool
-btr_scrub_complete_space(
-/*=====================*/
-	btr_scrub_t* scrub_data) /*!< in/out: scrub data */
+void
+btr_scrub_complete_space(btr_scrub_t* scrub_data)
 {
+	ut_ad(scrub_data->scrubbing);
 	btr_scrub_table_close_for_thread(scrub_data);
 	btr_scrub_update_total_stat(scrub_data);
-	return scrub_data->scrubbing;
 }
 
 /*********************************************************************

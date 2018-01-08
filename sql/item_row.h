@@ -35,7 +35,8 @@
 */
 class Item_row: public Item,
                 private Item_args,
-                private Used_tables_and_const_cache
+                private Used_tables_and_const_cache,
+                private With_subquery_cache
 {
   table_map not_null_tables_cache;
   /**
@@ -47,14 +48,12 @@ public:
   Item_row(THD *thd, List<Item> &list):
   Item(thd), Item_args(thd, list), not_null_tables_cache(0), with_null(0)
   { }
-  Item_row(THD *thd, Item_row *item):
-    Item(thd),
-    Item_args(item),
-    Used_tables_and_const_cache(item),
-    not_null_tables_cache(0),
-    with_null(0)
-  {}
+  Item_row(THD *thd, Item_row *row):
+    Item(thd), Item_args(thd, static_cast<Item_args*>(row)), Used_tables_and_const_cache(),
+    not_null_tables_cache(0), with_null(0)
+  { }
 
+  bool with_subquery() const { DBUG_ASSERT(fixed); return m_with_subquery; }
   enum Type type() const { return ROW_ITEM; };
   const Type_handler *type_handler() const { return &type_handler_row; }
   void illegal_method_call(const char *);
@@ -84,19 +83,12 @@ public:
     return 0;
   };
   bool fix_fields(THD *thd, Item **ref);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   void cleanup();
   void split_sum_func(THD *thd, Ref_ptr_array ref_pointer_array,
                       List<Item> &fields, uint flags);
   table_map used_tables() const { return used_tables_cache; };
   bool const_item() const { return const_item_cache; };
-  enum Item_result result_type() const { return ROW_RESULT; }
-  Item_result cmp_type() const { return ROW_RESULT; }
-  enum_field_types field_type() const
-  {
-    DBUG_ASSERT(0);
-    return MYSQL_TYPE_DOUBLE;
-  }
   void update_used_tables()
   {
     used_tables_and_const_cache_init();
@@ -114,7 +106,7 @@ public:
   Item *transform(THD *thd, Item_transformer transformer, uchar *arg);
   bool eval_not_null_tables(void *opt_arg);
 
-  uint cols() { return arg_count; }
+  uint cols() const { return arg_count; }
   Item* element_index(uint i) { return args[i]; }
   Item** addr(uint i) { return args + i; }
   bool check_cols(uint c);
@@ -127,10 +119,20 @@ public:
     return this;
   }
 
+  bool excl_dep_on_table(table_map tab_map)
+  {
+    return Item_args::excl_dep_on_table(tab_map);
+  }
+
+  bool excl_dep_on_grouping_fields(st_select_lex *sel)
+  {
+    return Item_args::excl_dep_on_grouping_fields(sel);
+  }
+
   bool check_vcol_func_processor(void *arg) {return FALSE; }
-  Item *get_copy(THD *thd, MEM_ROOT *mem_root)
-  { return get_item_copy<Item_row>(thd, mem_root, this); }
-  Item *build_clone(THD *thd, MEM_ROOT *mem_root);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_row>(thd, this); }
+  Item *build_clone(THD *thd);
 };
 
 #endif /* ITEM_ROW_INCLUDED */

@@ -154,7 +154,6 @@ btr_defragment_init()
 	srv_defragment_interval = ut_microseconds_to_timer(
 		(ulonglong) (1000000.0 / srv_defragment_frequency));
 	mutex_create(LATCH_ID_BTR_DEFRAGMENT_MUTEX, &btr_defragment_mutex);
-	os_thread_create(btr_defragment_thread, NULL, NULL);
 }
 
 /******************************************************************//**
@@ -227,13 +226,15 @@ btr_defragment_add_index(
 		page = buf_block_get_frame(block);
 	}
 
-	if (page == NULL && index->table->is_encrypted) {
+	if (page == NULL && !index->is_readable()) {
 		mtr_commit(&mtr);
 		*err = DB_DECRYPTION_FAILED;
 		return NULL;
 	}
 
-	if (btr_page_get_level(page, &mtr) == 0) {
+	ut_ad(page_is_root(page));
+
+	if (page_is_leaf(page)) {
 		// Index root is a leaf page, no need to defragment.
 		mtr_commit(&mtr);
 		return NULL;
@@ -401,6 +402,7 @@ btr_defragment_calc_n_recs_for_size(
 	while (page_cur_get_rec(&cur) != page_get_supremum_rec(page)) {
 		rec_t* cur_rec = page_cur_get_rec(&cur);
 		offsets = rec_get_offsets(cur_rec, index, offsets,
+					  page_is_leaf(page),
 					  ULINT_UNDEFINED, &heap);
 		ulint rec_size = rec_offs_size(offsets);
 		size += rec_size;
@@ -562,7 +564,7 @@ btr_defragment_merge_pages(
 				page_get_infimum_rec(from_page));
 			node_ptr = dict_index_build_node_ptr(
 				index, rec, page_get_page_no(from_page),
-				heap, level + 1);
+				heap, level);
 			btr_insert_on_non_leaf_level(0, index, level+1,
 						     node_ptr, mtr);
 		}
@@ -734,14 +736,13 @@ btr_defragment_n_pages(
 	return current_block;
 }
 
-/******************************************************************//**
-Thread that merges consecutive b-tree pages into fewer pages to defragment
-the index. */
+/** Whether btr_defragment_thread is active */
+bool btr_defragment_thread_active;
+
+/** Merge consecutive b-tree pages into fewer pages to defragment indexes */
 extern "C" UNIV_INTERN
 os_thread_ret_t
-DECLARE_THREAD(btr_defragment_thread)(
-/*==========================================*/
-	void*	arg)	/*!< in: work queue */
+DECLARE_THREAD(btr_defragment_thread)(void*)
 {
 	btr_pcur_t*	pcur;
 	btr_cur_t*	cursor;
@@ -750,7 +751,11 @@ DECLARE_THREAD(btr_defragment_thread)(
 	buf_block_t*	first_block;
 	buf_block_t*	last_block;
 
+	trx_t* trx = trx_allocate_for_background();
+
 	while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
+		ut_ad(btr_defragment_thread_active);
+
 		/* If defragmentation is disabled, sleep before
 		checking whether it's enabled. */
 		if (!srv_defragment) {
@@ -794,11 +799,16 @@ DECLARE_THREAD(btr_defragment_thread)(
 
 		now = ut_timer_now();
 		mtr_start(&mtr);
-		btr_pcur_restore_position(BTR_MODIFY_TREE, pcur, &mtr);
 		cursor = btr_pcur_get_btr_cur(pcur);
 		index = btr_cur_get_index(cursor);
-		first_block = btr_cur_get_block(cursor);
 		mtr.set_named_space(index->space);
+		/* To follow the latching order defined in WL#6326, acquire index->lock X-latch.
+		This entitles us to acquire page latches in any order for the index. */
+		mtr_x_lock(&index->lock, &mtr);
+		/* This will acquire index->lock SX-latch, which per WL#6363 is allowed
+		when we are already holding the X-latch. */
+		btr_pcur_restore_position(BTR_MODIFY_TREE, pcur, &mtr);
+		first_block = btr_cur_get_block(cursor);
 
 		last_block = btr_defragment_n_pages(first_block, index,
 						    srv_defragment_n_pages,
@@ -818,31 +828,37 @@ DECLARE_THREAD(btr_defragment_thread)(
 			/* Update the last_processed time of this index. */
 			item->last_processed = now;
 		} else {
-			dberr_t err = DB_SUCCESS;
 			mtr_commit(&mtr);
 			/* Reaching the end of the index. */
 			dict_stats_empty_defrag_stats(index);
-			err = dict_stats_save_defrag_stats(index);
-			if (err != DB_SUCCESS) {
-				ib::error() << "Saving defragmentation stats for table "
-					    << index->table->name.m_name
-					    << " index " << index->name()
-					    << " failed with error " << err;
-			} else {
-				err = dict_stats_save_defrag_summary(index);
-
-				if (err != DB_SUCCESS) {
-					ib::error() << "Saving defragmentation summary for table "
-					    << index->table->name.m_name
-					    << " index " << index->name()
-					    << " failed with error " << err;
-				}
+			trx->error_state = DB_SUCCESS;
+			ut_d(trx->persistent_stats = true);
+			++trx->will_lock;
+			dberr_t err = dict_stats_save_defrag_stats(index, trx);
+			if (err == DB_SUCCESS) {
+				err = dict_stats_save_defrag_summary(
+					index, trx);
 			}
 
+			if (err != DB_SUCCESS) {
+				trx_rollback_to_savepoint(trx, NULL);
+				ib::error() << "Saving defragmentation stats for table "
+					    << index->table->name
+					    << " index " << index->name
+					    << " failed with error "
+					    << ut_strerr(err);
+			} else if (trx->state != TRX_STATE_NOT_STARTED) {
+				trx_commit_for_mysql(trx);
+			}
+
+			ut_d(trx->persistent_stats = false);
 			btr_defragment_remove_item(item);
 		}
 	}
-	btr_defragment_shutdown();
+
+	trx_free_for_background(trx);
+
+	btr_defragment_thread_active = false;
 	os_thread_exit();
 	OS_THREAD_DUMMY_RETURN;
 }

@@ -20,6 +20,11 @@ IF(have_C__Wvla)
   SET(MY_WARNING_FLAGS "${MY_WARNING_FLAGS} -Wvla")
 ENDIF()
 
+MY_CHECK_C_COMPILER_FLAG("-Wno-format-truncation")
+IF(HAVE_C__Wno_format_truncation)
+  SET(MY_WARNING_FLAGS "${MY_WARNING_FLAGS} -Wno-format-truncation")
+ENDIF()
+
 # Common warning flags for GCC and Clang
 SET(MY_C_WARNING_FLAGS
     "${MY_WARNING_FLAGS} -Wwrite-strings -Wdeclaration-after-statement")
@@ -46,7 +51,7 @@ IF(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 ENDIF()
 # Set warning flags for G++/Clang++
 IF(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  SET(MY_MAINTAINER_CXX_WARNINGS "${MY_CXX_WARNING_FLAGS}")
+  SET(MY_MAINTAINER_CXX_WARNINGS "${MY_CXX_WARNING_FLAGS} -Wnon-virtual-dtor")
 ENDIF()
 
 IF(MYSQL_MAINTAINER_MODE MATCHES "ON")

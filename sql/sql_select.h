@@ -604,14 +604,17 @@ typedef struct st_join_table {
             !(used_sjm_lookup_tables & ~emb_sj_nest->sj_inner_tables));
   }
 
+  bool keyuse_is_valid_for_access_in_chosen_plan(JOIN *join, KEYUSE *keyuse);
+
   void remove_redundant_bnl_scan_conds();
 
-  void save_explain_data(Explain_table_access *eta, table_map prefix_tables, 
+  bool save_explain_data(Explain_table_access *eta, table_map prefix_tables,
                          bool distinct, struct st_join_table *first_top_tab);
 
   bool use_order() const; ///< Use ordering provided by chosen index?
   bool sort_table();
   bool remove_duplicates();
+  Item *get_splitting_cond_for_grouping_derived(THD *thd);
 
 } JOIN_TAB;
 
@@ -1120,6 +1123,11 @@ public:
     to materialize and access by lookups
   */
   table_map sjm_lookup_tables;
+  /** 
+    Bitmap of semijoin tables that the chosen plan decided
+    to materialize to scan the results of materialization
+  */
+  table_map sjm_scan_tables;
   /*
     Constant tables for which we have found a row (as opposed to those for
     which we didn't).
@@ -1267,6 +1275,8 @@ public:
     and should be taken from the appropriate JOIN_TAB
   */
   bool filesort_found_rows;
+
+  bool subq_exit_fl;
   
   ROLLUP rollup;				///< Used with rollup
   
@@ -1373,7 +1383,8 @@ public:
 
   enum join_optimization_state { NOT_OPTIMIZED=0,
                                  OPTIMIZATION_IN_PROGRESS=1,
-                                 OPTIMIZATION_DONE=2};
+                                 OPTIMIZATION_PHASE_1_DONE=2,
+                                 OPTIMIZATION_DONE=3};
   // state of JOIN optimization
   enum join_optimization_state optimization_state;
   bool initialized; ///< flag to avoid double init_execution calls
@@ -1398,6 +1409,15 @@ public:
   bool set_group_rpa;
   /** Exec time only: TRUE <=> current group has been sent */
   bool group_sent;
+  /**
+    TRUE if the query contains an aggregate function but has no GROUP
+    BY clause. 
+  */
+  bool implicit_grouping; 
+
+  bool is_for_splittable_grouping_derived;
+  bool with_two_phase_optimization;
+  ORDER *partition_list; 
 
   JOIN_TAB *sort_and_group_aggr_tab;
 
@@ -1416,7 +1436,7 @@ public:
     table_count= 0;
     top_join_tab_count= 0;
     const_tables= 0;
-    const_table_map= 0;
+    const_table_map= found_const_table_map= 0;
     aggr_tables= 0;
     eliminated_tables= 0;
     join_list= 0;
@@ -1444,6 +1464,8 @@ public:
     ordered_index_usage= ordered_index_void;
     need_distinct= 0;
     skip_sort_order= 0;
+    with_two_phase_optimization= 0;
+    is_for_splittable_grouping_derived= 0;
     need_tmp= 0;
     hidden_group_fields= 0; /*safety*/
     error= 0;
@@ -1488,10 +1510,13 @@ public:
     in_to_exists_having= NULL;
     emb_sjm_nest= NULL;
     sjm_lookup_tables= 0;
+    sjm_scan_tables= 0;
   }
 
   /* True if the plan guarantees that it will be returned zero or one row */
   bool only_const_tables()  { return const_tables == table_count; }
+  /* Number of tables actually joined at the top level */
+  uint exec_join_tab_cnt() { return tables_list ? top_join_tab_count : 0; }
 
   int prepare(TABLE_LIST *tables, uint wind_num,
 	      COND *conds, uint og_num, ORDER *order, bool skip_order_by,
@@ -1500,6 +1525,8 @@ public:
   bool prepare_stage2();
   int optimize();
   int optimize_inner();
+  int optimize_stage2();
+  bool build_explain();
   int reinit();
   int init_execution();
   void exec();
@@ -1640,12 +1667,18 @@ public:
   {
     return (unit->item && unit->item->is_in_predicate());
   }
-  void save_explain_data(Explain_query *output, bool can_overwrite,
+  bool save_explain_data(Explain_query *output, bool can_overwrite,
                          bool need_tmp_table, bool need_order, bool distinct);
   int save_explain_data_intern(Explain_query *output, bool need_tmp_table,
                                bool need_order, bool distinct,
                                const char *message);
   JOIN_TAB *first_breadth_first_tab() { return join_tab; }
+  bool check_two_phase_optimization(THD *thd);
+  bool check_for_splittable_grouping_derived(THD *thd);
+  bool inject_cond_into_where(Item *injected_cond);
+  bool push_splitting_cond_into_derived(THD *thd, Item *cond);
+  bool improve_chosen_plan(THD *thd);
+  bool transform_in_predicates_into_in_subq(THD *thd);
 private:
   /**
     Create a temporary table to be used for processing DISTINCT/ORDER
@@ -1676,13 +1709,10 @@ private:
   */
   void optimize_distinct();
 
-  /**
-    TRUE if the query contains an aggregate function but has no GROUP
-    BY clause. 
-  */
-  bool implicit_grouping; 
   void cleanup_item_list(List<Item> &items) const;
+  bool add_having_as_table_cond(JOIN_TAB *tab);
   bool make_aggr_tables_info();
+
 };
 
 enum enum_with_bush_roots { WITH_BUSH_ROOTS, WITHOUT_BUSH_ROOTS};
@@ -1714,7 +1744,7 @@ void copy_fields(TMP_TABLE_PARAM *param);
 bool copy_funcs(Item **func_ptr, const THD *thd);
 uint find_shortest_key(TABLE *table, const key_map *usable_keys);
 Field* create_tmp_field_from_field(THD *thd, Field* org_field,
-                                   const char *name, TABLE *table,
+                                   LEX_CSTRING *name, TABLE *table,
                                    Item_field *item);
 
 bool is_indexed_agg_distinct(JOIN *join, List<Item_field> *out_args);
@@ -1987,7 +2017,7 @@ Field *create_tmp_field(THD *thd, TABLE *table,Item *item, Item::Type type,
 class Virtual_tmp_table: public TABLE
 {
   /**
-    Destruct collected fields. This method is called on errors only,
+    Destruct collected fields. This method can be called on errors,
     when we could not make the virtual temporary table completely,
     e.g. when some of the fields could not be created or added.
 
@@ -1998,7 +2028,10 @@ class Virtual_tmp_table: public TABLE
   void destruct_fields()
   {
     for (uint i= 0; i < s->fields; i++)
+    {
+      field[i]->free();
       delete field[i];  // to invoke the field destructor
+    }
     s->fields= 0;       // safety
   }
 
@@ -2118,7 +2151,7 @@ public:
     TABLE object ready for read and write in case of success
 */
 
-inline TABLE *
+inline Virtual_tmp_table *
 create_virtual_tmp_table(THD *thd, List<Spvar_definition> &field_list)
 {
   Virtual_tmp_table *table;

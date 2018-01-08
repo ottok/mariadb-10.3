@@ -19,8 +19,6 @@
 #ifndef _my_pthread_h
 #define _my_pthread_h
 
-#include "my_global.h"                          /* myf */
-
 #ifndef ETIME
 #define ETIME ETIMEDOUT				/* For FreeBSD */
 #endif
@@ -345,6 +343,26 @@ int my_pthread_mutex_trylock(pthread_mutex_t *mutex);
   (ABSTIME).MY_tv_nsec= (_now_ % 1000000000ULL);       \
 } while(0)
 #endif /* !set_timespec_time_nsec */
+
+#ifdef MYSQL_CLIENT
+#define _current_thd() NULL
+#elif defined(_WIN32)
+#ifdef __cplusplus
+extern "C"
+#endif
+MYSQL_THD _current_thd_noinline();
+#define _current_thd() _current_thd_noinline()
+#else
+/*
+  THR_THD is a key which will be used to set/get THD* for a thread,
+  using my_pthread_setspecific_ptr()/my_thread_getspecific_ptr().
+*/
+extern pthread_key(MYSQL_THD, THR_THD);
+static inline MYSQL_THD _current_thd(void)
+{
+  return my_pthread_getspecific_ptr(MYSQL_THD,THR_THD);
+}
+#endif
 
 /* safe_mutex adds checking to mutex for easier debugging */
 struct st_hash;

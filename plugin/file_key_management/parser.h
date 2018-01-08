@@ -22,7 +22,8 @@ Created 09/15/2014
 
 #include <my_crypt.h>
 #include <ctype.h>
-#include <sql_array.h>
+#include <map>
+#include <stdlib.h> /* size_t */
 
 struct keyentry {
   unsigned int id;
@@ -42,13 +43,13 @@ class Parser
   void bytes_to_key(const unsigned char *salt, const char *secret,
                     unsigned char *key, unsigned char *iv);
   bool read_filekey(const char *filekey, char *secret);
-  bool parse_file(Dynamic_array<keyentry> *keys, const char *secret);
-  void report_error(const char *reason, unsigned int position);
+  bool parse_file(std::map<unsigned int ,keyentry> *keys, const char *secret);
+  void report_error(const char *reason, size_t position);
   int parse_line(char **line_ptr, keyentry *key);
   char* read_and_decrypt_file(const char *secret);
 
 public:
   Parser(const char* fn, const char *fk) :
     filename(fn), filekey(fk), line_number(0) { }
-  bool parse(Dynamic_array<keyentry> *keys);
+  bool parse(std::map<unsigned int ,keyentry> *keys);
 };

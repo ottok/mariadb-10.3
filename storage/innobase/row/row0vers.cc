@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, MariaDB Corporation
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -63,23 +63,25 @@ row_vers_non_vc_match(
 	const dtuple_t*		ientry,
 	mem_heap_t*		heap,
 	ulint*			n_non_v_col);
-/*****************************************************************//**
-Finds out if an active transaction has inserted or modified a secondary
+/** Determine if an active transaction has inserted or modified a secondary
 index record.
-@return 0 if committed, else the active transaction id;
-NOTE that this function can return false positives but never false
-negatives. The caller must confirm all positive results by calling
-trx_is_active() while holding lock_sys->mutex. */
+@param[in]	clust_rec	clustered index record
+@param[in]	clust_index	clustered index
+@param[in]	rec		secondary index record
+@param[in]	index		secondary index
+@param[in]	offsets		rec_get_offsets(rec, index)
+@param[in,out]	mtr		mini-transaction
+@return	the active transaction; trx_release_reference() must be invoked
+@retval	NULL if the record was committed */
 UNIV_INLINE
 trx_t*
 row_vers_impl_x_locked_low(
-/*=======================*/
-	const rec_t*	clust_rec,	/*!< in: clustered index record */
-	dict_index_t*	clust_index,	/*!< in: the clustered index */
-	const rec_t*	rec,		/*!< in: secondary index record */
-	dict_index_t*	index,		/*!< in: the secondary index */
-	const ulint*	offsets,	/*!< in: rec_get_offsets(rec, index) */
-	mtr_t*		mtr)		/*!< in/out: mini-transaction */
+	const rec_t*	clust_rec,
+	dict_index_t*	clust_index,
+	const rec_t*	rec,
+	dict_index_t*	index,
+	const ulint*	offsets,
+	mtr_t*		mtr)
 {
 	trx_id_t	trx_id;
 	ibool		corrupt;
@@ -97,12 +99,25 @@ row_vers_impl_x_locked_low(
 
 	ut_ad(rec_offs_validate(rec, index, offsets));
 
+	if (ulint trx_id_offset = clust_index->trx_id_offset) {
+		trx_id = mach_read_from_6(clust_rec + trx_id_offset);
+		if (trx_id == 0) {
+			/* The transaction history was already purged. */
+			DBUG_RETURN(0);
+		}
+	}
+
 	heap = mem_heap_create(1024);
 
 	clust_offsets = rec_get_offsets(
-		clust_rec, clust_index, NULL, ULINT_UNDEFINED, &heap);
+		clust_rec, clust_index, NULL, true, ULINT_UNDEFINED, &heap);
 
 	trx_id = row_get_rec_trx_id(clust_rec, clust_index, clust_offsets);
+	if (trx_id == 0) {
+		/* The transaction history was already purged. */
+		mem_heap_free(heap);
+		DBUG_RETURN(0);
+	}
 	corrupt = FALSE;
 
 	trx_t*	trx = trx_rw_is_active(trx_id, &corrupt, true);
@@ -206,8 +221,8 @@ row_vers_impl_x_locked_low(
 		}
 
 		clust_offsets = rec_get_offsets(
-			prev_version, clust_index, NULL, ULINT_UNDEFINED,
-			&heap);
+			prev_version, clust_index, NULL, true,
+			ULINT_UNDEFINED, &heap);
 
 		vers_del = rec_get_deleted_flag(prev_version, comp);
 
@@ -325,19 +340,18 @@ result_check:
 	DBUG_RETURN(trx);
 }
 
-/*****************************************************************//**
-Finds out if an active transaction has inserted or modified a secondary
+/** Determine if an active transaction has inserted or modified a secondary
 index record.
-@return 0 if committed, else the active transaction id;
-NOTE that this function can return false positives but never false
-negatives. The caller must confirm all positive results by calling
-trx_is_active() while holding lock_sys->mutex. */
+@param[in]	rec	secondary index record
+@param[in]	index	secondary index
+@param[in]	offsets	rec_get_offsets(rec, index)
+@return	the active transaction; trx_release_reference() must be invoked
+@retval	NULL if the record was committed */
 trx_t*
 row_vers_impl_x_locked(
-/*===================*/
-	const rec_t*	rec,	/*!< in: record in a secondary index */
-	dict_index_t*	index,	/*!< in: the secondary index */
-	const ulint*	offsets)/*!< in: rec_get_offsets(rec, index) */
+	const rec_t*	rec,
+	dict_index_t*	index,
+	const ulint*	offsets)
 {
 	mtr_t		mtr;
 	trx_t*		trx;
@@ -568,7 +582,8 @@ row_vers_build_cur_vrow_low(
 		}
 
 		clust_offsets = rec_get_offsets(prev_version, clust_index,
-						NULL, ULINT_UNDEFINED, &heap);
+						NULL,
+						true, ULINT_UNDEFINED, &heap);
 
 		ulint	entry_len = dict_index_get_n_fields(index);
 
@@ -706,7 +721,8 @@ row_vers_vc_matches_cluster(
 		}
 
 		clust_offsets = rec_get_offsets(prev_version, clust_index,
-						NULL, ULINT_UNDEFINED, &heap);
+						NULL,
+						true, ULINT_UNDEFINED, &heap);
 
 		ulint	entry_len = dict_index_get_n_fields(index);
 
@@ -832,7 +848,7 @@ row_vers_build_cur_vrow(
 			index, roll_ptr, trx_id, v_heap, &cur_vrow, mtr);
 	}
 
-	*clust_offsets = rec_get_offsets(rec, clust_index, NULL,
+	*clust_offsets = rec_get_offsets(rec, clust_index, NULL, true,
 					 ULINT_UNDEFINED, &heap);
 	return(cur_vrow);
 }
@@ -881,7 +897,7 @@ row_vers_old_has_index_entry(
 	comp = page_rec_is_comp(rec);
 	ut_ad(!dict_table_is_comp(index->table) == !comp);
 	heap = mem_heap_create(1024);
-	clust_offsets = rec_get_offsets(rec, clust_index, NULL,
+	clust_offsets = rec_get_offsets(rec, clust_index, NULL, true,
 					ULINT_UNDEFINED, &heap);
 
 	if (dict_index_has_virtual(index)) {
@@ -955,6 +971,7 @@ row_vers_old_has_index_entry(
 				}
 			}
 			clust_offsets = rec_get_offsets(rec, clust_index, NULL,
+							true,
 							ULINT_UNDEFINED, &heap);
 		} else {
 
@@ -1029,7 +1046,8 @@ row_vers_old_has_index_entry(
 		}
 
 		clust_offsets = rec_get_offsets(prev_version, clust_index,
-						NULL, ULINT_UNDEFINED, &heap);
+						NULL, true,
+						ULINT_UNDEFINED, &heap);
 
 		if (dict_index_has_virtual(index)) {
 			if (vrow) {
@@ -1174,8 +1192,8 @@ row_vers_build_for_consistent_read(
 		}
 
 		*offsets = rec_get_offsets(
-			prev_version, index, *offsets, ULINT_UNDEFINED,
-			offset_heap);
+			prev_version, index, *offsets,
+			true, ULINT_UNDEFINED, offset_heap);
 
 #if defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
 		ut_a(!rec_offs_any_null_extern(prev_version, *offsets));
@@ -1193,7 +1211,7 @@ row_vers_build_for_consistent_read(
 					in_heap, rec_offs_size(*offsets)));
 
 			*old_vers = rec_copy(buf, prev_version, *offsets);
-			rec_offs_make_valid(*old_vers, index, *offsets);
+			rec_offs_make_valid(*old_vers, index, true, *offsets);
 
 			if (vrow && *vrow) {
 				*vrow = dtuple_copy(*vrow, in_heap);
@@ -1262,6 +1280,10 @@ row_vers_build_for_semi_consistent_read(
 			rec_trx_id = version_trx_id;
 		}
 
+		if (!version_trx_id) {
+			goto committed_version_trx;
+		}
+
 		trx_sys_mutex_enter();
 		version_trx = trx_get_rw_trx_by_id(version_trx_id);
 		/* Because version_trx is a read-write transaction,
@@ -1306,6 +1328,7 @@ committed_version_trx:
 				version = rec;
 				*offsets = rec_get_offsets(version,
 							   index, *offsets,
+							   true,
 							   ULINT_UNDEFINED,
 							   offset_heap);
 			}
@@ -1315,7 +1338,7 @@ committed_version_trx:
 					in_heap, rec_offs_size(*offsets)));
 
 			*old_vers = rec_copy(buf, version, *offsets);
-			rec_offs_make_valid(*old_vers, index, *offsets);
+			rec_offs_make_valid(*old_vers, index, true, *offsets);
 			if (vrow && *vrow) {
 				*vrow = dtuple_copy(*vrow, in_heap);
 				dtuple_dup_v_fld(*vrow, in_heap);
@@ -1350,7 +1373,7 @@ committed_version_trx:
 		}
 
 		version = prev_version;
-		*offsets = rec_get_offsets(version, index, *offsets,
+		*offsets = rec_get_offsets(version, index, *offsets, true,
 					   ULINT_UNDEFINED, offset_heap);
 #if defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
 		ut_a(!rec_offs_any_null_extern(version, *offsets));

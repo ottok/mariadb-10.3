@@ -1051,7 +1051,7 @@ static void
 my_fill_mb2(CHARSET_INFO *cs, char *s, size_t slen, int fill)
 {
   char buf[10], *last;
-  int buflen, remainder;
+  size_t buflen, remainder;
 
   DBUG_ASSERT((slen % 2) == 0);
 
@@ -1066,7 +1066,7 @@ my_fill_mb2(CHARSET_INFO *cs, char *s, size_t slen, int fill)
   for (last= s + slen - buflen; s <= last; s+= buflen)
   {
     /* Enough space for the characer */
-    memcpy(s, buf, (size_t) buflen);
+    memcpy(s, buf, buflen);
   }
 
   /* 
@@ -2618,14 +2618,14 @@ void my_fill_utf32(CHARSET_INFO *cs,
                    char *s, size_t slen, int fill)
 {
   char buf[10];
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   uint buflen;
 #endif
   char *e= s + slen;
   
   DBUG_ASSERT((slen % 4) == 0);
 
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   buflen=
 #endif
     cs->cset->wc_mb(cs, (my_wc_t) fill, (uchar*) buf,

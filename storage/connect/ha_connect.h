@@ -1,4 +1,4 @@
-/* Copyright (C) Olivier Bertrand 2004 - 2015
+/* Copyright (C) MariaDB Corporation Ab
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -14,6 +14,7 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /** @file ha_connect.h
+	Author Olivier Bertrand
 
     @brief
   The ha_connect engine is a prototype storage engine to access external data.
@@ -30,8 +31,6 @@
 /*  mycat.h contains the TOS, PTOS, ha_table_option_struct declarations.    */
 /****************************************************************************/
 #include "mycat.h"
-
-static char *strz(PGLOBAL g, LEX_STRING &ls);
 
 /****************************************************************************/
 /*  Structures used to pass info between CONNECT and ha_connect.            */
@@ -61,7 +60,7 @@ public:
               oldopn= newopn= NULL;
               oldpix= newpix= NULL;}
 
-  inline char *SetName(PGLOBAL g, char *name) {return PlugDup(g, name);}
+  inline char *SetName(PGLOBAL g, PCSZ name) {return PlugDup(g, name);}
 
   bool         oldsep;              // Sepindex before create/alter
   bool         newsep;              // Sepindex after create/alter
@@ -165,21 +164,21 @@ public:
   ~ha_connect();
 
   // CONNECT Implementation
-  static   bool connect_init(void);
-  static   bool connect_end(void);
+//static   bool connect_init(void);
+//static   bool connect_end(void);
   TABTYPE  GetRealType(PTOS pos= NULL);
-  char    *GetRealString(const char *s);
-  char    *GetStringOption(char *opname, char *sdef= NULL);
+  char    *GetRealString(PCSZ s);
+	PCSZ     GetStringOption(PCSZ opname, PCSZ sdef= NULL);
   PTOS     GetTableOptionStruct(TABLE_SHARE *s= NULL);
-  bool     GetBooleanOption(char *opname, bool bdef);
-  bool     SetBooleanOption(char *opname, bool b);
-  int      GetIntegerOption(char *opname);
-  bool     GetIndexOption(KEY *kp, char *opname);
-  bool     CheckString(const char *str1, const char *str2);
-  bool     SameString(TABLE *tab, char *opn);
-  bool     SetIntegerOption(char *opname, int n);
-  bool     SameInt(TABLE *tab, char *opn);
-  bool     SameBool(TABLE *tab, char *opn);
+  bool     GetBooleanOption(PCSZ opname, bool bdef);
+  bool     SetBooleanOption(PCSZ opname, bool b);
+  int      GetIntegerOption(PCSZ opname);
+  bool     GetIndexOption(KEY *kp, PCSZ opname);
+  bool     CheckString(PCSZ str1, PCSZ str2);
+  bool     SameString(TABLE *tab, PCSZ opn);
+  bool     SetIntegerOption(PCSZ opname, int n);
+  bool     SameInt(TABLE *tab, PCSZ opn);
+  bool     SameBool(TABLE *tab, PCSZ opn);
   bool     FileExists(const char *fn, bool bf);
   bool     NoFieldOptionChange(TABLE *tab);
   PFOS     GetFieldOptionStruct(Field *fp);
@@ -187,8 +186,8 @@ public:
   PXOS     GetIndexOptionStruct(KEY *kp);
   PIXDEF   GetIndexInfo(TABLE_SHARE *s= NULL);
   bool     CheckVirtualIndex(TABLE_SHARE *s);
-  const char *GetDBName(const char *name);
-  const char *GetTableName(void);
+  PCSZ     GetDBName(PCSZ name);
+  PCSZ     GetTableName(void);
   char    *GetPartName(void);
 //int      GetColNameLen(Field *fp);
 //char    *GetColName(Field *fp);
@@ -197,22 +196,22 @@ public:
   bool     IsSameIndex(PIXDEF xp1, PIXDEF xp2);
   bool     IsPartitioned(void);
   bool     IsUnique(uint n);
-  char    *GetDataPath(void) {return (char*)datapath;}
+  PCSZ     GetDataPath(void) {return datapath;}
 
-  void     SetDataPath(PGLOBAL g, const char *path); 
+  bool     SetDataPath(PGLOBAL g, PCSZ path);
   PTDB     GetTDB(PGLOBAL g);
   int      OpenTable(PGLOBAL g, bool del= false);
   bool     CheckColumnList(PGLOBAL g);
   bool     IsOpened(void);
   int      CloseTable(PGLOBAL g);
   int      MakeRecord(char *buf);
-  int      ScanRecord(PGLOBAL g, uchar *buf);
-  int      CheckRecord(PGLOBAL g, const uchar *oldbuf, uchar *newbuf);
+  int      ScanRecord(PGLOBAL g, const uchar *buf);
+  int      CheckRecord(PGLOBAL g, const uchar *oldbuf, const uchar *newbuf);
 	int      ReadIndexed(uchar *buf, OPVAL op, const key_range *kr= NULL);
 	bool     IsIndexed(Field *fp);
   bool     MakeKeyWhere(PGLOBAL g, PSTRG qry, OPVAL op, char q,
                                    const key_range *kr);
-  inline char *Strz(LEX_STRING &ls);
+//inline char *Strz(LEX_STRING &ls);
 	key_range start_key;
 
 
@@ -230,7 +229,7 @@ public:
   /** @brief
     The file extensions.
    */
-  const char **bas_ext() const;
+//const char **bas_ext() const;
 
  /**
     Check if a storage engine supports a particular alter table in-place
@@ -347,6 +346,13 @@ const char *GetValStr(OPVAL vop, bool neg);
 PFIL  CondFilter(PGLOBAL g, Item *cond);
 //PFIL  CheckFilter(PGLOBAL g);
 
+/** admin commands - called from mysql_admin_table */
+virtual int check(THD* thd, HA_CHECK_OPT* check_opt)
+{
+	// TODO: implement it
+	return HA_ADMIN_OK;	// Just to avoid error message with checktables
+}	// end of check
+
  /**
    Number of rows in table. It will only be called if
    (table_flags() & (HA_HAS_RECORDS | HA_STATS_RECORDS_IS_EXACT)) != 0
@@ -388,7 +394,7 @@ PFIL  CondFilter(PGLOBAL g, Item *cond);
     We implement this in ha_connect.cc. It's not an obligatory method;
     skip it and and MySQL will treat it as not implemented.
   */
-  int update_row(const uchar *old_data, uchar *new_data);
+  int update_row(const uchar *old_data, const uchar *new_data);
 
   /** @brief
     We implement this in ha_connect.cc. It's not an obligatory method;
@@ -503,7 +509,7 @@ private:
   DsMrr_impl ds_mrr;
 
 protected:
-  bool check_privileges(THD *thd, PTOS options, char *dbn, bool quick=false);
+  bool check_privileges(THD *thd, PTOS options, const char *dbn, bool quick=false);
   MODE CheckMode(PGLOBAL g, THD *thd, MODE newmode, bool *chk, bool *cras);
   char *GetDBfromName(const char *name);
 
@@ -513,7 +519,7 @@ protected:
   ulong         hnum;                 // The number of this handler
   query_id_t    valid_query_id;       // The one when tdbp was allocated
   query_id_t    creat_query_id;       // The one when handler was allocated
-  char         *datapath;             // Is the Path of DB data directory
+  PCSZ          datapath;             // Is the Path of DB data directory
   PTDB          tdbp;                 // To table class object
   PVAL          sdvalin1;             // Used to convert date values
   PVAL          sdvalin2;             // Used to convert date values

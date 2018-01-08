@@ -163,16 +163,31 @@ trx_write_trx_id(
 /*=============*/
 	byte*		ptr,	/*!< in: pointer to memory where written */
 	trx_id_t	id);	/*!< in: id */
-/*****************************************************************//**
-Reads a trx id from an index page. In case that the id size changes in
-some future version, this function should be used instead of
-mach_read_...
+
+/** Read a transaction identifier.
 @return id */
-UNIV_INLINE
+inline
 trx_id_t
-trx_read_trx_id(
-/*============*/
-	const byte*	ptr);	/*!< in: pointer to memory from where to read */
+trx_read_trx_id(const byte* ptr)
+{
+#if DATA_TRX_ID_LEN != 6
+# error "DATA_TRX_ID_LEN != 6"
+#endif
+	return(mach_read_from_6(ptr));
+}
+
+#ifdef UNIV_DEBUG
+/** Check that the DB_TRX_ID in a record is valid.
+@param[in]	db_trx_id	the DB_TRX_ID column to validate
+@param[in]	trx_id		the id of the ALTER TABLE transaction */
+inline bool trx_id_check(const void* db_trx_id, trx_id_t trx_id)
+{
+	trx_id_t id = trx_read_trx_id(static_cast<const byte*>(db_trx_id));
+	ut_ad(id == 0 || id > trx_id);
+	return true;
+}
+#endif
+
 /****************************************************************//**
 Looks for the trx instance with the given id in the rw trx_list.
 @return	the trx handle or NULL if not found */
@@ -236,74 +251,38 @@ trx_sys_update_mysql_binlog_offset(
 /*===============================*/
 	const char*	file_name,/*!< in: MySQL log file name */
 	int64_t		offset,	/*!< in: position in that log file */
-	ulint		field,	/*!< in: offset of the MySQL log info field in
-				the trx sys header */
         trx_sysf_t*     sys_header, /*!< in: trx sys header */
 	mtr_t*		mtr);	/*!< in: mtr */
-/*****************************************************************//**
-Prints to stderr the MySQL binlog offset info in the trx system header if
-the magic number shows it valid. */
+/** Display the MySQL binlog offset info if it is present in the trx
+system header. */
 void
-trx_sys_print_mysql_binlog_offset(void);
-/*===================================*/
+trx_sys_print_mysql_binlog_offset();
 #ifdef WITH_WSREP
-/** Update WSREP checkpoint XID in sys header. */
+
+/** Update WSREP XID info in sys_header of TRX_SYS_PAGE_NO = 5.
+@param[in]	xid		Transaction XID
+@param[in,out]	sys_header	sys_header
+@param[in]	mtr		minitransaction */
+UNIV_INTERN
 void
 trx_sys_update_wsrep_checkpoint(
-/*============================*/
-	const XID*	xid,		/*!< in: WSREP XID */
-	trx_sysf_t*	sys_header,	/*!< in: sys_header */
-	mtr_t*		mtr);		/*!< in: mtr */
+	const XID*	xid,
+	trx_sysf_t*	sys_header,
+	mtr_t*		mtr);
 
-void
-/** Read WSREP checkpoint XID from sys header. */
-trx_sys_read_wsrep_checkpoint(
-/*==========================*/
-	XID* xid); /*!< out: WSREP XID */
+/** Read WSREP checkpoint XID from sys header.
+@param[out]	xid	WSREP XID
+@return	whether the checkpoint was present */
+UNIV_INTERN
+bool
+trx_sys_read_wsrep_checkpoint(XID* xid);
 #endif /* WITH_WSREP */
-
-/** Initializes the tablespace tag system. */
-void
-trx_sys_file_format_init(void);
-/*==========================*/
-
-/*****************************************************************//**
-Closes the tablespace tag system. */
-void
-trx_sys_file_format_close(void);
-/*===========================*/
-
-/********************************************************************//**
-Tags the system table space with minimum format id if it has not been
-tagged yet.
-WARNING: This function is only called during the startup and AFTER the
-redo log application during recovery has finished. */
-void
-trx_sys_file_format_tag_init(void);
-/*==============================*/
 
 /*****************************************************************//**
 Shutdown/Close the transaction system. */
 void
 trx_sys_close(void);
 /*===============*/
-/*****************************************************************//**
-Get the name representation of the file format from its id.
-@return pointer to the name */
-const char*
-trx_sys_file_format_id_to_name(
-/*===========================*/
-	const ulint	id);		/*!< in: id of the file format */
-/*****************************************************************//**
-Set the file format id unconditionally except if it's already the
-same value.
-@return TRUE if value updated */
-ibool
-trx_sys_file_format_max_set(
-/*========================*/
-	ulint		format_id,	/*!< in: file format id */
-	const char**	name);		/*!< out: max file format name or
-					NULL if not needed. */
 /** Create the rollback segments.
 @return	whether the creation succeeded */
 bool
@@ -322,35 +301,6 @@ Check if there are any active (non-prepared) transactions.
 ulint
 trx_sys_any_active_transactions(void);
 /*=================================*/
-/*****************************************************************//**
-Get the name representation of the file format from its id.
-@return pointer to the max format name */
-const char*
-trx_sys_file_format_max_get(void);
-/*=============================*/
-/*****************************************************************//**
-Check for the max file format tag stored on disk.
-@return DB_SUCCESS or error code */
-dberr_t
-trx_sys_file_format_max_check(
-/*==========================*/
-	ulint		max_format_id);	/*!< in: the max format id to check */
-/********************************************************************//**
-Update the file format tag in the system tablespace only if the given
-format id is greater than the known max id.
-@return TRUE if format_id was bigger than the known max id */
-ibool
-trx_sys_file_format_max_upgrade(
-/*============================*/
-	const char**	name,		/*!< out: max file format name */
-	ulint		format_id);	/*!< in: file format identifier */
-/*****************************************************************//**
-Get the name representation of the file format from its id.
-@return pointer to the name */
-const char*
-trx_sys_file_format_id_to_name(
-/*===========================*/
-	const ulint	id);	/*!< in: id of the file format */
 
 /**
 Add the transaction to the RW transaction set
@@ -403,10 +353,8 @@ byte, therefore 128; each slot is currently 8 bytes in size. If you want
 to raise the level to 256 then you will need to fix some assertions that
 impose the 7 bit restriction. e.g., mach_write_to_3() */
 #define	TRX_SYS_N_RSEGS			128
-/* Originally, InnoDB defined TRX_SYS_N_RSEGS as 256 but created only one
-rollback segment.  It initialized some arrays with this number of entries.
-We must remember this limit in order to keep file compatibility. */
-#define TRX_SYS_OLD_N_RSEGS		256
+/** Maximum number of undo tablespaces (not counting the system tablespace) */
+#define TRX_SYS_MAX_UNDO_SPACES		(TRX_SYS_N_RSEGS - 1)
 
 /** Maximum length of MySQL binlog file name, in bytes. */
 #define TRX_SYS_MYSQL_LOG_NAME_LEN	512
@@ -422,19 +370,75 @@ We must remember this limit in order to keep file compatibility. */
 						TRX_SYS_MYSQL_LOG_MAGIC_N
 						if we have valid data in the
 						MySQL binlog info */
-#define TRX_SYS_MYSQL_LOG_OFFSET_HIGH	4	/*!< high 4 bytes of the offset
-						within that file */
-#define TRX_SYS_MYSQL_LOG_OFFSET_LOW	8	/*!< low 4 bytes of the offset
+#define TRX_SYS_MYSQL_LOG_OFFSET	4	/*!< the 64-bit offset
 						within that file */
 #define TRX_SYS_MYSQL_LOG_NAME		12	/*!< MySQL log file name */
 
+/** Memory map TRX_SYS_PAGE_NO = 5 when UNIV_PAGE_SIZE = 4096
+
+0...37 FIL_HEADER
+38...45 TRX_SYS_TRX_ID_STORE
+46...55 TRX_SYS_FSEG_HEADER (FSEG_HEADER_SIZE == 10)
+56      TRX_SYS_RSEGS
+  56...59  TRX_SYS_RSEG_SPACE       for slot 0
+  60...63  TRX_SYS_RSEG_PAGE_NO     for slot 0
+  64...67  TRX_SYS_RSEG_SPACE       for slot 1
+  68...71  TRX_SYS_RSEG_PAGE_NO     for slot 1
+....
+ 594..597  TRX_SYS_RSEG_SPACE       for slot 72
+ 598..601  TRX_SYS_RSEG_PAGE_NO     for slot 72
+...
+  ...1063  TRX_SYS_RSEG_PAGE_NO     for slot 126
+
+(UNIV_PAGE_SIZE-3500 WSREP ::: FAIL would overwrite undo tablespace
+space_id, page_no pairs :::)
+596 TRX_SYS_WSREP_XID_INFO             TRX_SYS_WSREP_XID_MAGIC_N_FLD
+600 TRX_SYS_WSREP_XID_FORMAT
+604 TRX_SYS_WSREP_XID_GTRID_LEN
+608 TRX_SYS_WSREP_XID_BQUAL_LEN
+612 TRX_SYS_WSREP_XID_DATA   (len = 128)
+739 TRX_SYS_WSREP_XID_DATA_END
+
+FIXED WSREP XID info offsets for 4k page size 10.0.32-galera
+(UNIV_PAGE_SIZE-2500)
+1596 TRX_SYS_WSREP_XID_INFO             TRX_SYS_WSREP_XID_MAGIC_N_FLD
+1600 TRX_SYS_WSREP_XID_FORMAT
+1604 TRX_SYS_WSREP_XID_GTRID_LEN
+1608 TRX_SYS_WSREP_XID_BQUAL_LEN
+1612 TRX_SYS_WSREP_XID_DATA   (len = 128)
+1739 TRX_SYS_WSREP_XID_DATA_END
+
+(UNIV_PAGE_SIZE - 2000 MYSQL MASTER LOG)
+2096   TRX_SYS_MYSQL_MASTER_LOG_INFO   TRX_SYS_MYSQL_LOG_MAGIC_N_FLD
+2100   TRX_SYS_MYSQL_LOG_OFFSET_HIGH
+2104   TRX_SYS_MYSQL_LOG_OFFSET_LOW
+2108   TRX_SYS_MYSQL_LOG_NAME
+
+(UNIV_PAGE_SIZE - 1000 MYSQL LOG)
+3096   TRX_SYS_MYSQL_LOG_INFO          TRX_SYS_MYSQL_LOG_MAGIC_N_FLD
+3100   TRX_SYS_MYSQL_LOG_OFFSET_HIGH
+3104   TRX_SYS_MYSQL_LOG_OFFSET_LOW
+3108   TRX_SYS_MYSQL_LOG_NAME
+
+(UNIV_PAGE_SIZE - 200 DOUBLEWRITE)
+3896   TRX_SYS_DOUBLEWRITE		TRX_SYS_DOUBLEWRITE_FSEG
+3906         TRX_SYS_DOUBLEWRITE_MAGIC
+3910         TRX_SYS_DOUBLEWRITE_BLOCK1
+3914         TRX_SYS_DOUBLEWRITE_BLOCK2
+3918         TRX_SYS_DOUBLEWRITE_REPEAT
+3930         TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED_N
+
+(UNIV_PAGE_SIZE - 8, TAILER)
+4088..4096	FIL_TAILER
+
+*/
 #ifdef WITH_WSREP
-/* The offset to WSREP XID headers */
-#define TRX_SYS_WSREP_XID_INFO (UNIV_PAGE_SIZE - 3500)
+/** The offset to WSREP XID headers */
+#define TRX_SYS_WSREP_XID_INFO std::max(srv_page_size - 3500, 1596UL)
 #define TRX_SYS_WSREP_XID_MAGIC_N_FLD 0
 #define TRX_SYS_WSREP_XID_MAGIC_N 0x77737265
 
-/* XID field: formatID, gtrid_len, bqual_len, xid_data */
+/** XID field: formatID, gtrid_len, bqual_len, xid_data */
 #define TRX_SYS_WSREP_XID_LEN        (4 + 4 + 4 + XIDDATASIZE)
 #define TRX_SYS_WSREP_XID_FORMAT     4
 #define TRX_SYS_WSREP_XID_GTRID_LEN  8
@@ -491,24 +495,6 @@ FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID. */
 
 /** Size of the doublewrite block in pages */
 #define TRX_SYS_DOUBLEWRITE_BLOCK_SIZE	FSP_EXTENT_SIZE
-/* @} */
-
-/** File format tag */
-/* @{ */
-/** The offset of the file format tag on the trx system header page
-(TRX_SYS_PAGE_NO of TRX_SYS_SPACE) */
-#define TRX_SYS_FILE_FORMAT_TAG		(UNIV_PAGE_SIZE - 16)
-
-/** Contents of TRX_SYS_FILE_FORMAT_TAG when valid. The file format
-identifier is added to this constant. */
-#define TRX_SYS_FILE_FORMAT_TAG_MAGIC_N_LOW	3645922177UL
-/** Contents of TRX_SYS_FILE_FORMAT_TAG+4 when valid */
-#define TRX_SYS_FILE_FORMAT_TAG_MAGIC_N_HIGH	2745987765UL
-/** Contents of TRX_SYS_FILE_FORMAT_TAG when valid. The file format
-identifier is added to this 64-bit constant. */
-#define TRX_SYS_FILE_FORMAT_TAG_MAGIC_N					\
-	((ib_uint64_t) TRX_SYS_FILE_FORMAT_TAG_MAGIC_N_HIGH << 32	\
-	 | TRX_SYS_FILE_FORMAT_TAG_MAGIC_N_LOW)
 /* @} */
 
 /** The transaction system central memory data structure. */

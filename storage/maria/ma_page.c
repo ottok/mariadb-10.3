@@ -420,11 +420,11 @@ my_off_t _ma_new(register MARIA_HA *info, int level,
         Next deleted page's number is in the header of the present page
         (single linked list):
       */
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
       my_off_t key_del_current;
 #endif
       share->key_del_current= mi_sizekorr(buff+share->keypage_header);
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
       key_del_current= share->key_del_current;
       DBUG_ASSERT((key_del_current != 0) &&
                   ((key_del_current == HA_OFFSET_ERROR) ||
@@ -512,7 +512,7 @@ static my_bool _ma_log_compact_keypage(MARIA_PAGE *ma_page,
    @param min_read_from  Remove all trids from page less than this
 
    @retval 0             Ok
-   ®retval 1             Error;  my_errno contains the error
+   Â®retval 1             Error;  my_errno contains the error
 */
 
 my_bool _ma_compact_keypage(MARIA_PAGE *ma_page, TrID min_read_from)
@@ -544,8 +544,8 @@ my_bool _ma_compact_keypage(MARIA_PAGE *ma_page, TrID min_read_from)
   {
     if (!(page= (*ma_page->keyinfo->skip_key)(&key, 0, 0, page)))
     {
-      DBUG_PRINT("error",("Couldn't find last key:  page_pos: 0x%lx",
-                          (long) page));
+      DBUG_PRINT("error",("Couldn't find last key:  page_pos: %p",
+                          page));
       _ma_set_fatal_error(share, HA_ERR_CRASHED);
       DBUG_RETURN(1);
     }

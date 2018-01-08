@@ -21,7 +21,7 @@
   Functions for discover of frm file from handler
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "discover.h"
@@ -89,8 +89,7 @@ int readfrm(const char *name, const uchar **frmdata, size_t *len)
   error= 0;
   
  err:
-  if (file > 0)
-    (void) mysql_file_close(file, MYF(MY_WME));
+  (void) mysql_file_close(file, MYF(MY_WME));
   
  err_end:		      /* Here when no file */
   DBUG_RETURN (error);
@@ -230,7 +229,7 @@ int extension_based_table_discovery(MY_DIR *dirp, const char *ext_meta,
     cur++;
   }
   advance(from, to, cur, skip);
-  dirp->number_of_files= to - dirp->dir_entry;
+  dirp->number_of_files= (uint)(to - dirp->dir_entry);
   return 0;
 }
 

@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 /*
   It is necessary to include set_var.h instead of item.h because there
@@ -23,7 +23,6 @@
 */
 #include "sql_class.h"                          // THD, set_var.h: THD
 #include "set_var.h"
-
 
 void Item_row::illegal_method_call(const char *method)
 {
@@ -63,8 +62,9 @@ bool Item_row::fix_fields(THD *thd, Item **ref)
     }
     maybe_null|= item->maybe_null;
     with_sum_func= with_sum_func || item->with_sum_func;
+    with_window_func = with_window_func || item->with_window_func;
     with_field= with_field || item->with_field;
-    with_subselect|= item->with_subselect;
+    m_with_subquery|= item->with_subquery();
   }
   fixed= 1;
   return FALSE;
@@ -110,13 +110,14 @@ void Item_row::split_sum_func(THD *thd, Ref_ptr_array ref_pointer_array,
 }
 
 
-void Item_row::fix_after_pullout(st_select_lex *new_parent, Item **ref)
+void Item_row::fix_after_pullout(st_select_lex *new_parent, Item **ref,
+                                 bool merge)
 {
   used_tables_and_const_cache_init();
   not_null_tables_cache= 0;
   for (uint i= 0; i < arg_count; i++)
   {
-    args[i]->fix_after_pullout(new_parent, &args[i]);
+    args[i]->fix_after_pullout(new_parent, &args[i], merge);
     used_tables_and_const_cache_join(args[i]);
     not_null_tables_cache|= args[i]->not_null_tables();
   }
@@ -162,15 +163,15 @@ void Item_row::bring_value()
 }
 
 
-Item* Item_row::build_clone(THD *thd, MEM_ROOT *mem_root)
+Item* Item_row::build_clone(THD *thd)
 {
-  Item_row *copy= (Item_row *) get_copy(thd, mem_root);
+  Item_row *copy= (Item_row *) get_copy(thd);
   if (!copy)
     return 0;
-  copy->args= (Item**) alloc_root(mem_root, sizeof(Item*) * arg_count);
+  copy->args= (Item**) alloc_root(thd->mem_root, sizeof(Item*) * arg_count);
   for (uint i= 0; i < arg_count; i++)
   {
-    Item *arg_clone= args[i]->build_clone(thd, mem_root);
+    Item *arg_clone= args[i]->build_clone(thd);
     if (!arg_clone)
       return 0;
     copy->args[i]= arg_clone;

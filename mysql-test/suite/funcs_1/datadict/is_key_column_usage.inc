@@ -75,7 +75,8 @@ eval SHOW COLUMNS FROM information_schema.$is_table;
 SELECT constraint_catalog, constraint_schema, constraint_name, table_catalog,
        table_schema, table_name, column_name
 FROM information_schema.key_column_usage
-WHERE constraint_catalog IS NOT NULL OR table_catalog IS NOT NULL;
+WHERE constraint_catalog IS NOT NULL OR table_catalog IS NOT NULL
+ORDER BY BINARY table_schema, BINARY table_name, BINARY column_name, BINARY constraint_name;
 
 
 --echo ########################################################################################
@@ -232,12 +233,6 @@ eval $my_select;
 ALTER TABLE db_datadict.t1_my_tablex ADD UNIQUE my_idx (f4,first_col);
 eval $my_select;
 #
-# Check DROP COLUMN
-eval $my_select;
-ALTER TABLE db_datadict.t1_my_tablex
-DROP COLUMN first_col;
-eval $my_select;
-#
 # Check impact of DROP TABLE
 SELECT table_name, column_name
 FROM information_schema.key_column_usage
@@ -328,7 +323,7 @@ if (!$mysql_errno)
 INSERT INTO information_schema.key_column_usage
 SELECT * FROM information_schema.key_column_usage;
 
---error ER_DBACCESS_DENIED_ERROR
+--error ER_DBACCESS_DENIED_ERROR,ER_NON_UPDATABLE_TABLE
 UPDATE information_schema.key_column_usage
 SET  table_name = 'db1' WHERE constraint_name = 'primary';
 

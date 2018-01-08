@@ -8,7 +8,7 @@ Please read the CREDITS file for details about the MariaDB Foundation,
 and who is developing MariaDB.
 
 MariaDB is developed by many of the original developers of MySQL who
-now work for the MariadB Foundation and the MariaDB Corporation, and by many people in
+now work for the MariaDB Foundation and the MariaDB Corporation, and by many people in
 the community.
 
 MySQL, which is the base of MariaDB, is a product and trademark of Oracle
@@ -17,7 +17,7 @@ see the Credits appendix.  You can also run 'SHOW authors' to get a
 list of active contributors.
 
 A description of the MariaDB project and a manual can be found at:
-http://mariadb.org/
+https://mariadb.org/
 https://mariadb.com/kb/en/
 https://mariadb.com/kb/en/mariadb-vs-mysql-features/
 https://mariadb.com/kb/en/mariadb-versus-mysql-features/
@@ -55,9 +55,9 @@ Bug Reports:
 ------------
 
 Bug and/or error reports regarding MariaDB should be submitted at
-http://mariadb.org/jira
+https://mariadb.org/jira
 
-Bugs in the MySQL code can also be submitted at http://bugs.mysql.com
+Bugs in the MySQL code can also be submitted at https://bugs.mysql.com
 
 The code for MariaDB, including all revision history, can be found at:
 https://github.com/MariaDB/server
