@@ -4,7 +4,6 @@ debian/mariadb_config usr/bin/
 usr/bin/mysql_config usr/lib/${DEB_HOST_MULTIARCH}/
 usr/bin/mariadb_config usr/lib/${DEB_HOST_MULTIARCH}/
 usr/include/mysql/*.h
-usr/include/mysql/psi/*.h
 usr/include/mysql/mariadb/*.h
 usr/include/mysql/mysql/*.h
 usr/lib/*/libmariadb.so

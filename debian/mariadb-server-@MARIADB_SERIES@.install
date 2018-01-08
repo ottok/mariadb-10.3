@@ -54,13 +54,10 @@ usr/lib/*/mariadb3/plugin/locales.so
 usr/lib/*/mariadb3/plugin/metadata_lock_info.so
 usr/lib/*/mariadb3/plugin/query_cache_info.so
 usr/lib/*/mariadb3/plugin/query_response_time.so
-usr/lib/*/mariadb3/plugin/semisync_master.so
-usr/lib/*/mariadb3/plugin/semisync_slave.so
 usr/lib/*/mariadb3/plugin/server_audit.so
 usr/lib/*/mariadb3/plugin/simple_password_check.so
 usr/lib/*/mariadb3/plugin/sql_errlog.so
 usr/lib/*/mariadb3/plugin/wsrep_info.so
-usr/lib/*/mariadb3/plugin/user_variables.so
 usr/lib/*/mariadb3/plugin/auth_ed25519.so
 usr/share/doc/mariadb-server-*/mysqld.sym.gz
 usr/share/mysql/errmsg-utf8.txt
