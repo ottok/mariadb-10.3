@@ -1,6 +1,6 @@
-mariadb-10.3 (10.3.3-0~3.gbp16e977) UNRELEASED; urgency=medium
+mariadb-10.3 (10.3.3-0~4.gbp51edbb) UNRELEASED; urgency=medium
 
-  ** SNAPSHOT build @16e977dc8bb532cc662ede5b1e43520a91b364c4 **
+  ** SNAPSHOT build @51edbb6181fa922970f307642488650e0c5a013c **
 
   [ Ondřej Surý ]
   * Update gbp.conf for the standard layout
@@ -54,8 +54,24 @@ mariadb-10.3 (10.3.3-0~3.gbp16e977) UNRELEASED; urgency=medium
   * Rebase patches on top of MariaDB 10.3.0 using gbp pq import/export
   * Greatly simplify C/B/R/P in d/control utilising virtual packages and versioned package names for plugins
   * Update changelog for 10.3.0-3+exp1~2.gbp3b8578 release
+  * Update changelog for 10.3.3-0~3.gbp16e977 release
+  * Make the package fully coinstallable with other MariaDB versions, by adding -@MARIADB_SERIES@ suffix to libmariadb-dev, libmariadbd-dev, mariadb-test and mariadb-test-data package names; move mariadb-common package into a separate independent source package
+  * Add default socket location for client (Closes: #864662)
+  * Don't disable PIE, it's enabled by upstream anyway (Closes: #865737)
+  * Remove unstable tests patches for unstable build, so we see what is really failing and what is not
+  * Add libconfig-inifiles-perl to mariadb-client-10.1 depends to fix mytop (Closes: #875708)
+  * Add mips64el to the list of platforms that are allowed to fail test suite (Closes: #879637)
 
- -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 21:30:31 +0000
+  [ Christian Ehrhardt ]
+  * d/t/upstream: skip func_regexp_pcre on s390x
+
+  [ Ondřej Surý ]
+  * Change the default optimization from -O3 to -O2 in mysql_release.cmake BUILD_CONFIG profile
+  * Ignore failed tests on more non-release platforms (kfreebsd-i386, kfreebsd-amd64, hppa and sparc64)
+  * Revert to using system pcre library (Closes: #882329)
+  * Remove some non-existing plugins from Debian packages
+
+ -- Ondřej Surý <ondrej@debian.org>  Mon, 08 Jan 2018 21:59:13 +0000
 
 mariadb-10.3 (10.3.0-0+exp2) experimental; urgency=medium
 
