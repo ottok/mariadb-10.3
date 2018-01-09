@@ -48,7 +48,7 @@ fi
 if ! apt-cache madison libcrack2-dev | grep 'libcrack2-dev *| *2\.9' >/dev/null 2>&1
 then
   sed '/libcrack2-dev/d' -i debian/control
-  sed '/Package: mariadb-plugin-cracklib/,+9d' -i debian/control
+  sed '/Package: mariadb-plugin-cracklib/,+11d' -i debian/control
 fi
 
 # If libpcre3-dev (>= 2:8.35-3.2~) is not available (before Debian Jessie or Ubuntu Wily)
@@ -80,7 +80,7 @@ GCCVERSION=$(gcc -dumpversion | sed -e 's/\.\([0-9][0-9]\)/\1/g' -e 's/\.\([0-9]
 # x86 32 bit.
 if [[ $GCCVERSION -lt 40800 ]] || [[ $(arch) =~ i[346]86 ]] || [[ $TRAVIS ]]
 then
-  sed '/Package: mariadb-plugin-rocksdb/,+11d' -i debian/control
+  sed '/Package: mariadb-plugin-rocksdb/,+13d' -i debian/control
 fi
 if [[ $GCCVERSION -lt 40800 ]] || [[ $TRAVIS ]]
 then
