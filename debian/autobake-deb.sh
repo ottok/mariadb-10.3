@@ -68,9 +68,9 @@ then
   sed 's/ --with systemd//' -i debian/rules
   sed '/systemd/d' -i debian/rules
   sed '/\.service/d' -i debian/rules
-  sed '/galera_new_cluster/d' -i debian/mariadb-server-10.3.install
-  sed '/galera_recovery/d' -i debian/mariadb-server-10.3.install
-  sed '/mariadb-service-convert/d' -i debian/mariadb-server-10.3.install
+  sed '/galera_new_cluster/d' -i debian/mariadb-server-@MARIADB_SERIES@.install
+  sed '/galera_recovery/d' -i debian/mariadb-server-@MARIADB_SERIES@.install
+  sed '/mariadb-service-convert/d' -i debian/mariadb-server-@MARIADB_SERIES@.install
 fi
 
 # Convert gcc version to numberical value. Format is Mmmpp where M is Major
