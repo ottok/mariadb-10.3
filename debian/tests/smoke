@@ -21,6 +21,22 @@ set -ex
 # 2) Creates a test table and checks it appears to operate normally
 # using the test user and test database.
 
+# Start the deamon if it was not running. For example in Docker testing
+# environments there might not be any systemd et al and the service needs to
+# be started manually.
+if ! which systemctl
+then
+  if ! /etc/init.d/mysql status
+  then
+    echo "Did not find systemctl and deamon was not running, starting it.."
+    /etc/init.d/mysql start
+  fi
+else
+  # If systemd (and systemctl) is available, but the service did not start, then
+  # this smoke test is supposed to fail if next commands don't work.
+  echo "Found systemctl, continuing smoke test.."
+fi
+
 mysql <<EOT
 CREATE DATABASE testdatabase;
 CREATE USER 'testuser'@'localhost' identified by 'testpassword';
