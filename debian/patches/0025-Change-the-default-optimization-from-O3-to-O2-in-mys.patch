@@ -53,7 +53,7 @@ Subject: Change the default optimization from -O3 to -O2 in
    # Solaris flags
 --- a/storage/tokudb/PerconaFT/cmake_modules/TokuSetupCompiler.cmake
 +++ b/storage/tokudb/PerconaFT/cmake_modules/TokuSetupCompiler.cmake
-@@ -121,10 +121,10 @@ set(CMAKE_CXX_FLAGS_DRD "-g3 -O1 ${CMAKE
+@@ -124,10 +124,10 @@ set(CMAKE_CXX_FLAGS_DRD "-g3 -O1 ${CMAKE
  ## need to set flags for RelWithDebInfo as well because we want the MySQL/MariaDB builds to use them
  if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
    # have tried -flto and -O4, both make our statically linked executables break apple's linker
@@ -68,7 +68,7 @@ Subject: Change the default optimization from -O3 to -O2 in
  else ()
    if (APPLE)
      set(FLTO_OPTS "-fwhole-program")
-@@ -132,10 +132,10 @@ else ()
+@@ -135,10 +135,10 @@ else ()
      set(FLTO_OPTS "-fuse-linker-plugin")
    endif()
    # we overwrite this because the default passes -DNDEBUG and we don't want that

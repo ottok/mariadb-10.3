@@ -15,7 +15,7 @@ Subject: libmariadbclient-rename
 
 --- a/client/CMakeLists.txt
 +++ b/client/CMakeLists.txt
-@@ -32,7 +32,7 @@ COPY_OPENSSL_DLLS(copy_openssl_client)
+@@ -33,7 +33,7 @@ COPY_OPENSSL_DLLS(copy_openssl_client)
  ADD_DEFINITIONS(${SSL_DEFINES})
  MYSQL_ADD_EXECUTABLE(mysql completion_hash.cc mysql.cc readline.cc
                             ${CMAKE_SOURCE_DIR}/sql/sql_string.cc)
@@ -24,7 +24,7 @@ Subject: libmariadbclient-rename
  IF(UNIX)
    TARGET_LINK_LIBRARIES(mysql ${MY_READLINE_LIBRARY})
    SET_TARGET_PROPERTIES(mysql PROPERTIES ENABLE_EXPORTS TRUE)
-@@ -40,39 +40,39 @@ ENDIF(UNIX)
+@@ -41,39 +41,39 @@ ENDIF(UNIX)
  
  MYSQL_ADD_EXECUTABLE(mysqltest mysqltest.cc COMPONENT Test)
  SET_SOURCE_FILES_PROPERTIES(mysqltest.cc PROPERTIES COMPILE_FLAGS "-DTHREADS")
@@ -74,7 +74,7 @@ Subject: libmariadbclient-rename
  
  # "WIN32" also covers 64 bit. "echo" is used in some files below "mysql-test/".
  IF(WIN32)
-@@ -81,7 +81,7 @@ ENDIF(WIN32)
+@@ -82,7 +82,7 @@ ENDIF(WIN32)
  
  # async_example is just a code example, do not install it.
  ADD_EXECUTABLE(async_example async_example.c)

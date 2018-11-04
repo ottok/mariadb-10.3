@@ -6,8 +6,6 @@ Subject: Revert to using system pcre library
  cmake/pcre.cmake | 16 ++--------------
  1 file changed, 2 insertions(+), 14 deletions(-)
 
-diff --git a/cmake/pcre.cmake b/cmake/pcre.cmake
-index 4c11392..894bde3 100644
 --- a/cmake/pcre.cmake
 +++ b/cmake/pcre.cmake
 @@ -1,23 +1,11 @@

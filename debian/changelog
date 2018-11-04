@@ -1,8 +1,16 @@
-mariadb-10.1 (1:10.1.35-2) UNRELEASED; urgency=medium
+mariadb-10.1 (1:10.1.37-1) unstable; urgency=high
 
-  * New changelog entry
+  * New upstream version 10.1.37. Includes security fixes for:
+    - CVE-2018-3282
+    - CVE-2018-3251
+    - CVE-2018-3174
+    - CVE-2018-3156
+    - CVE-2018-3143
+    - CVE-2016-9843
+  * Update README.Contributor based on recent feedback
+  * Update README.Maintainer to match current best practices
 
- -- Otto Kekäläinen <otto@debian.org>  Sat, 25 Aug 2018 22:26:34 +0300
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 04 Nov 2018 19:11:19 +0200
 
 mariadb-10.1 (1:10.1.35-1) unstable; urgency=medium
 

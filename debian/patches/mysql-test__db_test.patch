@@ -14,7 +14,7 @@ Subject: mysql-test__db_test
 
 --- a/mysql-test/mysql-test-run.pl
 +++ b/mysql-test/mysql-test-run.pl
-@@ -3222,6 +3222,10 @@ sub mysql_install_db {
+@@ -3225,6 +3225,10 @@ sub mysql_install_db {
        mtr_appendfile_to_file("$sql_dir/mysql_system_tables_data.sql",
             $bootstrap_sql_file);
  
