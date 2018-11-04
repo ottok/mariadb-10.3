@@ -381,11 +381,6 @@ Files: storage/connect/connect.cc
 Copyright: 2004-2012 Olivier Bertrand
 License: GPL-2+
 
-Files: storage/connect/inihandl.c
-Copyright: 1993 Miguel de Icaza
- 1996 Alexandre Julliard
-License: LGPL-2.1+
-
 Files: storage/oqgraph/ha_oqgraph.*
  storage/oqgraph/oqgraph_probes.d
 Copyright:
@@ -872,7 +867,6 @@ Copyright: 2006, 2014, Oracle and/or its affiliates
 License: GPL-2
 
 Files: cmake/systemd.cmake
- include/my_systemd.h
  scripts/mariadb-service-convert
 Copyright: 2015 Daniel Black
 License: GPL-2

@@ -104,7 +104,6 @@ usr/include/mysql/private/tzfile.h
 usr/include/mysql/private/my_bit.h
 usr/include/mysql/private/rpl_parallel.h
 usr/include/mysql/private/opt_range.h
-usr/include/mysql/private/my_systemd.h
 usr/include/mysql/private/sql_connect.h
 usr/include/mysql/private/strfunc.h
 usr/include/mysql/private/rpl_gtid.h
