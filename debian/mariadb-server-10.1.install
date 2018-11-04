@@ -19,7 +19,6 @@ usr/bin/aria_ftdump
 usr/bin/aria_pack
 usr/bin/aria_read_log
 usr/bin/msql2mysql
-usr/bin/my_print_defaults
 usr/bin/myisam_ftdump
 usr/bin/myisamchk
 usr/bin/myisamlog
@@ -109,7 +108,6 @@ usr/share/man/man1/myisamchk.1
 usr/share/man/man1/myisam_ftdump.1
 usr/share/man/man1/myisamlog.1
 usr/share/man/man1/myisampack.1
-usr/share/man/man1/my_print_defaults.1
 usr/share/man/man1/mysqlbinlog.1
 usr/share/man/man1/mysql_convert_table_format.1
 usr/share/man/man1/mysqld_multi.1
