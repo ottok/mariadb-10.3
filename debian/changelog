@@ -9,6 +9,10 @@ mariadb-10.1 (1:10.1.37-1) unstable; urgency=high
     - CVE-2016-9843
   * Update README.Contributor based on recent feedback
   * Update README.Maintainer to match current best practices
+  * Move my_print_defaults to mariadb-server-core (Closes: #898367)
+  * Update Debian standards version to 4.2.1 (no changes)
+  * Fix minor Lintian complaints
+  * Add (and rename) new man pages
 
  -- Otto Kekäläinen <otto@debian.org>  Sun, 04 Nov 2018 19:11:19 +0200
 
