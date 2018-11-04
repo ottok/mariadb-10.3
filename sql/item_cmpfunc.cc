@@ -4329,11 +4329,20 @@ void Item_func_in::fix_length_and_dec()
       if (field_item->field_type() ==  MYSQL_TYPE_LONGLONG ||
           field_item->field_type() ==  MYSQL_TYPE_YEAR)
       {
-        bool all_converted= TRUE;
+        bool all_converted= true;
         for (arg=args+1, arg_end=args+arg_count; arg != arg_end ; arg++)
         {
-           if (!convert_const_to_int(thd, field_item, &arg[0]))
-            all_converted= FALSE;
+          /*
+            Explicit NULLs should not affect data cmp_type resolution:
+            - we ignore NULLs when calling collect_cmp_type()
+            - we ignore NULLs here
+            So this expression:
+              year_column IN (DATE'2001-01-01', NULL)
+            switches from TIME_RESULT to INT_RESULT.
+          */
+          if (arg[0]->type() != Item::NULL_ITEM &&
+              !convert_const_to_int(thd, field_item, &arg[0]))
+           all_converted= false;
         }
         if (all_converted)
           m_compare_type= INT_RESULT;
@@ -5117,6 +5126,19 @@ bool Item_func_null_predicate::count_sargable_conds(uchar *arg)
 {
   ((SELECT_LEX*) arg)->cond_count++;
   return 0;
+}
+
+
+void Item_func_isnull::print(String *str, enum_query_type query_type)
+{
+  str->append(func_name());
+  str->append('(');
+  if (const_item() && !args[0]->maybe_null &&
+      !(query_type & (QT_NO_DATA_EXPANSION | QT_VIEW_INTERNAL)))
+    str->append("/*always not null*/ 1");
+  else
+    args[0]->print(str, query_type);
+  str->append(')');
 }
 
 

@@ -1,8 +1,8 @@
-commit: 50c426200224a4527e84052aa2ab32be893f43f4
-date: 2018-08-04 22:53:16 +0100
-build-date: 2018-08-04 22:21:00 +0000 
-short: 50c4262
+commit: 8d834cd0f370b306f63c2364552d187fc388e59e
+date: 2018-10-31 23:48:29 +0200
+build-date: 2018-10-31 21:54:07 +0000 
+short: 8d834cd
 branch: HEAD
 
 
-MariaDB source 10.1.35
+MariaDB source 10.1.37

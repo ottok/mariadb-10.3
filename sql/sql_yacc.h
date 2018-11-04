@@ -648,7 +648,7 @@ extern int MYSQLdebug;
     UPDATE_SYM = 858,
     UPGRADE_SYM = 859,
     USAGE = 860,
-    USER = 861,
+    USER_SYM = 861,
     USE_FRM = 862,
     USE_SYM = 863,
     USING = 864,
@@ -1293,7 +1293,7 @@ extern int MYSQLdebug;
 #define UPDATE_SYM 858
 #define UPGRADE_SYM 859
 #define USAGE 860
-#define USER 861
+#define USER_SYM 861
 #define USE_FRM 862
 #define USE_SYM 863
 #define USING 864
@@ -1391,7 +1391,7 @@ union YYSTYPE
   enum enum_diag_condition_item_name diag_condition_item_name;
   enum Diagnostics_information::Which_area diag_area;
   enum Field::geometry_type geom_type;
-  enum Foreign_key::fk_option m_fk_option;
+  enum enum_fk_option m_fk_option;
   enum Item_udftype udf_type;
   enum Key::Keytype key_type;
   enum Statement_information_item::Name stmt_info_item_name;
