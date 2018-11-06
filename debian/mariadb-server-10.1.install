@@ -82,9 +82,9 @@ usr/share/mysql/policy/selinux/README
 usr/share/mysql/policy/selinux/mariadb-server.fc
 usr/share/mysql/policy/selinux/mariadb-server.te
 usr/share/mysql/policy/selinux/mariadb.te
-usr/share/mysql/systemd/use_galera_new_cluster.conf
-usr/share/mysql/systemd/mariadb.service
-usr/share/mysql/systemd/mariadb@.service
+[linux-any] usr/share/mysql/systemd/use_galera_new_cluster.conf
+[linux-any] usr/share/mysql/systemd/mariadb.service
+[linux-any] usr/share/mysql/systemd/mariadb@.service
 usr/share/mysql/wsrep_notify
 usr/share/mysql/mysql.server
 usr/share/mysql/my-large.cnf
