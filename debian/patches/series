@@ -23,3 +23,4 @@ mytop-merge_src:mytop_improvements.patch
 Add_default_ExecStartPre_to_mariadb@.service.patch
 0024-Revert-to-using-system-pcre-library.patch
 0025-Change-the-default-optimization-from-O3-to-O2-in-mys.patch
+hurd.patch
