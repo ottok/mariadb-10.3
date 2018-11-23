@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include "mariadb.h"
 #include <mysqld.h>
 #include "sql_base.h"
 #include "rpl_filter.h"
@@ -98,7 +99,8 @@ void wsrep_register_hton(THD* thd, bool all)
          * replicated unless we declare wsrep hton as read/write here
 	 */
         if (i->is_trx_read_write() ||
-            (thd->lex->sql_command == SQLCOM_CREATE_TABLE &&
+            ((thd->lex->sql_command == SQLCOM_CREATE_TABLE ||
+              thd->lex->sql_command == SQLCOM_CREATE_SEQUENCE) &&
              thd->wsrep_exec_mode == LOCAL_STATE))
         {
           thd->ha_data[wsrep_hton->slot].ha_info[all].set_trx_read_write();
@@ -273,8 +275,7 @@ static int wsrep_rollback(handlerton *hton, THD *thd, bool all)
     {
       DBUG_PRINT("wsrep", ("setting rollback fail"));
       WSREP_ERROR("settting rollback fail: thd: %llu, schema: %s, SQL: %s",
-                  (long long)thd->real_id, (thd->db ? thd->db : "(null)"),
-                  thd->query());
+                  (long long)thd->real_id, thd->get_db(), thd->query());
     }
     wsrep_cleanup_transaction(thd);
   }
@@ -315,7 +316,7 @@ int wsrep_commit(handlerton *hton, THD *thd, bool all)
         {
           DBUG_PRINT("wsrep", ("setting rollback fail"));
           WSREP_ERROR("settting rollback fail: thd: %llu, schema: %s, SQL: %s",
-                      (long long)thd->real_id, (thd->db ? thd->db : "(null)"),
+                      (long long)thd->real_id, thd->get_db(),
                       thd->query());
         }
       }
@@ -389,6 +390,11 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
 
   mysql_mutex_lock(&LOCK_wsrep_replaying);
 
+  DBUG_PRINT("info", ("wsrep_replaying: %d  wsrep_conflict_state: %d  killed: %d  shutdown_in_progress: %d",
+                      (int) wsrep_replaying, (int) thd->wsrep_conflict_state,
+                      (int) thd->killed,
+                      (int) shutdown_in_progress));
+
   while (wsrep_replaying > 0                       &&
          thd->wsrep_conflict_state == NO_CONFLICT  &&
          thd->killed == NOT_KILLED            &&
@@ -399,7 +405,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     mysql_mutex_unlock(&thd->LOCK_thd_data);
 
     mysql_mutex_lock(&thd->mysys_var->mutex);
-    thd_proc_info(thd, "wsrep waiting on replaying");
+    thd_proc_info(thd, "WSREP waiting on replaying");
     thd->mysys_var->current_mutex= &LOCK_wsrep_replaying;
     thd->mysys_var->current_cond=  &COND_wsrep_replaying;
     mysql_mutex_unlock(&thd->mysys_var->mutex);
@@ -412,9 +418,9 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
 			 &wtime);
 
     if (replay_round++ % 100000 == 0)
-      WSREP_DEBUG("commit waiting for replaying: replayers %d, thd: (%lu) "
+      WSREP_DEBUG("commit waiting for replaying: replayers %d, thd: %lld "
                   "conflict: %d (round: %d)",
-		  wsrep_replaying, thd->thread_id,
+		  wsrep_replaying, (longlong) thd->thread_id,
                   thd->wsrep_conflict_state, replay_round);
 
     mysql_mutex_unlock(&LOCK_wsrep_replaying);
@@ -452,6 +458,9 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     }
   }
 
+  DBUG_PRINT("info", ("rcode: %d  wsrep_conflict_state: %d",
+                      rcode, thd->wsrep_conflict_state));
+
   if (data_len == 0)
   {
     if (thd->get_stmt_da()->is_ok()              &&
@@ -478,12 +487,12 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
 
   if (WSREP_UNDEFINED_TRX_ID == thd->wsrep_ws_handle.trx_id)
   {
-    WSREP_WARN("SQL statement was ineffective, THD: %lu, buf: %zu\n"
+    WSREP_WARN("SQL statement was ineffective  thd: %lld  buf: %zu\n"
                "schema: %s \n"
 	       "QUERY: %s\n"
 	       " => Skipping replication",
-	       thd->thread_id, data_len,
-               (thd->db ? thd->db : "(null)"), thd->query());
+	       (longlong) thd->thread_id, data_len,
+               thd->get_db(), thd->query());
     rcode = WSREP_TRX_FAIL;
   }
   else if (!rcode)
@@ -497,21 +506,25 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
                                  0ULL : WSREP_FLAG_PA_UNSAFE),
                                 &thd->wsrep_trx_meta);
 
+    DBUG_PRINT("info", ("rcode after pre_commit: %d", rcode));
+
     if (rcode == WSREP_TRX_MISSING) {
-      WSREP_WARN("Transaction missing in provider, thd: %ld, schema: %s, SQL: %s",
-                 thd->thread_id, (thd->db ? thd->db : "(null)"), thd->query());
+      WSREP_WARN("Transaction missing in provider, thd: %lld  schema: %s  SQL: %s",
+                 (longlong) thd->thread_id,
+                 thd->get_db(), thd->query());
       rcode = WSREP_TRX_FAIL;
     } else if (rcode == WSREP_BF_ABORT) {
-      WSREP_DEBUG("thd %lu seqno %lld BF aborted by provider, will replay",
-                  thd->thread_id, (long long)thd->wsrep_trx_meta.gtid.seqno);
+      WSREP_DEBUG("thd: %lld  seqno: %lld  BF aborted by provider, will replay",
+                  (longlong) thd->thread_id,
+                  (longlong) thd->wsrep_trx_meta.gtid.seqno);
       mysql_mutex_lock(&thd->LOCK_thd_data);
       thd->wsrep_conflict_state = MUST_REPLAY;
       DBUG_ASSERT(wsrep_thd_trx_seqno(thd) > 0);
       mysql_mutex_unlock(&thd->LOCK_thd_data);
       mysql_mutex_lock(&LOCK_wsrep_replaying);
       wsrep_replaying++;
-      WSREP_DEBUG("replaying increased: %d, thd: %lu",
-                  wsrep_replaying, thd->thread_id);
+      WSREP_DEBUG("replaying increased: %d, thd: %lld",
+                  wsrep_replaying, (longlong) thd->thread_id);
       mysql_mutex_unlock(&LOCK_wsrep_replaying);
     }
   } else {
@@ -524,6 +537,9 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
   mysql_mutex_lock(&thd->LOCK_thd_data);
 
   DEBUG_SYNC(thd, "wsrep_after_replication");
+
+  DBUG_PRINT("info", ("rcode: %d  wsrep_conflict_state: %d",
+                      rcode, thd->wsrep_conflict_state));
 
   switch(rcode) {
   case 0:
@@ -538,9 +554,9 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
 
     if (thd->wsrep_conflict_state != NO_CONFLICT)
     {
-      WSREP_WARN("thd %lu seqno %lld: conflict state %d after post commit",
-                 thd->thread_id,
-                 (long long)thd->wsrep_trx_meta.gtid.seqno,
+      WSREP_WARN("thd: %llu  seqno: %lld  conflict state %d after post commit",
+                 (longlong) thd->thread_id,
+                 (longlong) thd->wsrep_trx_meta.gtid.seqno,
                  thd->wsrep_conflict_state);
     }
     thd->wsrep_exec_mode= LOCAL_COMMIT;

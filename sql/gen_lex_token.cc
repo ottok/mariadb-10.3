@@ -14,14 +14,12 @@
    along with this program; if not, write to the Free Software Foundation,
    51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
 
-#include <my_global.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include "mariadb.h"
 #include <string.h>
 
 /* We only need the tokens here */
 #define YYSTYPE_IS_DECLARED
-#include <sql_yacc.h>
+#include <sql_yacc.hh>
 #include <lex.h>
 
 #include <welcome_copyright_notice.h> /* ORACLE_WELCOME_COPYRIGHT_NOTICE */
@@ -35,7 +33,7 @@
   from bison.
   See also YYMAXUTOK.
 */
-#define MY_MAX_TOKEN 1000
+#define MY_MAX_TOKEN 1100
 /** Generated token. */
 struct gen_lex_token_string
 {
@@ -79,7 +77,7 @@ void set_token(int tok, const char *str)
   }
 
   compiled_token_array[tok].m_token_string= str;
-  compiled_token_array[tok].m_token_length= strlen(str);
+  compiled_token_array[tok].m_token_length= (int)strlen(str);
   compiled_token_array[tok].m_append_space= true;
   compiled_token_array[tok].m_start_expr= false;
 }
@@ -132,6 +130,10 @@ void compute_tokens()
 
   set_token(WITH_CUBE_SYM, "WITH CUBE");
   set_token(WITH_ROLLUP_SYM, "WITH ROLLUP");
+  set_token(WITH_SYSTEM_SYM, "WITH SYSTEM");
+  set_token(FOR_SYSTEM_TIME_SYM, "FOR SYSTEM_TIME");
+  set_token(VALUES_IN_SYM, "VALUES IN");
+  set_token(VALUES_LESS_SYM, "VALUES LESS");
   set_token(NOT2_SYM, "!");
   set_token(OR2_SYM, "|");
   set_token(PARAM_MARKER, "?");
@@ -253,9 +255,11 @@ void compute_tokens()
   set_start_expr_token(STARTS_SYM);
   set_start_expr_token(ENDS_SYM);
   set_start_expr_token(DEFAULT);
-  set_start_expr_token(RETURN_SYM);
+  set_start_expr_token(RETURN_MARIADB_SYM);
+  set_start_expr_token(RETURN_ORACLE_SYM);
   set_start_expr_token(IF_SYM);
-  set_start_expr_token(ELSEIF_SYM);
+  set_start_expr_token(ELSEIF_MARIADB_SYM);
+  set_start_expr_token(ELSEIF_ORACLE_SYM);
   set_start_expr_token(CASE_SYM);
   set_start_expr_token(WHEN_SYM);
   set_start_expr_token(WHILE_SYM);

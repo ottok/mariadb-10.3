@@ -23,7 +23,6 @@
 #include <mysys_err.h>
 #include <my_getopt.h>
 #include <errno.h>
-#include <m_string.h>
 
 typedef void (*init_func_p)(const struct my_option *option, void *variable,
                             longlong value);
@@ -237,7 +236,7 @@ int handle_options(int *argc, char ***argv,
     {
       is_cmdline_arg= 1;
 
-      /* save the separator too if skip unkown options  */
+      /* save the separator too if skip unknown options  */
       if (my_getopt_skip_unknown)
         (*argv)[argvpos++]= cur_arg;
       else
@@ -827,7 +826,7 @@ static int setval(const struct my_option *opts, void *value, char *argument,
         *((ulonglong*)value)=
               find_set_from_flags(opts->typelib, opts->typelib->count, 
                                   *(ulonglong *)value, opts->def_value,
-                                  argument, strlen(argument),
+                                  argument, (uint)strlen(argument),
                                   &error, &error_len);
         if (error)
         {
@@ -836,6 +835,27 @@ static int setval(const struct my_option *opts, void *value, char *argument,
         };
       }
       break;
+    case GET_BIT:
+    {
+      uint tmp;
+      ulonglong bit= (opts->block_size >= 0 ?
+                      opts->block_size :
+                      -opts->block_size);
+      /*
+        This sets a bit stored in a longlong.
+        The bit to set is stored in block_size. If block_size is positive
+        then setting the bit means value is true. If block_size is negatitive,
+        then setting the bit means value is false.
+      */
+      tmp= get_bool_argument(opts, argument);
+      if (opts->block_size < 0)
+        tmp= !tmp;
+      if (tmp)
+        (*(ulonglong*)value)|= bit;
+      else
+        (*(ulonglong*)value)&= ~bit;
+      break;
+    }
     case GET_NO_ARG: /* get_one_option has taken care of the value already */
     default:         /* dummy default to avoid compiler warnings */
       break;
@@ -949,31 +969,43 @@ my_bool getopt_compare_strings(register const char *s, register const char *t,
 /*
   function: eval_num_suffix
 
-  Transforms suffix like k/m/g to their real value.
+  Transforms suffix like k/m/g/t/p/e to their real value.
 */
 
-static inline long eval_num_suffix(char *suffix, int *error)
+static inline ulonglong eval_num_suffix(char *suffix, int *error)
 {
-  long num= 1;
-  if (*suffix == 'k' || *suffix == 'K')
-    num*= 1024L;
-  else if (*suffix == 'm' || *suffix == 'M')
-    num*= 1024L * 1024L;
-  else if (*suffix == 'g' || *suffix == 'G')
-    num*= 1024L * 1024L * 1024L;
-  else if (*suffix)
-  {
+  switch (*suffix) {
+  case '\0':
+    return 1ULL;
+  case 'k':
+  case 'K':
+    return 1ULL << 10;
+  case 'm':
+  case 'M':
+    return 1ULL << 20;
+  case 'g':
+  case 'G':
+    return 1ULL << 30;
+  case 't':
+  case 'T':
+    return 1ULL << 40;
+  case 'p':
+  case 'P':
+    return 1ULL << 50;
+  case 'e':
+  case 'E':
+    return 1ULL << 60;
+  default:
     *error= 1;
-    return 0;
+    return 0ULL;
   }
- return num;
 }
 
 /*
   function: eval_num_suffix_ll
 
   Transforms a number with a suffix to real number. Suffix can
-  be k|K for kilo, m|M for mega or g|G for giga.
+  be k|K for kilo, m|M for mega, etc.
 */
 
 static longlong eval_num_suffix_ll(char *argument,
@@ -1006,7 +1038,7 @@ static longlong eval_num_suffix_ll(char *argument,
   function: eval_num_suffix_ull
 
   Transforms a number with a suffix to positive Integer. Suffix can
-  be k|K for kilo, m|M for mega or g|G for giga.
+  be k|K for kilo, m|M for mega, etc.
 */
 
 static ulonglong eval_num_suffix_ull(char *argument,
@@ -1289,6 +1321,19 @@ static void init_one_value(const struct my_option *option, void *variable,
   case GET_FLAGSET:
     *((ulonglong*) variable)= (ulonglong) value;
     break;
+  case GET_BIT:
+  {
+    ulonglong bit= (option->block_size >= 0 ?
+                    option->block_size :
+                    -option->block_size);
+    if (option->block_size < 0)
+      value= !value;
+    if (value)
+      (*(ulonglong*)variable)|= bit;
+    else
+      (*(ulonglong*)variable)&= ~bit;
+    break;
+  }
   case GET_DOUBLE:
     *((double*) variable)= getopt_ulonglong2double(value);
     break;
@@ -1400,7 +1445,7 @@ static uint print_name(const struct my_option *optp)
 
   for (;*s;s++)
     putchar(*s == '_' ? '-' : *s);
-  return s - optp->name;
+  return (uint)(s - optp->name);
 }
 
 /** prints option comment with indentation and wrapping.
@@ -1441,7 +1486,7 @@ static uint print_comment(const char *comment,
       putchar(' ');
   }
   printf("%s", comment);
-  return curpos + (end - comment);
+  return curpos + (int)(end - comment);
 }
 
 
@@ -1477,7 +1522,8 @@ void my_print_help(const struct my_option *options)
       printf("--");
       col+= 2 + print_name(optp);
       if (optp->arg_type == NO_ARG ||
-	  (optp->var_type & GET_TYPE_MASK) == GET_BOOL)
+	  (optp->var_type & GET_TYPE_MASK) == GET_BOOL ||
+          (optp->var_type & GET_TYPE_MASK) == GET_BIT)
       {
 	putchar(' ');
 	col++;
@@ -1575,7 +1621,7 @@ void my_print_variables(const struct my_option *options)
 
   for (optp= options; optp->name; optp++)
   {
-    length= strlen(optp->name)+1;
+    length= (uint)strlen(optp->name)+1;
     if (length > name_space)
       name_space= length;
   }
@@ -1627,6 +1673,16 @@ void my_print_variables(const struct my_option *options)
       case GET_BOOL:
 	printf("%s\n", *((my_bool*) value) ? "TRUE" : "FALSE");
 	break;
+      case GET_BIT:
+      {
+        ulonglong bit= (optp->block_size >= 0 ?
+                        optp->block_size :
+                        -optp->block_size);
+        my_bool reverse= optp->block_size < 0;
+	printf("%s\n", ((*((ulonglong*) value) & bit) != 0) ^ reverse ?
+               "TRUE" : "FALSE");
+	break;
+      }
       case GET_INT:
 	printf("%d\n", *((int*) value));
 	break;

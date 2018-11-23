@@ -20,7 +20,7 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "procedure.h"
 #include "sql_analyse.h"			// Includes procedure
@@ -89,14 +89,14 @@ setup_procedure(THD *thd,ORDER *param,select_result *result,
   for (i=0 ; i < array_elements(sql_procs) ; i++)
   {
     if (!my_strcasecmp(system_charset_info,
-                       (*param->item)->name,sql_procs[i].name))
+                       (*param->item)->name.str, sql_procs[i].name))
     {
       Procedure *proc=(*sql_procs[i].init)(thd,param,result,field_list);
       *error= !proc;
       DBUG_RETURN(proc);
     }
   }
-  my_error(ER_UNKNOWN_PROCEDURE, MYF(0), (*param->item)->name);
+  my_error(ER_UNKNOWN_PROCEDURE, MYF(0), (*param->item)->name.str);
   *error=1;
   DBUG_RETURN(0);
 }

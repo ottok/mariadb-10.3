@@ -13,18 +13,19 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
-INCLUDE(FindPkgConfig)
-# http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
-
 MACRO(CHECK_SYSTEMD)
   IF(UNIX)
+    INCLUDE(FindPkgConfig)
+    # http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
     SET(WITH_SYSTEMD "auto" CACHE STRING "Enable systemd scripts and notification support")
     IF(WITH_SYSTEMD STREQUAL "yes" OR WITH_SYSTEMD STREQUAL "auto")
       IF(PKG_CONFIG_FOUND)
-        IF(WITH_SYSTEMD STREQUAL "yes")
-          pkg_search_module(LIBSYSTEMD REQUIRED libsystemd libsystemd-daemon)
-        ELSE()
-          pkg_search_module(LIBSYSTEMD libsystemd libsystemd-daemon)
+        IF (NOT DEFINED LIBSYSTEMD_FOUND)
+          IF(WITH_SYSTEMD STREQUAL "yes")
+            pkg_search_module(LIBSYSTEMD REQUIRED libsystemd libsystemd-daemon)
+          ELSE()
+            pkg_search_module(LIBSYSTEMD libsystemd libsystemd-daemon)
+          ENDIF()
         ENDIF()
         IF(HAVE_DLOPEN)
           SET(LIBSYSTEMD ${LIBSYSTEMD_LIBRARIES})
@@ -56,17 +57,11 @@ MACRO(CHECK_SYSTEMD)
          AND HAVE_SYSTEMD_SD_NOTIFY AND HAVE_SYSTEMD_SD_NOTIFYF)
         ADD_DEFINITIONS(-DHAVE_SYSTEMD)
         SET(SYSTEMD_SCRIPTS mariadb-service-convert galera_new_cluster galera_recovery)
-        SET(SYSTEMD_DEB_FILES "usr/bin/mariadb-service-convert
-                               usr/bin/galera_new_cluster
-                               usr/bin/galera_recovery
-                               ${INSTALL_SYSTEMD_UNITDIR}/mariadb.service
-                               ${INSTALL_SYSTEMD_UNITDIR}/mariadb@.service
-                               ${INSTALL_SYSTEMD_UNITDIR}/mariadb@bootstrap.service.d/use_galera_new_cluster.conf")
         IF(DEB)
           SET(SYSTEMD_EXECSTARTPRE "ExecStartPre=/usr/bin/install -m 755 -o mysql -g root -d /var/run/mysqld")
           SET(SYSTEMD_EXECSTARTPOST "ExecStartPost=/etc/mysql/debian-start")
         ENDIF()
-        MESSAGE(STATUS "Systemd features enabled")
+        MESSAGE_ONCE(systemd "Systemd features enabled")
       ELSE()
         UNSET(LIBSYSTEMD)
         UNSET(HAVE_SYSTEMD)
@@ -74,7 +69,7 @@ MACRO(CHECK_SYSTEMD)
         UNSET(HAVE_SYSTEMD_SD_LISTEN_FDS)
         UNSET(HAVE_SYSTEMD_SD_NOTIFY)
         UNSET(HAVE_SYSTEMD_SD_NOTIFYF)
-        MESSAGE(STATUS "Systemd features not enabled")
+        MESSAGE_ONCE(systemd "Systemd features not enabled")
         IF(WITH_SYSTEMD STREQUAL "yes")
           MESSAGE(FATAL_ERROR "Requested WITH_SYSTEMD=yes however no dependencies installed/found")
         ENDIF()

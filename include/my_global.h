@@ -153,13 +153,11 @@
 */
 #if defined(__APPLE__) && defined(__MACH__)
 #  undef SIZEOF_CHARP 
-#  undef SIZEOF_SHORT 
 #  undef SIZEOF_INT 
 #  undef SIZEOF_LONG 
 #  undef SIZEOF_LONG_LONG 
 #  undef SIZEOF_OFF_T 
 #  undef WORDS_BIGENDIAN
-#  define SIZEOF_SHORT 2
 #  define SIZEOF_INT 4
 #  define SIZEOF_LONG_LONG 8
 #  define SIZEOF_OFF_T 8
@@ -180,7 +178,7 @@
 
 /*
   The macros below are borrowed from include/linux/compiler.h in the
-  Linux kernel. Use them to indicate the likelyhood of the truthfulness
+  Linux kernel. Use them to indicate the likelihood of the truthfulness
   of a condition. This serves two purposes - newer versions of gcc will be
   able to optimize for branch predication, which could yield siginficant
   performance gains in frequently executed sections of the code, and the
@@ -190,15 +188,6 @@
 #if !defined(__GNUC__) || (__GNUC__ == 2 && __GNUC_MINOR__ < 96)
 #define __builtin_expect(x, expected_value) (x)
 #endif
-
-/**
-  The semantics of builtin_expect() are that
-  1) its two arguments are long
-  2) it's likely that they are ==
-  Those of our likely(x) are that x can be bool/int/longlong/pointer.
-*/
-#define likely(x)	__builtin_expect(((x) != 0),1)
-#define unlikely(x)	__builtin_expect(((x) != 0),0)
 
 /* Fix problem with S_ISLNK() on Linux */
 #if defined(TARGET_OS_LINUX) || defined(__GLIBC__)
@@ -257,7 +246,9 @@
   AIX includes inttypes.h from sys/types.h
   Explicitly request format macros before the first inclusion of inttypes.h
 */
-#define __STDC_FORMAT_MACROS  
+#if !defined(__STDC_FORMAT_MACROS)
+#define __STDC_FORMAT_MACROS
+#endif  // !defined(__STDC_FORMAT_MACROS)
 #endif
 
 
@@ -386,6 +377,36 @@ C_MODE_END
 #include <crypt.h>
 #endif
 
+/* Add checking if we are using likely/unlikely wrong */
+#ifdef CHECK_UNLIKELY
+C_MODE_START
+extern void init_my_likely(), end_my_likely(FILE *);
+extern int my_likely_ok(const char *file_name, uint line);
+extern int my_likely_fail(const char *file_name, uint line);
+C_MODE_END
+
+#define likely(A) ((A) ? (my_likely_ok(__FILE__, __LINE__),1) : (my_likely_fail(__FILE__, __LINE__), 0))
+#define unlikely(A) ((A) ? (my_likely_fail(__FILE__, __LINE__),1) : (my_likely_ok(__FILE__, __LINE__), 0))
+/*
+  These macros should be used when the check fails often when running benchmarks but
+  we know for sure that the check is correct in a production environment
+*/
+#define checked_likely(A) (A)
+#define checked_unlikely(A) (A)
+#else
+/**
+  The semantics of builtin_expect() are that
+  1) its two arguments are long
+  2) it's likely that they are ==
+  Those of our likely(x) are that x can be bool/int/longlong/pointer.
+*/
+
+#define likely(x)	__builtin_expect(((x) != 0),1)
+#define unlikely(x)	__builtin_expect(((x) != 0),0)
+#define checked_likely(x) likely(x)
+#define checked_unlikely(x) unlikely(x)
+#endif /* CHECK_UNLIKELY */
+
 /*
   A lot of our programs uses asserts, so better to always include it
   This also fixes a problem when people uses DBUG_ASSERT without including
@@ -462,7 +483,7 @@ extern "C" int madvise(void *addr, size_t len, int behav);
 #define UNINIT_VAR(x) x
 #endif
 
-/* This is only to be used when reseting variables in a class constructor */
+/* This is only to be used when resetting variables in a class constructor */
 #if defined(_lint) || defined(FORCE_INIT_OF_VARS)
 #define LINT_INIT(x) x= 0
 #else
@@ -529,7 +550,7 @@ typedef SOCKET my_socket;
 typedef int	my_socket;	/* File descriptor for sockets */
 #define INVALID_SOCKET -1
 #endif
-/* Type for fuctions that handles signals */
+/* Type for functions that handles signals */
 #define sig_handler RETSIGTYPE
 C_MODE_START
 #ifdef HAVE_SIGHANDLER_T
@@ -555,7 +576,7 @@ C_MODE_START
 typedef int	(*qsort_cmp)(const void *,const void *);
 typedef int	(*qsort_cmp2)(void*, const void *,const void *);
 C_MODE_END
-#define qsort_t RETQSORTTYPE	/* Broken GCC cant handle typedef !!!! */
+#define qsort_t RETQSORTTYPE	/* Broken GCC can't handle typedef !!!! */
 #ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
 #endif
@@ -581,8 +602,8 @@ typedef SOCKET_SIZE_TYPE size_socket;
 #endif
 #endif /* O_SHARE */
 
-#ifndef O_TEMPORARY
-#define O_TEMPORARY	0
+#ifndef O_SEQUENTIAL
+#define O_SEQUENTIAL	0
 #endif
 #ifndef O_SHORT_LIVED
 #define O_SHORT_LIVED	0
@@ -685,7 +706,7 @@ typedef SOCKET_SIZE_TYPE size_socket;
   smaller what the disk page size. This influences the speed of the
   isam btree library. eg to big to slow.
 */
-#define IO_SIZE			4096
+#define IO_SIZE			4096U
 /*
   How much overhead does malloc have. The code often allocates
   something like 1024-MALLOC_OVERHEAD bytes
@@ -714,7 +735,7 @@ typedef SOCKET_SIZE_TYPE size_socket;
 #define closesocket(A)	close(A)
 #endif
 
-#if (_MSC_VER)
+#if defined(_MSC_VER)
 #if !defined(_WIN64)
 inline double my_ulonglong2double(unsigned long long value)
 {
@@ -811,27 +832,6 @@ inline unsigned long long my_double2ulonglong(double d)
 #define SIZE_T_MAX      (~((size_t) 0))
 #endif
 
-#ifndef isfinite
-#ifdef HAVE_FINITE
-#define isfinite(x) finite(x)
-#else
-#define finite(x) (1.0 / fabs(x) > 0.0)
-#endif /* HAVE_FINITE */
-#elif (__cplusplus >= 201103L)
-#include <cmath>
-static inline bool isfinite(double x) { return std::isfinite(x); }
-#endif /* isfinite */
-
-#ifndef HAVE_ISNAN
-#define isnan(x) ((x) != (x))
-#endif
-
-#ifdef HAVE_ISINF
-#define my_isinf(X) isinf(X)
-#else /* !HAVE_ISINF */
-#define my_isinf(X) (!finite(X) && !isnan(X))
-#endif
-
 /* Define missing math constants. */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -843,20 +843,9 @@ static inline bool isfinite(double x) { return std::isfinite(x); }
 #define M_LN2 0.69314718055994530942
 #endif
 
-#ifndef HAVE_LOG2
-/*
-  This will be slightly slower and perhaps a tiny bit less accurate than
-  doing it the IEEE754 way but log2() should be available on C99 systems.
-*/
-static inline double log2(double x)
-{
-  return (log(x) / M_LN2);
-}
-#endif
-
 /*
   Max size that must be added to a so that we know Size to make
-  adressable obj.
+  addressable obj.
 */
 #if SIZEOF_CHARP == 4
 typedef long		my_ptrdiff_t;
@@ -868,7 +857,7 @@ typedef long long	my_ptrdiff_t;
 #define MY_ALIGN_DOWN(A,L) ((A) & ~((L) - 1))
 #define ALIGN_SIZE(A)	MY_ALIGN((A),sizeof(double))
 #define ALIGN_MAX_UNIT  (sizeof(double))
-/* Size to make adressable obj. */
+/* Size to make addressable obj. */
 #define ALIGN_PTR(A, t) ((t*) MY_ALIGN((A), sizeof(double)))
 #define ADD_TO_PTR(ptr,size,type) (type) ((uchar*) (ptr)+size)
 #define PTR_BYTE_DIFF(A,B) (my_ptrdiff_t) ((uchar*) (A) - (uchar*) (B))
@@ -997,7 +986,6 @@ typedef unsigned long my_off_t;
   TODO Convert these to use Bitmap class.
  */
 typedef ulonglong table_map;          /* Used for table bits in join */
-typedef ulong nesting_map;  /* Used for flags of nesting constructs */
 
 /* often used type names - opaque declarations */
 typedef const struct charset_info_st CHARSET_INFO;
@@ -1065,7 +1053,9 @@ typedef ulong		myf;	/* Type of MyFlags in my_funcs */
 
 #include <my_byteorder.h>
 
-#ifdef HAVE_CHARSET_utf8
+#ifdef HAVE_CHARSET_utf8mb4
+#define MYSQL_UNIVERSAL_CLIENT_CHARSET "utf8mb4"
+#elif defined(HAVE_CHARSET_utf8)
 #define MYSQL_UNIVERSAL_CLIENT_CHARSET "utf8"
 #else
 #define MYSQL_UNIVERSAL_CLIENT_CHARSET MYSQL_DEFAULT_CHARSET_NAME
@@ -1078,6 +1068,7 @@ typedef ulong		myf;	/* Type of MyFlags in my_funcs */
 #ifdef _WIN32
 #define dlsym(lib, name) (void*)GetProcAddress((HMODULE)lib, name)
 #define dlopen(libname, unused) LoadLibraryEx(libname, NULL, 0)
+#define RTLD_DEFAULT GetModuleHandle(NULL)
 #define dlclose(lib) FreeLibrary((HMODULE)lib)
 static inline char *dlerror(void)
 {
@@ -1159,7 +1150,7 @@ typedef struct { const char *dli_fname, dli_fbase; } Dl_info;
 
 /* Provide __func__ macro definition for platforms that miss it. */
 #if !defined (__func__)
-#if __STDC_VERSION__ < 199901L
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ < 199901L
 #  if __GNUC__ >= 2
 #    define __func__ __FUNCTION__
 #  else
@@ -1177,41 +1168,6 @@ typedef struct { const char *dli_fname, dli_fbase; } Dl_info;
 #  define __func__ "<unknown>"
 #endif
 #endif /* !defined(__func__) */
-
-#ifndef HAVE_RINT
-/**
-   All integers up to this number can be represented exactly as double precision
-   values (DBL_MANT_DIG == 53 for IEEE 754 hardware).
-*/
-#define MAX_EXACT_INTEGER ((1LL << DBL_MANT_DIG) - 1)
-
-/**
-   rint(3) implementation for platforms that do not have it.
-   Always rounds to the nearest integer with ties being rounded to the nearest
-   even integer to mimic glibc's rint() behavior in the "round-to-nearest"
-   FPU mode. Hardware-specific optimizations are possible (frndint on x86).
-   Unlike this implementation, hardware will also honor the FPU rounding mode.
-*/
-
-static inline double rint(double x)
-{
-  double f, i;
-  f = modf(x, &i);
-  /*
-    All doubles with absolute values > MAX_EXACT_INTEGER are even anyway,
-    no need to check it.
-  */
-  if (x > 0.0)
-    i += (double) ((f > 0.5) || (f == 0.5 &&
-                                 i <= (double) MAX_EXACT_INTEGER &&
-                                 (longlong) i % 2));
-  else
-    i -= (double) ((f < -0.5) || (f == -0.5 &&
-                                  i >= (double) -MAX_EXACT_INTEGER &&
-                                  (longlong) i % 2));
-  return i;
-}
-#endif /* HAVE_RINT */
 
 /* 
   MYSQL_PLUGIN_IMPORT macro is used to export mysqld data
@@ -1246,4 +1202,30 @@ static inline double rint(double x)
 #undef __GNUG__
 #endif
 
+/*
+  Provide defaults for the CPU cache line size, if it has not been detected by
+  CMake using getconf
+*/
+#if !defined(CPU_LEVEL1_DCACHE_LINESIZE) || CPU_LEVEL1_DCACHE_LINESIZE == 0
+  #if defined(CPU_LEVEL1_DCACHE_LINESIZE) && CPU_LEVEL1_DCACHE_LINESIZE == 0
+    #undef CPU_LEVEL1_DCACHE_LINESIZE
+  #endif
+
+  #if defined(__s390__)
+    #define CPU_LEVEL1_DCACHE_LINESIZE 256
+  #elif defined(__powerpc__) || defined(__aarch64__)
+    #define CPU_LEVEL1_DCACHE_LINESIZE 128
+  #else
+    #define CPU_LEVEL1_DCACHE_LINESIZE 64
+  #endif
+#endif
+
+#define FLOATING_POINT_DECIMALS 31
+
+/* Keep client compatible with earlier versions */
+#ifdef MYSQL_SERVER
+#define NOT_FIXED_DEC           DECIMAL_NOT_SPECIFIED
+#else
+#define NOT_FIXED_DEC           FLOATING_POINT_DECIMALS
+#endif
 #endif /* my_global_h */

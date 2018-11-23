@@ -21,6 +21,7 @@
   upper level.
 */
 
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_select.h"
 
@@ -62,9 +63,8 @@ int Pushdown_query::execute(JOIN *join)
 
   while (!(err= handler->next_row()))
   {
-    if (thd->check_killed())
+    if (unlikely(thd->check_killed()))
     {
-      thd->send_kill_message();
       handler->end_scan();
       DBUG_RETURN(-1);
     }
@@ -77,7 +77,7 @@ int Pushdown_query::execute(JOIN *join)
         if ((err= table->file->ha_write_tmp_row(table->record[0])))
         {
           bool is_duplicate;
-          if (!table->file->is_fatal_error(err, HA_CHECK_DUP))
+          if (likely(!table->file->is_fatal_error(err, HA_CHECK_DUP)))
             continue;                           // Distinct elimination
 
           if (create_internal_tmp_table_from_heap(thd, table,
@@ -97,7 +97,7 @@ int Pushdown_query::execute(JOIN *join)
         {
           int error;
           /* result < 0 if row was not accepted and should not be counted */
-          if ((error= join->result->send_data(*join->fields)))
+          if (unlikely((error= join->result->send_data(*join->fields))))
           {
             handler->end_scan();
             DBUG_RETURN(error < 0 ? 0 : -1);

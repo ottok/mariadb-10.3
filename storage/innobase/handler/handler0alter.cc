@@ -22,86 +22,349 @@ this program; if not, write to the Free Software Foundation, Inc.,
 Smart ALTER TABLE
 *******************************************************/
 
-#include <my_global.h>
-#include <unireg.h>
-#include <mysqld_error.h>
-#include <log.h>
+/* Include necessary SQL headers */
+#include "ha_prototypes.h"
 #include <debug_sync.h>
-#include <innodb_priv.h>
-#include <sql_alter.h>
+#include <log.h>
+#include <sql_lex.h>
 #include <sql_class.h>
 #include <sql_table.h>
+#include <mysql/plugin.h>
 
+/* Include necessary InnoDB headers */
+#include "btr0sea.h"
 #include "dict0crea.h"
 #include "dict0dict.h"
 #include "dict0priv.h"
 #include "dict0stats.h"
 #include "dict0stats_bg.h"
+#include "fsp0sysspace.h"
 #include "log0log.h"
 #include "rem0types.h"
 #include "row0log.h"
 #include "row0merge.h"
-#include "srv0srv.h"
+#include "row0ins.h"
+#include "row0row.h"
+#include "row0upd.h"
 #include "trx0trx.h"
 #include "trx0roll.h"
-#include "ha_prototypes.h"
 #include "handler0alter.h"
 #include "srv0mon.h"
+#include "srv0srv.h"
 #include "fts0priv.h"
+#include "fts0plugin.h"
 #include "pars0pars.h"
 #include "row0sel.h"
 #include "ha_innodb.h"
+#include "ut0new.h"
+#include "ut0stage.h"
+
+static const char *MSG_UNSUPPORTED_ALTER_ONLINE_ON_VIRTUAL_COLUMN=
+			"INPLACE ADD or DROP of virtual columns cannot be "
+			"combined with other ALTER TABLE actions";
 
 /** Operations for creating secondary indexes (no rebuild needed) */
-static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_ONLINE_CREATE
-	= Alter_inplace_info::ADD_INDEX
-	| Alter_inplace_info::ADD_UNIQUE_INDEX;
+static const alter_table_operations INNOBASE_ONLINE_CREATE
+	= ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX
+	| ALTER_ADD_UNIQUE_INDEX;
+
+/** Operations that require filling in default values for columns */
+static const alter_table_operations INNOBASE_DEFAULTS
+	= ALTER_COLUMN_NOT_NULLABLE
+	| ALTER_ADD_STORED_BASE_COLUMN;
+
+
+/** Operations that require knowledge about row_start, row_end values */
+static const alter_table_operations INNOBASE_ALTER_VERSIONED_REBUILD
+	= ALTER_ADD_SYSTEM_VERSIONING
+	| ALTER_DROP_SYSTEM_VERSIONING;
 
 /** Operations for rebuilding a table in place */
-static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_ALTER_REBUILD
-	= Alter_inplace_info::ADD_PK_INDEX
-	| Alter_inplace_info::DROP_PK_INDEX
-	| Alter_inplace_info::CHANGE_CREATE_OPTION
-	/* CHANGE_CREATE_OPTION needs to check innobase_need_rebuild() */
-	| Alter_inplace_info::ALTER_COLUMN_NULLABLE
-	| Alter_inplace_info::ALTER_COLUMN_NOT_NULLABLE
-	| Alter_inplace_info::ALTER_COLUMN_ORDER
-	| Alter_inplace_info::DROP_COLUMN
-	| Alter_inplace_info::ADD_COLUMN
-	| Alter_inplace_info::RECREATE_TABLE
+static const alter_table_operations INNOBASE_ALTER_REBUILD
+	= ALTER_ADD_PK_INDEX
+	| ALTER_DROP_PK_INDEX
+	| ALTER_OPTIONS
+	/* ALTER_OPTIONS needs to check alter_options_need_rebuild() */
+	| ALTER_COLUMN_NULLABLE
+	| INNOBASE_DEFAULTS
+	| ALTER_STORED_COLUMN_ORDER
+	| ALTER_DROP_STORED_COLUMN
+	| ALTER_RECREATE_TABLE
 	/*
-	| Alter_inplace_info::ALTER_COLUMN_TYPE
-	| Alter_inplace_info::ALTER_COLUMN_EQUAL_PACK_LENGTH
+	| ALTER_STORED_COLUMN_TYPE
 	*/
+	| INNOBASE_ALTER_VERSIONED_REBUILD
 	;
 
 /** Operations that require changes to data */
-static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_ALTER_DATA
+static const alter_table_operations INNOBASE_ALTER_DATA
 	= INNOBASE_ONLINE_CREATE | INNOBASE_ALTER_REBUILD;
 
 /** Operations for altering a table that InnoDB does not care about */
-static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_INPLACE_IGNORE
-	= Alter_inplace_info::ALTER_COLUMN_DEFAULT
-	| Alter_inplace_info::ALTER_PARTITIONED
-	| Alter_inplace_info::ALTER_COLUMN_COLUMN_FORMAT
-	| Alter_inplace_info::ALTER_COLUMN_STORAGE_TYPE
-	| Alter_inplace_info::ALTER_RENAME;
+static const alter_table_operations INNOBASE_INPLACE_IGNORE
+	= ALTER_COLUMN_DEFAULT
+	| ALTER_PARTITIONED
+	| ALTER_COLUMN_COLUMN_FORMAT
+	| ALTER_COLUMN_STORAGE_TYPE
+	| ALTER_VIRTUAL_GCOL_EXPR
+	| ALTER_DROP_CHECK_CONSTRAINT
+	| ALTER_RENAME;
 
 /** Operations on foreign key definitions (changing the schema only) */
-static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_FOREIGN_OPERATIONS
-	= Alter_inplace_info::DROP_FOREIGN_KEY
-	| Alter_inplace_info::ADD_FOREIGN_KEY;
+static const alter_table_operations INNOBASE_FOREIGN_OPERATIONS
+	= ALTER_DROP_FOREIGN_KEY
+	| ALTER_ADD_FOREIGN_KEY;
+
+/** Operations that InnoDB cares about and can perform without creating data */
+static const alter_table_operations INNOBASE_ALTER_NOCREATE
+	= ALTER_DROP_NON_UNIQUE_NON_PRIM_INDEX
+	| ALTER_DROP_UNIQUE_INDEX;
 
 /** Operations that InnoDB cares about and can perform without rebuild */
-static const Alter_inplace_info::HA_ALTER_FLAGS INNOBASE_ALTER_NOREBUILD
+static const alter_table_operations INNOBASE_ALTER_NOREBUILD
 	= INNOBASE_ONLINE_CREATE
+	| INNOBASE_ALTER_NOCREATE;
+
+/** Operations that can be performed instantly, without inplace_alter_table() */
+static const alter_table_operations INNOBASE_ALTER_INSTANT
+	= ALTER_VIRTUAL_COLUMN_ORDER
+	| ALTER_COLUMN_NAME
+#ifdef MYSQL_RENAME_INDEX
+	| ALTER_RENAME_INDEX
+#endif
+	| ALTER_ADD_VIRTUAL_COLUMN
 	| INNOBASE_FOREIGN_OPERATIONS
-	| Alter_inplace_info::DROP_INDEX
-	| Alter_inplace_info::DROP_UNIQUE_INDEX
-	| Alter_inplace_info::ALTER_COLUMN_NAME;
+	| ALTER_COLUMN_EQUAL_PACK_LENGTH
+	| ALTER_COLUMN_UNVERSIONED
+	| ALTER_DROP_VIRTUAL_COLUMN;
+
+struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
+{
+	/** Dummy query graph */
+	que_thr_t*	thr;
+	/** The prebuilt struct of the creating instance */
+	row_prebuilt_t*&	prebuilt;
+	/** InnoDB indexes being created */
+	dict_index_t**	add_index;
+	/** MySQL key numbers for the InnoDB indexes that are being created */
+	const ulint*	add_key_numbers;
+	/** number of InnoDB indexes being created */
+	ulint		num_to_add_index;
+	/** InnoDB indexes being dropped */
+	dict_index_t**	drop_index;
+	/** number of InnoDB indexes being dropped */
+	const ulint	num_to_drop_index;
+	/** InnoDB indexes being renamed */
+	dict_index_t**	rename;
+	/** number of InnoDB indexes being renamed */
+	const ulint	num_to_rename;
+	/** InnoDB foreign key constraints being dropped */
+	dict_foreign_t** drop_fk;
+	/** number of InnoDB foreign key constraints being dropped */
+	const ulint	num_to_drop_fk;
+	/** InnoDB foreign key constraints being added */
+	dict_foreign_t** add_fk;
+	/** number of InnoDB foreign key constraints being dropped */
+	const ulint	num_to_add_fk;
+	/** whether to create the indexes online */
+	bool		online;
+	/** memory heap */
+	mem_heap_t*	heap;
+	/** dictionary transaction */
+	trx_t*		trx;
+	/** original table (if rebuilt, differs from indexed_table) */
+	dict_table_t*	old_table;
+	/** table where the indexes are being created or dropped */
+	dict_table_t*	new_table;
+	/** table definition for instant ADD COLUMN */
+	dict_table_t*	instant_table;
+	/** mapping of old column numbers to new ones, or NULL */
+	const ulint*	col_map;
+	/** new column names, or NULL if nothing was renamed */
+	const char**	col_names;
+	/** added AUTO_INCREMENT column position, or ULINT_UNDEFINED */
+	const ulint	add_autoinc;
+	/** default values of ADD and CHANGE COLUMN, or NULL */
+	const dtuple_t*	defaults;
+	/** autoinc sequence to use */
+	ib_sequence_t	sequence;
+	/** temporary table name to use for old table when renaming tables */
+	const char*	tmp_name;
+	/** whether the order of the clustered index is unchanged */
+	bool		skip_pk_sort;
+	/** number of virtual columns to be added */
+	ulint		num_to_add_vcol;
+	/** virtual columns to be added */
+	dict_v_col_t*	add_vcol;
+	const char**	add_vcol_name;
+	/** number of virtual columns to be dropped */
+	ulint		num_to_drop_vcol;
+	/** virtual columns to be dropped */
+	dict_v_col_t*	drop_vcol;
+	const char**	drop_vcol_name;
+	/** ALTER TABLE stage progress recorder */
+	ut_stage_alter_t* m_stage;
+	/** original number of user columns in the table */
+	const unsigned	old_n_cols;
+	/** original columns of the table */
+	dict_col_t* const old_cols;
+	/** original column names of the table */
+	const char* const old_col_names;
+
+	/** Allow non-null conversion.
+	(1) Alter ignore should allow the conversion
+	irrespective of sql mode.
+	(2) Don't allow the conversion in strict mode
+	(3) Allow the conversion only in non-strict mode. */
+	const bool	allow_not_null;
+
+	/** The page_compression_level attribute, or 0 */
+	const uint	page_compression_level;
+
+	ha_innobase_inplace_ctx(row_prebuilt_t*& prebuilt_arg,
+				dict_index_t** drop_arg,
+				ulint num_to_drop_arg,
+				dict_index_t** rename_arg,
+				ulint num_to_rename_arg,
+				dict_foreign_t** drop_fk_arg,
+				ulint num_to_drop_fk_arg,
+				dict_foreign_t** add_fk_arg,
+				ulint num_to_add_fk_arg,
+				bool online_arg,
+				mem_heap_t* heap_arg,
+				dict_table_t* new_table_arg,
+				const char** col_names_arg,
+				ulint add_autoinc_arg,
+				ulonglong autoinc_col_min_value_arg,
+				ulonglong autoinc_col_max_value_arg,
+				bool allow_not_null_flag,
+				bool page_compressed,
+				ulonglong page_compression_level_arg) :
+		inplace_alter_handler_ctx(),
+		prebuilt (prebuilt_arg),
+		add_index (0), add_key_numbers (0), num_to_add_index (0),
+		drop_index (drop_arg), num_to_drop_index (num_to_drop_arg),
+		rename (rename_arg), num_to_rename (num_to_rename_arg),
+		drop_fk (drop_fk_arg), num_to_drop_fk (num_to_drop_fk_arg),
+		add_fk (add_fk_arg), num_to_add_fk (num_to_add_fk_arg),
+		online (online_arg), heap (heap_arg), trx (0),
+		old_table (prebuilt_arg->table),
+		new_table (new_table_arg), instant_table (0),
+		col_map (0), col_names (col_names_arg),
+		add_autoinc (add_autoinc_arg),
+		defaults (0),
+		sequence(prebuilt->trx->mysql_thd,
+			 autoinc_col_min_value_arg, autoinc_col_max_value_arg),
+		tmp_name (0),
+		skip_pk_sort(false),
+		num_to_add_vcol(0),
+		add_vcol(0),
+		add_vcol_name(0),
+		num_to_drop_vcol(0),
+		drop_vcol(0),
+		drop_vcol_name(0),
+		m_stage(NULL),
+		old_n_cols(prebuilt_arg->table->n_cols),
+		old_cols(prebuilt_arg->table->cols),
+		old_col_names(prebuilt_arg->table->col_names),
+		allow_not_null(allow_not_null_flag),
+		page_compression_level(page_compressed
+				       ? (page_compression_level_arg
+					  ? uint(page_compression_level_arg)
+					  : page_zip_level)
+				       : 0)
+	{
+		ut_ad(old_n_cols >= DATA_N_SYS_COLS);
+		ut_ad(page_compression_level <= 9);
+#ifdef UNIV_DEBUG
+		for (ulint i = 0; i < num_to_add_index; i++) {
+			ut_ad(!add_index[i]->to_be_dropped);
+		}
+		for (ulint i = 0; i < num_to_drop_index; i++) {
+			ut_ad(drop_index[i]->to_be_dropped);
+		}
+#endif /* UNIV_DEBUG */
+
+		thr = pars_complete_graph_for_exec(NULL, prebuilt->trx, heap,
+			prebuilt);
+	}
+
+	~ha_innobase_inplace_ctx()
+	{
+		UT_DELETE(m_stage);
+		if (instant_table) {
+			while (dict_index_t* index
+			       = UT_LIST_GET_LAST(instant_table->indexes)) {
+				UT_LIST_REMOVE(instant_table->indexes, index);
+				rw_lock_free(&index->lock);
+				dict_mem_index_free(index);
+			}
+			dict_mem_table_free(instant_table);
+		}
+		mem_heap_free(heap);
+	}
+
+	/** Determine if the table will be rebuilt.
+	@return whether the table will be rebuilt */
+	bool need_rebuild () const { return(old_table != new_table); }
+
+	/** Clear uncommmitted added indexes after a failed operation. */
+	void clear_added_indexes()
+	{
+		for (ulint i = 0; i < num_to_add_index; i++) {
+			if (!add_index[i]->is_committed()) {
+				add_index[i]->detach_columns();
+			}
+		}
+	}
+
+	/** Convert table-rebuilding ALTER to instant ALTER. */
+	void prepare_instant()
+	{
+		DBUG_ASSERT(need_rebuild());
+		DBUG_ASSERT(!is_instant());
+		DBUG_ASSERT(old_table->n_cols == old_table->n_def);
+		DBUG_ASSERT(new_table->n_cols == new_table->n_def);
+		DBUG_ASSERT(old_table->n_cols == old_n_cols);
+		DBUG_ASSERT(new_table->n_cols > old_table->n_cols);
+		instant_table = new_table;
+
+		new_table = old_table;
+		export_vars.innodb_instant_alter_column++;
+	}
+
+	/** Revert prepare_instant() if the transaction is rolled back. */
+	void rollback_instant()
+	{
+		if (!is_instant()) return;
+		old_table->rollback_instant(old_n_cols,
+					    old_cols, old_col_names);
+	}
+
+	/** @return whether this is instant ALTER TABLE */
+	bool is_instant() const
+	{
+		DBUG_ASSERT(!instant_table || !instant_table->can_be_evicted);
+		return instant_table;
+	}
+
+private:
+	// Disable copying
+	ha_innobase_inplace_ctx(const ha_innobase_inplace_ctx&);
+	ha_innobase_inplace_ctx& operator=(const ha_innobase_inplace_ctx&);
+};
+
+/********************************************************************//**
+Get the upper limit of the MySQL integral and floating-point type.
+@return maximum allowed value for the field */
+UNIV_INTERN
+ulonglong
+innobase_get_int_col_max_value(
+/*===========================*/
+	const Field*	field);	/*!< in: MySQL field */
 
 /* Report an InnoDB error to the client by invoking my_error(). */
-static UNIV_COLD MY_ATTRIBUTE((nonnull))
+static ATTRIBUTE_COLD __attribute__((nonnull))
 void
 my_error_innodb(
 /*============*/
@@ -131,15 +394,12 @@ my_error_innodb(
 	case DB_OUT_OF_FILE_SPACE:
 		my_error(ER_RECORD_FILE_FULL, MYF(0), table);
 		break;
-	case DB_TEMP_FILE_WRITE_FAILURE:
-		my_error(ER_GET_ERRMSG, MYF(0),
-                         DB_TEMP_FILE_WRITE_FAILURE,
-                         ut_strerr(DB_TEMP_FILE_WRITE_FAILURE),
-                         "InnoDB");
+	case DB_TEMP_FILE_WRITE_FAIL:
+		my_error(ER_TEMP_FILE_WRITE_FAILURE, MYF(0));
 		break;
 	case DB_TOO_BIG_INDEX_COL:
 		my_error(ER_INDEX_COLUMN_TOO_LONG, MYF(0),
-			 DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(flags));
+			 (ulong) DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(flags));
 		break;
 	case DB_TOO_MANY_CONCURRENT_TRXS:
 		my_error(ER_TOO_MANY_CONCURRENT_TRXS, MYF(0));
@@ -160,8 +420,8 @@ my_error_innodb(
 		bool comp = !!(flags & DICT_TF_COMPACT);
 		ulint free_space = page_get_free_space_of_empty(comp) / 2;
 
-		if (free_space >= (comp ? COMPRESSED_REC_MAX_DATA_SIZE :
-				          REDUNDANT_REC_MAX_DATA_SIZE)) {
+		if (free_space >= ulint(comp ? COMPRESSED_REC_MAX_DATA_SIZE :
+					  REDUNDANT_REC_MAX_DATA_SIZE)) {
 			free_space = (comp ? COMPRESSED_REC_MAX_DATA_SIZE :
 				REDUNDANT_REC_MAX_DATA_SIZE) - 1;
 		}
@@ -172,6 +432,9 @@ my_error_innodb(
 	case DB_INVALID_NULL:
 		/* TODO: report the row, as we do for DB_DUPLICATE_KEY */
 		my_error(ER_INVALID_USE_OF_NULL, MYF(0));
+		break;
+	case DB_CANT_CREATE_GEOMETRY_OBJECT:
+		my_error(ER_CANT_CREATE_GEOMETRY_OBJECT, MYF(0));
 		break;
 	case DB_TABLESPACE_EXISTS:
 		my_error(ER_TABLESPACE_EXISTS, MYF(0), table);
@@ -191,8 +454,8 @@ my_error_innodb(
 }
 
 /** Determine if fulltext indexes exist in a given table.
-@param table		MySQL table
-@return			whether fulltext indexes exist on the table */
+@param table MySQL table
+@return whether fulltext indexes exist on the table */
 static
 bool
 innobase_fulltext_exist(
@@ -208,151 +471,480 @@ innobase_fulltext_exist(
 	return(false);
 }
 
-/** Determine if ALTER TABLE needs to rebuild the table.
-@param ha_alter_info	the DDL operation
-@param table		metadata before ALTER TABLE
-@return whether it is necessary to rebuild the table */
+/** Determine whether indexed virtual columns exist in a table.
+@param[in]	table	table definition
+@return	whether indexes exist on virtual columns */
+static bool innobase_indexed_virtual_exist(const TABLE* table)
+{
+	const KEY* const end = &table->key_info[table->s->keys];
+
+	for (const KEY* key = table->key_info; key < end; key++) {
+		const KEY_PART_INFO* const key_part_end = key->key_part
+			+ key->user_defined_key_parts;
+		for (const KEY_PART_INFO* key_part = key->key_part;
+		     key_part < key_part_end; key_part++) {
+			if (!key_part->field->stored_in_db())
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/** Determine if spatial indexes exist in a given table.
+@param table MySQL table
+@return whether spatial indexes exist on the table */
+static
+bool
+innobase_spatial_exist(
+/*===================*/
+	const   TABLE*  table)
+{
+	for (uint i = 0; i < table->s->keys; i++) {
+	       if (table->key_info[i].flags & HA_SPATIAL) {
+		       return(true);
+	       }
+	}
+
+	return(false);
+}
+
+/** Determine if ALTER_OPTIONS requires rebuilding the table.
+@param[in] ha_alter_info	the ALTER TABLE operation
+@param[in] table		metadata before ALTER TABLE
+@return whether it is mandatory to rebuild the table */
+static bool alter_options_need_rebuild(
+	const Alter_inplace_info*	ha_alter_info,
+	const TABLE*			table)
+{
+	DBUG_ASSERT(ha_alter_info->handler_flags & ALTER_OPTIONS);
+
+	if (ha_alter_info->create_info->used_fields
+	    & (HA_CREATE_USED_ROW_FORMAT
+	       | HA_CREATE_USED_KEY_BLOCK_SIZE)) {
+		/* Specifying ROW_FORMAT or KEY_BLOCK_SIZE requires
+		rebuilding the table. (These attributes in the .frm
+		file may disagree with the InnoDB data dictionary, and
+		the interpretation of thse attributes depends on
+		InnoDB parameters. That is why we for now always
+		require a rebuild when these attributes are specified.) */
+		return true;
+	}
+
+	const ha_table_option_struct& alt_opt=
+			*ha_alter_info->create_info->option_struct;
+	const ha_table_option_struct& opt= *table->s->option_struct;
+
+	/* Allow an instant change to enable page_compressed,
+	and any change of page_compression_level. */
+	if ((!alt_opt.page_compressed && opt.page_compressed)
+	    || alt_opt.encryption != opt.encryption
+	    || alt_opt.encryption_key_id != opt.encryption_key_id) {
+		return(true);
+	}
+
+	return false;
+}
+
+/** Determine if ALTER TABLE needs to rebuild the table
+(or perform instant operation).
+@param[in] ha_alter_info	the ALTER TABLE operation
+@param[in] table		metadata before ALTER TABLE
+@return whether it is necessary to rebuild the table or to alter columns */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 innobase_need_rebuild(
 	const Alter_inplace_info*	ha_alter_info,
 	const TABLE*			table)
 {
-	Alter_inplace_info::HA_ALTER_FLAGS alter_inplace_flags =
-		ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE;
+	if ((ha_alter_info->handler_flags & ~(INNOBASE_INPLACE_IGNORE
+					      | INNOBASE_ALTER_NOREBUILD
+					      | INNOBASE_ALTER_INSTANT))
+	    == ALTER_OPTIONS) {
+		return alter_options_need_rebuild(ha_alter_info, table);
+	}
 
-	if (alter_inplace_flags & Alter_inplace_info::CHANGE_CREATE_OPTION) {
-		const ha_table_option_struct& alt_opt=
-			*ha_alter_info->create_info->option_struct;
-		const ha_table_option_struct& opt= *table->s->option_struct;
+	return !!(ha_alter_info->handler_flags & INNOBASE_ALTER_REBUILD);
+}
 
-		if (alt_opt.page_compressed != opt.page_compressed
-		    || alt_opt.page_compression_level
-		    != opt.page_compression_level
-		    || alt_opt.encryption != opt.encryption
-		    || alt_opt.encryption_key_id != opt.encryption_key_id) {
+/** Check if virtual column in old and new table are in order, excluding
+those dropped column. This is needed because when we drop a virtual column,
+ALTER_VIRTUAL_COLUMN_ORDER is also turned on, so we can't decide if this
+is a real ORDER change or just DROP COLUMN
+@param[in]	table		old TABLE
+@param[in]	altered_table	new TABLE
+@param[in]	ha_alter_info	Structure describing changes to be done
+by ALTER TABLE and holding data used during in-place alter.
+@return	true is all columns in order, false otherwise. */
+static
+bool
+check_v_col_in_order(
+	const TABLE*		table,
+	const TABLE*		altered_table,
+	Alter_inplace_info*	ha_alter_info)
+{
+	ulint	j = 0;
+
+	/* We don't support any adding new virtual column before
+	existed virtual column. */
+	if (ha_alter_info->handler_flags
+              & ALTER_ADD_VIRTUAL_COLUMN) {
+		bool			has_new = false;
+
+		List_iterator_fast<Create_field> cf_it(
+			ha_alter_info->alter_info->create_list);
+
+		cf_it.rewind();
+
+		while (const Create_field* new_field = cf_it++) {
+			if (!innobase_is_v_fld(new_field)) {
+				continue;
+			}
+
+			/* Found a new added virtual column. */
+			if (!new_field->field) {
+				has_new = true;
+				continue;
+			}
+
+			/* If there's any old virtual column
+			after the new added virtual column,
+			order must be changed. */
+			if (has_new) {
+				return(false);
+			}
+		}
+	}
+
+	/* directly return true if ALTER_VIRTUAL_COLUMN_ORDER is not on */
+	if (!(ha_alter_info->handler_flags
+              & ALTER_VIRTUAL_COLUMN_ORDER)) {
+		return(true);
+	}
+
+	for (ulint i = 0; i < table->s->fields; i++) {
+		Field*		field = table->field[i];
+
+		if (field->stored_in_db()) {
+			continue;
+		}
+
+		ut_ad(innobase_is_v_fld(field));
+
+		if (field->flags & FIELD_IS_DROPPED) {
+			continue;
+		}
+
+		/* Now check if the next virtual column in altered table
+		matches this column */
+		while (j < altered_table->s->fields) {
+			 Field*  new_field = altered_table->s->field[j];
+
+			if (new_field->stored_in_db()) {
+				j++;
+				continue;
+			}
+
+			if (my_strcasecmp(system_charset_info,
+					  field->field_name.str,
+					  new_field->field_name.str) != 0) {
+				/* different column */
+				return(false);
+			} else {
+				j++;
+				break;
+			}
+		}
+
+		if (j > altered_table->s->fields) {
+			/* there should not be less column in new table
+			without them being in drop list */
+			ut_ad(0);
+			return(false);
+		}
+	}
+
+	return(true);
+}
+
+/** Determine if an instant operation is possible for altering columns.
+@param[in]	ha_alter_info	the ALTER TABLE operation
+@param[in]	table		table definition before ALTER TABLE */
+static
+bool
+instant_alter_column_possible(
+	const Alter_inplace_info*	ha_alter_info,
+	const TABLE*			table)
+{
+	// Making table system-versioned instantly is not implemented yet.
+	if (ha_alter_info->handler_flags & ALTER_ADD_SYSTEM_VERSIONING) {
+		return false;
+	}
+
+	if (~ha_alter_info->handler_flags & ALTER_ADD_STORED_BASE_COLUMN) {
+		return false;
+	}
+
+	/* At the moment, we disallow ADD [UNIQUE] INDEX together with
+	instant ADD COLUMN.
+
+	The main reason is that the work of instant ADD must be done
+	in commit_inplace_alter_table().  For the rollback_instant()
+	to work, we must add the columns to dict_table_t beforehand,
+	and roll back those changes in case the transaction is rolled
+	back.
+
+	If we added the columns to the dictionary cache already in the
+	prepare_inplace_alter_table(), we would have to deal with
+	column number mismatch in ha_innobase::open(), write_row() and
+	other functions. */
+
+	/* FIXME: allow instant ADD COLUMN together with
+	INNOBASE_ONLINE_CREATE (ADD [UNIQUE] INDEX) on pre-existing
+	columns. */
+	if (ha_alter_info->handler_flags
+	    & ((INNOBASE_ALTER_REBUILD | INNOBASE_ONLINE_CREATE)
+	       & ~ALTER_ADD_STORED_BASE_COLUMN & ~ALTER_OPTIONS)) {
+		return false;
+	}
+
+	return !(ha_alter_info->handler_flags & ALTER_OPTIONS)
+		|| !alter_options_need_rebuild(ha_alter_info, table);
+}
+
+/** Check whether the non-const default value for the field
+@param[in]	field	field which could be added or changed
+@return true if the non-const default is present. */
+static bool is_non_const_value(Field* field)
+{
+	return field->default_value
+		&& field->default_value->flags
+		& uint(~(VCOL_SESSION_FUNC | VCOL_TIME_FUNC));
+}
+
+/** Set default value for the field.
+@param[in]	field	field which could be added or changed
+@return true if the default value is set. */
+static bool set_default_value(Field* field)
+{
+	/* The added/changed NOT NULL column lacks a DEFAULT value,
+	   or the DEFAULT is the same for all rows.
+	   (Time functions, such as CURRENT_TIMESTAMP(),
+	   are evaluated from a timestamp that is assigned
+	   at the start of the statement. Session
+	   functions, such as USER(), always evaluate the
+	   same within a statement.) */
+
+	ut_ad(!is_non_const_value(field));
+
+	/* Compute the DEFAULT values of non-constant columns
+	   (VCOL_SESSION_FUNC | VCOL_TIME_FUNC). */
+	switch (field->set_default()) {
+	case 0: /* OK */
+	case 3: /* DATETIME to TIME or DATE conversion */
+		return true;
+	case -1: /* OOM, or GEOMETRY type mismatch */
+	case 1:  /* A number adjusted to the min/max value */
+	case 2:  /* String truncation, or conversion problem */
+		break;
+	}
+
+	return false;
+}
+
+/** Check whether the table has the FTS_DOC_ID column
+@param[in]	table		InnoDB table with fulltext index
+@param[in]	altered_table	MySQL table with fulltext index
+@param[out]	fts_doc_col_no	The column number for Doc ID,
+				or ULINT_UNDEFINED if it is of wrong type
+@param[out]	num_v		Number of virtual column
+@param[in]	check_only	check only whether fts doc id exist.
+@return whether there exists an FTS_DOC_ID column */
+static
+bool
+innobase_fts_check_doc_id_col(
+	const dict_table_t*	table,
+	const TABLE*		altered_table,
+	ulint*			fts_doc_col_no,
+	ulint*			num_v,
+	bool			check_only=false)
+{
+	*fts_doc_col_no = ULINT_UNDEFINED;
+
+	const uint n_cols = altered_table->s->fields;
+	ulint	i;
+	int	err = 0;
+	*num_v = 0;
+
+	for (i = 0; i < n_cols; i++) {
+		const Field*	field = altered_table->field[i];
+
+		if (innobase_is_v_fld(field)) {
+			(*num_v)++;
+		}
+
+		if (my_strcasecmp(system_charset_info,
+				  field->field_name.str, FTS_DOC_ID_COL_NAME)) {
+			continue;
+		}
+
+		if (strcmp(field->field_name.str, FTS_DOC_ID_COL_NAME)) {
+			err = ER_WRONG_COLUMN_NAME;
+		} else if (field->type() != MYSQL_TYPE_LONGLONG
+			   || field->pack_length() != 8
+			   || field->real_maybe_null()
+			   || !(field->flags & UNSIGNED_FLAG)
+			   || innobase_is_v_fld(field)) {
+			err = ER_INNODB_FT_WRONG_DOCID_COLUMN;
+		} else {
+			*fts_doc_col_no = i - *num_v;
+		}
+
+		if (err && !check_only) {
+			my_error(err, MYF(0), field->field_name.str);
+		}
+
+		return(true);
+	}
+
+	if (!table) {
+		return(false);
+	}
+
+	/* Not to count the virtual columns */
+	i -= *num_v;
+
+	for (; i + DATA_N_SYS_COLS < (uint) table->n_cols; i++) {
+		const char*     name = dict_table_get_col_name(table, i);
+
+		if (strcmp(name, FTS_DOC_ID_COL_NAME) == 0) {
+#ifdef UNIV_DEBUG
+			const dict_col_t*       col;
+
+			col = dict_table_get_nth_col(table, i);
+
+			/* Because the FTS_DOC_ID does not exist in
+			the MySQL data dictionary, this must be the
+			internally created FTS_DOC_ID column. */
+			ut_ad(col->mtype == DATA_INT);
+			ut_ad(col->len == 8);
+			ut_ad(col->prtype & DATA_NOT_NULL);
+			ut_ad(col->prtype & DATA_UNSIGNED);
+#endif /* UNIV_DEBUG */
+			*fts_doc_col_no = i;
 			return(true);
 		}
 	}
 
-	if (alter_inplace_flags == Alter_inplace_info::CHANGE_CREATE_OPTION
-	    && !(ha_alter_info->create_info->used_fields
-		 & (HA_CREATE_USED_ROW_FORMAT
-		    | HA_CREATE_USED_KEY_BLOCK_SIZE))) {
-		/* Any other CHANGE_CREATE_OPTION than changing
-		ROW_FORMAT or KEY_BLOCK_SIZE can be done without
-		rebuilding the table. */
-		return(false);
-	}
-
-	return(!!(alter_inplace_flags & INNOBASE_ALTER_REBUILD));
+	return(false);
 }
 
 /** Check if InnoDB supports a particular alter table in-place
-@param altered_table	TABLE object for new version of table.
-@param ha_alter_info	Structure describing changes to be done
+@param altered_table TABLE object for new version of table.
+@param ha_alter_info Structure describing changes to be done
 by ALTER TABLE and holding data used during in-place alter.
 
-@retval HA_ALTER_INPLACE_NOT_SUPPORTED	Not supported
-@retval HA_ALTER_INPLACE_NO_LOCK	Supported
-@retval HA_ALTER_INPLACE_SHARED_LOCK_AFTER_PREPARE Supported, but requires
-lock during main phase and exclusive lock during prepare phase.
-@retval HA_ALTER_INPLACE_NO_LOCK_AFTER_PREPARE	Supported, prepare phase
-requires exclusive lock (any transactions that have accessed the table
-must commit or roll back first, and no transactions can access the table
-while prepare_inplace_alter_table() is executing)
+@retval HA_ALTER_INPLACE_NOT_SUPPORTED Not supported
+@retval HA_ALTER_INPLACE_INSTANT
+MDL_EXCLUSIVE is needed for executing prepare_inplace_alter_table()
+and commit_inplace_alter_table(). inplace_alter_table() will not be called.
+@retval HA_ALTER_INPLACE_COPY_NO_LOCK
+MDL_EXCLUSIVE in prepare_inplace_alter_table(), which can be downgraded to
+LOCK=NONE for rebuilding the table in inplace_alter_table()
+@retval HA_ALTER_INPLACE_COPY_LOCK
+MDL_EXCLUSIVE in prepare_inplace_alter_table(), which can be downgraded to
+LOCK=SHARED for rebuilding the table in inplace_alter_table()
+@retval HA_ALTER_INPLACE_NOCOPY_NO_LOCK
+MDL_EXCLUSIVE in prepare_inplace_alter_table(), which can be downgraded to
+LOCK=NONE for inplace_alter_table() which will not rebuild the table
+@retval HA_ALTER_INPLACE_NOCOPY_LOCK
+MDL_EXCLUSIVE in prepare_inplace_alter_table(), which can be downgraded to
+LOCK=SHARED for inplace_alter_table() which will not rebuild the table
 */
-UNIV_INTERN
+
 enum_alter_inplace_result
 ha_innobase::check_if_supported_inplace_alter(
-/*==========================================*/
 	TABLE*			altered_table,
 	Alter_inplace_info*	ha_alter_info)
 {
 	DBUG_ENTER("check_if_supported_inplace_alter");
 
-	if (high_level_read_only) {
+	if ((ha_alter_info->handler_flags
+	     & INNOBASE_ALTER_VERSIONED_REBUILD)
+	    && altered_table->versioned(VERS_TIMESTAMP)) {
 		ha_alter_info->unsupported_reason =
-			innobase_get_err_msg(ER_READ_ONLY_MODE);
-		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
-	} else if (srv_created_new_raw || srv_force_recovery) {
-
-		ha_alter_info->unsupported_reason =
-			innobase_get_err_msg(ER_READ_ONLY_MODE);
+			"Not implemented for system-versioned timestamp tables";
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
 
-	if (altered_table->s->stored_fields > REC_MAX_N_USER_FIELDS) {
+	/* Before 10.2.2 information about virtual columns was not stored in
+	system tables. We need to do a full alter to rebuild proper 10.2.2+
+	metadata with the information about virtual columns */
+	if (table->s->mysql_version < 100202 && table->s->virtual_fields) {
+		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+	}
+
+	if (high_level_read_only) {
+		ha_alter_info->unsupported_reason =
+			my_get_err_msg(ER_READ_ONLY_MODE);
+
+		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+	}
+
+	if (altered_table->s->fields > REC_MAX_N_USER_FIELDS) {
 		/* Deny the inplace ALTER TABLE. MySQL will try to
 		re-create the table and ha_innobase::create() will
 		return an error too. This is how we effectively
 		deny adding too many columns to a table. */
 		ha_alter_info->unsupported_reason =
-			innobase_get_err_msg(ER_TOO_MANY_FIELDS);
+			my_get_err_msg(ER_TOO_MANY_FIELDS);
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
 
 	update_thd();
-	trx_search_latch_release_if_reserved(prebuilt->trx);
 
 	if (ha_alter_info->handler_flags
 	    & ~(INNOBASE_INPLACE_IGNORE
+		| INNOBASE_ALTER_INSTANT
 		| INNOBASE_ALTER_NOREBUILD
 		| INNOBASE_ALTER_REBUILD)) {
 
 		if (ha_alter_info->handler_flags
-			& (Alter_inplace_info::ALTER_COLUMN_EQUAL_PACK_LENGTH
-			   | Alter_inplace_info::ALTER_COLUMN_TYPE))
-			ha_alter_info->unsupported_reason = innobase_get_err_msg(
+		    & ALTER_STORED_COLUMN_TYPE) {
+			ha_alter_info->unsupported_reason = my_get_err_msg(
 				ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_COLUMN_TYPE);
+		}
+
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
 
 	/* Only support online add foreign key constraint when
 	check_foreigns is turned off */
-	if ((ha_alter_info->handler_flags
-	     & Alter_inplace_info::ADD_FOREIGN_KEY)
-	    && prebuilt->trx->check_foreigns) {
-		ha_alter_info->unsupported_reason = innobase_get_err_msg(
+	if ((ha_alter_info->handler_flags & ALTER_ADD_FOREIGN_KEY)
+	    && m_prebuilt->trx->check_foreigns) {
+		ha_alter_info->unsupported_reason = my_get_err_msg(
 			ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FK_CHECK);
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
 
-	if (!(ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE)) {
-		DBUG_RETURN(HA_ALTER_INPLACE_NO_LOCK);
-	}
-
-	/* Only support NULL -> NOT NULL change if strict table sql_mode
-	is set. Fall back to COPY for conversion if not strict tables.
-	In-Place will fail with an error when trying to convert
-	NULL to a NOT NULL value. */
-	if ((ha_alter_info->handler_flags
-	     & Alter_inplace_info::ALTER_COLUMN_NOT_NULLABLE)
-	    && !thd_is_strict_mode(user_thd)) {
-		ha_alter_info->unsupported_reason = innobase_get_err_msg(
-			ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_NOT_NULL);
-		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
-	}
-
-	/* InnoDB cannot IGNORE when creating unique indexes. IGNORE
-	should silently delete some duplicate rows. Our inplace_alter
-	code will not delete anything from existing indexes. */
-	if (ha_alter_info->ignore
-	    && (ha_alter_info->handler_flags
-		& (Alter_inplace_info::ADD_PK_INDEX
-		   | Alter_inplace_info::ADD_UNIQUE_INDEX))) {
-		ha_alter_info->unsupported_reason = innobase_get_err_msg(
-			ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_IGNORE);
-		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+	switch (ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE) {
+	case ALTER_OPTIONS:
+		if (alter_options_need_rebuild(ha_alter_info, table)) {
+			ha_alter_info->unsupported_reason = my_get_err_msg(
+				ER_ALTER_OPERATION_TABLE_OPTIONS_NEED_REBUILD);
+			break;
+		}
+		/* fall through */
+	case 0:
+		DBUG_RETURN(HA_ALTER_INPLACE_INSTANT);
 	}
 
 	/* DROP PRIMARY KEY is only allowed in combination with ADD
 	PRIMARY KEY. */
 	if ((ha_alter_info->handler_flags
-	     & (Alter_inplace_info::ADD_PK_INDEX
-		| Alter_inplace_info::DROP_PK_INDEX))
-	    == Alter_inplace_info::DROP_PK_INDEX) {
-		ha_alter_info->unsupported_reason = innobase_get_err_msg(
+	     & (ALTER_ADD_PK_INDEX | ALTER_DROP_PK_INDEX))
+	    == ALTER_DROP_PK_INDEX) {
+		ha_alter_info->unsupported_reason = my_get_err_msg(
 			ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_NOPK);
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
@@ -360,15 +952,16 @@ ha_innobase::check_if_supported_inplace_alter(
 	/* If a column change from NOT NULL to NULL,
 	and there's a implict pk on this column. the
 	table should be rebuild. The change should
-	only go through the "Copy" method.*/
+	only go through the "Copy" method. */
 	if ((ha_alter_info->handler_flags
-	     & Alter_inplace_info::ALTER_COLUMN_NULLABLE)) {
-		uint primary_key = altered_table->s->primary_key;
+	     & ALTER_COLUMN_NULLABLE)) {
+		const uint my_primary_key = altered_table->s->primary_key;
 
-		/* See if MYSQL table has no pk but we do.*/
-		if (UNIV_UNLIKELY(primary_key >= MAX_KEY)
-		    && !row_table_got_default_clust_index(prebuilt->table)) {
-			ha_alter_info->unsupported_reason = innobase_get_err_msg(
+		/* See if MYSQL table has no pk but we do. */
+		if (UNIV_UNLIKELY(my_primary_key >= MAX_KEY)
+		    && !dict_index_is_auto_gen_clust(
+			    dict_table_get_first_index(m_prebuilt->table))) {
+			ha_alter_info->unsupported_reason = my_get_err_msg(
 				ER_PRIMARY_CANT_HAVE_NULL);
 			DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 		}
@@ -379,21 +972,26 @@ ha_innobase::check_if_supported_inplace_alter(
 	  codes for certain types. In some cases the signed/unsigned bit was
 	  generated differently too.
 
-	  Online ALTER would change the mtype/unsigned_flag (to what the
+	  Inplace ALTER would change the mtype/unsigned_flag (to what the
 	  current code generates) without changing the underlying data
 	  represenation, and it might result in data corruption.
 
-	  Don't do online ALTER if mtype/unsigned_flag are wrong.
+	  Don't do inplace ALTER if mtype/unsigned_flag are wrong.
 	*/
 	for (ulint i = 0, icol= 0; i < table->s->fields; i++) {
 		const Field*		field = table->field[i];
-		const dict_col_t*	col = dict_table_get_nth_col(prebuilt->table, icol);
-		ulint		unsigned_flag;
-		if (!field->stored_in_db)
+		const dict_col_t*	col = dict_table_get_nth_col(
+			m_prebuilt->table, icol);
+		ulint			unsigned_flag;
+
+		if (!field->stored_in_db()) {
 			continue;
+		}
+
 		icol++;
 
-		if (col->mtype != get_innobase_type_from_mysql_type(&unsigned_flag, field)) {
+		if (col->mtype != get_innobase_type_from_mysql_type(
+			    &unsigned_flag, field)) {
 
 			DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 		}
@@ -404,52 +1002,64 @@ ha_innobase::check_if_supported_inplace_alter(
 		}
 	}
 
-	/* If we have column that has changed from NULL -> NOT NULL
-	and column default has changed we need to do additional
-	check. */
-	if ((ha_alter_info->handler_flags
-			& Alter_inplace_info::ALTER_COLUMN_NOT_NULLABLE) &&
-	    (ha_alter_info->handler_flags
-		    & Alter_inplace_info::ALTER_COLUMN_DEFAULT)) {
-		Alter_info *alter_info = ha_alter_info->alter_info;
-		List_iterator<Create_field> def_it(alter_info->create_list);
-		Create_field *def;
-		while ((def=def_it++)) {
-
-			/* If this is first column definition whose SQL type
-			is TIMESTAMP and it is defined as NOT NULL and
-			it has either constant default or function default
-			we must use "Copy" method. */
-			if (is_timestamp_type(def->sql_type)) {
-				if ((def->flags & NOT_NULL_FLAG) != 0 && // NOT NULL
-					(def->def != NULL || // constant default ?
-					 def->unireg_check != Field::NONE)) { // function default
-					ha_alter_info->unsupported_reason = innobase_get_err_msg(
-						ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_NOT_NULL);
-					DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
-				}
-				break;
-			}
-		}
-	}
-
-	ulint n_indexes = UT_LIST_GET_LEN((prebuilt->table)->indexes);
+	ulint n_indexes = UT_LIST_GET_LEN((m_prebuilt->table)->indexes);
 
 	/* If InnoDB dictionary and MySQL frm file are not consistent
 	use "Copy" method. */
-	if (prebuilt->table->dict_frm_mismatch) {
+	if (m_prebuilt->table->dict_frm_mismatch) {
 
-		ha_alter_info->unsupported_reason = innobase_get_err_msg(
+		ha_alter_info->unsupported_reason = my_get_err_msg(
 			ER_NO_SUCH_INDEX);
-		ib_push_frm_error(user_thd, prebuilt->table, altered_table,
+		ib_push_frm_error(m_user_thd, m_prebuilt->table, altered_table,
 			n_indexes, true);
 
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
 
+	bool	add_drop_v_cols = false;
+
+	/* If there is add or drop virtual columns, we will support operations
+	with these 2 options alone with inplace interface for now */
+
+	if (ha_alter_info->handler_flags
+	    & (ALTER_ADD_VIRTUAL_COLUMN
+	       | ALTER_DROP_VIRTUAL_COLUMN
+	       | ALTER_VIRTUAL_COLUMN_ORDER)) {
+		ulonglong flags = ha_alter_info->handler_flags;
+
+		/* TODO: uncomment the flags below, once we start to
+		support them */
+
+		flags &= ~(ALTER_ADD_VIRTUAL_COLUMN
+			   | ALTER_DROP_VIRTUAL_COLUMN
+			   | ALTER_VIRTUAL_COLUMN_ORDER
+		           | ALTER_VIRTUAL_GCOL_EXPR
+		           | ALTER_COLUMN_VCOL
+		/*
+			   | ALTER_ADD_STORED_BASE_COLUMN
+			   | ALTER_DROP_STORED_COLUMN
+			   | ALTER_STORED_COLUMN_ORDER
+			   | ALTER_ADD_UNIQUE_INDEX
+		*/
+			   | ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX
+			   | ALTER_DROP_NON_UNIQUE_NON_PRIM_INDEX);
+
+		if (flags != 0
+		    || IF_PARTITIONING((altered_table->s->partition_info_str
+			&& altered_table->s->partition_info_str_len), 0)
+		    || (!check_v_col_in_order(
+			this->table, altered_table, ha_alter_info))) {
+			ha_alter_info->unsupported_reason =
+				MSG_UNSUPPORTED_ALTER_ONLINE_ON_VIRTUAL_COLUMN;
+			DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+		}
+
+		add_drop_v_cols = true;
+	}
+
 	/* We should be able to do the operation in-place.
 	See if we can do it online (LOCK=NONE). */
-	bool	online = true;
+	bool		online = true;
 
 	List_iterator_fast<Create_field> cf_it(
 		ha_alter_info->alter_info->create_list);
@@ -459,12 +1069,25 @@ ha_innobase::check_if_supported_inplace_alter(
 	     new_key < ha_alter_info->key_info_buffer
 		     + ha_alter_info->key_count;
 	     new_key++) {
+
+		/* Do not support adding/droping a virtual column, while
+		there is a table rebuild caused by adding a new FTS_DOC_ID */
+		if ((new_key->flags & HA_FULLTEXT) && add_drop_v_cols
+		    && !DICT_TF2_FLAG_IS_SET(m_prebuilt->table,
+					     DICT_TF2_FTS_HAS_DOC_ID)) {
+			ha_alter_info->unsupported_reason =
+				MSG_UNSUPPORTED_ALTER_ONLINE_ON_VIRTUAL_COLUMN;
+			DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+		}
+
 		for (KEY_PART_INFO* key_part = new_key->key_part;
-		     key_part < new_key->key_part + new_key->user_defined_key_parts;
+		     key_part < (new_key->key_part
+				 + new_key->user_defined_key_parts);
 		     key_part++) {
 			const Create_field*	new_field;
 
-			DBUG_ASSERT(key_part->fieldnr < altered_table->s->fields);
+			DBUG_ASSERT(key_part->fieldnr
+				    < altered_table->s->fields);
 
 			cf_it.rewind();
 			for (uint fieldnr = 0; (new_field = cf_it++);
@@ -478,10 +1101,11 @@ ha_innobase::check_if_supported_inplace_alter(
 
 			key_part->field = altered_table->field[
 				key_part->fieldnr];
+
 			/* In some special cases InnoDB emits "false"
 			duplicate key errors with NULL key values. Let
 			us play safe and ensure that we can correctly
-			print key values even in such cases .*/
+			print key values even in such cases. */
 			key_part->null_offset = key_part->field->null_offset();
 			key_part->null_bit = key_part->field->null_bit;
 
@@ -492,17 +1116,17 @@ ha_innobase::check_if_supported_inplace_alter(
 
 			/* This is an added column. */
 			DBUG_ASSERT(ha_alter_info->handler_flags
-				    & Alter_inplace_info::ADD_COLUMN);
+				    & ALTER_ADD_COLUMN);
 
 			/* We cannot replace a hidden FTS_DOC_ID
 			with a user-visible FTS_DOC_ID. */
-			if (prebuilt->table->fts
+			if (m_prebuilt->table->fts
 			    && innobase_fulltext_exist(altered_table)
 			    && !my_strcasecmp(
 				    system_charset_info,
-				    key_part->field->field_name,
+				    key_part->field->field_name.str,
 				    FTS_DOC_ID_COL_NAME)) {
-				ha_alter_info->unsupported_reason = innobase_get_err_msg(
+				ha_alter_info->unsupported_reason = my_get_err_msg(
 					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_HIDDEN_FTS);
 				DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 			}
@@ -517,29 +1141,55 @@ ha_innobase::check_if_supported_inplace_alter(
 				column values during online ALTER. */
 				DBUG_ASSERT(key_part->field == altered_table
 					    -> found_next_number_field);
-				ha_alter_info->unsupported_reason = innobase_get_err_msg(
-					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_AUTOINC);
+
+				if (ha_alter_info->online) {
+					ha_alter_info->unsupported_reason = my_get_err_msg(
+						ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_AUTOINC);
+				}
+
+				online = false;
+			}
+
+			if (innobase_is_v_fld(key_part->field)) {
+				/* Do not support adding index on newly added
+				virtual column, while there is also a drop
+				virtual column in the same clause */
+				if (ha_alter_info->handler_flags
+				    & ALTER_DROP_VIRTUAL_COLUMN) {
+					ha_alter_info->unsupported_reason =
+						MSG_UNSUPPORTED_ALTER_ONLINE_ON_VIRTUAL_COLUMN;
+
+					DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+				}
+
+				if (ha_alter_info->online
+				    && !ha_alter_info->unsupported_reason) {
+					ha_alter_info->unsupported_reason =
+						MSG_UNSUPPORTED_ALTER_ONLINE_ON_VIRTUAL_COLUMN;
+				}
+
 				online = false;
 			}
 		}
 	}
 
-	DBUG_ASSERT(!prebuilt->table->fts || prebuilt->table->fts->doc_col
-		    <= table->s->stored_fields);
-	DBUG_ASSERT(!prebuilt->table->fts || prebuilt->table->fts->doc_col
-		    < dict_table_get_n_user_cols(prebuilt->table));
+	DBUG_ASSERT(!m_prebuilt->table->fts
+		    || (m_prebuilt->table->fts->doc_col <= table->s->fields));
 
-	if (prebuilt->table->fts
-	    && innobase_fulltext_exist(altered_table)) {
+	DBUG_ASSERT(!m_prebuilt->table->fts
+		    || (m_prebuilt->table->fts->doc_col
+		        < dict_table_get_n_user_cols(m_prebuilt->table)));
+
+	if (m_prebuilt->table->fts && innobase_fulltext_exist(altered_table)) {
 		/* FULLTEXT indexes are supposed to remain. */
 		/* Disallow DROP INDEX FTS_DOC_ID_INDEX */
 
 		for (uint i = 0; i < ha_alter_info->index_drop_count; i++) {
 			if (!my_strcasecmp(
 				    system_charset_info,
-				    ha_alter_info->index_drop_buffer[i]->name,
+				    ha_alter_info->index_drop_buffer[i]->name.str,
 				    FTS_DOC_ID_INDEX_NAME)) {
-				ha_alter_info->unsupported_reason = innobase_get_err_msg(
+				ha_alter_info->unsupported_reason = my_get_err_msg(
 					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_CHANGE_FTS);
 				DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 			}
@@ -557,42 +1207,161 @@ ha_innobase::check_if_supported_inplace_alter(
 
 			if (!my_strcasecmp(
 				    system_charset_info,
-				    (*fp)->field_name,
+				    (*fp)->field_name.str,
 				    FTS_DOC_ID_COL_NAME)) {
-				ha_alter_info->unsupported_reason = innobase_get_err_msg(
+				ha_alter_info->unsupported_reason = my_get_err_msg(
 					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_CHANGE_FTS);
 				DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 			}
 		}
 	}
 
-	prebuilt->trx->will_lock++;
+	m_prebuilt->trx->will_lock++;
+
+	/* When changing a NULL column to NOT NULL and specifying a
+	DEFAULT value, ensure that the DEFAULT expression is a constant.
+	Also, in ADD COLUMN, for now we only support a
+	constant DEFAULT expression. */
+	cf_it.rewind();
+	Field **af = altered_table->field;
+	bool add_column_not_last = false;
+	uint n_stored_cols = 0, n_add_cols = 0;
+
+	while (Create_field* cf = cf_it++) {
+		DBUG_ASSERT(cf->field
+			    || (ha_alter_info->handler_flags
+				& ALTER_ADD_COLUMN));
+
+		if (const Field* f = cf->field) {
+			/* This could be changing an existing column
+			from NULL to NOT NULL. */
+			switch ((*af)->type()) {
+			case MYSQL_TYPE_TIMESTAMP:
+			case MYSQL_TYPE_TIMESTAMP2:
+				/* Inserting NULL into a TIMESTAMP column
+				would cause the DEFAULT value to be
+				replaced. Ensure that the DEFAULT
+				expression is not changing during
+				ALTER TABLE. */
+				if (!f->real_maybe_null()
+				    || (*af)->real_maybe_null()) {
+					/* The column was NOT NULL, or it
+					will allow NULL after ALTER TABLE. */
+					goto next_column;
+				}
+
+				if (!(*af)->default_value
+				    && (*af)->is_real_null()) {
+					/* No DEFAULT value is
+					specified. We can report
+					errors for any NULL values for
+					the TIMESTAMP. */
+
+					goto next_column;
+				}
+				break;
+			default:
+				/* For any other data type, NULL
+				values are not converted.
+				(An AUTO_INCREMENT attribute cannot
+				be introduced to a column with
+				ALGORITHM=INPLACE.) */
+				ut_ad((MTYP_TYPENR((*af)->unireg_check)
+				       == Field::NEXT_NUMBER)
+				      == (MTYP_TYPENR(f->unireg_check)
+					  == Field::NEXT_NUMBER));
+				goto next_column;
+			}
+
+			ha_alter_info->unsupported_reason
+				= my_get_err_msg(
+					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_NOT_NULL);
+		} else if (!is_non_const_value(*af)) {
+
+			n_add_cols++;
+
+			if (af < &altered_table->field[table_share->fields]) {
+				add_column_not_last = true;
+			}
+
+			if (set_default_value(*af)) {
+				goto next_column;
+			}
+		}
+
+		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+
+next_column:
+		n_stored_cols += (*af++)->stored_in_db();
+	}
+
+	if (!add_column_not_last
+	    && uint(m_prebuilt->table->n_cols) - DATA_N_SYS_COLS + n_add_cols
+	    == n_stored_cols
+	    && m_prebuilt->table->supports_instant()
+	    && instant_alter_column_possible(ha_alter_info, table)) {
+
+		DBUG_RETURN(HA_ALTER_INPLACE_INSTANT);
+	}
+
+	if (!(ha_alter_info->handler_flags & ~(INNOBASE_ALTER_INSTANT
+					       | INNOBASE_INPLACE_IGNORE))) {
+		DBUG_RETURN(HA_ALTER_INPLACE_INSTANT);
+	}
+
+	bool fts_need_rebuild = false;
+	const bool need_rebuild = innobase_need_rebuild(ha_alter_info, table);
 
 	if (!online) {
 		/* We already determined that only a non-locking
 		operation is possible. */
-	} else if (((ha_alter_info->handler_flags
-		     & Alter_inplace_info::ADD_PK_INDEX)
-		    || innobase_need_rebuild(ha_alter_info, table))
-		   && (innobase_fulltext_exist(altered_table))) {
+	} else if ((need_rebuild || (ha_alter_info->handler_flags
+				     & ALTER_ADD_PK_INDEX))
+		   && (innobase_fulltext_exist(altered_table)
+		       || innobase_spatial_exist(altered_table)
+		       || innobase_indexed_virtual_exist(altered_table))) {
 		/* Refuse to rebuild the table online, if
-		fulltext indexes are to survive the rebuild. */
+		FULLTEXT OR SPATIAL indexes are to survive the rebuild. */
 		online = false;
 		/* If the table already contains fulltext indexes,
 		refuse to rebuild the table natively altogether. */
-		if (prebuilt->table->fts) {
-			ha_alter_info->unsupported_reason = innobase_get_err_msg(
-				ER_INNODB_FT_LIMIT);
+		if (m_prebuilt->table->fts) {
+cannot_create_many_fulltext_index:
+			ha_alter_info->unsupported_reason =
+				my_get_err_msg(ER_INNODB_FT_LIMIT);
 			DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 		}
-		ha_alter_info->unsupported_reason = innobase_get_err_msg(
-			ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FTS);
-	} else if ((ha_alter_info->handler_flags
-		    & Alter_inplace_info::ADD_INDEX)) {
-		/* Building a full-text index requires a lock.
-		We could do without a lock if the table already contains
-		an FTS_DOC_ID column, but in that case we would have
-		to apply the modification log to the full-text indexes. */
+
+		if (ha_alter_info->online
+		    && !ha_alter_info->unsupported_reason) {
+
+			if (innobase_spatial_exist(altered_table)) {
+				ha_alter_info->unsupported_reason = my_get_err_msg(
+					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_GIS);
+			} else if (!innobase_fulltext_exist(altered_table)) {
+				/* MDEV-14341 FIXME: Remove this limitation. */
+				ha_alter_info->unsupported_reason =
+					"online rebuild with indexed virtual columns";
+			} else {
+				ha_alter_info->unsupported_reason = my_get_err_msg(
+					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FTS);
+			}
+		}
+
+	}
+
+	if (ha_alter_info->handler_flags
+		& ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX) {
+		/* ADD FULLTEXT|SPATIAL INDEX requires a lock.
+
+		We could do ADD FULLTEXT INDEX without a lock if the
+		table already contains an FTS_DOC_ID column, but in
+		that case we would have to apply the modification log
+		to the full-text indexes.
+
+		We could also do ADD SPATIAL INDEX by implementing
+		row_log_apply() for it. */
+		bool add_fulltext = false;
 
 		for (uint i = 0; i < ha_alter_info->index_add_count; i++) {
 			const KEY* key =
@@ -604,17 +1373,73 @@ ha_innobase::check_if_supported_inplace_alter(
 						  | HA_PACK_KEY
 						  | HA_GENERATED_KEY
 						  | HA_BINARY_PACK_KEY)));
-				ha_alter_info->unsupported_reason = innobase_get_err_msg(
-					ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FTS);
+				if (add_fulltext) {
+					goto cannot_create_many_fulltext_index;
+				}
+
+				add_fulltext = true;
+				if (ha_alter_info->online
+				    && !ha_alter_info->unsupported_reason) {
+					ha_alter_info->unsupported_reason = my_get_err_msg(
+						ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_FTS);
+				}
+
 				online = false;
-				break;
+
+				/* Full text search index exists, check
+				whether the table already has DOC ID column.
+				If not, InnoDB have to rebuild the table to
+				add a Doc ID hidden column and change
+				primary index. */
+				ulint	fts_doc_col_no;
+				ulint	num_v = 0;
+
+				fts_need_rebuild =
+					!innobase_fts_check_doc_id_col(
+						m_prebuilt->table,
+						altered_table,
+						&fts_doc_col_no, &num_v, true);
+			}
+
+			if (online && (key->flags & HA_SPATIAL)) {
+
+				if (ha_alter_info->online) {
+					ha_alter_info->unsupported_reason = my_get_err_msg(
+						ER_ALTER_OPERATION_NOT_SUPPORTED_REASON_GIS);
+				}
+
+				online = false;
 			}
 		}
 	}
 
+	// FIXME: implement Online DDL for system-versioned operations
+	if (ha_alter_info->handler_flags & INNOBASE_ALTER_VERSIONED_REBUILD) {
+
+		if (ha_alter_info->online) {
+			ha_alter_info->unsupported_reason =
+				"Not implemented for system-versioned operations";
+		}
+
+		online = false;
+	}
+
+	if (need_rebuild || fts_need_rebuild) {
+		DBUG_RETURN(online
+			    ? HA_ALTER_INPLACE_COPY_NO_LOCK
+			    : HA_ALTER_INPLACE_COPY_LOCK);
+	}
+
+	if (ha_alter_info->unsupported_reason) {
+	} else if (ha_alter_info->handler_flags & INNOBASE_ONLINE_CREATE) {
+		ha_alter_info->unsupported_reason = "ADD INDEX";
+	} else {
+		ha_alter_info->unsupported_reason = "DROP INDEX";
+	}
+
 	DBUG_RETURN(online
-		    ? HA_ALTER_INPLACE_NO_LOCK_AFTER_PREPARE
-		    : HA_ALTER_INPLACE_SHARED_LOCK_AFTER_PREPARE);
+		    ? HA_ALTER_INPLACE_NOCOPY_NO_LOCK
+		    : HA_ALTER_INPLACE_NOCOPY_LOCK);
 }
 
 /*************************************************************//**
@@ -626,7 +1451,7 @@ innobase_init_foreign(
 /*==================*/
 	dict_foreign_t*	foreign,		/*!< in/out: structure to
 						initialize */
-	char*		constraint_name,	/*!< in/out: constraint name if
+	const char*	constraint_name,	/*!< in/out: constraint name if
 						exists */
 	dict_table_t*	table,			/*!< in: foreign table */
 	dict_index_t*	index,			/*!< in: foreign key index */
@@ -652,12 +1477,12 @@ innobase_init_foreign(
                 same MySQL 'database' as the table itself. We store the name
                 to foreign->id. */
 
-                db_len = dict_get_db_name_len(table->name);
+                db_len = dict_get_db_name_len(table->name.m_name);
 
                 foreign->id = static_cast<char*>(mem_heap_alloc(
                         foreign->heap, db_len + strlen(constraint_name) + 2));
 
-                ut_memcpy(foreign->id, table->name, db_len);
+                ut_memcpy(foreign->id, table->name.m_name, db_len);
                 foreign->id[db_len] = '/';
                 strcpy(foreign->id + db_len + 1, constraint_name);
 
@@ -672,7 +1497,7 @@ innobase_init_foreign(
 
         foreign->foreign_table = table;
         foreign->foreign_table_name = mem_heap_strdup(
-                foreign->heap, table->name);
+                foreign->heap, table->name.m_name);
         dict_mem_foreign_table_name_lookup_set(foreign, TRUE);
 
         foreign->foreign_index = index;
@@ -763,6 +1588,8 @@ innobase_set_foreign_key_option(
 	case FK_OPTION_SET_NULL:
 		foreign->type = DICT_FOREIGN_ON_DELETE_SET_NULL;
 		break;
+	case FK_OPTION_UNDEF:
+		break;
 	}
 
 	switch (fk_key->update_opt) {
@@ -777,6 +1604,8 @@ innobase_set_foreign_key_option(
 	case FK_OPTION_SET_NULL:
 		foreign->type |= DICT_FOREIGN_ON_UPDATE_SET_NULL;
 		break;
+	case FK_OPTION_UNDEF:
+		break;
 	}
 
 	return(innobase_check_fk_option(foreign));
@@ -785,7 +1614,7 @@ innobase_set_foreign_key_option(
 /*******************************************************************//**
 Check if a foreign key constraint can make use of an index
 that is being created.
-@return	useable index, or NULL if none found */
+@return useable index, or NULL if none found */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 const KEY*
 innobase_find_equiv_index(
@@ -800,7 +1629,8 @@ innobase_find_equiv_index(
 	for (uint i = 0; i < n_add; i++) {
 		const KEY*	key = &keys[add[i]];
 
-		if (key->user_defined_key_parts < n_cols) {
+		if (key->user_defined_key_parts < n_cols
+		    || key->flags & HA_SPATIAL) {
 no_match:
 			continue;
 		}
@@ -809,6 +1639,12 @@ no_match:
 			const KEY_PART_INFO&	key_part = key->key_part[j];
 			uint32			col_len
 				= key_part.field->pack_length();
+
+			/* Any index on virtual columns cannot be used
+			for reference constaint */
+			if (innobase_is_v_fld(key_part.field)) {
+				goto no_match;
+			}
 
 			/* The MySQL pack length contains 1 or 2 bytes
 			length field for a true VARCHAR. */
@@ -826,7 +1662,7 @@ no_match:
 			}
 
 			if (innobase_strcasecmp(col_names[j],
-						key_part.field->field_name)) {
+						key_part.field->field_name.str)) {
 				/* Name mismatch */
 				goto no_match;
 			}
@@ -842,12 +1678,10 @@ no_match:
 Find an index whose first fields are the columns in the array
 in the same order and is not marked for deletion
 @return matching index, NULL if not found */
-static MY_ATTRIBUTE((nonnull(1,2,6), warn_unused_result))
+static MY_ATTRIBUTE((nonnull(1,5), warn_unused_result))
 dict_index_t*
 innobase_find_fk_index(
 /*===================*/
-	Alter_inplace_info*	ha_alter_info,
-					/*!< in: alter table info */
 	dict_table_t*		table,	/*!< in: table */
 	const char**		col_names,
 					/*!< in: column names, or NULL
@@ -864,8 +1698,7 @@ innobase_find_fk_index(
 	index = dict_table_get_first_index(table);
 
 	while (index != NULL) {
-		if (!(index->type & DICT_FTS)
-		    && dict_foreign_qualify_index(
+		if (dict_foreign_qualify_index(
 			    table, col_names, columns, n_cols,
 			    index, NULL, true, 0,
 			    NULL, NULL, NULL)) {
@@ -886,27 +1719,98 @@ next_rec:
 	return(NULL);
 }
 
-/*************************************************************//**
-Create InnoDB foreign key structure from MySQL alter_info
+/** Check whether given column is a base of stored column.
+@param[in]	col_name	column name
+@param[in]	table		table
+@param[in]	s_cols		list of stored columns
+@return true if the given column is a base of stored column,else false. */
+static
+bool
+innobase_col_check_fk(
+	const char*		col_name,
+	const dict_table_t*	table,
+	dict_s_col_list*	s_cols)
+{
+	dict_s_col_list::const_iterator	it;
+
+	for (it = s_cols->begin();
+	     it != s_cols->end(); ++it) {
+		dict_s_col_t	s_col = *it;
+
+		for (ulint j = 0; j < s_col.num_base; j++) {
+			if (strcmp(col_name, dict_table_get_col_name(
+						table,
+						s_col.base_col[j]->ind)) == 0) {
+				return(true);
+			}
+		}
+	}
+
+	return(false);
+}
+
+/** Check whether the foreign key constraint is on base of any stored columns.
+@param[in]	foreign	Foriegn key constraing information
+@param[in]	table	table to which the foreign key objects
+to be added
+@param[in]	s_cols	list of stored column information in the table.
+@return true if yes, otherwise false. */
+static
+bool
+innobase_check_fk_stored(
+	const dict_foreign_t*	foreign,
+	const dict_table_t*	table,
+	dict_s_col_list*	s_cols)
+{
+	ulint	type = foreign->type;
+
+	type &= ~(DICT_FOREIGN_ON_DELETE_NO_ACTION
+		  | DICT_FOREIGN_ON_UPDATE_NO_ACTION);
+
+	if (type == 0 || s_cols == NULL) {
+		return(false);
+	}
+
+	for (ulint i = 0; i < foreign->n_fields; i++) {
+		if (innobase_col_check_fk(
+			foreign->foreign_col_names[i], table, s_cols)) {
+			return(true);
+		}
+	}
+
+	return(false);
+}
+
+/** Create InnoDB foreign key structure from MySQL alter_info
+@param[in]	ha_alter_info	alter table info
+@param[in]	table_share	TABLE_SHARE
+@param[in]	table		table object
+@param[in]	col_names	column names, or NULL to use
+table->col_names
+@param[in]	drop_index	indexes to be dropped
+@param[in]	n_drop_index	size of drop_index
+@param[out]	add_fk		foreign constraint added
+@param[out]	n_add_fk	number of foreign constraints
+added
+@param[in]	trx		user transaction
+@param[in]	s_cols		list of stored column information
 @retval true if successful
 @retval false on error (will call my_error()) */
 static MY_ATTRIBUTE((nonnull(1,2,3,7,8), warn_unused_result))
 bool
 innobase_get_foreign_key_info(
-/*==========================*/
 	Alter_inplace_info*
-			ha_alter_info,	/*!< in: alter table info */
+			ha_alter_info,
 	const TABLE_SHARE*
-			table_share,	/*!< in: the TABLE_SHARE */
-	dict_table_t*	table,		/*!< in: table */
-	const char**	col_names,	/*!< in: column names, or NULL
-					to use table->col_names */
-	dict_index_t**	drop_index,	/*!< in: indexes to be dropped */
-	ulint		n_drop_index,	/*!< in: size of drop_index[] */
-	dict_foreign_t**add_fk,		/*!< out: foreign constraint added */
-	ulint*		n_add_fk,	/*!< out: number of foreign
-					constraints added */
-	const trx_t*	trx)		/*!< in: user transaction */
+			table_share,
+	dict_table_t*	table,
+	const char**	col_names,
+	dict_index_t**	drop_index,
+	ulint		n_drop_index,
+	dict_foreign_t**add_fk,
+	ulint*		n_add_fk,
+	const trx_t*	trx,
+	dict_s_col_list*s_cols)
 {
 	Key*		key;
 	Foreign_key*	fk_key;
@@ -914,6 +1818,8 @@ innobase_get_foreign_key_info(
 	char*		referenced_table_name = NULL;
 	ulint		num_fk = 0;
 	Alter_info*	alter_info = ha_alter_info->alter_info;
+
+	DBUG_ENTER("innobase_get_foreign_key_info");
 
 	*n_add_fk = 0;
 
@@ -955,7 +1861,6 @@ innobase_get_foreign_key_info(
 			}
 
 			index = innobase_find_fk_index(
-				ha_alter_info,
 				table, col_names,
 				drop_index, n_drop_index,
 				column_names, i);
@@ -988,8 +1893,8 @@ innobase_get_foreign_key_info(
 
 		add_fk[num_fk] = dict_mem_foreign_create();
 
-#ifndef __WIN__
-		if(fk_key->ref_db.str) {
+#ifndef _WIN32
+		if (fk_key->ref_db.str) {
 			tablename_to_filename(fk_key->ref_db.str, db_name,
 					      MAX_DATABASE_NAME_LEN);
 			db_namep = db_name;
@@ -1020,7 +1925,7 @@ innobase_get_foreign_key_info(
 		mutex_enter(&dict_sys->mutex);
 
 		referenced_table_name = dict_get_referenced_table(
-			table->name,
+			table->name.m_name,
 			db_namep,
 			db_name_len,
 			tbl_namep,
@@ -1099,9 +2004,9 @@ innobase_get_foreign_key_info(
 			    referenced_column_names, referenced_num_col)) {
 			mutex_exit(&dict_sys->mutex);
 			my_error(
-				ER_FK_DUP_NAME,
+				ER_DUP_CONSTRAINT_NAME,
 				MYF(0),
-				add_fk[num_fk]->id);
+                                "FOREIGN KEY", add_fk[num_fk]->id);
 			goto err_exit;
 		}
 
@@ -1121,12 +2026,21 @@ innobase_get_foreign_key_info(
 			goto err_exit;
 		}
 
+		if (innobase_check_fk_stored(
+			add_fk[num_fk], table, s_cols)) {
+			my_printf_error(
+				HA_ERR_UNSUPPORTED,
+				"Cannot add foreign key on the base column "
+				"of stored column", MYF(0));
+			goto err_exit;
+		}
+
 		num_fk++;
 	}
 
 	*n_add_fk = num_fk;
 
-	return(true);
+	DBUG_RETURN(true);
 err_exit:
 	for (ulint i = 0; i <= num_fk; i++) {
 		if (add_fk[i]) {
@@ -1134,7 +2048,7 @@ err_exit:
 		}
 	}
 
-	return(false);
+	DBUG_RETURN(false);
 }
 
 /*************************************************************//**
@@ -1188,6 +2102,7 @@ innobase_col_to_mysql(
 		memcpy(dest, data, len);
 		break;
 
+	case DATA_GEOMETRY:
 	case DATA_BLOB:
 		/* Skip MySQL BLOBs when reporting an erroneous row
 		during index creation or table rebuild. */
@@ -1227,7 +2142,6 @@ innobase_col_to_mysql(
 
 /*************************************************************//**
 Copies an InnoDB record to table->record[0]. */
-UNIV_INTERN
 void
 innobase_rec_to_mysql(
 /*==================*/
@@ -1237,26 +2151,23 @@ innobase_rec_to_mysql(
 	const ulint*		offsets)/*!< in: rec_get_offsets(
 					rec, index, ...) */
 {
-	uint	n_fields	= table->s->stored_fields;
-        uint    sql_idx         = 0;
+	uint	n_fields	= table->s->fields;
 
 	ut_ad(n_fields == dict_table_get_n_user_cols(index->table)
 	      - !!(DICT_TF2_FLAG_IS_SET(index->table,
 					DICT_TF2_FTS_HAS_DOC_ID)));
 
-	for (uint i = 0; i < n_fields; i++, sql_idx++) {
-		Field*		field;
+	for (uint i = 0; i < n_fields; i++) {
+		Field*		field	= table->field[i];
 		ulint		ipos;
 		ulint		ilen;
 		const uchar*	ifield;
-
-                while (!((field= table->field[sql_idx])->stored_in_db))
-                          sql_idx++;
+		ulint prefix_col;
 
 		field->reset();
 
-		ipos = dict_index_get_nth_col_or_prefix_pos(index, i, TRUE,
-							    NULL);
+		ipos = dict_index_get_nth_col_or_prefix_pos(
+			index, i, true, false, &prefix_col);
 
 		if (ipos == ULINT_UNDEFINED
 		    || rec_offs_nth_extern(offsets, ipos)) {
@@ -1265,7 +2176,7 @@ null_field:
 			continue;
 		}
 
-		ifield = rec_get_nth_field(rec, offsets, ipos, &ilen);
+		ifield = rec_get_nth_cfield(rec, index, offsets, ipos, &ilen);
 
 		/* Assign the NULL flag */
 		if (ilen == UNIV_SQL_NULL) {
@@ -1283,8 +2194,9 @@ null_field:
 }
 
 /*************************************************************//**
-Copies an InnoDB index entry to table->record[0]. */
-UNIV_INTERN
+Copies an InnoDB index entry to table->record[0].
+This is used in preparation for print_keydup_error() from
+inline add index */
 void
 innobase_fields_to_mysql(
 /*=====================*/
@@ -1292,24 +2204,32 @@ innobase_fields_to_mysql(
 	const dict_index_t*	index,	/*!< in: InnoDB index */
 	const dfield_t*		fields)	/*!< in: InnoDB index fields */
 {
-	uint	n_fields	= table->s->stored_fields;
-        uint    sql_idx         = 0;
+	uint	n_fields	= table->s->fields;
+	ulint	num_v 		= 0;
 
 	ut_ad(n_fields == dict_table_get_n_user_cols(index->table)
+	      + dict_table_get_n_v_cols(index->table)
 	      - !!(DICT_TF2_FLAG_IS_SET(index->table,
 					DICT_TF2_FTS_HAS_DOC_ID)));
 
-	for (uint i = 0; i < n_fields; i++, sql_idx++) {
-		Field*		field;
+	for (uint i = 0; i < n_fields; i++) {
+		Field*		field	= table->field[i];
 		ulint		ipos;
-
-                while (!((field= table->field[sql_idx])->stored_in_db))
-                          sql_idx++;
+		ulint		col_n;
+		ulint		prefix_col;
 
 		field->reset();
 
-		ipos = dict_index_get_nth_col_or_prefix_pos(index, i, TRUE,
-							    NULL);
+		if (innobase_is_v_fld(field)) {
+			col_n = num_v;
+			num_v++;
+		} else {
+			col_n = i - num_v;
+		}
+
+		ipos = dict_index_get_nth_col_or_prefix_pos(
+			index, col_n, true, innobase_is_v_fld(field),
+			&prefix_col);
 
 		if (ipos == ULINT_UNDEFINED
 		    || dfield_is_ext(&fields[ipos])
@@ -1331,8 +2251,9 @@ innobase_fields_to_mysql(
 }
 
 /*************************************************************//**
-Copies an InnoDB row to table->record[0]. */
-UNIV_INTERN
+Copies an InnoDB row to table->record[0].
+This is used in preparation for print_keydup_error() from
+row_log_table_apply() */
 void
 innobase_row_to_mysql(
 /*==================*/
@@ -1340,22 +2261,28 @@ innobase_row_to_mysql(
 	const dict_table_t*	itab,	/*!< in: InnoDB table */
 	const dtuple_t*		row)	/*!< in: InnoDB row */
 {
-	uint  n_fields	= table->s->stored_fields;
-        uint  sql_idx   = 0;
+	uint	n_fields = table->s->fields;
+	ulint	num_v = 0;
 
 	/* The InnoDB row may contain an extra FTS_DOC_ID column at the end. */
 	ut_ad(row->n_fields == dict_table_get_n_cols(itab));
 	ut_ad(n_fields == row->n_fields - DATA_N_SYS_COLS
+	      + dict_table_get_n_v_cols(itab)
 	      - !!(DICT_TF2_FLAG_IS_SET(itab, DICT_TF2_FTS_HAS_DOC_ID)));
 
-	for (uint i = 0; i < n_fields; i++, sql_idx++) {
-		Field*          field;
-		const dfield_t*	df	= dtuple_get_nth_field(row, i);
-
-                while (!((field= table->field[sql_idx])->stored_in_db))
-                          sql_idx++;
+	for (uint i = 0; i < n_fields; i++) {
+		Field*		field	= table->field[i];
 
 		field->reset();
+
+		if (innobase_is_v_fld(field)) {
+			/* Virtual column are not stored in InnoDB table, so
+			skip it */
+			num_v++;
+			continue;
+		}
+
+		const dfield_t*	df	= dtuple_get_nth_field(row, i - num_v);
 
 		if (dfield_is_ext(df) || dfield_is_null(df)) {
 			field->set_null();
@@ -1363,32 +2290,21 @@ innobase_row_to_mysql(
 			field->set_notnull();
 
 			innobase_col_to_mysql(
-				dict_table_get_nth_col(itab, i),
+				dict_table_get_nth_col(itab, i - num_v),
 				static_cast<const uchar*>(dfield_get_data(df)),
 				dfield_get_len(df), field);
 		}
 	}
-}
-
-/*************************************************************//**
-Resets table->record[0]. */
-UNIV_INTERN
-void
-innobase_rec_reset(
-/*===============*/
-	TABLE*			table)		/*!< in/out: MySQL table */
-{
-	uint	n_fields	= table->s->fields;
-	uint	i;
-
-	for (i = 0; i < n_fields; i++) {
-		table->field[i]->set_default();
+	if (table->vfield) {
+		my_bitmap_map*	old_vcol_set = tmp_use_all_columns(table, table->vcol_set);
+		table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_READ);
+		tmp_restore_column_map(table->vcol_set, old_vcol_set);
 	}
 }
 
 /*******************************************************************//**
 This function checks that index keys are sensible.
-@return	0 or error number */
+@return 0 or error number */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 int
 innobase_check_index_keys(
@@ -1410,9 +2326,9 @@ innobase_check_index_keys(
 			const KEY&	key2 = info->key_info_buffer[
 				info->index_add_buffer[i]];
 
-			if (0 == strcmp(key.name, key2.name)) {
+			if (0 == strcmp(key.name.str, key2.name.str)) {
 				my_error(ER_WRONG_NAME_FOR_INDEX, MYF(0),
-					 key.name);
+					 key.name.str);
 
 				return(ER_WRONG_NAME_FOR_INDEX);
 			}
@@ -1425,10 +2341,23 @@ innobase_check_index_keys(
 		for (index = dict_table_get_first_index(innodb_table);
 		     index; index = dict_table_get_next_index(index)) {
 
-			if (!strcmp(key.name, index->name)) {
+			if (index->is_committed()
+			    && !strcmp(key.name.str, index->name)) {
 				break;
 			}
 		}
+
+		/* Now we are in a situation where we have "ADD INDEX x"
+		and an index by the same name already exists. We have 4
+		possible cases:
+		1. No further clauses for an index x are given. Should reject
+		the operation.
+		2. "DROP INDEX x" is given. Should allow the operation.
+		3. "RENAME INDEX x TO y" is given. Should allow the operation.
+		4. "DROP INDEX x, RENAME INDEX x TO y" is given. Should allow
+		the operation, since no name clash occurs. In this particular
+		case MySQL cancels the operation without calling InnoDB
+		methods. */
 
 		if (index) {
 			/* If a key by the same name is being created and
@@ -1438,13 +2367,32 @@ innobase_check_index_keys(
 				const KEY*	drop_key
 					= info->index_drop_buffer[i];
 
-				if (0 == strcmp(key.name, drop_key->name)) {
+				if (0 == strcmp(key.name.str,
+                                                drop_key->name.str)) {
 					goto name_ok;
 				}
 			}
 
-			my_error(ER_WRONG_NAME_FOR_INDEX, MYF(0), key.name);
+#ifdef MYSQL_RENAME_INDEX
+			/* If a key by the same name is being created and
+			renamed, the name clash is OK. E.g.
+			ALTER TABLE t ADD INDEX i (col), RENAME INDEX i TO x
+			where the index "i" exists prior to the ALTER command.
+			In this case we:
+			1. rename the existing index from "i" to "x"
+			2. add the new index "i" */
+			for (uint i = 0; i < info->index_rename_count; i++) {
+				const KEY_PAIR*	pair
+					= &info->index_rename_buffer[i];
 
+				if (0 == strcmp(key.name, pair->old_key->name)) {
+					goto name_ok;
+				}
+			}
+#endif /* MYSQL_RENAME_INDEX */
+
+			my_error(ER_WRONG_NAME_FOR_INDEX, MYF(0),
+                                 key.name.str);
 			return(ER_WRONG_NAME_FOR_INDEX);
 		}
 
@@ -1483,7 +2431,7 @@ name_ok:
 				}
 
 				my_error(ER_WRONG_KEY_COLUMN, MYF(0), "InnoDB",
-					 field->field_name);
+					 field->field_name.str);
 				return(ER_WRONG_KEY_COLUMN);
 			}
 
@@ -1499,7 +2447,7 @@ name_ok:
 				}
 
 				my_error(ER_WRONG_KEY_COLUMN, MYF(0), "InnoDB",
-					 field->field_name);
+					 field->field_name.str);
 				return(ER_WRONG_KEY_COLUMN);
 			}
 		}
@@ -1525,7 +2473,7 @@ innobase_create_index_field_def(
 	const Field*	field;
 	ibool		is_unsigned;
 	ulint		col_type;
-	ulint		innodb_fieldnr=0;
+	ulint		num_v = 0;
 
 	DBUG_ENTER("innobase_create_index_field_def");
 
@@ -1533,27 +2481,28 @@ innobase_create_index_field_def(
 	ut_ad(index_field);
 	ut_ad(altered_table);
 
-	/* Virtual columns are not stored in InnoDB data dictionary, thus
-	if there is virtual columns we need to skip them to find the
-	correct field. */
-	for(ulint i = 0; i < key_part->fieldnr; i++) {
-		const Field* table_field = altered_table->field[i];
-		if (!table_field->stored_in_db) {
-			continue;
-		}
-		innodb_fieldnr++;
-	}
-
-	field = new_clustered ?
-		altered_table->field[key_part->fieldnr]
+	field = new_clustered
+		? altered_table->field[key_part->fieldnr]
 		: key_part->field;
 
-	ut_a(field);
+	for (ulint i = 0; i < key_part->fieldnr; i++) {
+		if (innobase_is_v_fld(altered_table->field[i])) {
+			num_v++;
+		}
+	}
 
-	index_field->col_no = innodb_fieldnr;
-	col_type = get_innobase_type_from_mysql_type(&is_unsigned, field);
+	col_type = get_innobase_type_from_mysql_type(
+		&is_unsigned, field);
 
-	if (DATA_BLOB == col_type
+	if (innobase_is_v_fld(field)) {
+		index_field->is_v_col = true;
+		index_field->col_no = num_v;
+	} else {
+		index_field->is_v_col = false;
+		index_field->col_no = key_part->fieldnr - num_v;
+	}
+
+	if (DATA_LARGE_MTYPE(col_type)
 	    || (key_part->length < field->pack_length()
 		&& field->type() != MYSQL_TYPE_VARCHAR)
 	    || (field->type() == MYSQL_TYPE_VARCHAR
@@ -1568,30 +2517,29 @@ innobase_create_index_field_def(
 	DBUG_VOID_RETURN;
 }
 
-/*******************************************************************//**
-Create index definition for key */
+/** Create index definition for key
+@param[in]	altered_table		MySQL table that is being altered
+@param[in]	keys			key definitions
+@param[in]	key_number		MySQL key number
+@param[in]	new_clustered		true if generating a new clustered
+index on the table
+@param[in]	key_clustered		true if this is the new clustered index
+@param[out]	index			index definition
+@param[in]	heap			heap where memory is allocated */
 static MY_ATTRIBUTE((nonnull))
 void
 innobase_create_index_def(
-/*======================*/
-	const TABLE*		altered_table,	/*!< in: MySQL table that is
-						being altered */
-	const KEY*		keys,		/*!< in: key definitions */
-	ulint			key_number,	/*!< in: MySQL key number */
-	bool			new_clustered,	/*!< in: true if generating
-						a new clustered index
-						on the table */
-	bool			key_clustered,	/*!< in: true if this is
-						the new clustered index */
-	index_def_t*		index,		/*!< out: index definition */
-	mem_heap_t*		heap)		/*!< in: heap where memory
-						is allocated */
+	const TABLE*		altered_table,
+	const KEY*		keys,
+	ulint			key_number,
+	bool			new_clustered,
+	bool			key_clustered,
+	index_def_t*		index,
+	mem_heap_t*		heap)
 {
 	const KEY*	key = &keys[key_number];
 	ulint		i;
-	ulint		len;
 	ulint		n_fields = key->user_defined_key_parts;
-	char*		index_name;
 
 	DBUG_ENTER("innobase_create_index_def");
 	DBUG_ASSERT(!key_clustered || new_clustered);
@@ -1600,131 +2548,99 @@ innobase_create_index_def(
 
 	index->fields = static_cast<index_field_t*>(
 		mem_heap_alloc(heap, n_fields * sizeof *index->fields));
-	index->ind_type = 0;
+
+	index->parser = NULL;
 	index->key_number = key_number;
 	index->n_fields = n_fields;
-	len = strlen(key->name) + 1;
-	index->name = index_name = static_cast<char*>(
-		mem_heap_alloc(heap, len + !new_clustered));
-
-	if (!new_clustered) {
-		*index_name++ = TEMP_INDEX_PREFIX;
-	}
-
-	memcpy(index_name, key->name, len);
-
-	if (key->flags & HA_NOSAME) {
-		index->ind_type |= DICT_UNIQUE;
-	}
+	index->name = mem_heap_strdup(heap, key->name.str);
+	index->rebuild = new_clustered;
 
 	if (key_clustered) {
-		DBUG_ASSERT(!(key->flags & HA_FULLTEXT));
+		DBUG_ASSERT(!(key->flags & (HA_FULLTEXT | HA_SPATIAL)));
 		DBUG_ASSERT(key->flags & HA_NOSAME);
-		index->ind_type |= DICT_CLUSTERED;
+		index->ind_type = DICT_CLUSTERED | DICT_UNIQUE;
 	} else if (key->flags & HA_FULLTEXT) {
+		DBUG_ASSERT(!(key->flags & (HA_SPATIAL | HA_NOSAME)));
 		DBUG_ASSERT(!(key->flags & HA_KEYFLAG_MASK
 			      & ~(HA_FULLTEXT
 				  | HA_PACK_KEY
 				  | HA_BINARY_PACK_KEY)));
+		index->ind_type = DICT_FTS;
+
+		/* Note: key->parser is only parser name,
+			 we need to get parser from altered_table instead */
+
+		if (key->flags & HA_USES_PARSER) {
+			for (ulint j = 0; j < altered_table->s->keys; j++) {
+				if (ut_strcmp(altered_table->key_info[j].name.str,
+					      key->name.str) == 0) {
+					ut_ad(altered_table->key_info[j].flags
+					      & HA_USES_PARSER);
+
+					plugin_ref	parser =
+						altered_table->key_info[j].parser;
+					index->parser =
+						static_cast<st_mysql_ftparser*>(
+						plugin_decl(parser)->info);
+
+					break;
+				}
+			}
+
+			DBUG_EXECUTE_IF("fts_instrument_use_default_parser",
+				index->parser = &fts_default_parser;);
+			ut_ad(index->parser);
+		}
+	} else if (key->flags & HA_SPATIAL) {
 		DBUG_ASSERT(!(key->flags & HA_NOSAME));
-		DBUG_ASSERT(!index->ind_type);
-		index->ind_type |= DICT_FTS;
+		index->ind_type = DICT_SPATIAL;
+		ut_ad(n_fields == 1);
+		ulint	num_v = 0;
+
+		/* Need to count the virtual fields before this spatial
+		indexed field */
+		for (ulint i = 0; i < key->key_part->fieldnr; i++) {
+			if (innobase_is_v_fld(altered_table->field[i])) {
+				num_v++;
+			}
+		}
+		index->fields[0].col_no = key->key_part[0].fieldnr - num_v;
+		index->fields[0].prefix_len = 0;
+		index->fields[0].is_v_col = false;
+
+		if (innobase_is_v_fld(key->key_part[0].field)) {
+
+			/* Currently, the spatial index cannot be created
+			on virtual columns. It is blocked in server
+			layer */
+			ut_ad(0);
+			index->fields[0].is_v_col = true;
+		} else {
+			index->fields[0].is_v_col = false;
+		}
+	} else {
+		index->ind_type = (key->flags & HA_NOSAME) ? DICT_UNIQUE : 0;
 	}
 
-	for (i = 0; i < n_fields; i++) {
-		innobase_create_index_field_def(
-				new_clustered,
-				altered_table,
-				&key->key_part[i],
-				&index->fields[i]);
+	if (!(key->flags & HA_SPATIAL)) {
+		for (i = 0; i < n_fields; i++) {
+			innobase_create_index_field_def(
+				new_clustered, altered_table,
+				&key->key_part[i], &index->fields[i]);
+
+			if (index->fields[i].is_v_col) {
+				index->ind_type |= DICT_VIRTUAL;
+			}
+		}
 	}
 
 	DBUG_VOID_RETURN;
 }
 
 /*******************************************************************//**
-Check whether the table has the FTS_DOC_ID column
-@return whether there exists an FTS_DOC_ID column */
-static
-bool
-innobase_fts_check_doc_id_col(
-/*==========================*/
-	const dict_table_t*	table,  /*!< in: InnoDB table with
-					fulltext index */
-	const TABLE*		altered_table,
-					/*!< in: MySQL table with
-					fulltext index */
-	ulint*			fts_doc_col_no)
-					/*!< out: The column number for
-					Doc ID, or ULINT_UNDEFINED
-					if it is of wrong type */
-{
-	*fts_doc_col_no = ULINT_UNDEFINED;
-
-	const uint n_cols = altered_table->s->stored_fields;
-        uint sql_idx = 0;
-	uint i;
-
-	for (i = 0; i < n_cols; i++, sql_idx++) {
-		const Field*	field;
-                while (!((field= altered_table->field[sql_idx])->
-                                 stored_in_db))
-                          sql_idx++;
-		if (my_strcasecmp(system_charset_info,
-				  field->field_name, FTS_DOC_ID_COL_NAME)) {
-			continue;
-		}
-
-		if (strcmp(field->field_name, FTS_DOC_ID_COL_NAME)) {
-			my_error(ER_WRONG_COLUMN_NAME, MYF(0),
-				 field->field_name);
-		} else if (field->type() != MYSQL_TYPE_LONGLONG
-			   || field->pack_length() != 8
-			   || field->real_maybe_null()
-			   || !(field->flags & UNSIGNED_FLAG)) {
-			my_error(ER_INNODB_FT_WRONG_DOCID_COLUMN, MYF(0),
-				 field->field_name);
-		} else {
-			*fts_doc_col_no = i;
-		}
-
-		return(true);
-	}
-
-	if (!table) {
-		return(false);
-	}
-
-	for (; i + DATA_N_SYS_COLS < (uint) table->n_cols; i++) {
-		const char*     name = dict_table_get_col_name(table, i);
-
-		if (strcmp(name, FTS_DOC_ID_COL_NAME) == 0) {
-#ifdef UNIV_DEBUG
-			const dict_col_t*       col;
-
-			col = dict_table_get_nth_col(table, i);
-
-			/* Because the FTS_DOC_ID does not exist in
-			the MySQL data dictionary, this must be the
-			internally created FTS_DOC_ID column. */
-			ut_ad(col->mtype == DATA_INT);
-			ut_ad(col->len == 8);
-			ut_ad(col->prtype & DATA_NOT_NULL);
-			ut_ad(col->prtype & DATA_UNSIGNED);
-#endif /* UNIV_DEBUG */
-			*fts_doc_col_no = i;
-			return(true);
-		}
-	}
-
-	return(false);
-}
-
-/*******************************************************************//**
 Check whether the table has a unique index with FTS_DOC_ID_INDEX_NAME
 on the Doc ID column.
-@return	the status of the FTS_DOC_ID index */
-UNIV_INTERN
+@return the status of the FTS_DOC_ID index */
 enum fts_doc_id_index_enum
 innobase_fts_check_doc_id_index(
 /*============================*/
@@ -1747,14 +2663,14 @@ innobase_fts_check_doc_id_index(
 			const KEY& key = altered_table->key_info[i];
 
 			if (innobase_strcasecmp(
-				    key.name, FTS_DOC_ID_INDEX_NAME)) {
+				    key.name.str, FTS_DOC_ID_INDEX_NAME)) {
 				continue;
 			}
 
 			if ((key.flags & HA_NOSAME)
 			    && key.user_defined_key_parts == 1
-			    && !strcmp(key.name, FTS_DOC_ID_INDEX_NAME)
-			    && !strcmp(key.key_part[0].field->field_name,
+			    && !strcmp(key.name.str, FTS_DOC_ID_INDEX_NAME)
+			    && !strcmp(key.key_part[0].field->field_name.str,
 				       FTS_DOC_ID_COL_NAME)) {
 				if (fts_doc_col_no) {
 					*fts_doc_col_no = ULINT_UNDEFINED;
@@ -1793,7 +2709,8 @@ innobase_fts_check_doc_id_index(
 		if (strcmp(field->name, FTS_DOC_ID_COL_NAME) == 0
 		    && field->col->mtype == DATA_INT
 		    && field->col->len == 8
-		    && field->col->prtype & DATA_NOT_NULL) {
+		    && field->col->prtype & DATA_NOT_NULL
+		    && !field->col->is_virtual()) {
 			if (fts_doc_col_no) {
 				*fts_doc_col_no = dict_col_get_no(field->col);
 			}
@@ -1810,9 +2727,8 @@ innobase_fts_check_doc_id_index(
 /*******************************************************************//**
 Check whether the table has a unique index with FTS_DOC_ID_INDEX_NAME
 on the Doc ID column in MySQL create index definition.
-@return	FTS_EXIST_DOC_ID_INDEX if there exists the FTS_DOC_ID index,
+@return FTS_EXIST_DOC_ID_INDEX if there exists the FTS_DOC_ID index,
 FTS_INCORRECT_DOC_ID_INDEX if the FTS_DOC_ID index is of wrong format */
-UNIV_INTERN
 enum fts_doc_id_index_enum
 innobase_fts_check_doc_id_index_in_def(
 /*===================================*/
@@ -1824,7 +2740,7 @@ innobase_fts_check_doc_id_index_in_def(
 	for (ulint j = 0; j < n_key; j++) {
 		const KEY*	key = &key_info[j];
 
-		if (innobase_strcasecmp(key->name, FTS_DOC_ID_INDEX_NAME)) {
+		if (innobase_strcasecmp(key->name.str, FTS_DOC_ID_INDEX_NAME)) {
 			continue;
 		}
 
@@ -1832,8 +2748,8 @@ innobase_fts_check_doc_id_index_in_def(
 		named as "FTS_DOC_ID_INDEX" and on column "FTS_DOC_ID" */
 		if (!(key->flags & HA_NOSAME)
 		    || key->user_defined_key_parts != 1
-		    || strcmp(key->name, FTS_DOC_ID_INDEX_NAME)
-		    || strcmp(key->key_part[0].field->field_name,
+		    || strcmp(key->name.str, FTS_DOC_ID_INDEX_NAME)
+		    || strcmp(key->key_part[0].field->field_name.str,
 			      FTS_DOC_ID_COL_NAME)) {
 			return(FTS_INCORRECT_DOC_ID_INDEX);
 		}
@@ -1858,7 +2774,7 @@ ELSE
 
 ENDIF
 
-@return	key definitions */
+@return key definitions */
 static MY_ATTRIBUTE((nonnull, warn_unused_result, malloc))
 index_def_t*
 innobase_create_key_defs(
@@ -1904,7 +2820,7 @@ innobase_create_key_defs(
 
 	new_primary = n_add > 0
 		&& !my_strcasecmp(system_charset_info,
-				  key_info[*add].name, "PRIMARY");
+				  key_info[*add].name.str, "PRIMARY");
 	n_fts_add = 0;
 
 	/* If there is a UNIQUE INDEX consisting entirely of NOT NULL
@@ -1945,9 +2861,9 @@ innobase_create_key_defs(
 			index->fields = NULL;
 			index->n_fields = 0;
 			index->ind_type = DICT_CLUSTERED;
-			index->name = mem_heap_strdup(
-				heap, innobase_index_reserve_name);
-			index->key_number = ~0;
+			index->name = innobase_index_reserve_name;
+			index->rebuild = true;
+			index->key_number = ~0U;
 			primary_key_number = ULINT_UNDEFINED;
 			goto created_clustered;
 		} else {
@@ -1957,7 +2873,7 @@ innobase_create_key_defs(
 		/* Create the PRIMARY key index definition */
 		innobase_create_index_def(
 			altered_table, key_info, primary_key_number,
-			TRUE, TRUE, indexdef++, heap);
+			true, true, indexdef++, heap);
 
 created_clustered:
 		n_add = 1;
@@ -1968,8 +2884,8 @@ created_clustered:
 			}
 			/* Copy the index definitions. */
 			innobase_create_index_def(
-				altered_table, key_info, i, TRUE, FALSE,
-				indexdef, heap);
+				altered_table, key_info, i, true,
+				false, indexdef, heap);
 
 			if (indexdef->ind_type & DICT_FTS) {
 				n_fts_add++;
@@ -1980,12 +2896,13 @@ created_clustered:
 		}
 
 		if (n_fts_add > 0) {
+			ulint	num_v = 0;
+
 			if (!add_fts_doc_id
 			    && !innobase_fts_check_doc_id_col(
 				    NULL, altered_table,
-				    &fts_doc_id_col)) {
-				fts_doc_id_col =
-                                  altered_table->s->stored_fields;
+				    &fts_doc_id_col, &num_v)) {
+				fts_doc_id_col = altered_table->s->fields - num_v;
 				add_fts_doc_id = true;
 			}
 
@@ -2013,8 +2930,8 @@ created_clustered:
 
 		for (ulint i = 0; i < n_add; i++) {
 			innobase_create_index_def(
-				altered_table, key_info, add[i], FALSE, FALSE,
-				indexdef, heap);
+				altered_table, key_info, add[i],
+				false, false, indexdef, heap);
 
 			if (indexdef->ind_type & DICT_FTS) {
 				n_fts_add++;
@@ -2034,23 +2951,14 @@ created_clustered:
 		index->n_fields = 1;
 		index->fields->col_no = fts_doc_id_col;
 		index->fields->prefix_len = 0;
+		index->fields->is_v_col = false;
 		index->ind_type = DICT_UNIQUE;
+		ut_ad(!rebuild
+		      || !add_fts_doc_id
+		      || fts_doc_id_col <= altered_table->s->fields);
 
-		if (rebuild) {
-			index->name = mem_heap_strdup(
-				heap, FTS_DOC_ID_INDEX_NAME);
-			ut_ad(!add_fts_doc_id
-			      || fts_doc_id_col == altered_table->s->stored_fields);
-		} else {
-			char*	index_name;
-			index->name = index_name = static_cast<char*>(
-				mem_heap_alloc(
-					heap,
-					1 + sizeof FTS_DOC_ID_INDEX_NAME));
-			*index_name++ = TEMP_INDEX_PREFIX;
-			memcpy(index_name, FTS_DOC_ID_INDEX_NAME,
-			       sizeof FTS_DOC_ID_INDEX_NAME);
-		}
+		index->name = FTS_DOC_ID_INDEX_NAME;
+		index->rebuild = rebuild;
 
 		/* TODO: assign a real MySQL key number for this */
 		index->key_number = ULINT_UNDEFINED;
@@ -2067,7 +2975,7 @@ created_clustered:
 
 /*******************************************************************//**
 Check each index column size, make sure they do not exceed the max limit
-@return	true if index column size exceeds limit */
+@return true if index column size exceeds limit */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 innobase_check_column_length(
@@ -2082,113 +2990,6 @@ innobase_check_column_length(
 	}
 	return(false);
 }
-
-struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
-{
-	/** Dummy query graph */
-	que_thr_t*	thr;
-	/** reference to the prebuilt struct of the creating instance */
-	row_prebuilt_t*&prebuilt;
-	/** InnoDB indexes being created */
-	dict_index_t**	add_index;
-	/** MySQL key numbers for the InnoDB indexes that are being created */
-	const ulint*	add_key_numbers;
-	/** number of InnoDB indexes being created */
-	ulint		num_to_add_index;
-	/** InnoDB indexes being dropped */
-	dict_index_t**	drop_index;
-	/** number of InnoDB indexes being dropped */
-	const ulint	num_to_drop_index;
-	/** InnoDB foreign key constraints being dropped */
-	dict_foreign_t** drop_fk;
-	/** number of InnoDB foreign key constraints being dropped */
-	const ulint	num_to_drop_fk;
-	/** InnoDB foreign key constraints being added */
-	dict_foreign_t** add_fk;
-	/** number of InnoDB foreign key constraints being dropped */
-	const ulint	num_to_add_fk;
-	/** whether to create the indexes online */
-	bool		online;
-	/** memory heap */
-	mem_heap_t*	heap;
-	/** dictionary transaction */
-	trx_t*		trx;
-	/** original table (if rebuilt, differs from indexed_table) */
-	dict_table_t*	old_table;
-	/** table where the indexes are being created or dropped */
-	dict_table_t*	new_table;
-	/** mapping of old column numbers to new ones, or NULL */
-	const ulint*	col_map;
-	/** new column names, or NULL if nothing was renamed */
-	const char**    col_names;
-	/** added AUTO_INCREMENT column position, or ULINT_UNDEFINED */
-	const ulint	add_autoinc;
-	/** default values of ADD COLUMN, or NULL */
-	const dtuple_t*	add_cols;
-	/** autoinc sequence to use */
-	ib_sequence_t	sequence;
-	/** maximum auto-increment value */
-	ulonglong	max_autoinc;
-	/** temporary table name to use for old table when renaming tables */
-	const char*	tmp_name;
-
-	ha_innobase_inplace_ctx(row_prebuilt_t*& prebuilt_arg,
-				dict_index_t** drop_arg,
-				ulint num_to_drop_arg,
-				dict_foreign_t** drop_fk_arg,
-				ulint num_to_drop_fk_arg,
-				dict_foreign_t** add_fk_arg,
-				ulint num_to_add_fk_arg,
-				bool online_arg,
-				mem_heap_t* heap_arg,
-				dict_table_t* new_table_arg,
-				const char** col_names_arg,
-				ulint add_autoinc_arg,
-				ulonglong autoinc_col_min_value_arg,
-				ulonglong autoinc_col_max_value_arg) :
-		inplace_alter_handler_ctx(),
-		prebuilt (prebuilt_arg),
-		add_index (0), add_key_numbers (0), num_to_add_index (0),
-		drop_index (drop_arg), num_to_drop_index (num_to_drop_arg),
-		drop_fk (drop_fk_arg), num_to_drop_fk (num_to_drop_fk_arg),
-		add_fk (add_fk_arg), num_to_add_fk (num_to_add_fk_arg),
-		online (online_arg), heap (heap_arg), trx (0),
-		old_table (prebuilt_arg->table),
-		new_table (new_table_arg),
-		col_map (0), col_names (col_names_arg),
-		add_autoinc (add_autoinc_arg),
-		add_cols (0),
-		sequence(prebuilt->trx->mysql_thd,
-			 autoinc_col_min_value_arg, autoinc_col_max_value_arg),
-		max_autoinc (0),
-		tmp_name (0)
-	{
-#ifdef UNIV_DEBUG
-		for (ulint i = 0; i < num_to_add_index; i++) {
-			ut_ad(!add_index[i]->to_be_dropped);
-		}
-		for (ulint i = 0; i < num_to_drop_index; i++) {
-			ut_ad(drop_index[i]->to_be_dropped);
-		}
-#endif /* UNIV_DEBUG */
-
-		thr = pars_complete_graph_for_exec(NULL, prebuilt->trx, heap);
-	}
-
-	~ha_innobase_inplace_ctx()
-	{
-		mem_heap_free(heap);
-	}
-
-	/** Determine if the table will be rebuilt.
-	@return whether the table will be rebuilt */
-	bool need_rebuild () const { return(old_table != new_table); }
-
-private:
-	// Disable copying
-	ha_innobase_inplace_ctx(const ha_innobase_inplace_ctx&);
-	ha_innobase_inplace_ctx& operator=(const ha_innobase_inplace_ctx&);
-};
 
 /********************************************************************//**
 Drop any indexes that we were not able to free previously due to
@@ -2208,7 +3009,7 @@ online_retry_drop_indexes_low(
 	may have prebuilt->table pointing to the table. However, these
 	other threads should be between statements, waiting for the
 	next statement to execute, or for a meta-data lock. */
-	ut_ad(table->n_ref_count >= 1);
+	ut_ad(table->get_ref_count() >= 1);
 
 	if (table->drop_aborted) {
 		row_merge_drop_indexes(trx, table, TRUE);
@@ -2234,15 +3035,13 @@ online_retry_drop_indexes(
 		online_retry_drop_indexes_low(table, trx);
 		trx_commit_for_mysql(trx);
 		row_mysql_unlock_data_dictionary(trx);
-		trx_free_for_mysql(trx);
+		trx_free(trx);
 	}
 
-#ifdef UNIV_DEBUG
-	mutex_enter(&dict_sys->mutex);
-	dict_table_check_for_dup_indexes(table, CHECK_ALL_COMPLETE);
-	mutex_exit(&dict_sys->mutex);
-	ut_a(!table->drop_aborted);
-#endif /* UNIV_DEBUG */
+	ut_d(mutex_enter(&dict_sys->mutex));
+	ut_d(dict_table_check_for_dup_indexes(table, CHECK_ALL_COMPLETE));
+	ut_d(mutex_exit(&dict_sys->mutex));
+	ut_ad(!table->drop_aborted);
 }
 
 /********************************************************************//**
@@ -2256,6 +3055,7 @@ online_retry_drop_indexes_with_trx(
 	trx_t*		trx)	/*!< in/out: transaction */
 {
 	ut_ad(trx_state_eq(trx, TRX_STATE_NOT_STARTED));
+
 	ut_ad(trx->dict_operation_lock_mode == RW_X_LATCH);
 
 	/* Now that the dictionary is being locked, check if we can
@@ -2273,9 +3073,9 @@ online_retry_drop_indexes_with_trx(
 }
 
 /** Determines if InnoDB is dropping a foreign key constraint.
-@param foreign		the constraint
-@param drop_fk		constraints being dropped
-@param n_drop_fk	number of constraints that are being dropped
+@param foreign the constraint
+@param drop_fk constraints being dropped
+@param n_drop_fk number of constraints that are being dropped
 @return whether the constraint is being dropped */
 MY_ATTRIBUTE((pure, nonnull(1), warn_unused_result))
 inline
@@ -2296,13 +3096,13 @@ innobase_dropping_foreign(
 
 /** Determines if an InnoDB FOREIGN KEY constraint depends on a
 column that is being dropped or modified to NOT NULL.
-@param user_table	InnoDB table as it is before the ALTER operation
-@param col_name		Name of the column being altered
-@param drop_fk		constraints being dropped
-@param n_drop_fk	number of constraints that are being dropped
-@param drop		true=drop column, false=set NOT NULL
-@retval true		Not allowed (will call my_error())
-@retval false		Allowed
+@param user_table InnoDB table as it is before the ALTER operation
+@param col_name Name of the column being altered
+@param drop_fk constraints being dropped
+@param n_drop_fk number of constraints that are being dropped
+@param drop true=drop column, false=set NOT NULL
+@retval true Not allowed (will call my_error())
+@retval false Allowed
 */
 MY_ATTRIBUTE((pure, nonnull(1,4), warn_unused_result))
 static
@@ -2380,7 +3180,7 @@ innobase_check_foreigns_low(
 				display_name, (sizeof display_name) - 1,
 				foreign->foreign_table_name,
 				strlen(foreign->foreign_table_name),
-				NULL, TRUE);
+				NULL);
 			*buf_end = '\0';
 			my_error(ER_FK_COLUMN_CANNOT_DROP_CHILD,
 				 MYF(0), col_name, foreign->id,
@@ -2395,21 +3195,20 @@ innobase_check_foreigns_low(
 
 /** Determines if an InnoDB FOREIGN KEY constraint depends on a
 column that is being dropped or modified to NOT NULL.
-@param ha_alter_info	Data used during in-place alter
-@param altered_table	MySQL table that is being altered
-@param old_table	MySQL table as it is before the ALTER operation
-@param user_table	InnoDB table as it is before the ALTER operation
-@param drop_fk		constraints being dropped
-@param n_drop_fk	number of constraints that are being dropped
-@retval true		Not allowed (will call my_error())
-@retval false		Allowed
+@param ha_alter_info Data used during in-place alter
+@param altered_table MySQL table that is being altered
+@param old_table MySQL table as it is before the ALTER operation
+@param user_table InnoDB table as it is before the ALTER operation
+@param drop_fk constraints being dropped
+@param n_drop_fk number of constraints that are being dropped
+@retval true Not allowed (will call my_error())
+@retval false Allowed
 */
-MY_ATTRIBUTE((pure, nonnull(1,2,3,4), warn_unused_result))
+MY_ATTRIBUTE((pure, nonnull(1,2,3), warn_unused_result))
 static
 bool
 innobase_check_foreigns(
 	Alter_inplace_info*	ha_alter_info,
-	const TABLE*		altered_table,
 	const TABLE*		old_table,
 	const dict_table_t*	user_table,
 	dict_foreign_t**	drop_fk,
@@ -2434,7 +3233,7 @@ innobase_check_foreigns(
 		if (!new_field || (new_field->flags & NOT_NULL_FLAG)) {
 			if (innobase_check_foreigns_low(
 				    user_table, drop_fk, n_drop_fk,
-				    (*fp)->field_name, !new_field)) {
+				    (*fp)->field_name.str, !new_field)) {
 				return(true);
 			}
 		}
@@ -2444,20 +3243,23 @@ innobase_check_foreigns(
 }
 
 /** Convert a default value for ADD COLUMN.
-
-@param heap	Memory heap where allocated
-@param dfield	InnoDB data field to copy to
-@param field	MySQL value for the column
-@param comp	nonzero if in compact format */
-static MY_ATTRIBUTE((nonnull))
-void
-innobase_build_col_map_add(
-/*=======================*/
+@param[in,out]	heap		Memory heap where allocated
+@param[out]	dfield		InnoDB data field to copy to
+@param[in]	field		MySQL value for the column
+@param[in]	old_field	Old field or NULL if new col is added	
+@param[in]	comp		nonzero if in compact format. */
+static void innobase_build_col_map_add(
 	mem_heap_t*	heap,
 	dfield_t*	dfield,
 	const Field*	field,
+	const Field*	old_field,
 	ulint		comp)
 {
+	if (old_field && old_field->real_maybe_null()
+	    && field->real_maybe_null()) {
+		return;
+	}
+
 	if (field->is_real_null()) {
 		dfield_set_null(dfield);
 		return;
@@ -2467,21 +3269,23 @@ innobase_build_col_map_add(
 
 	byte*	buf	= static_cast<byte*>(mem_heap_alloc(heap, size));
 
+	const byte*	mysql_data = old_field ? old_field->ptr : field->ptr;
+
 	row_mysql_store_col_in_innobase_format(
-		dfield, buf, TRUE, field->ptr, size, comp);
+		dfield, buf, true, mysql_data, size, comp);
 }
 
 /** Construct the translation table for reordering, dropping or
 adding columns.
 
-@param ha_alter_info	Data used during in-place alter
-@param altered_table	MySQL table that is being altered
-@param table		MySQL table as it is before the ALTER operation
-@param new_table	InnoDB table corresponding to MySQL altered_table
-@param old_table	InnoDB table corresponding to MYSQL table
-@param add_cols		Default values for ADD COLUMN, or NULL if no ADD COLUMN
-@param heap		Memory heap where allocated
-@return	array of integers, mapping column numbers in the table
+@param ha_alter_info Data used during in-place alter
+@param altered_table MySQL table that is being altered
+@param table MySQL table as it is before the ALTER operation
+@param new_table InnoDB table corresponding to MySQL altered_table
+@param old_table InnoDB table corresponding to MYSQL table
+@param defaults Default values for ADD COLUMN, or NULL if no ADD COLUMN
+@param heap Memory heap where allocated
+@return array of integers, mapping column numbers in the table
 to column numbers in altered_table */
 static MY_ATTRIBUTE((nonnull(1,2,3,4,5,7), warn_unused_result))
 const ulint*
@@ -2492,67 +3296,99 @@ innobase_build_col_map(
 	const TABLE*		table,
 	const dict_table_t*	new_table,
 	const dict_table_t*	old_table,
-	dtuple_t*		add_cols,
+	dtuple_t*		defaults,
 	mem_heap_t*		heap)
 {
-        uint old_i, old_innobase_i;
 	DBUG_ENTER("innobase_build_col_map");
 	DBUG_ASSERT(altered_table != table);
 	DBUG_ASSERT(new_table != old_table);
 	DBUG_ASSERT(dict_table_get_n_cols(new_table)
-		    >= altered_table->s->stored_fields + DATA_N_SYS_COLS);
+		    + dict_table_get_n_v_cols(new_table)
+		    >= altered_table->s->fields + DATA_N_SYS_COLS);
 	DBUG_ASSERT(dict_table_get_n_cols(old_table)
-		    >= table->s->stored_fields + DATA_N_SYS_COLS);
-	DBUG_ASSERT(!!add_cols == !!(ha_alter_info->handler_flags
-				     & Alter_inplace_info::ADD_COLUMN));
-	DBUG_ASSERT(!add_cols || dtuple_get_n_fields(add_cols)
+		    + dict_table_get_n_v_cols(old_table)
+		    >= table->s->fields + DATA_N_SYS_COLS);
+	DBUG_ASSERT(!!defaults == !!(ha_alter_info->handler_flags
+				     & INNOBASE_DEFAULTS));
+	DBUG_ASSERT(!defaults || dtuple_get_n_fields(defaults)
 		    == dict_table_get_n_cols(new_table));
 
 	ulint*	col_map = static_cast<ulint*>(
-		mem_heap_alloc(heap, old_table->n_cols * sizeof *col_map));
+		mem_heap_alloc(
+			heap, unsigned(old_table->n_cols + old_table->n_v_cols)
+			* sizeof *col_map));
 
 	List_iterator_fast<Create_field> cf_it(
 		ha_alter_info->alter_info->create_list);
-	uint i = 0, sql_idx = 0;
+	uint	i = 0;
+	uint	num_v = 0;
 
 	/* Any dropped columns will map to ULINT_UNDEFINED. */
-	for (old_innobase_i = 0;
-             old_innobase_i + DATA_N_SYS_COLS < old_table->n_cols;
-	     old_innobase_i++) {
-		col_map[old_innobase_i] = ULINT_UNDEFINED;
+	for (uint old_i = 0; old_i + DATA_N_SYS_COLS < old_table->n_cols;
+	     old_i++) {
+		col_map[old_i] = ULINT_UNDEFINED;
+	}
+
+	for (uint old_i = 0; old_i < old_table->n_v_cols; old_i++) {
+		col_map[old_i + old_table->n_cols] = ULINT_UNDEFINED;
 	}
 
 	while (const Create_field* new_field = cf_it++) {
-                if (!new_field->stored_in_db)
-                {
-                  sql_idx++;
-                  continue;
-                }
-		for (old_i = 0, old_innobase_i= 0;
-                     table->field[old_i];
-                     old_i++) {
+		bool	is_v = innobase_is_v_fld(new_field);
+
+		ulint	num_old_v = 0;
+
+		for (uint old_i = 0; table->field[old_i]; old_i++) {
 			const Field* field = table->field[old_i];
-                        if (!table->field[old_i]->stored_in_db)
-                          continue;
+			if (innobase_is_v_fld(field)) {
+				if (is_v && new_field->field == field) {
+					col_map[old_table->n_cols + num_v]
+						= num_old_v;
+					num_old_v++;
+					goto found_col;
+				}
+				num_old_v++;
+				continue;
+			}
+
 			if (new_field->field == field) {
-				col_map[old_innobase_i] = i;
+
+				const Field* altered_field =
+					altered_table->field[i + num_v];
+
+				if (defaults) {
+					innobase_build_col_map_add(
+						heap,
+						dtuple_get_nth_field(
+							defaults, i),
+						altered_field,
+						field,
+						dict_table_is_comp(
+							new_table));
+				}
+
+				col_map[old_i - num_old_v] = i;
 				goto found_col;
 			}
-                        old_innobase_i++;
 		}
 
+		ut_ad(!is_v);
 		innobase_build_col_map_add(
-			heap, dtuple_get_nth_field(add_cols, i),
-			altered_table->field[sql_idx],
+			heap, dtuple_get_nth_field(defaults, i),
+			altered_table->field[i + num_v],
+			NULL,
 			dict_table_is_comp(new_table));
 found_col:
-		i++;
-                sql_idx++;
+		if (is_v) {
+			num_v++;
+		} else {
+			i++;
+		}
 	}
 
-	DBUG_ASSERT(i == altered_table->s->stored_fields);
+	DBUG_ASSERT(i == altered_table->s->fields - num_v);
 
-	i = table->s->stored_fields;
+	i = table->s->fields - old_table->n_v_cols;
 
 	/* Add the InnoDB hidden FTS_DOC_ID column, if any. */
 	if (i + DATA_N_SYS_COLS < old_table->n_cols) {
@@ -2562,17 +3398,21 @@ found_col:
 						 DICT_TF2_FTS_HAS_DOC_ID));
 		DBUG_ASSERT(i + DATA_N_SYS_COLS + 1 == old_table->n_cols);
 		DBUG_ASSERT(!strcmp(dict_table_get_col_name(
-					    old_table, table->s->stored_fields),
+					    old_table, i),
 				    FTS_DOC_ID_COL_NAME));
-		if (altered_table->s->stored_fields + DATA_N_SYS_COLS
+		if (altered_table->s->fields + DATA_N_SYS_COLS
+		    - new_table->n_v_cols
 		    < new_table->n_cols) {
 			DBUG_ASSERT(DICT_TF2_FLAG_IS_SET(
 					    new_table,
 					    DICT_TF2_FTS_HAS_DOC_ID));
-			DBUG_ASSERT(altered_table->s->stored_fields
+			DBUG_ASSERT(altered_table->s->fields
 				    + DATA_N_SYS_COLS + 1
-				    == new_table->n_cols);
-			col_map[i] = altered_table->s->stored_fields;
+				    == static_cast<ulint>(
+					new_table->n_cols
+					+ new_table->n_v_cols));
+			col_map[i] = altered_table->s->fields
+				     - new_table->n_v_cols;
 		} else {
 			DBUG_ASSERT(!DICT_TF2_FLAG_IS_SET(
 					    new_table,
@@ -2596,9 +3436,9 @@ found_col:
 
 /** Drop newly create FTS index related auxiliary table during
 FIC create index process, before fts_add_index is called
-@param table    table that was being rebuilt online
-@param trx	transaction
-@return		DB_SUCCESS if successful, otherwise last error code
+@param table table that was being rebuilt online
+@param trx transaction
+@return DB_SUCCESS if successful, otherwise last error code
 */
 static
 dberr_t
@@ -2626,7 +3466,7 @@ innobase_drop_fts_index_table(
 	return(ret_err);
 }
 
-/** Get the new column names if any columns were renamed
+/** Get the new non-virtual column names if any columns were renamed
 @param ha_alter_info	Data used during in-place alter
 @param altered_table	MySQL table that is being altered
 @param table		MySQL table as it is before the ALTER operation
@@ -2646,9 +3486,9 @@ innobase_get_col_names(
 	uint			i;
 
 	DBUG_ENTER("innobase_get_col_names");
-	DBUG_ASSERT(user_table->n_def > table->s->fields);
+	DBUG_ASSERT(user_table->n_t_def > table->s->fields);
 	DBUG_ASSERT(ha_alter_info->handler_flags
-		    & Alter_inplace_info::ALTER_COLUMN_NAME);
+		    & ALTER_COLUMN_NAME);
 
 	cols = static_cast<const char**>(
 		mem_heap_zalloc(heap, user_table->n_def * sizeof *cols));
@@ -2657,11 +3497,20 @@ innobase_get_col_names(
 	List_iterator_fast<Create_field> cf_it(
 		ha_alter_info->alter_info->create_list);
 	while (const Create_field* new_field = cf_it++) {
+		ulint	num_v = 0;
 		DBUG_ASSERT(i < altered_table->s->fields);
 
+		if (innobase_is_v_fld(new_field)) {
+			continue;
+		}
+
 		for (uint old_i = 0; table->field[old_i]; old_i++) {
+			if (innobase_is_v_fld(table->field[old_i])) {
+				num_v++;
+			}
+
 			if (new_field->field == table->field[old_i]) {
-				cols[old_i] = new_field->field_name;
+				cols[old_i - num_v] = new_field->field_name.str;
 				break;
 			}
 		}
@@ -2670,7 +3519,7 @@ innobase_get_col_names(
 	}
 
 	/* Copy the internal column names. */
-	i = table->s->fields;
+	i = table->s->fields - user_table->n_v_def;
 	cols[i] = dict_table_get_col_name(user_table, i);
 
 	while (++i < user_table->n_def) {
@@ -2680,21 +3529,1313 @@ innobase_get_col_names(
 	DBUG_RETURN(cols);
 }
 
+/** Check whether the column prefix is increased, decreased, or unchanged.
+@param[in]	new_prefix_len	new prefix length
+@param[in]	old_prefix_len	new prefix length
+@retval	1	prefix is increased
+@retval	0	prefix is unchanged
+@retval	-1	prefix is decreased */
+static inline
+lint
+innobase_pk_col_prefix_compare(
+	ulint	new_prefix_len,
+	ulint	old_prefix_len)
+{
+	ut_ad(new_prefix_len < COMPRESSED_REC_MAX_DATA_SIZE);
+	ut_ad(old_prefix_len < COMPRESSED_REC_MAX_DATA_SIZE);
+
+	if (new_prefix_len == old_prefix_len) {
+		return(0);
+	}
+
+	if (new_prefix_len == 0) {
+		new_prefix_len = ULINT_MAX;
+	}
+
+	if (old_prefix_len == 0) {
+		old_prefix_len = ULINT_MAX;
+	}
+
+	if (new_prefix_len > old_prefix_len) {
+		return(1);
+	} else {
+		return(-1);
+	}
+}
+
+/** Check whether the column is existing in old table.
+@param[in]	new_col_no	new column no
+@param[in]	col_map		mapping of old column numbers to new ones
+@param[in]	col_map_size	the column map size
+@return true if the column is existing, otherwise false. */
+static inline
+bool
+innobase_pk_col_is_existing(
+	const ulint	new_col_no,
+	const ulint*	col_map,
+	const ulint	col_map_size)
+{
+	for (ulint i = 0; i < col_map_size; i++) {
+		if (col_map[i] == new_col_no) {
+			return(true);
+		}
+	}
+
+	return(false);
+}
+
+/** Determine whether both the indexes have same set of primary key
+fields arranged in the same order.
+
+Rules when we cannot skip sorting:
+(1) Removing existing PK columns somewhere else than at the end of the PK;
+(2) Adding existing columns to the PK, except at the end of the PK when no
+columns are removed from the PK;
+(3) Changing the order of existing PK columns;
+(4) Decreasing the prefix length just like removing existing PK columns
+follows rule(1), Increasing the prefix length just like adding existing
+PK columns follows rule(2).
+@param[in]	col_map		mapping of old column numbers to new ones
+@param[in]	ha_alter_info	Data used during in-place alter
+@param[in]	old_clust_index	index to be compared
+@param[in]	new_clust_index index to be compared
+@retval true if both indexes have same order.
+@retval false. */
+static MY_ATTRIBUTE((warn_unused_result))
+bool
+innobase_pk_order_preserved(
+	const ulint*		col_map,
+	const dict_index_t*	old_clust_index,
+	const dict_index_t*	new_clust_index)
+{
+	ulint	old_n_uniq
+		= dict_index_get_n_ordering_defined_by_user(
+			old_clust_index);
+	ulint	new_n_uniq
+		= dict_index_get_n_ordering_defined_by_user(
+			new_clust_index);
+
+	ut_ad(dict_index_is_clust(old_clust_index));
+	ut_ad(dict_index_is_clust(new_clust_index));
+	ut_ad(old_clust_index->table != new_clust_index->table);
+	ut_ad(col_map != NULL);
+
+	if (old_n_uniq == 0) {
+		/* There was no PRIMARY KEY in the table.
+		If there is no PRIMARY KEY after the ALTER either,
+		no sorting is needed. */
+		return(new_n_uniq == old_n_uniq);
+	}
+
+	/* DROP PRIMARY KEY is only allowed in combination with
+	ADD PRIMARY KEY. */
+	ut_ad(new_n_uniq > 0);
+
+	/* The order of the last processed new_clust_index key field,
+	not counting ADD COLUMN, which are constant. */
+	lint	last_field_order = -1;
+	ulint	existing_field_count = 0;
+	ulint	old_n_cols = dict_table_get_n_cols(old_clust_index->table);
+	for (ulint new_field = 0; new_field < new_n_uniq; new_field++) {
+		ulint	new_col_no =
+			new_clust_index->fields[new_field].col->ind;
+
+		/* Check if there is a match in old primary key. */
+		ulint	old_field = 0;
+		while (old_field < old_n_uniq) {
+			ulint	old_col_no =
+				old_clust_index->fields[old_field].col->ind;
+
+			if (col_map[old_col_no] == new_col_no) {
+				break;
+			}
+
+			old_field++;
+		}
+
+		/* The order of key field in the new primary key.
+		1. old PK column:      idx in old primary key
+		2. existing column:    old_n_uniq + sequence no
+		3. newly added column: no order */
+		lint		new_field_order;
+		const bool	old_pk_column = old_field < old_n_uniq;
+
+		if (old_pk_column) {
+			new_field_order = lint(old_field);
+		} else if (innobase_pk_col_is_existing(new_col_no, col_map,
+						       old_n_cols)) {
+			new_field_order = lint(old_n_uniq
+					       + existing_field_count++);
+		} else {
+			/* Skip newly added column. */
+			continue;
+		}
+
+		if (last_field_order + 1 != new_field_order) {
+			/* Old PK order is not kept, or existing column
+			is not added at the end of old PK. */
+			return(false);
+		}
+
+		last_field_order = new_field_order;
+
+		if (!old_pk_column) {
+			continue;
+		}
+
+		/* Check prefix length change. */
+		const lint	prefix_change = innobase_pk_col_prefix_compare(
+			new_clust_index->fields[new_field].prefix_len,
+			old_clust_index->fields[old_field].prefix_len);
+
+		if (prefix_change < 0) {
+			/* If a column's prefix length is decreased, it should
+			be the last old PK column in new PK.
+			Note: we set last_field_order to -2, so that if	there
+			are any old PK colmns or existing columns after it in
+			new PK, the comparison to new_field_order will fail in
+			the next round.*/
+			last_field_order = -2;
+		} else if (prefix_change > 0) {
+			/* If a column's prefix length is increased, it	should
+			be the last PK column in old PK. */
+			if (old_field != old_n_uniq - 1) {
+				return(false);
+			}
+		}
+	}
+
+	return(true);
+}
+
+/** Update the mtype from DATA_BLOB to DATA_GEOMETRY for a specified
+GIS column of a table. This is used when we want to create spatial index
+on legacy GIS columns coming from 5.6, where we store GIS data as DATA_BLOB
+in innodb layer.
+@param[in]	table_id	table id
+@param[in]	col_name	column name
+@param[in]	trx		data dictionary transaction
+@retval true Failure
+@retval false Success */
+static
+bool
+innobase_update_gis_column_type(
+	table_id_t	table_id,
+	const char*	col_name,
+	trx_t*		trx)
+{
+	pars_info_t*	info;
+	dberr_t		error;
+
+	DBUG_ENTER("innobase_update_gis_column_type");
+
+	DBUG_ASSERT(trx_get_dict_operation(trx) == TRX_DICT_OP_INDEX);
+	ut_ad(trx->dict_operation_lock_mode == RW_X_LATCH);
+	ut_ad(mutex_own(&dict_sys->mutex));
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
+
+	info = pars_info_create();
+
+	pars_info_add_ull_literal(info, "tableid", table_id);
+	pars_info_add_str_literal(info, "name", col_name);
+	pars_info_add_int4_literal(info, "mtype", DATA_GEOMETRY);
+
+	trx->op_info = "update column type to DATA_GEOMETRY";
+
+	error = que_eval_sql(
+		info,
+		"PROCEDURE UPDATE_SYS_COLUMNS_PROC () IS\n"
+		"BEGIN\n"
+		"UPDATE SYS_COLUMNS SET MTYPE=:mtype\n"
+		"WHERE TABLE_ID=:tableid AND NAME=:name;\n"
+		"END;\n",
+		false, trx);
+
+	trx->error_state = DB_SUCCESS;
+	trx->op_info = "";
+
+	DBUG_RETURN(error != DB_SUCCESS);
+}
+
+/** Check if we are creating spatial indexes on GIS columns, which are
+legacy columns from earlier MySQL, such as 5.6. If so, we have to update
+the mtypes of the old GIS columns to DATA_GEOMETRY.
+In 5.6, we store GIS columns as DATA_BLOB in InnoDB layer, it will introduce
+confusion when we run latest server on older data. That's why we need to
+do the upgrade.
+@param[in] ha_alter_info	Data used during in-place alter
+@param[in] table		Table on which we want to add indexes
+@param[in] trx			Transaction
+@return DB_SUCCESS if update successfully or no columns need to be updated,
+otherwise DB_ERROR, which means we can't update the mtype for some
+column, and creating spatial index on it should be dangerous */
+static
+dberr_t
+innobase_check_gis_columns(
+	Alter_inplace_info*	ha_alter_info,
+	dict_table_t*		table,
+	trx_t*			trx)
+{
+	DBUG_ENTER("innobase_check_gis_columns");
+
+	for (uint key_num = 0;
+	     key_num < ha_alter_info->index_add_count;
+	     key_num++) {
+
+		const KEY&	key = ha_alter_info->key_info_buffer[
+			ha_alter_info->index_add_buffer[key_num]];
+
+		if (!(key.flags & HA_SPATIAL)) {
+			continue;
+		}
+
+		ut_ad(key.user_defined_key_parts == 1);
+		const KEY_PART_INFO&    key_part = key.key_part[0];
+
+		/* Does not support spatial index on virtual columns */
+		if (innobase_is_v_fld(key_part.field)) {
+			DBUG_RETURN(DB_UNSUPPORTED);
+		}
+
+		ulint col_nr = dict_table_has_column(
+			table,
+			key_part.field->field_name.str,
+			key_part.fieldnr);
+		ut_ad(col_nr != table->n_def);
+		dict_col_t*	col = &table->cols[col_nr];
+
+		if (col->mtype != DATA_BLOB) {
+			ut_ad(DATA_GEOMETRY_MTYPE(col->mtype));
+			continue;
+		}
+
+		const char* col_name = dict_table_get_col_name(
+			table, col_nr);
+
+		if (innobase_update_gis_column_type(
+			table->id, col_name, trx)) {
+
+			DBUG_RETURN(DB_ERROR);
+		} else {
+			col->mtype = DATA_GEOMETRY;
+
+			ib::info() << "Updated mtype of column" << col_name
+				<< " in table " << table->name
+				<< ", whose id is " << table->id
+				<< " to DATA_GEOMETRY";
+		}
+	}
+
+	DBUG_RETURN(DB_SUCCESS);
+}
+
+/** Collect virtual column info for its addition
+@param[in] ha_alter_info	Data used during in-place alter
+@param[in] altered_table	MySQL table that is being altered to
+@param[in] table		MySQL table as it is before the ALTER operation
+@retval true Failure
+@retval false Success */
+static
+bool
+prepare_inplace_add_virtual(
+	Alter_inplace_info*	ha_alter_info,
+	const TABLE*		altered_table,
+	const TABLE*		table)
+{
+	ha_innobase_inplace_ctx*	ctx;
+	ulint				i = 0;
+	ulint				j = 0;
+	const Create_field*		new_field;
+
+	ctx = static_cast<ha_innobase_inplace_ctx*>
+		(ha_alter_info->handler_ctx);
+
+	ctx->num_to_add_vcol = altered_table->s->fields
+			       + ctx->num_to_drop_vcol - table->s->fields;
+
+	ctx->add_vcol = static_cast<dict_v_col_t*>(
+		 mem_heap_zalloc(ctx->heap, ctx->num_to_add_vcol
+				 * sizeof *ctx->add_vcol));
+	ctx->add_vcol_name = static_cast<const char**>(
+		 mem_heap_alloc(ctx->heap, ctx->num_to_add_vcol
+				* sizeof *ctx->add_vcol_name));
+
+	List_iterator_fast<Create_field> cf_it(
+		ha_alter_info->alter_info->create_list);
+
+	while ((new_field = (cf_it++)) != NULL) {
+		const Field* field = new_field->field;
+		ulint	old_i;
+
+		for (old_i = 0; table->field[old_i]; old_i++) {
+			const Field* n_field = table->field[old_i];
+			if (field == n_field) {
+				break;
+			}
+		}
+
+		i++;
+
+		if (table->field[old_i]) {
+			continue;
+		}
+
+		ut_ad(!field);
+
+		ulint	col_len;
+		ulint	is_unsigned;
+		ulint	field_type;
+		ulint	charset_no;
+
+		field =  altered_table->field[i - 1];
+
+		ulint	col_type
+				= get_innobase_type_from_mysql_type(
+					&is_unsigned, field);
+
+
+		if (!innobase_is_v_fld(field)) {
+			continue;
+		}
+
+		col_len = field->pack_length();
+		field_type = (ulint) field->type();
+
+		if (!field->real_maybe_null()) {
+			field_type |= DATA_NOT_NULL;
+		}
+
+		if (field->binary()) {
+			field_type |= DATA_BINARY_TYPE;
+		}
+
+		if (is_unsigned) {
+			field_type |= DATA_UNSIGNED;
+		}
+
+		if (dtype_is_string_type(col_type)) {
+			charset_no = (ulint) field->charset()->number;
+
+			DBUG_EXECUTE_IF(
+				"ib_alter_add_virtual_fail",
+				charset_no += MAX_CHAR_COLL_NUM;);
+
+			if (charset_no > MAX_CHAR_COLL_NUM) {
+				my_error(ER_WRONG_KEY_COLUMN, MYF(0), "InnoDB",
+					 field->field_name.str);
+				return(true);
+			}
+		} else {
+			charset_no = 0;
+		}
+
+		if (field->type() == MYSQL_TYPE_VARCHAR) {
+			uint32  length_bytes
+				= static_cast<const Field_varstring*>(
+					field)->length_bytes;
+
+			col_len -= length_bytes;
+
+			if (length_bytes == 2) {
+				field_type |= DATA_LONG_TRUE_VARCHAR;
+			}
+		}
+
+
+		ctx->add_vcol[j].m_col.prtype = dtype_form_prtype(
+						field_type, charset_no);
+
+		ctx->add_vcol[j].m_col.prtype |= DATA_VIRTUAL;
+
+		ctx->add_vcol[j].m_col.mtype = col_type;
+
+		ctx->add_vcol[j].m_col.len = col_len;
+
+		ctx->add_vcol[j].m_col.ind = i - 1;
+		ctx->add_vcol[j].num_base = 0;
+		ctx->add_vcol_name[j] = field->field_name.str;
+		ctx->add_vcol[j].base_col = NULL;
+		ctx->add_vcol[j].v_pos = ctx->old_table->n_v_cols
+					 - ctx->num_to_drop_vcol + j;
+
+		/* No need to track the list */
+		ctx->add_vcol[j].v_indexes = NULL;
+		innodb_base_col_setup(ctx->old_table, field, &ctx->add_vcol[j]);
+		j++;
+	}
+
+	return(false);
+}
+
+/** Collect virtual column info for its addition
+@param[in] ha_alter_info	Data used during in-place alter
+@param[in] table		MySQL table as it is before the ALTER operation
+@retval true Failure
+@retval false Success */
+static
+bool
+prepare_inplace_drop_virtual(
+	Alter_inplace_info*	ha_alter_info,
+	const TABLE*		table)
+{
+	ha_innobase_inplace_ctx*	ctx;
+	ulint				i = 0;
+	ulint				j = 0;
+
+	ctx = static_cast<ha_innobase_inplace_ctx*>
+		(ha_alter_info->handler_ctx);
+
+	ctx->num_to_drop_vcol = 0;
+	for (i = 0; table->field[i]; i++) {
+		const Field* field = table->field[i];
+		if (field->flags & FIELD_IS_DROPPED && !field->stored_in_db()) {
+			ctx->num_to_drop_vcol++;
+		}
+	}
+
+	ctx->drop_vcol = static_cast<dict_v_col_t*>(
+		 mem_heap_alloc(ctx->heap, ctx->num_to_drop_vcol
+				* sizeof *ctx->drop_vcol));
+	ctx->drop_vcol_name = static_cast<const char**>(
+		 mem_heap_alloc(ctx->heap, ctx->num_to_drop_vcol
+				* sizeof *ctx->drop_vcol_name));
+
+	for (i = 0; table->field[i]; i++) {
+		Field *field =  table->field[i];
+		if (!(field->flags & FIELD_IS_DROPPED) || field->stored_in_db()) {
+			continue;
+		}
+
+		ulint	col_len;
+		ulint	is_unsigned;
+		ulint	field_type;
+		ulint	charset_no;
+
+		ulint           col_type
+                                = get_innobase_type_from_mysql_type(
+                                        &is_unsigned, field);
+
+		col_len = field->pack_length();
+		field_type = (ulint) field->type();
+
+		if (!field->real_maybe_null()) {
+			field_type |= DATA_NOT_NULL;
+		}
+
+		if (field->binary()) {
+			field_type |= DATA_BINARY_TYPE;
+		}
+
+		if (is_unsigned) {
+			field_type |= DATA_UNSIGNED;
+		}
+
+		if (dtype_is_string_type(col_type)) {
+			charset_no = (ulint) field->charset()->number;
+
+			DBUG_EXECUTE_IF(
+				"ib_alter_add_virtual_fail",
+				charset_no += MAX_CHAR_COLL_NUM;);
+
+			if (charset_no > MAX_CHAR_COLL_NUM) {
+				my_error(ER_WRONG_KEY_COLUMN, MYF(0), "InnoDB",
+					 field->field_name.str);
+				return(true);
+			}
+		} else {
+			charset_no = 0;
+		}
+
+		if (field->type() == MYSQL_TYPE_VARCHAR) {
+			uint32  length_bytes
+				= static_cast<const Field_varstring*>(
+					field)->length_bytes;
+
+			col_len -= length_bytes;
+
+			if (length_bytes == 2) {
+				field_type |= DATA_LONG_TRUE_VARCHAR;
+			}
+		}
+
+
+		ctx->drop_vcol[j].m_col.prtype = dtype_form_prtype(
+						field_type, charset_no);
+
+		ctx->drop_vcol[j].m_col.prtype |= DATA_VIRTUAL;
+
+		ctx->drop_vcol[j].m_col.mtype = col_type;
+
+		ctx->drop_vcol[j].m_col.len = col_len;
+
+		ctx->drop_vcol[j].m_col.ind = i;
+
+		ctx->drop_vcol_name[j] = field->field_name.str;
+
+		dict_v_col_t*	v_col = dict_table_get_nth_v_col_mysql(
+					ctx->old_table, i);
+		ctx->drop_vcol[j].v_pos = v_col->v_pos;
+		j++;
+	}
+
+	return(false);
+}
+
+/** Insert a new record to INNODB SYS_VIRTUAL
+@param[in] table	InnoDB table
+@param[in] pos		virtual column column no
+@param[in] base_pos	base column pos
+@param[in] trx		transaction
+@return DB_SUCCESS if successful, otherwise error code */
+static
+dberr_t
+innobase_insert_sys_virtual(
+	const dict_table_t*	table,
+	ulint			pos,
+	ulint			base_pos,
+	trx_t*			trx)
+{
+	pars_info_t*    info = pars_info_create();
+
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	pars_info_add_int4_literal(info, "pos", pos);
+
+	pars_info_add_int4_literal(info, "base_pos", base_pos);
+
+	dberr_t error = que_eval_sql(
+			info,
+			"PROCEDURE P () IS\n"
+			"BEGIN\n"
+			"INSERT INTO SYS_VIRTUAL VALUES"
+			"(:id, :pos, :base_pos);\n"
+			"END;\n",
+			FALSE, trx);
+
+	return(error);
+}
+
+/** Update INNODB SYS_COLUMNS on new virtual columns
+@param[in] table	InnoDB table
+@param[in] col_name	column name
+@param[in] vcol		virtual column
+@param[in] trx		transaction
+@return DB_SUCCESS if successful, otherwise error code */
+static
+dberr_t
+innobase_add_one_virtual(
+	const dict_table_t*	table,
+	const char*		col_name,
+	dict_v_col_t*		vcol,
+	trx_t*			trx)
+{
+	ulint		pos = dict_create_v_col_pos(vcol->v_pos,
+						    vcol->m_col.ind);
+	ulint		mtype =	vcol->m_col.mtype;
+	ulint		prtype = vcol->m_col.prtype;
+	ulint		len = vcol->m_col.len;
+	pars_info_t*    info = pars_info_create();
+
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	pars_info_add_int4_literal(info, "pos", pos);
+
+	pars_info_add_str_literal(info, "name", col_name);
+	pars_info_add_int4_literal(info, "mtype", mtype);
+	pars_info_add_int4_literal(info, "prtype", prtype);
+	pars_info_add_int4_literal(info, "len", len);
+	pars_info_add_int4_literal(info, "prec", vcol->num_base);
+
+	dberr_t error = que_eval_sql(
+			info,
+			"PROCEDURE P () IS\n"
+			"BEGIN\n"
+			"INSERT INTO SYS_COLUMNS VALUES"
+			"(:id, :pos, :name, :mtype, :prtype, :len, :prec);\n"
+			"END;\n",
+			FALSE, trx);
+
+	if (error != DB_SUCCESS) {
+		return(error);
+	}
+
+	for (ulint i = 0; i < vcol->num_base; i++) {
+		error = innobase_insert_sys_virtual(
+			table, pos, vcol->base_col[i]->ind, trx);
+		if (error != DB_SUCCESS) {
+			return(error);
+		}
+	}
+
+	return(error);
+}
+
+/** Update SYS_TABLES.N_COLS in the data dictionary.
+@param[in] user_table	InnoDB table
+@param[in] n_cols	the new value of SYS_TABLES.N_COLS
+@param[in] trx		transaction
+@return whether the operation failed */
+static
+bool
+innodb_update_n_cols(const dict_table_t* table, ulint n_cols, trx_t* trx)
+{
+	pars_info_t*    info = pars_info_create();
+
+	pars_info_add_int4_literal(info, "n", n_cols);
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	dberr_t err = que_eval_sql(info,
+				   "PROCEDURE UPDATE_N_COLS () IS\n"
+				   "BEGIN\n"
+				   "UPDATE SYS_TABLES SET N_COLS = :n"
+				   " WHERE ID = :id;\n"
+				   "END;\n", FALSE, trx);
+
+	if (err != DB_SUCCESS) {
+		my_error(ER_INTERNAL_ERROR, MYF(0),
+			 "InnoDB: Updating SYS_TABLES.N_COLS failed");
+		return true;
+	}
+
+	return false;
+}
+
+/** Update system table for adding virtual column(s)
+@param[in]	ha_alter_info	Data used during in-place alter
+@param[in]	user_table	InnoDB table
+@param[in]	trx		transaction
+@retval true Failure
+@retval false Success */
+static
+bool
+innobase_add_virtual_try(
+	Alter_inplace_info*	ha_alter_info,
+	const dict_table_t*     user_table,
+	trx_t*			trx)
+{
+	ha_innobase_inplace_ctx*	ctx;
+	dberr_t				err = DB_SUCCESS;
+
+	ctx = static_cast<ha_innobase_inplace_ctx*>(
+		ha_alter_info->handler_ctx);
+
+	for (ulint i = 0; i < ctx->num_to_add_vcol; i++) {
+
+		err = innobase_add_one_virtual(
+			user_table, ctx->add_vcol_name[i],
+			&ctx->add_vcol[i], trx);
+
+		if (err != DB_SUCCESS) {
+			my_error(ER_INTERNAL_ERROR, MYF(0),
+				 "InnoDB: ADD COLUMN...VIRTUAL");
+			return(true);
+		}
+	}
+
+
+	ulint	n_col = unsigned(user_table->n_cols) - DATA_N_SYS_COLS;
+	ulint	n_v_col = unsigned(user_table->n_v_cols)
+		+ ctx->num_to_add_vcol - ctx->num_to_drop_vcol;
+	ulint	new_n = dict_table_encode_n_col(n_col, n_v_col)
+		+ (unsigned(user_table->flags & DICT_TF_COMPACT) << 31);
+
+	return innodb_update_n_cols(user_table, new_n, trx);
+}
+
+/** Insert into SYS_COLUMNS and insert/update the hidden metadata record
+for instant ADD COLUMN.
+@param[in,out]	ctx		ALTER TABLE context for the current partition
+@param[in]	altered_table	MySQL table that is being altered
+@param[in]	table		MySQL table as it is before the ALTER operation
+@param[in,out]	trx		dictionary transaction
+@retval	true	failure
+@retval	false	success */
+static
+bool
+innobase_add_instant_try(
+	ha_innobase_inplace_ctx*ctx,
+	const TABLE*		altered_table,
+	const TABLE*		table,
+	trx_t*			trx)
+{
+	DBUG_ASSERT(!ctx->need_rebuild());
+
+	if (!ctx->is_instant()) return false;
+
+	DBUG_ASSERT(altered_table->s->fields > table->s->fields);
+	DBUG_ASSERT(ctx->old_table->n_cols == ctx->old_n_cols);
+
+	dict_table_t* user_table = ctx->old_table;
+	user_table->instant_add_column(*ctx->instant_table);
+	dict_index_t* index = dict_table_get_first_index(user_table);
+	/* The table may have been emptied and may have lost its
+	'instant-add-ness' during this instant ADD COLUMN. */
+
+	/* Construct a table row of default values for the stored columns. */
+	dtuple_t* row = dtuple_create(ctx->heap, user_table->n_cols);
+	dict_table_copy_types(row, user_table);
+	Field** af = altered_table->field;
+	Field** const end = altered_table->field + altered_table->s->fields;
+
+	for (uint i = 0; af < end; af++) {
+		if (!(*af)->stored_in_db()) {
+			continue;
+		}
+
+		dict_col_t* col = dict_table_get_nth_col(user_table, i);
+		DBUG_ASSERT(!strcmp((*af)->field_name.str,
+				    dict_table_get_col_name(user_table, i)));
+
+		dfield_t* d = dtuple_get_nth_field(row, i);
+
+		if (col->is_instant()) {
+			dfield_set_data(d, col->def_val.data,
+					col->def_val.len);
+		} else if ((*af)->real_maybe_null()) {
+			/* Store NULL for nullable 'core' columns. */
+			dfield_set_null(d);
+		} else {
+			switch ((*af)->type()) {
+			case MYSQL_TYPE_VARCHAR:
+			case MYSQL_TYPE_GEOMETRY:
+			case MYSQL_TYPE_TINY_BLOB:
+			case MYSQL_TYPE_MEDIUM_BLOB:
+			case MYSQL_TYPE_BLOB:
+			case MYSQL_TYPE_LONG_BLOB:
+				/* Store the empty string for 'core'
+				variable-length NOT NULL columns. */
+				dfield_set_data(d, field_ref_zero, 0);
+				break;
+			default:
+				/* For fixed-length NOT NULL 'core' columns,
+				get a dummy default value from SQL. Note that
+				we will preserve the old values of these
+				columns when updating the metadata
+				record, to avoid unnecessary updates. */
+				ulint len = (*af)->pack_length();
+				DBUG_ASSERT(d->type.mtype != DATA_INT
+					    || len <= 8);
+				row_mysql_store_col_in_innobase_format(
+					d, d->type.mtype == DATA_INT
+					? static_cast<byte*>(
+						mem_heap_alloc(ctx->heap, len))
+					: NULL, true, (*af)->ptr, len,
+					dict_table_is_comp(user_table));
+			}
+		}
+
+		if (i + DATA_N_SYS_COLS < ctx->old_n_cols) {
+			i++;
+			continue;
+		}
+
+		pars_info_t*    info = pars_info_create();
+		pars_info_add_ull_literal(info, "id", user_table->id);
+		pars_info_add_int4_literal(info, "pos", i);
+		pars_info_add_str_literal(info, "name", (*af)->field_name.str);
+		pars_info_add_int4_literal(info, "mtype", d->type.mtype);
+		pars_info_add_int4_literal(info, "prtype", d->type.prtype);
+		pars_info_add_int4_literal(info, "len", d->type.len);
+
+		dberr_t err = que_eval_sql(
+			info,
+			"PROCEDURE ADD_COL () IS\n"
+			"BEGIN\n"
+			"INSERT INTO SYS_COLUMNS VALUES"
+			"(:id,:pos,:name,:mtype,:prtype,:len,0);\n"
+			"END;\n", FALSE, trx);
+		if (err != DB_SUCCESS) {
+			my_error(ER_INTERNAL_ERROR, MYF(0),
+				 "InnoDB: Insert into SYS_COLUMNS failed");
+			return(true);
+		}
+
+		i++;
+	}
+
+	if (innodb_update_n_cols(user_table, dict_table_encode_n_col(
+					 unsigned(user_table->n_cols)
+					 - DATA_N_SYS_COLS,
+					 user_table->n_v_cols)
+				 | (user_table->flags & DICT_TF_COMPACT) << 31,
+				 trx)) {
+		return true;
+	}
+
+	unsigned i = unsigned(user_table->n_cols) - DATA_N_SYS_COLS;
+	byte trx_id[DATA_TRX_ID_LEN], roll_ptr[DATA_ROLL_PTR_LEN];
+	dfield_set_data(dtuple_get_nth_field(row, i++), field_ref_zero,
+			DATA_ROW_ID_LEN);
+	dfield_set_data(dtuple_get_nth_field(row, i++), trx_id, sizeof trx_id);
+	dfield_set_data(dtuple_get_nth_field(row, i),roll_ptr,sizeof roll_ptr);
+	DBUG_ASSERT(i + 1 == user_table->n_cols);
+
+	trx_write_trx_id(trx_id, trx->id);
+	/* The DB_ROLL_PTR will be assigned later, when allocating undo log.
+	Silence a Valgrind warning in dtuple_validate() when
+	row_ins_clust_index_entry_low() searches for the insert position. */
+	memset(roll_ptr, 0, sizeof roll_ptr);
+
+	dtuple_t* entry = row_build_index_entry(row, NULL, index, ctx->heap);
+	entry->info_bits = REC_INFO_METADATA;
+
+	mtr_t mtr;
+	mtr.start();
+	index->set_modified(mtr);
+	btr_pcur_t pcur;
+	btr_pcur_open_at_index_side(true, index, BTR_MODIFY_TREE, &pcur, true,
+				    0, &mtr);
+	ut_ad(btr_pcur_is_before_first_on_page(&pcur));
+	btr_pcur_move_to_next_on_page(&pcur);
+
+	buf_block_t* block = btr_pcur_get_block(&pcur);
+	ut_ad(page_is_leaf(block->frame));
+	ut_ad(!page_has_prev(block->frame));
+	ut_ad(!buf_block_get_page_zip(block));
+	const rec_t* rec = btr_pcur_get_rec(&pcur);
+	que_thr_t* thr = pars_complete_graph_for_exec(
+		NULL, trx, ctx->heap, NULL);
+
+	dberr_t err;
+	if (rec_is_metadata(rec, index)) {
+		ut_ad(page_rec_is_user_rec(rec));
+		if (!page_has_next(block->frame)
+		    && page_rec_is_last(rec, block->frame)) {
+			goto empty_table;
+		}
+		/* Extend the record with the instantly added columns. */
+		const unsigned n = user_table->n_cols - ctx->old_n_cols;
+		/* Reserve room for DB_TRX_ID,DB_ROLL_PTR and any
+		non-updated off-page columns in case they are moved off
+		page as a result of the update. */
+		upd_t* update = upd_create(index->n_fields, ctx->heap);
+		update->n_fields = n;
+		update->info_bits = REC_INFO_METADATA;
+		/* Add the default values for instantly added columns */
+		for (unsigned i = 0; i < n; i++) {
+			upd_field_t* uf = upd_get_nth_field(update, i);
+			unsigned f = index->n_fields - n + i;
+			uf->field_no = f;
+			uf->new_val = entry->fields[f];
+		}
+		ulint* offsets = NULL;
+		mem_heap_t* offsets_heap = NULL;
+		big_rec_t* big_rec;
+		err = btr_cur_pessimistic_update(
+			BTR_NO_LOCKING_FLAG | BTR_KEEP_POS_FLAG,
+			btr_pcur_get_btr_cur(&pcur),
+			&offsets, &offsets_heap, ctx->heap,
+			&big_rec, update, UPD_NODE_NO_ORD_CHANGE,
+			thr, trx->id, &mtr);
+		if (big_rec) {
+			if (err == DB_SUCCESS) {
+				err = btr_store_big_rec_extern_fields(
+					&pcur, offsets, big_rec, &mtr,
+					BTR_STORE_UPDATE);
+			}
+
+			dtuple_big_rec_free(big_rec);
+		}
+		if (offsets_heap) {
+			mem_heap_free(offsets_heap);
+		}
+		btr_pcur_close(&pcur);
+		goto func_exit;
+	} else if (page_rec_is_supremum(rec)) {
+empty_table:
+		/* The table is empty. */
+		ut_ad(page_is_root(block->frame));
+		btr_page_empty(block, NULL, index, 0, &mtr);
+		index->remove_instant();
+		err = DB_SUCCESS;
+		goto func_exit;
+	}
+
+	/* Convert the table to the instant ADD COLUMN format. */
+	ut_ad(user_table->is_instant());
+	mtr.commit();
+	mtr.start();
+	index->set_modified(mtr);
+	if (page_t* root = btr_root_get(index, &mtr)) {
+		if (fil_page_get_type(root) != FIL_PAGE_INDEX) {
+			DBUG_ASSERT(!"wrong page type");
+			goto err_exit;
+		}
+
+		DBUG_ASSERT(!page_is_comp(root) || !page_get_instant(root));
+		mlog_write_ulint(root + FIL_PAGE_TYPE,
+				 FIL_PAGE_TYPE_INSTANT, MLOG_2BYTES,
+				 &mtr);
+		page_set_instant(root, index->n_core_fields, &mtr);
+		mtr.commit();
+		mtr.start();
+		index->set_modified(mtr);
+		err = row_ins_clust_index_entry_low(
+			BTR_NO_LOCKING_FLAG, BTR_MODIFY_TREE, index,
+			index->n_uniq, entry, 0, thr, false);
+	} else {
+err_exit:
+		err = DB_CORRUPTION;
+	}
+
+func_exit:
+	mtr.commit();
+
+	if (err != DB_SUCCESS) {
+		my_error_innodb(err, table->s->table_name.str,
+				user_table->flags);
+		return true;
+	}
+
+	return false;
+}
+
+/** Update INNODB SYS_COLUMNS on new virtual column's position
+@param[in]	table	InnoDB table
+@param[in]	old_pos	old position
+@param[in]	new_pos	new position
+@param[in]	trx	transaction
+@return DB_SUCCESS if successful, otherwise error code */
+static
+dberr_t
+innobase_update_v_pos_sys_columns(
+	const dict_table_t*	table,
+	ulint			old_pos,
+	ulint			new_pos,
+	trx_t*			trx)
+{
+	pars_info_t*    info = pars_info_create();
+
+	pars_info_add_int4_literal(info, "pos", old_pos);
+	pars_info_add_int4_literal(info, "val", new_pos);
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	dberr_t error = que_eval_sql(
+			info,
+			"PROCEDURE P () IS\n"
+			"BEGIN\n"
+			"UPDATE SYS_COLUMNS\n"
+			"SET POS = :val\n"
+			"WHERE POS = :pos\n"
+			"AND TABLE_ID = :id;\n"
+			"END;\n",
+			FALSE, trx);
+
+	return(error);
+}
+
+/** Update INNODB SYS_VIRTUAL table with new virtual column position
+@param[in]	table		InnoDB table
+@param[in]	old_pos		old position
+@param[in]	new_pos		new position
+@param[in]	trx		transaction
+@return DB_SUCCESS if successful, otherwise error code */
+static
+dberr_t
+innobase_update_v_pos_sys_virtual(
+	const dict_table_t*	table,
+	ulint			old_pos,
+	ulint			new_pos,
+	trx_t*			trx)
+{
+	pars_info_t*    info = pars_info_create();
+
+	pars_info_add_int4_literal(info, "pos", old_pos);
+	pars_info_add_int4_literal(info, "val", new_pos);
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	dberr_t error = que_eval_sql(
+			info,
+			"PROCEDURE P () IS\n"
+			"BEGIN\n"
+			"UPDATE SYS_VIRTUAL\n"
+			"SET POS = :val\n"
+			"WHERE POS = :pos\n"
+			"AND TABLE_ID = :id;\n"
+			"END;\n",
+			FALSE, trx);
+
+	return(error);
+}
+
+/** Update InnoDB system tables on dropping a virtual column
+@param[in]	table		InnoDB table
+@param[in]	col_name	column name of the dropping column
+@param[in]	drop_col	col information for the dropping column
+@param[in]	n_prev_dropped	number of previously dropped columns in the
+				same alter clause
+@param[in]	trx		transaction
+@return DB_SUCCESS if successful, otherwise error code */
+static
+dberr_t
+innobase_drop_one_virtual_sys_columns(
+	const dict_table_t*	table,
+	const char*		col_name,
+	dict_col_t*		drop_col,
+	ulint			n_prev_dropped,
+	trx_t*			trx)
+{
+	pars_info_t*    info = pars_info_create();
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	pars_info_add_str_literal(info, "name", col_name);
+
+	dberr_t error = que_eval_sql(
+			info,
+			"PROCEDURE P () IS\n"
+			"BEGIN\n"
+			"DELETE FROM SYS_COLUMNS\n"
+			"WHERE TABLE_ID = :id\n"
+			"AND NAME = :name;\n"
+			"END;\n",
+			FALSE, trx);
+
+	if (error != DB_SUCCESS) {
+		return(error);
+	}
+
+	dict_v_col_t*	v_col = dict_table_get_nth_v_col_mysql(
+				table, drop_col->ind);
+
+	/* Adjust column positions for all subsequent columns */
+	for (ulint i = v_col->v_pos + 1; i < table->n_v_cols; i++) {
+		dict_v_col_t*   t_col = dict_table_get_nth_v_col(table, i);
+		ulint		old_p = dict_create_v_col_pos(
+			t_col->v_pos - n_prev_dropped,
+			t_col->m_col.ind - n_prev_dropped);
+		ulint		new_p = dict_create_v_col_pos(
+			t_col->v_pos - 1 - n_prev_dropped,
+			ulint(t_col->m_col.ind) - 1 - n_prev_dropped);
+
+		error = innobase_update_v_pos_sys_columns(
+			table, old_p, new_p, trx);
+		if (error != DB_SUCCESS) {
+			return(error);
+		}
+		error = innobase_update_v_pos_sys_virtual(
+			table, old_p, new_p, trx);
+		if (error != DB_SUCCESS) {
+			return(error);
+		}
+	}
+
+	return(error);
+}
+
+/** Delete virtual column's info from INNODB SYS_VIRTUAL
+@param[in]	table	InnoDB table
+@param[in]	pos	position of the virtual column to be deleted
+@param[in]	trx	transaction
+@return DB_SUCCESS if successful, otherwise error code */
+static
+dberr_t
+innobase_drop_one_virtual_sys_virtual(
+	const dict_table_t*	table,
+	ulint			pos,
+	trx_t*			trx)
+{
+	pars_info_t*    info = pars_info_create();
+	pars_info_add_ull_literal(info, "id", table->id);
+
+	pars_info_add_int4_literal(info, "pos", pos);
+
+	dberr_t error = que_eval_sql(
+			info,
+			"PROCEDURE P () IS\n"
+			"BEGIN\n"
+			"DELETE FROM SYS_VIRTUAL\n"
+			"WHERE TABLE_ID = :id\n"
+			"AND POS = :pos;\n"
+			"END;\n",
+			FALSE, trx);
+
+	return(error);
+}
+
+/** Update system table for dropping virtual column(s)
+@param[in]	ha_alter_info	Data used during in-place alter
+@param[in]	user_table	InnoDB table
+@param[in]	trx		transaction
+@retval true Failure
+@retval false Success */
+static
+bool
+innobase_drop_virtual_try(
+	Alter_inplace_info*	ha_alter_info,
+	const dict_table_t*     user_table,
+	trx_t*			trx)
+{
+	ha_innobase_inplace_ctx*	ctx;
+	dberr_t				err = DB_SUCCESS;
+
+	ctx = static_cast<ha_innobase_inplace_ctx*>
+		(ha_alter_info->handler_ctx);
+
+	for (ulint i = 0; i < ctx->num_to_drop_vcol; i++) {
+
+		ulint	pos = dict_create_v_col_pos(
+			ctx->drop_vcol[i].v_pos - i,
+			ctx->drop_vcol[i].m_col.ind - i);
+		err = innobase_drop_one_virtual_sys_virtual(
+			user_table, pos, trx);
+
+		if (err != DB_SUCCESS) {
+			my_error(ER_INTERNAL_ERROR, MYF(0),
+				 "InnoDB: DROP COLUMN...VIRTUAL");
+			return(true);
+		}
+
+		err = innobase_drop_one_virtual_sys_columns(
+			user_table, ctx->drop_vcol_name[i],
+			&(ctx->drop_vcol[i].m_col), i, trx);
+
+		if (err != DB_SUCCESS) {
+			my_error(ER_INTERNAL_ERROR, MYF(0),
+				 "InnoDB: DROP COLUMN...VIRTUAL");
+			return(true);
+		}
+	}
+
+
+	ulint	n_col = unsigned(user_table->n_cols) - DATA_N_SYS_COLS;
+	ulint	n_v_col = unsigned(user_table->n_v_cols)
+		- ctx->num_to_drop_vcol;
+	ulint	new_n = dict_table_encode_n_col(n_col, n_v_col)
+		| ((user_table->flags & DICT_TF_COMPACT) << 31);
+
+	return innodb_update_n_cols(user_table, new_n, trx);
+}
+
+/** Adjust the create index column number from "New table" to
+"old InnoDB table" while we are doing dropping virtual column. Since we do
+not create separate new table for the dropping/adding virtual columns.
+To correctly find the indexed column, we will need to find its col_no
+in the "Old Table", not the "New table".
+@param[in]	ha_alter_info	Data used during in-place alter
+@param[in]	old_table	MySQL table as it is before the ALTER operation
+@param[in]	num_v_dropped	number of virtual column dropped
+@param[in,out]	index_def	index definition */
+static
+void
+innodb_v_adjust_idx_col(
+	const Alter_inplace_info*	ha_alter_info,
+	const TABLE*			old_table,
+	ulint				num_v_dropped,
+	index_def_t*			index_def)
+{
+	List_iterator_fast<Create_field> cf_it(
+		ha_alter_info->alter_info->create_list);
+	for (ulint i = 0; i < index_def->n_fields; i++) {
+#ifdef UNIV_DEBUG
+		bool	col_found = false;
+#endif /* UNIV_DEBUG */
+		ulint	num_v = 0;
+
+		index_field_t*	index_field = &index_def->fields[i];
+
+		/* Only adjust virtual column col_no, since non-virtual
+		column position (in non-vcol list) won't change unless
+		table rebuild */
+		if (!index_field->is_v_col) {
+			continue;
+		}
+
+		const Field*	field = NULL;
+
+		cf_it.rewind();
+
+		/* Found the field in the new table */
+		while (const Create_field* new_field = cf_it++) {
+			if (!innobase_is_v_fld(new_field)) {
+				continue;
+			}
+
+			field = new_field->field;
+
+			if (num_v == index_field->col_no) {
+				break;
+			}
+			num_v++;
+		}
+
+		if (!field) {
+			/* this means the field is a newly added field, this
+			should have been blocked when we drop virtual column
+			at the same time */
+			ut_ad(num_v_dropped > 0);
+			ut_a(0);
+		}
+
+		ut_ad(innobase_is_v_fld(field));
+
+		num_v = 0;
+
+		/* Look for its position in old table */
+		for (uint old_i = 0; old_table->field[old_i]; old_i++) {
+			if (old_table->field[old_i] == field) {
+				/* Found it, adjust its col_no to its position
+				in old table */
+				index_def->fields[i].col_no = num_v;
+				ut_d(col_found = true);
+				break;
+			}
+
+			if (innobase_is_v_fld(old_table->field[old_i])) {
+				num_v++;
+			}
+		}
+
+		ut_ad(col_found);
+	}
+}
+
+/** Create index metadata in the data dictionary.
+@param[in,out]	trx	dictionary transaction
+@param[in,out]	index	index being created
+@param[in]	add_v	virtual columns that are being added, or NULL
+@return the created index */
+MY_ATTRIBUTE((nonnull(1,2), warn_unused_result))
+static
+dict_index_t*
+create_index_dict(
+	trx_t*			trx,
+	dict_index_t*		index,
+	const dict_add_v_col_t* add_v)
+{
+	DBUG_ENTER("create_index_dict");
+
+	mem_heap_t* heap = mem_heap_create(512);
+	ind_node_t* node = ind_create_graph_create(
+		index, index->table->name.m_name, heap, add_v);
+	que_thr_t* thr = pars_complete_graph_for_exec(node, trx, heap, NULL);
+
+	que_fork_start_command(
+		static_cast<que_fork_t*>(que_node_get_parent(thr)));
+
+	que_run_threads(thr);
+
+	index = node->index;
+
+	que_graph_free((que_t*) que_node_get_parent(thr));
+
+	DBUG_RETURN(trx->error_state == DB_SUCCESS ? index : NULL);
+}
+
 /** Update internal structures with concurrent writes blocked,
 while preparing ALTER TABLE.
 
-@param ha_alter_info	Data used during in-place alter
-@param altered_table	MySQL table that is being altered
-@param old_table	MySQL table as it is before the ALTER operation
-@param table_name	Table name in MySQL
-@param flags		Table and tablespace flags
-@param flags2		Additional table flags
-@param fts_doc_id_col	The column number of FTS_DOC_ID
-@param add_fts_doc_id	Flag: add column FTS_DOC_ID?
+@param ha_alter_info Data used during in-place alter
+@param altered_table MySQL table that is being altered
+@param old_table MySQL table as it is before the ALTER operation
+@param table_name Table name in MySQL
+@param flags Table and tablespace flags
+@param flags2 Additional table flags
+@param fts_doc_id_col The column number of FTS_DOC_ID
+@param add_fts_doc_id Flag: add column FTS_DOC_ID?
 @param add_fts_doc_id_idx Flag: add index FTS_DOC_ID_INDEX (FTS_DOC_ID)?
 
-@retval true		Failure
-@retval false		Success
+@retval true Failure
+@retval false Success
 */
 static MY_ATTRIBUTE((warn_unused_result, nonnull(1,2,3,4)))
 bool
@@ -2715,10 +4856,10 @@ prepare_inplace_alter_table_dict(
 	index_def_t*		index_defs;	/* index definitions */
 	dict_table_t*		user_table;
 	dict_index_t*		fts_index	= NULL;
-	ulint			new_clustered	= 0;
+	bool			new_clustered	= false;
 	dberr_t			error;
 	ulint			num_fts_index;
-        uint                    sql_idx;
+	dict_add_v_col_t*	add_v = NULL;
 	ha_innobase_inplace_ctx*ctx;
 
 	DBUG_ENTER("prepare_inplace_alter_table_dict");
@@ -2733,20 +4874,54 @@ prepare_inplace_alter_table_dict(
 	DBUG_ASSERT(!add_fts_doc_id || add_fts_doc_id_idx);
 	DBUG_ASSERT(!add_fts_doc_id_idx
 		    || innobase_fulltext_exist(altered_table));
-	DBUG_ASSERT(!ctx->add_cols);
+	DBUG_ASSERT(!ctx->defaults);
 	DBUG_ASSERT(!ctx->add_index);
 	DBUG_ASSERT(!ctx->add_key_numbers);
 	DBUG_ASSERT(!ctx->num_to_add_index);
 
 	user_table = ctx->new_table;
 
-	trx_start_if_not_started_xa(ctx->prebuilt->trx);
+	trx_start_if_not_started_xa(ctx->prebuilt->trx, true);
 
-	/* Create a background transaction for the operations on
-	the data dictionary tables. */
-	ctx->trx = innobase_trx_allocate(ctx->prebuilt->trx->mysql_thd);
+	if (ha_alter_info->handler_flags
+	    & ALTER_DROP_VIRTUAL_COLUMN) {
+		if (prepare_inplace_drop_virtual(ha_alter_info, old_table)) {
+			DBUG_RETURN(true);
+		}
+	}
 
-	trx_start_for_ddl(ctx->trx, TRX_DICT_OP_INDEX);
+	if (ha_alter_info->handler_flags
+	    & ALTER_ADD_VIRTUAL_COLUMN) {
+		if (prepare_inplace_add_virtual(
+			    ha_alter_info, altered_table, old_table)) {
+			DBUG_RETURN(true);
+		}
+
+		/* Need information for newly added virtual columns
+		for create index */
+
+		if (ha_alter_info->handler_flags
+		    & ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX) {
+			for (ulint i = 0; i < ctx->num_to_add_vcol; i++) {
+				/* Set mbminmax for newly added column */
+				dict_col_t& col = ctx->add_vcol[i].m_col;
+				ulint mbminlen, mbmaxlen;
+				dtype_get_mblen(col.mtype, col.prtype,
+						&mbminlen, &mbmaxlen);
+				col.mbminlen = mbminlen;
+				col.mbmaxlen = mbmaxlen;
+			}
+			add_v = static_cast<dict_add_v_col_t*>(
+				mem_heap_alloc(ctx->heap, sizeof *add_v));
+			add_v->n_v_col = ctx->num_to_add_vcol;
+			add_v->v_col = ctx->add_vcol;
+			add_v->v_col_name = ctx->add_vcol_name;
+		}
+	}
+
+	/* There should be no order change for virtual columns coming in
+	here */
+	ut_ad(check_v_col_in_order(old_table, altered_table, ha_alter_info));
 
 	/* Create table containing all indexes to be built in this
 	ALTER TABLE ADD INDEX so that they are in the correct order
@@ -2761,32 +4936,12 @@ prepare_inplace_alter_table_dict(
 	index_defs = innobase_create_key_defs(
 		ctx->heap, ha_alter_info, altered_table, ctx->num_to_add_index,
 		num_fts_index,
-		row_table_got_default_clust_index(ctx->new_table),
+		dict_index_is_auto_gen_clust(dict_table_get_first_index(
+						     ctx->new_table)),
 		fts_doc_id_col, add_fts_doc_id, add_fts_doc_id_idx,
 		old_table);
 
-	new_clustered = DICT_CLUSTERED & index_defs[0].ind_type;
-
-	if (num_fts_index > 1) {
-		my_error(ER_INNODB_FT_LIMIT, MYF(0));
-		goto error_handled;
-	}
-
-	if (!ctx->online) {
-		/* This is not an online operation (LOCK=NONE). */
-	} else if (ctx->add_autoinc == ULINT_UNDEFINED
-		   && num_fts_index == 0
-		   && (!innobase_need_rebuild(ha_alter_info, old_table)
-		       || !innobase_fulltext_exist(altered_table))) {
-		/* InnoDB can perform an online operation (LOCK=NONE). */
-	} else {
-		/* This should have been blocked in
-		check_if_supported_inplace_alter(). */
-		ut_ad(0);
-		my_error(ER_NOT_SUPPORTED_YET, MYF(0),
-			 thd_query_string(ctx->prebuilt->trx->mysql_thd)->str);
-		goto error_handled;
-	}
+	new_clustered = (DICT_CLUSTERED & index_defs[0].ind_type) != 0;
 
 	/* The primary index would be rebuilt if a FTS Doc ID
 	column is to be added, and the primary index definition
@@ -2799,16 +4954,11 @@ prepare_inplace_alter_table_dict(
 	/* Allocate memory for dictionary index definitions */
 
 	ctx->add_index = static_cast<dict_index_t**>(
-		mem_heap_alloc(ctx->heap, ctx->num_to_add_index
+		mem_heap_zalloc(ctx->heap, ctx->num_to_add_index
 			       * sizeof *ctx->add_index));
 	ctx->add_key_numbers = add_key_nums = static_cast<ulint*>(
 		mem_heap_alloc(ctx->heap, ctx->num_to_add_index
 			       * sizeof *ctx->add_key_numbers));
-
-	/* This transaction should be dictionary operation, so that
-	the data dictionary will be locked during crash recovery. */
-
-	ut_ad(ctx->trx->dict_operation == TRX_DICT_OP_INDEX);
 
 	/* Acquire a lock on the table before creating any indexes. */
 
@@ -2823,6 +4973,12 @@ prepare_inplace_alter_table_dict(
 			goto error_handling;
 		}
 	}
+
+	/* Create a background transaction for the operations on
+	the data dictionary tables. */
+	ctx->trx = innobase_trx_allocate(ctx->prebuilt->trx->mysql_thd);
+
+	trx_start_for_ddl(ctx->trx, TRX_DICT_OP_INDEX);
 
 	/* Latch the InnoDB data dictionary exclusively so that no deadlocks
 	or lock waits can happen in it during an index create operation. */
@@ -2843,52 +4999,71 @@ prepare_inplace_alter_table_dict(
 	ut_d(dict_table_check_for_dup_indexes(
 		     ctx->new_table, CHECK_ABORTED_OK));
 
+	DBUG_EXECUTE_IF("innodb_OOM_prepare_inplace_alter",
+			error = DB_OUT_OF_MEMORY;
+			goto error_handling;);
+
 	/* If a new clustered index is defined for the table we need
 	to rebuild the table with a temporary name. */
 
 	if (new_clustered) {
-		const char*	new_table_name
-			= dict_mem_create_temporary_tablename(
-				ctx->heap,
-				ctx->new_table->name,
-				ctx->new_table->id);
-		ulint		n_cols;
-		dtuple_t*	add_cols;
-		ulint		key_id = FIL_DEFAULT_ENCRYPTION_KEY;
-		fil_encryption_t mode = FIL_ENCRYPTION_DEFAULT;
-
-		if (fil_space_t* space
-		    = fil_space_acquire(ctx->prebuilt->table->space)) {
-			if (const fil_space_crypt_t* crypt_data
-			    = space->crypt_data) {
-				key_id = crypt_data->key_id;
-				mode = crypt_data->encryption;
-			}
-
-			fil_space_release(space);
-		}
-
-		if (ha_alter_info->handler_flags
-		    & Alter_inplace_info::CHANGE_CREATE_OPTION) {
-			const ha_table_option_struct& alt_opt=
-				*ha_alter_info->create_info->option_struct;
-			const ha_table_option_struct& opt=
-				*old_table->s->option_struct;
-			if (alt_opt.encryption != opt.encryption
-			    || alt_opt.encryption_key_id
-			    != opt.encryption_key_id) {
-				key_id = alt_opt.encryption_key_id;
-				mode = fil_encryption_t(alt_opt.encryption);
-			}
-		}
-
 		if (innobase_check_foreigns(
-			    ha_alter_info, altered_table, old_table,
+			    ha_alter_info, old_table,
 			    user_table, ctx->drop_fk, ctx->num_to_drop_fk)) {
-			goto new_clustered_failed;
+new_clustered_failed:
+			DBUG_ASSERT(ctx->trx != ctx->prebuilt->trx);
+			trx_rollback_to_savepoint(ctx->trx, NULL);
+
+			ut_ad(user_table->get_ref_count() == 1);
+
+			online_retry_drop_indexes_with_trx(
+				user_table, ctx->trx);
+
+			if (ctx->need_rebuild()) {
+				ut_ad(!ctx->new_table->cached);
+				dict_mem_table_free(ctx->new_table);
+				ctx->new_table = ctx->old_table;
+			}
+
+			while (ctx->num_to_add_index--) {
+				if (dict_index_t*& i = ctx->add_index[
+					    ctx->num_to_add_index]) {
+					dict_mem_index_free(i);
+					i = NULL;
+				}
+			}
+
+			goto err_exit;
 		}
 
-		n_cols = altered_table->s->stored_fields;
+		size_t	dblen = ctx->old_table->name.dblen() + 1;
+		size_t	tablen = altered_table->s->table_name.length;
+		const char* part = ctx->old_table->name.part();
+		size_t	partlen = part ? strlen(part) : 0;
+		char*	new_table_name = static_cast<char*>(
+			mem_heap_alloc(ctx->heap,
+				       dblen + tablen + partlen + 1));
+		memcpy(new_table_name, ctx->old_table->name.m_name, dblen);
+		memcpy(new_table_name + dblen,
+		       altered_table->s->table_name.str, tablen);
+		memcpy(new_table_name + dblen + tablen,
+		       part ? part : "", partlen + 1);
+		ulint		n_cols = 0;
+		ulint		n_v_cols = 0;
+		dtuple_t*	defaults;
+		ulint		z = 0;
+
+		for (uint i = 0; i < altered_table->s->fields; i++) {
+			const Field*	field = altered_table->field[i];
+
+			if (innobase_is_v_fld(field)) {
+				n_v_cols++;
+			} else {
+					n_cols++;
+			}
+		}
+
+		ut_ad(n_cols + n_v_cols == altered_table->s->fields);
 
 		if (add_fts_doc_id) {
 			n_cols++;
@@ -2901,18 +5076,10 @@ prepare_inplace_alter_table_dict(
 
 		DBUG_ASSERT(!add_fts_doc_id_idx || (flags2 & DICT_TF2_FTS));
 
-		/* Create the table. */
-		trx_set_dict_operation(ctx->trx, TRX_DICT_OP_TABLE);
-
-		if (dict_table_get_low(new_table_name)) {
-			my_error(ER_TABLE_EXISTS_ERROR, MYF(0),
-				 new_table_name);
-			goto new_clustered_failed;
-		}
-
-		/* The initial space id 0 may be overridden later. */
 		ctx->new_table = dict_mem_table_create(
-			new_table_name, 0, n_cols, flags, flags2);
+			new_table_name, NULL, n_cols + n_v_cols, n_v_cols,
+			flags, flags2);
+
 		/* The rebuilt indexed_table will use the renamed
 		column names. */
 		ctx->col_names = NULL;
@@ -2923,12 +5090,8 @@ prepare_inplace_alter_table_dict(
 				user_table->data_dir_path);
 		}
 
-                sql_idx= 0;
-		for (uint i = 0; i < altered_table->s->stored_fields; i++, sql_idx++) {
-			const Field*	field;
-                        while (!((field= altered_table->field[sql_idx])->
-                                 stored_in_db))
-                          sql_idx++;
+		for (uint i = 0; i < altered_table->s->fields; i++) {
+			const Field*	field = altered_table->field[i];
 			ulint		is_unsigned;
 			ulint		field_type
 				= (ulint) field->type();
@@ -2937,6 +5100,7 @@ prepare_inplace_alter_table_dict(
 					&is_unsigned, field);
 			ulint		charset_no;
 			ulint		col_len;
+			bool		is_virtual = innobase_is_v_fld(field);
 
 			/* we assume in dtype_form_prtype() that this
 			fits in two bytes */
@@ -2954,14 +5118,24 @@ prepare_inplace_alter_table_dict(
 				field_type |= DATA_UNSIGNED;
 			}
 
+			if (altered_table->versioned()) {
+				if (i == altered_table->s->row_start_field) {
+					field_type |= DATA_VERS_START;
+				} else if (i ==
+					   altered_table->s->row_end_field) {
+					field_type |= DATA_VERS_END;
+				} else if (!(field->flags
+					     & VERS_UPDATE_UNVERSIONED_FLAG)) {
+					field_type |= DATA_VERSIONED;
+				}
+			}
+
 			if (dtype_is_string_type(col_type)) {
 				charset_no = (ulint) field->charset()->number;
 
 				if (charset_no > MAX_CHAR_COLL_NUM) {
-					dict_mem_table_free(
-						ctx->new_table);
-					my_error(ER_WRONG_KEY_COLUMN, MYF(0),
-						 field->field_name);
+					my_error(ER_WRONG_KEY_COLUMN, MYF(0), "InnoDB",
+						 field->field_name.str);
 					goto new_clustered_failed;
 				}
 			} else {
@@ -2986,33 +5160,342 @@ prepare_inplace_alter_table_dict(
 				if (length_bytes == 2) {
 					field_type |= DATA_LONG_TRUE_VARCHAR;
 				}
+
 			}
 
-			if (dict_col_name_is_reserved(field->field_name)) {
+			if (dict_col_name_is_reserved(field->field_name.str)) {
 				dict_mem_table_free(ctx->new_table);
+				ctx->new_table = ctx->old_table;
 				my_error(ER_WRONG_COLUMN_NAME, MYF(0),
-					 field->field_name);
+					 field->field_name.str);
 				goto new_clustered_failed;
 			}
 
-			dict_mem_table_add_col(
-				ctx->new_table, ctx->heap,
-				field->field_name,
-				col_type,
-				dtype_form_prtype(field_type, charset_no),
-				col_len);
+			if (is_virtual) {
+				dict_mem_table_add_v_col(
+					ctx->new_table, ctx->heap,
+					field->field_name.str,
+					col_type,
+					dtype_form_prtype(
+						field_type, charset_no)
+					| DATA_VIRTUAL,
+					col_len, i, 0);
+			} else {
+				dict_mem_table_add_col(
+					ctx->new_table, ctx->heap,
+					field->field_name.str,
+					col_type,
+					dtype_form_prtype(
+						field_type, charset_no),
+					col_len);
+			}
+		}
+
+		if (n_v_cols) {
+			for (uint i = 0; i < altered_table->s->fields; i++) {
+				dict_v_col_t*	v_col;
+				const Field*	field = altered_table->field[i];
+
+				if (!innobase_is_v_fld(field)) {
+					continue;
+				}
+				v_col = dict_table_get_nth_v_col(
+					ctx->new_table, z);
+				z++;
+				innodb_base_col_setup(
+					ctx->new_table, field, v_col);
+			}
 		}
 
 		if (add_fts_doc_id) {
 			fts_add_doc_id_column(ctx->new_table, ctx->heap);
 			ctx->new_table->fts->doc_col = fts_doc_id_col;
-			ut_ad(fts_doc_id_col == altered_table->s->stored_fields);
+			ut_ad(fts_doc_id_col
+			      == altered_table->s->fields - n_v_cols);
 		} else if (ctx->new_table->fts) {
 			ctx->new_table->fts->doc_col = fts_doc_id_col;
 		}
 
+		dict_table_add_system_columns(ctx->new_table, ctx->heap);
+
+		if (ha_alter_info->handler_flags & INNOBASE_DEFAULTS) {
+			defaults = dtuple_create_with_vcol(
+				ctx->heap,
+				dict_table_get_n_cols(ctx->new_table),
+				dict_table_get_n_v_cols(ctx->new_table));
+
+			dict_table_copy_types(defaults, ctx->new_table);
+		} else {
+			defaults = NULL;
+		}
+
+		ctx->col_map = innobase_build_col_map(
+			ha_alter_info, altered_table, old_table,
+			ctx->new_table, user_table, defaults, ctx->heap);
+		ctx->defaults = defaults;
+	} else {
+		DBUG_ASSERT(!innobase_need_rebuild(ha_alter_info, old_table));
+		DBUG_ASSERT(old_table->s->primary_key
+			    == altered_table->s->primary_key);
+
+		for (dict_index_t* index
+			     = dict_table_get_first_index(user_table);
+		     index != NULL;
+		     index = dict_table_get_next_index(index)) {
+			if (!index->to_be_dropped && index->is_corrupted()) {
+				my_error(ER_CHECK_NO_SUCH_TABLE, MYF(0));
+				goto error_handled;
+			}
+		}
+
+		for (dict_index_t* index
+			     = dict_table_get_first_index(user_table);
+		     index != NULL;
+		     index = dict_table_get_next_index(index)) {
+			if (!index->to_be_dropped && index->is_corrupted()) {
+				my_error(ER_CHECK_NO_SUCH_TABLE, MYF(0));
+				goto error_handled;
+			}
+		}
+
+		if (!ctx->new_table->fts
+		    && innobase_fulltext_exist(altered_table)) {
+			ctx->new_table->fts = fts_create(
+				ctx->new_table);
+			ctx->new_table->fts->doc_col = fts_doc_id_col;
+		}
+
+		/* Check if we need to update mtypes of legacy GIS columns.
+		This check is only needed when we don't have to rebuild
+		the table, since rebuild would update all mtypes for GIS
+		columns */
+		error = innobase_check_gis_columns(
+			ha_alter_info, ctx->new_table, ctx->trx);
+		if (error != DB_SUCCESS) {
+			ut_ad(error == DB_ERROR);
+			error = DB_UNSUPPORTED;
+			goto error_handling;
+		}
+	}
+
+	ut_ad(new_clustered == ctx->need_rebuild());
+
+	/* Create the index metadata. */
+	for (ulint a = 0; a < ctx->num_to_add_index; a++) {
+		if (index_defs[a].ind_type & DICT_VIRTUAL
+		    && ctx->num_to_drop_vcol > 0 && !new_clustered) {
+			innodb_v_adjust_idx_col(ha_alter_info, old_table,
+						ctx->num_to_drop_vcol,
+						&index_defs[a]);
+		}
+
+		ctx->add_index[a] = row_merge_create_index(
+			ctx->new_table, &index_defs[a], add_v);
+
+		add_key_nums[a] = index_defs[a].key_number;
+
+		DBUG_ASSERT(ctx->add_index[a]->is_committed()
+			    == !!new_clustered);
+	}
+
+	if (ctx->need_rebuild() && user_table->supports_instant()) {
+		if (!instant_alter_column_possible(ha_alter_info, old_table)) {
+			goto not_instant_add_column;
+		}
+
+		for (uint i = uint(ctx->old_table->n_cols) - DATA_N_SYS_COLS;
+		     i--; ) {
+			if (ctx->col_map[i] != i) {
+				goto not_instant_add_column;
+			}
+		}
+
+		DBUG_ASSERT(ctx->new_table->n_cols > ctx->old_table->n_cols);
+
+		for (uint a = 0; a < ctx->num_to_add_index; a++) {
+			ctx->add_index[a]->table = ctx->new_table;
+			ctx->add_index[a] = dict_index_add_to_cache(
+				ctx->add_index[a], FIL_NULL, false,
+				&error, add_v);
+			ut_a(error == DB_SUCCESS);
+		}
+		DBUG_ASSERT(ha_alter_info->key_count
+			    /* hidden GEN_CLUST_INDEX in InnoDB */
+			    + dict_index_is_auto_gen_clust(
+				    dict_table_get_first_index(ctx->new_table))
+			    /* hidden FTS_DOC_ID_INDEX in InnoDB */
+			    + (ctx->old_table->fts_doc_id_index
+			       && innobase_fts_check_doc_id_index_in_def(
+				       altered_table->s->keys,
+				       altered_table->key_info)
+			       != FTS_EXIST_DOC_ID_INDEX)
+			    == ctx->num_to_add_index);
+		ctx->num_to_add_index = 0;
+		ctx->add_index = NULL;
+
+		uint i = 0; // index of stored columns ctx->new_table->cols[]
+		Field **af = altered_table->field;
+
+		List_iterator_fast<Create_field> cf_it(
+			ha_alter_info->alter_info->create_list);
+
+		while (const Create_field* new_field = cf_it++) {
+			DBUG_ASSERT(!new_field->field
+				    || std::find(old_table->field,
+						 old_table->field
+						 + old_table->s->fields,
+						 new_field->field) !=
+				    old_table->field + old_table->s->fields);
+			DBUG_ASSERT(new_field->field
+				    || !strcmp(new_field->field_name.str,
+					       (*af)->field_name.str));
+
+			if (!(*af)->stored_in_db()) {
+				af++;
+				continue;
+			}
+
+			dict_col_t* col = dict_table_get_nth_col(
+				ctx->new_table, i);
+			DBUG_ASSERT(!strcmp((*af)->field_name.str,
+				    dict_table_get_col_name(ctx->new_table,
+							    i)));
+			DBUG_ASSERT(!col->is_instant());
+
+			if (new_field->field) {
+				ut_d(const dict_col_t* old_col
+				     = dict_table_get_nth_col(user_table, i));
+				ut_d(const dict_index_t* index
+				     = user_table->indexes.start);
+				DBUG_SLOW_ASSERT(col->mtype == old_col->mtype);
+				ut_ad(col->prtype == old_col->prtype
+				      || col->prtype
+				      == (old_col->prtype & ~DATA_VERSIONED));
+				DBUG_SLOW_ASSERT(col->mbminlen
+					    == old_col->mbminlen);
+				DBUG_SLOW_ASSERT(col->mbmaxlen
+					    == old_col->mbmaxlen);
+				DBUG_SLOW_ASSERT(col->len >= old_col->len);
+				DBUG_SLOW_ASSERT(old_col->is_instant()
+					    == (dict_col_get_clust_pos(
+							old_col, index)
+						>= index->n_core_fields));
+			} else if ((*af)->is_real_null()) {
+				/* DEFAULT NULL */
+				col->def_val.len = UNIV_SQL_NULL;
+			} else {
+				switch ((*af)->type()) {
+				case MYSQL_TYPE_VARCHAR:
+					col->def_val.len = reinterpret_cast
+						<const Field_varstring*>
+						((*af))->get_length();
+					col->def_val.data = reinterpret_cast
+						<const Field_varstring*>
+						((*af))->get_data();
+					break;
+				case MYSQL_TYPE_GEOMETRY:
+				case MYSQL_TYPE_TINY_BLOB:
+				case MYSQL_TYPE_MEDIUM_BLOB:
+				case MYSQL_TYPE_BLOB:
+				case MYSQL_TYPE_LONG_BLOB:
+					col->def_val.len = reinterpret_cast
+						<const Field_blob*>
+						((*af))->get_length();
+					col->def_val.data = reinterpret_cast
+						<const Field_blob*>
+						((*af))->get_ptr();
+					break;
+				default:
+					dfield_t d;
+					dict_col_copy_type(col, &d.type);
+					ulint len = (*af)->pack_length();
+					DBUG_ASSERT(len <= 8
+						    || d.type.mtype
+						    != DATA_INT);
+					row_mysql_store_col_in_innobase_format(
+						&d,
+						d.type.mtype == DATA_INT
+						? static_cast<byte*>(
+							mem_heap_alloc(
+								ctx->heap,
+								len))
+						: NULL,
+						true, (*af)->ptr, len,
+						dict_table_is_comp(
+							user_table));
+					col->def_val.len = d.len;
+					col->def_val.data = d.data;
+				}
+			}
+
+			i++;
+			af++;
+		}
+
+		DBUG_ASSERT(af == altered_table->field
+			    + altered_table->s->fields);
+		/* There might exist a hidden FTS_DOC_ID column for
+		FULLTEXT INDEX. If it exists, the columns should have
+		been implicitly added by ADD FULLTEXT INDEX together
+		with instant ADD COLUMN. (If a hidden FTS_DOC_ID pre-existed,
+		then the ctx->col_map[] check should have prevented
+		adding visible user columns after that.) */
+		DBUG_ASSERT(DATA_N_SYS_COLS + i == ctx->new_table->n_cols
+			    || (1 + DATA_N_SYS_COLS + i
+				== ctx->new_table->n_cols
+				&& !strcmp(dict_table_get_col_name(
+						   ctx->new_table, i),
+				   FTS_DOC_ID_COL_NAME)));
+
+		ctx->prepare_instant();
+	}
+
+	if (ctx->need_rebuild()) {
+not_instant_add_column:
+		DBUG_ASSERT(ctx->need_rebuild());
+		DBUG_ASSERT(!ctx->is_instant());
+		DBUG_ASSERT(num_fts_index <= 1);
+		DBUG_ASSERT(!ctx->online || num_fts_index == 0);
+		DBUG_ASSERT(!ctx->online
+			    || ctx->add_autoinc == ULINT_UNDEFINED);
+		DBUG_ASSERT(!ctx->online
+			    || !innobase_need_rebuild(ha_alter_info, old_table)
+			    || !innobase_fulltext_exist(altered_table));
+
+		uint32_t		key_id	= FIL_DEFAULT_ENCRYPTION_KEY;
+		fil_encryption_t	mode	= FIL_ENCRYPTION_DEFAULT;
+
+		if (fil_space_t* s = user_table->space) {
+			if (const fil_space_crypt_t* c = s->crypt_data) {
+				key_id = c->key_id;
+				mode = c->encryption;
+			}
+		}
+
+		if (ha_alter_info->handler_flags & ALTER_OPTIONS) {
+			const ha_table_option_struct& alt_opt=
+				*ha_alter_info->create_info->option_struct;
+			const ha_table_option_struct& opt=
+				*old_table->s->option_struct;
+			if (alt_opt.encryption != opt.encryption
+			    || alt_opt.encryption_key_id
+			    != opt.encryption_key_id) {
+				key_id = uint32_t(alt_opt.encryption_key_id);
+				mode = fil_encryption_t(alt_opt.encryption);
+			}
+		}
+
+		if (dict_table_get_low(ctx->new_table->name.m_name)) {
+			my_error(ER_TABLE_EXISTS_ERROR, MYF(0),
+				 ctx->new_table->name.m_name);
+			goto new_clustered_failed;
+		}
+
+		/* Create the table. */
+		trx_set_dict_operation(ctx->trx, TRX_DICT_OP_TABLE);
+
 		error = row_create_table_for_mysql(
-			ctx->new_table, ctx->trx, false, mode, key_id);
+			ctx->new_table, ctx->trx, mode, key_id);
 
 		switch (error) {
 			dict_table_t*	temp_table;
@@ -3024,153 +5507,181 @@ prepare_inplace_alter_table_dict(
 			the dict_sys->mutex. */
 			ut_ad(mutex_own(&dict_sys->mutex));
 			temp_table = dict_table_open_on_name(
-				ctx->new_table->name, TRUE, FALSE,
+				ctx->new_table->name.m_name, TRUE, FALSE,
 				DICT_ERR_IGNORE_NONE);
 			ut_a(ctx->new_table == temp_table);
 			/* n_ref_count must be 1, because purge cannot
 			be executing on this very table as we are
 			holding dict_operation_lock X-latch. */
-			DBUG_ASSERT(ctx->new_table->n_ref_count == 1);
+			DBUG_ASSERT(ctx->new_table->get_ref_count() == 1);
+			DBUG_ASSERT(ctx->new_table->id != 0);
+			DBUG_ASSERT(ctx->new_table->id == ctx->trx->table_id);
 			break;
 		case DB_TABLESPACE_EXISTS:
 			my_error(ER_TABLESPACE_EXISTS, MYF(0),
-				 new_table_name);
-			goto new_clustered_failed;
+				 ctx->new_table->name.m_name);
+			goto new_table_failed;
 		case DB_DUPLICATE_KEY:
 			my_error(HA_ERR_TABLE_EXIST, MYF(0),
 				 altered_table->s->table_name.str);
-			goto new_clustered_failed;
+			goto new_table_failed;
+		case DB_UNSUPPORTED:
+			my_error(ER_UNSUPPORTED_EXTENSION, MYF(0),
+				 ctx->new_table->name.m_name);
+			goto new_table_failed;
 		default:
 			my_error_innodb(error, table_name, flags);
-		new_clustered_failed:
+new_table_failed:
 			DBUG_ASSERT(ctx->trx != ctx->prebuilt->trx);
-			trx_rollback_to_savepoint(ctx->trx, NULL);
-
-			ut_ad(user_table->n_ref_count == 1);
-
-			online_retry_drop_indexes_with_trx(
-				user_table, ctx->trx);
-			goto err_exit;
+			goto new_clustered_failed;
 		}
 
-		if (ha_alter_info->handler_flags
-		    & Alter_inplace_info::ADD_COLUMN) {
-			add_cols = dtuple_create(
-				ctx->heap,
-				dict_table_get_n_cols(ctx->new_table));
+		for (ulint a = 0; a < ctx->num_to_add_index; a++) {
+			dict_index_t*& index = ctx->add_index[a];
+			const bool has_new_v_col = index->has_new_v_col;
+			index = create_index_dict(ctx->trx, index, add_v);
+			if (!index) {
+				error = ctx->trx->error_state;
+				ut_ad(error != DB_SUCCESS);
+				while (++a < ctx->num_to_add_index) {
+					dict_mem_index_free(ctx->add_index[a]);
+				}
+				goto error_handling;
+			}
 
-			dict_table_copy_types(add_cols, ctx->new_table);
-		} else {
-			add_cols = NULL;
+			index->parser = index_defs[a].parser;
+			index->has_new_v_col = has_new_v_col;
+			/* Note the id of the transaction that created this
+			index, we use it to restrict readers from accessing
+			this index, to ensure read consistency. */
+			ut_ad(index->trx_id == ctx->trx->id);
+
+			if (index->type & DICT_FTS) {
+				DBUG_ASSERT(num_fts_index == 1);
+				DBUG_ASSERT(!fts_index);
+				DBUG_ASSERT(index->type == DICT_FTS);
+				fts_index = ctx->add_index[a];
+			}
 		}
 
-		ctx->col_map = innobase_build_col_map(
-			ha_alter_info, altered_table, old_table,
-			ctx->new_table, user_table,
-			add_cols, ctx->heap);
-		ctx->add_cols = add_cols;
-	} else {
-		DBUG_ASSERT(!innobase_need_rebuild(ha_alter_info, old_table));
-		DBUG_ASSERT(old_table->s->primary_key
-			    == altered_table->s->primary_key);
+		dict_index_t*	clust_index = dict_table_get_first_index(
+			user_table);
+		dict_index_t*	new_clust_index = dict_table_get_first_index(
+			ctx->new_table);
+		ctx->skip_pk_sort = innobase_pk_order_preserved(
+			ctx->col_map, clust_index, new_clust_index);
 
-		if (!ctx->new_table->fts
-		    && innobase_fulltext_exist(altered_table)) {
-			ctx->new_table->fts = fts_create(
-				ctx->new_table);
-			ctx->new_table->fts->doc_col = fts_doc_id_col;
-		}
-	}
+		DBUG_EXECUTE_IF("innodb_alter_table_pk_assert_no_sort",
+			DBUG_ASSERT(ctx->skip_pk_sort););
 
-	/* Assign table_id, so that no table id of
-	fts_create_index_tables() will be written to the undo logs. */
-	DBUG_ASSERT(ctx->new_table->id != 0);
-	ctx->trx->table_id = ctx->new_table->id;
+		ut_ad(!new_clust_index->is_instant());
+		/* row_merge_build_index() depends on the correct value */
+		ut_ad(new_clust_index->n_core_null_bytes
+		      == UT_BITS_IN_BYTES(new_clust_index->n_nullable));
 
-	/* Create the indexes in SYS_INDEXES and load into dictionary. */
+		DBUG_ASSERT(!ctx->new_table->persistent_autoinc);
+		if (const Field* ai = altered_table->found_next_number_field) {
+			const unsigned	col_no = innodb_col_no(ai);
 
-	for (ulint a = 0; a < ctx->num_to_add_index; a++) {
+			ctx->new_table->persistent_autoinc = 1
+				+ dict_table_get_nth_col_pos(
+					ctx->new_table, col_no, NULL);
 
-		ctx->add_index[a] = row_merge_create_index(
-			ctx->trx, ctx->new_table, &index_defs[a]);
-
-		add_key_nums[a] = index_defs[a].key_number;
-
-		if (!ctx->add_index[a]) {
-			error = ctx->trx->error_state;
-			DBUG_ASSERT(error != DB_SUCCESS);
-			goto error_handling;
+			/* Initialize the AUTO_INCREMENT sequence
+			to the rebuilt table from the old one. */
+			if (!old_table->found_next_number_field
+			    || !user_table->space) {
+			} else if (ib_uint64_t autoinc
+				   = btr_read_autoinc(clust_index)) {
+				btr_write_autoinc(new_clust_index, autoinc);
+			}
 		}
 
-		if (ctx->add_index[a]->type & DICT_FTS) {
-			DBUG_ASSERT(num_fts_index);
-			DBUG_ASSERT(!fts_index);
-			DBUG_ASSERT(ctx->add_index[a]->type == DICT_FTS);
-			fts_index = ctx->add_index[a];
-		}
-
-		/* If only online ALTER TABLE operations have been
-		requested, allocate a modification log. If the table
-		will be locked anyway, the modification
-		log is unnecessary. When rebuilding the table
-		(new_clustered), we will allocate the log for the
-		clustered index of the old table, later. */
-		if (new_clustered
-		    || !ctx->online
-		    || !user_table->is_readable()
-		    || dict_table_is_discarded(user_table)) {
-			/* No need to allocate a modification log. */
-			ut_ad(!ctx->add_index[a]->online_log);
-		} else if (ctx->add_index[a]->type & DICT_FTS) {
-			/* Fulltext indexes are not covered
-			by a modification log. */
-		} else {
-			DBUG_EXECUTE_IF("innodb_OOM_prepare_inplace_alter",
-					error = DB_OUT_OF_MEMORY;
-					goto error_handling;);
-			rw_lock_x_lock(&ctx->add_index[a]->lock);
-
-			bool ok = row_log_allocate(ctx->add_index[a],
-						   NULL, true, NULL,
-						   NULL, path);
-			rw_lock_x_unlock(&ctx->add_index[a]->lock);
+		if (ctx->online) {
+			/* Allocate a log for online table rebuild. */
+			rw_lock_x_lock(&clust_index->lock);
+			bool ok = row_log_allocate(
+				ctx->prebuilt->trx,
+				clust_index, ctx->new_table,
+				!(ha_alter_info->handler_flags
+				  & ALTER_ADD_PK_INDEX),
+				ctx->defaults, ctx->col_map, path,
+				old_table,
+				ctx->allow_not_null);
+			rw_lock_x_unlock(&clust_index->lock);
 
 			if (!ok) {
 				error = DB_OUT_OF_MEMORY;
 				goto error_handling;
 			}
 		}
-	}
+	} else if (ctx->num_to_add_index) {
+		ut_ad(!ctx->is_instant());
+		ctx->trx->table_id = user_table->id;
 
-	ut_ad(new_clustered == ctx->need_rebuild());
+		for (ulint a = 0; a < ctx->num_to_add_index; a++) {
+			dict_index_t*& index = ctx->add_index[a];
+			const bool has_new_v_col = index->has_new_v_col;
+			index = create_index_dict(ctx->trx, index, add_v);
+			if (!index) {
+				error = ctx->trx->error_state;
+				ut_ad(error != DB_SUCCESS);
+error_handling_drop_uncached:
+				while (++a < ctx->num_to_add_index) {
+					dict_mem_index_free(ctx->add_index[a]);
+				}
+				goto error_handling;
+			}
 
-	DBUG_EXECUTE_IF("innodb_OOM_prepare_inplace_alter",
-			error = DB_OUT_OF_MEMORY;
-			goto error_handling;);
+			index->parser = index_defs[a].parser;
+			index->has_new_v_col = has_new_v_col;
+			/* Note the id of the transaction that created this
+			index, we use it to restrict readers from accessing
+			this index, to ensure read consistency. */
+			ut_ad(index->trx_id == ctx->trx->id);
 
-	if (new_clustered && ctx->online) {
-		/* Allocate a log for online table rebuild. */
-		dict_index_t* clust_index = dict_table_get_first_index(
-			user_table);
+			/* If ADD INDEX with LOCK=NONE has been
+			requested, allocate a modification log. */
+			if (index->type & DICT_FTS) {
+				DBUG_ASSERT(num_fts_index == 1);
+				DBUG_ASSERT(!fts_index);
+				DBUG_ASSERT(index->type == DICT_FTS);
+				fts_index = ctx->add_index[a];
+				/* Fulltext indexes are not covered
+				by a modification log. */
+			} else if (!ctx->online
+				   || !user_table->is_readable()
+				   || !user_table->space) {
+				/* No need to allocate a modification log. */
+				DBUG_ASSERT(!index->online_log);
+			} else {
+				DBUG_EXECUTE_IF(
+					"innodb_OOM_prepare_inplace_alter",
+					error = DB_OUT_OF_MEMORY;
+					goto error_handling_drop_uncached;);
+				rw_lock_x_lock(&ctx->add_index[a]->lock);
 
-		rw_lock_x_lock(&clust_index->lock);
-		bool ok = row_log_allocate(
-			clust_index, ctx->new_table,
-			!(ha_alter_info->handler_flags
-			  & Alter_inplace_info::ADD_PK_INDEX),
-			ctx->add_cols, ctx->col_map, path);
-		rw_lock_x_unlock(&clust_index->lock);
+				bool ok = row_log_allocate(
+					ctx->prebuilt->trx,
+					index,
+					NULL, true, NULL, NULL,
+					path, old_table,
+					ctx->allow_not_null);
 
-		if (!ok) {
-			error = DB_OUT_OF_MEMORY;
-			goto error_handling;
+				rw_lock_x_unlock(&index->lock);
+
+				if (!ok) {
+					error = DB_OUT_OF_MEMORY;
+					goto error_handling_drop_uncached;
+				}
+			}
 		}
 	}
 
-	if (ctx->online) {
+	if (ctx->online && ctx->num_to_add_index) {
 		/* Assign a consistent read view for
 		row_merge_read_clustered_index(). */
-		trx_assign_read_view(ctx->prebuilt->trx);
+		ctx->prebuilt->trx->read_view.open(ctx->prebuilt->trx);
 	}
 
 	if (fts_index) {
@@ -3191,16 +5702,20 @@ op_ok:
 #endif /* UNIV_DEBUG */
 		ut_ad(ctx->trx->dict_operation_lock_mode == RW_X_LATCH);
 		ut_ad(mutex_own(&dict_sys->mutex));
-#ifdef UNIV_SYNC_DEBUG
-		ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
-#endif /* UNIV_SYNC_DEBUG */
+		ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
 
 		DICT_TF2_FLAG_SET(ctx->new_table, DICT_TF2_FTS);
+		if (ctx->need_rebuild()) {
+			/* For !ctx->need_rebuild(), this will be set at
+			commit_cache_norebuild(). */
+			ctx->new_table->fts_doc_id_index
+				= dict_table_get_index_on_name(
+					ctx->new_table, FTS_DOC_ID_INDEX_NAME);
+			DBUG_ASSERT(ctx->new_table->fts_doc_id_index != NULL);
+		}
 
-		/* This function will commit the transaction and reset
-		the trx_t::dict_operation flag on success. */
-
-		error = fts_create_index_tables(ctx->trx, fts_index);
+		error = fts_create_index_tables(ctx->trx, fts_index,
+						ctx->new_table->id);
 
 		DBUG_EXECUTE_IF("innodb_test_fail_after_fts_index_table",
 				error = DB_LOCK_WAIT_TIMEOUT;
@@ -3210,13 +5725,13 @@ op_ok:
 			goto error_handling;
 		}
 
+		trx_commit(ctx->trx);
 		trx_start_for_ddl(ctx->trx, op);
 
 		if (!ctx->new_table->fts
 		    || ib_vector_size(ctx->new_table->fts->indexes) == 0) {
 			error = fts_create_common_tables(
-				ctx->trx, ctx->new_table,
-				user_table->name, TRUE);
+				ctx->trx, ctx->new_table, true);
 
 			DBUG_EXECUTE_IF(
 				"innodb_test_fail_after_fts_common_table",
@@ -3234,7 +5749,7 @@ op_ok:
 				ctx->prebuilt->trx->mysql_thd)
 				? DB_SUCCESS : DB_ERROR;
 			ctx->new_table->fts->fts_status
-				&= ~TABLE_DICT_LOCKED;
+				&= ulint(~TABLE_DICT_LOCKED);
 
 			if (error != DB_SUCCESS) {
 				goto error_handling;
@@ -3278,6 +5793,9 @@ error_handling:
 	case DB_DUPLICATE_KEY:
 		my_error(ER_DUP_KEY, MYF(0), "SYS_INDEXES");
 		break;
+	case DB_UNSUPPORTED:
+		my_error(ER_TABLE_CANT_HANDLE_SPKEYS, MYF(0), "SYS_COLUMNS");
+		break;
 	default:
 		my_error_innodb(error, table_name, user_table->flags);
 	}
@@ -3285,6 +5803,11 @@ error_handling:
 error_handled:
 
 	ctx->prebuilt->trx->error_info = NULL;
+
+	if (!ctx->trx) {
+		goto err_exit;
+	}
+
 	ctx->trx->error_state = DB_SUCCESS;
 
 	if (!dict_locked) {
@@ -3300,17 +5823,7 @@ error_handled:
 					ctx->new_table, ctx->trx);
 			}
 
-			dict_table_close(ctx->new_table, TRUE, FALSE);
-
-#if defined UNIV_DEBUG || defined UNIV_DDL_DEBUG
-			/* Nobody should have initialized the stats of the
-			newly created table yet. When this is the case, we
-			know that it has not been added for background stats
-			gathering. */
-			ut_a(!ctx->new_table->stat_initialized);
-#endif /* UNIV_DEBUG || UNIV_DDL_DEBUG */
-
-			row_merge_drop_table(ctx->trx, ctx->new_table);
+			dict_table_close_and_drop(ctx->trx, ctx->new_table);
 
 			/* Free the log for online table rebuild, if
 			one was allocated. */
@@ -3334,7 +5847,7 @@ error_handled:
 		/* n_ref_count must be 1, because purge cannot
 		be executing on this very table as we are
 		holding dict_operation_lock X-latch. */
-		DBUG_ASSERT(user_table->n_ref_count == 1 || ctx->online);
+		DBUG_ASSERT(user_table->get_ref_count() == 1 || ctx->online);
 
 		online_retry_drop_indexes_with_trx(user_table, ctx->trx);
 	} else {
@@ -3347,16 +5860,20 @@ error_handled:
 	ut_ad(!user_table->drop_aborted);
 
 err_exit:
+#ifdef UNIV_DEBUG
 	/* Clear the to_be_dropped flag in the data dictionary cache. */
 	for (ulint i = 0; i < ctx->num_to_drop_index; i++) {
-		DBUG_ASSERT(*ctx->drop_index[i]->name != TEMP_INDEX_PREFIX);
+		DBUG_ASSERT(ctx->drop_index[i]->is_committed());
 		DBUG_ASSERT(ctx->drop_index[i]->to_be_dropped);
 		ctx->drop_index[i]->to_be_dropped = 0;
 	}
+#endif /* UNIV_DEBUG */
 
-	row_mysql_unlock_data_dictionary(ctx->trx);
+	if (ctx->trx) {
+		row_mysql_unlock_data_dictionary(ctx->trx);
 
-	trx_free_for_mysql(ctx->trx);
+		trx_free(ctx->trx);
+	}
 	trx_commit_for_mysql(ctx->prebuilt->trx);
 
 	delete ctx;
@@ -3386,9 +5903,6 @@ innobase_check_foreign_key_index(
 	ulint			n_drop_fk)	/*!< in: Number of foreign keys
 						to drop */
 {
-	ut_ad(index != NULL);
-	ut_ad(indexed_table != NULL);
-
 	const dict_foreign_set*	fks = &indexed_table->referenced_set;
 
 	/* Check for all FK references from other tables to the index. */
@@ -3459,19 +5973,261 @@ innobase_check_foreign_key_index(
 	return(false);
 }
 
+#ifdef MYSQL_RENAME_INDEX
+/**
+Rename a given index in the InnoDB data dictionary.
+
+@param index index to rename
+@param new_name new name of the index
+@param[in,out] trx dict transaction to use, not going to be committed here
+
+@retval true Failure
+@retval false Success */
+static MY_ATTRIBUTE((warn_unused_result))
+bool
+rename_index_in_data_dictionary(
+/*============================*/
+	const dict_index_t*	index,
+	const char*		new_name,
+	trx_t*			trx)
+{
+	DBUG_ENTER("rename_index_in_data_dictionary");
+
+	ut_ad(mutex_own(&dict_sys->mutex));
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
+	ut_ad(trx->dict_operation_lock_mode == RW_X_LATCH);
+
+	pars_info_t*	pinfo;
+	dberr_t		err;
+
+	pinfo = pars_info_create();
+
+	pars_info_add_ull_literal(pinfo, "table_id", index->table->id);
+	pars_info_add_ull_literal(pinfo, "index_id", index->id);
+	pars_info_add_str_literal(pinfo, "new_name", new_name);
+
+	trx->op_info = "Renaming an index in SYS_INDEXES";
+
+	DBUG_EXECUTE_IF(
+		"ib_rename_index_fail1",
+		DBUG_SET("+d,innodb_report_deadlock");
+	);
+
+	err = que_eval_sql(
+		pinfo,
+		"PROCEDURE RENAME_INDEX_IN_SYS_INDEXES () IS\n"
+		"BEGIN\n"
+		"UPDATE SYS_INDEXES SET\n"
+		"NAME = :new_name\n"
+		"WHERE\n"
+		"ID = :index_id AND\n"
+		"TABLE_ID = :table_id;\n"
+		"END;\n",
+		FALSE, trx); /* pinfo is freed by que_eval_sql() */
+
+	DBUG_EXECUTE_IF(
+		"ib_rename_index_fail1",
+		DBUG_SET("-d,innodb_report_deadlock");
+	);
+
+	trx->op_info = "";
+
+	if (err != DB_SUCCESS) {
+		my_error_innodb(err, index->table->name.m_name, 0);
+		DBUG_RETURN(true);
+	}
+
+	DBUG_RETURN(false);
+}
+
+/**
+Rename all indexes in data dictionary of a given table that are
+specified in ha_alter_info.
+
+@param ctx alter context, used to fetch the list of indexes to
+rename
+@param ha_alter_info fetch the new names from here
+@param[in,out] trx dict transaction to use, not going to be committed here
+
+@retval true Failure
+@retval false Success */
+static MY_ATTRIBUTE((warn_unused_result))
+bool
+rename_indexes_in_data_dictionary(
+/*==============================*/
+	const ha_innobase_inplace_ctx*	ctx,
+	const Alter_inplace_info*	ha_alter_info,
+	trx_t*				trx)
+{
+	DBUG_ENTER("rename_indexes_in_data_dictionary");
+
+	ut_ad(ctx->num_to_rename == ha_alter_info->index_rename_count);
+
+	for (ulint i = 0; i < ctx->num_to_rename; i++) {
+
+		KEY_PAIR*	pair = &ha_alter_info->index_rename_buffer[i];
+		dict_index_t*	index;
+
+		index = ctx->rename[i];
+
+		ut_ad(strcmp(index->name, pair->old_key->name) == 0);
+
+		if (rename_index_in_data_dictionary(index,
+						    pair->new_key->name,
+						    trx)) {
+			/* failed */
+			DBUG_RETURN(true);
+		}
+	}
+
+	DBUG_RETURN(false);
+}
+
+/**
+Rename a given index in the InnoDB data dictionary cache.
+
+@param[in,out] index index to rename
+@param new_name new index name
+*/
+static
+void
+rename_index_in_cache(
+/*==================*/
+	dict_index_t*	index,
+	const char*	new_name)
+{
+	DBUG_ENTER("rename_index_in_cache");
+
+	ut_ad(mutex_own(&dict_sys->mutex));
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
+
+	size_t	old_name_len = strlen(index->name);
+	size_t	new_name_len = strlen(new_name);
+
+	if (old_name_len >= new_name_len) {
+		/* reuse the old buffer for the name if it is large enough */
+		memcpy(const_cast<char*>(index->name()), new_name,
+		       new_name_len + 1);
+	} else {
+		/* Free the old chunk of memory if it is at the topmost
+		place in the heap, otherwise the old chunk will be freed
+		when the index is evicted from the cache. This code will
+		kick-in in a repeated ALTER sequences where the old name is
+		alternately longer/shorter than the new name:
+		1. ALTER TABLE t RENAME INDEX a TO aa;
+		2. ALTER TABLE t RENAME INDEX aa TO a;
+		3. go to 1. */
+		index->name = mem_heap_strdup_replace(
+			index->heap,
+			/* Presumed topmost element of the heap: */
+			index->name, old_name_len + 1,
+			new_name);
+	}
+
+	DBUG_VOID_RETURN;
+}
+
+/**
+Rename all indexes in data dictionary cache of a given table that are
+specified in ha_alter_info.
+
+@param ctx alter context, used to fetch the list of indexes to rename
+@param ha_alter_info fetch the new names from here
+*/
+static
+void
+rename_indexes_in_cache(
+/*====================*/
+	const ha_innobase_inplace_ctx*	ctx,
+	const Alter_inplace_info*	ha_alter_info)
+{
+	DBUG_ENTER("rename_indexes_in_cache");
+
+	ut_ad(ctx->num_to_rename == ha_alter_info->index_rename_count);
+
+	for (ulint i = 0; i < ctx->num_to_rename; i++) {
+		KEY_PAIR*	pair = &ha_alter_info->index_rename_buffer[i];
+		dict_index_t*	index;
+
+		index = ctx->rename[i];
+
+		ut_ad(strcmp(index->name, pair->old_key->name) == 0);
+
+		rename_index_in_cache(index, pair->new_key->name);
+	}
+
+	DBUG_VOID_RETURN;
+}
+#endif /* MYSQL_RENAME_INDEX */
+
+/** Fill the stored column information in s_cols list.
+@param[in]	altered_table	mysql table object
+@param[in]	table		innodb table object
+@param[out]	s_cols		list of stored column
+@param[out]	s_heap		heap for storing stored
+column information. */
+static
+void
+alter_fill_stored_column(
+	const TABLE*		altered_table,
+	dict_table_t*		table,
+	dict_s_col_list**	s_cols,
+	mem_heap_t**		s_heap)
+{
+	ulint	n_cols = altered_table->s->fields;
+	ulint	stored_col_no = 0;
+
+	for (ulint i = 0; i < n_cols; i++) {
+		Field* field = altered_table->field[i];
+		dict_s_col_t	s_col;
+
+		if (!innobase_is_v_fld(field)) {
+			stored_col_no++;
+		}
+
+		if (!innobase_is_s_fld(field)) {
+			continue;
+		}
+
+		ulint	num_base = 0;
+		dict_col_t*	col = dict_table_get_nth_col(table,
+							     stored_col_no);
+
+		s_col.m_col = col;
+		s_col.s_pos = i;
+
+		if (*s_cols == NULL) {
+			*s_cols = UT_NEW_NOKEY(dict_s_col_list());
+			*s_heap = mem_heap_create(1000);
+		}
+
+		if (num_base != 0) {
+			s_col.base_col = static_cast<dict_col_t**>(mem_heap_zalloc(
+						*s_heap, num_base * sizeof(dict_col_t*)));
+		} else {
+			s_col.base_col = NULL;
+		}
+
+		s_col.num_base = num_base;
+		innodb_base_col_setup_for_stored(table, field, &s_col);
+		(*s_cols)->push_back(s_col);
+	}
+}
+
+
 /** Allows InnoDB to update internal structures with concurrent
 writes blocked (provided that check_if_supported_inplace_alter()
 did not return HA_ALTER_INPLACE_NO_LOCK).
 This will be invoked before inplace_alter_table().
 
-@param altered_table	TABLE object for new version of table.
-@param ha_alter_info	Structure describing changes to be done
+@param altered_table TABLE object for new version of table.
+@param ha_alter_info Structure describing changes to be done
 by ALTER TABLE and holding data used during in-place alter.
 
-@retval true		Failure
-@retval false		Success
+@retval true Failure
+@retval false Success
 */
-UNIV_INTERN
+
 bool
 ha_innobase::prepare_inplace_alter_table(
 /*=====================================*/
@@ -3480,16 +6236,16 @@ ha_innobase::prepare_inplace_alter_table(
 {
 	dict_index_t**	drop_index;	/*!< Index to be dropped */
 	ulint		n_drop_index;	/*!< Number of indexes to drop */
+	dict_index_t**	rename_index;	/*!< Indexes to be dropped */
+	ulint		n_rename_index;	/*!< Number of indexes to rename */
 	dict_foreign_t**drop_fk;	/*!< Foreign key constraints to drop */
 	ulint		n_drop_fk;	/*!< Number of foreign keys to drop */
 	dict_foreign_t**add_fk = NULL;	/*!< Foreign key constraints to drop */
 	ulint		n_add_fk;	/*!< Number of foreign keys to drop */
 	dict_table_t*	indexed_table;	/*!< Table where indexes are created */
-	mem_heap_t*     heap;
+	mem_heap_t*	heap;
 	const char**	col_names;
 	int		error;
-	ulint		flags;
-	ulint		flags2;
 	ulint		max_col_len;
 	ulint		add_autoinc_col_no	= ULINT_UNDEFINED;
 	ulonglong	autoinc_col_max_value	= 0;
@@ -3497,6 +6253,8 @@ ha_innobase::prepare_inplace_alter_table(
 	bool		add_fts_doc_id		= false;
 	bool		add_fts_doc_id_idx	= false;
 	bool		add_fts_idx		= false;
+	dict_s_col_list*s_cols			= NULL;
+	mem_heap_t*	s_heap			= NULL;
 
 	DBUG_ENTER("prepare_inplace_alter_table");
 	DBUG_ASSERT(!ha_alter_info->handler_ctx);
@@ -3511,7 +6269,7 @@ ha_innobase::prepare_inplace_alter_table(
 	MONITOR_ATOMIC_INC(MONITOR_PENDING_ALTER_TABLE);
 
 #ifdef UNIV_DEBUG
-	for (dict_index_t* index = dict_table_get_first_index(prebuilt->table);
+	for (dict_index_t* index = dict_table_get_first_index(m_prebuilt->table);
 	     index;
 	     index = dict_table_get_next_index(index)) {
 		ut_ad(!index->to_be_dropped);
@@ -3520,35 +6278,61 @@ ha_innobase::prepare_inplace_alter_table(
 
 	ut_d(mutex_enter(&dict_sys->mutex));
 	ut_d(dict_table_check_for_dup_indexes(
-		     prebuilt->table, CHECK_ABORTED_OK));
+		     m_prebuilt->table, CHECK_ABORTED_OK));
 	ut_d(mutex_exit(&dict_sys->mutex));
 
 	if (!(ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE)) {
 		/* Nothing to do */
-		goto func_exit;
+		DBUG_ASSERT(m_prebuilt->trx->dict_operation_lock_mode == 0);
+		if (ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE) {
+
+			online_retry_drop_indexes(
+				m_prebuilt->table, m_user_thd);
+
+		}
+		DBUG_RETURN(false);
 	}
 
-	indexed_table = prebuilt->table;
+	indexed_table = m_prebuilt->table;
+
+	/* ALTER TABLE will not implicitly move a table from a single-table
+	tablespace to the system tablespace when innodb_file_per_table=OFF.
+	But it will implicitly move a table from the system tablespace to a
+	single-table tablespace if innodb_file_per_table = ON. */
+
+	create_table_info_t	info(m_user_thd,
+				     altered_table,
+				     ha_alter_info->create_info,
+				     NULL,
+				     NULL,
+				     srv_file_per_table);
+
+	info.set_tablespace_type(indexed_table->space != fil_system.sys_space);
+
+	if (ha_alter_info->handler_flags & ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX) {
+		if (info.gcols_in_fulltext_or_spatial()) {
+			goto err_exit_no_heap;
+		}
+	}
 
 	if (indexed_table->is_readable()) {
 	} else {
 		if (indexed_table->corrupted) {
 			/* Handled below */
 		} else {
-			FilSpace space(indexed_table->space, true);
-
-			if (space()) {
+			if (const fil_space_t* space = indexed_table->space) {
 				String str;
 				const char* engine= table_type();
-				char	buf[MAX_FULL_NAME_LEN];
-				ut_format_name(indexed_table->name, TRUE, buf, sizeof(buf));
 
-				push_warning_printf(user_thd, Sql_condition::WARN_LEVEL_WARN,
+				push_warning_printf(
+					m_user_thd,
+					Sql_condition::WARN_LEVEL_WARN,
 					HA_ERR_DECRYPTION_FAILED,
 					"Table %s in file %s is encrypted but encryption service or"
 					" used key_id is not available. "
 					" Can't continue reading table.",
-					buf, space()->chain.start->name);
+					table_share->table_name.str,
+					space->chain.start->name);
 
 				my_error(ER_GET_ERRMSG, MYF(0), HA_ERR_DECRYPTION_FAILED, str.c_ptr(), engine);
 				DBUG_RETURN(true);
@@ -3558,30 +6342,21 @@ ha_innobase::prepare_inplace_alter_table(
 
 	if (indexed_table->corrupted
 	    || dict_table_get_first_index(indexed_table) == NULL
-	    || dict_index_is_corrupted(
-		    dict_table_get_first_index(indexed_table))) {
+	    || dict_table_get_first_index(indexed_table)->is_corrupted()) {
 		/* The clustered index is corrupted. */
 		my_error(ER_CHECK_NO_SUCH_TABLE, MYF(0));
 		DBUG_RETURN(true);
-	}
+	} else {
+		const char* invalid_opt = info.create_options_are_invalid();
 
-	if (ha_alter_info->handler_flags
-	    & Alter_inplace_info::CHANGE_CREATE_OPTION) {
 		/* Check engine specific table options */
-		if (const char* invalid_tbopt = check_table_options(
-				user_thd, altered_table,
-				ha_alter_info->create_info,
-				prebuilt->table->space != 0,
-				srv_file_format)) {
+		if (const char* invalid_tbopt = info.check_table_options()) {
 			my_error(ER_ILLEGAL_HA_CREATE_OPTION, MYF(0),
 				 table_type(), invalid_tbopt);
 			goto err_exit_no_heap;
 		}
 
-		if (const char* invalid_opt = create_options_are_invalid(
-			    user_thd, altered_table,
-			    ha_alter_info->create_info,
-			    prebuilt->table->space != 0)) {
+		if (invalid_opt) {
 			my_error(ER_ILLEGAL_HA_CREATE_OPTION, MYF(0),
 				 table_type(), invalid_opt);
 			goto err_exit_no_heap;
@@ -3590,18 +6365,20 @@ ha_innobase::prepare_inplace_alter_table(
 
 	/* Check if any index name is reserved. */
 	if (innobase_index_name_is_reserved(
-		    user_thd,
+		    m_user_thd,
 		    ha_alter_info->key_info_buffer,
 		    ha_alter_info->key_count)) {
 err_exit_no_heap:
-		DBUG_ASSERT(prebuilt->trx->dict_operation_lock_mode == 0);
+		DBUG_ASSERT(m_prebuilt->trx->dict_operation_lock_mode == 0);
 		if (ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE) {
-			online_retry_drop_indexes(prebuilt->table, user_thd);
+
+			online_retry_drop_indexes(
+				m_prebuilt->table, m_user_thd);
 		}
 		DBUG_RETURN(true);
 	}
 
-	indexed_table = prebuilt->table;
+	indexed_table = m_prebuilt->table;
 
 	/* Check that index keys are sensible */
 	error = innobase_check_index_keys(ha_alter_info, indexed_table);
@@ -3613,7 +6390,7 @@ err_exit_no_heap:
 	/* Prohibit renaming a column to something that the table
 	already contains. */
 	if (ha_alter_info->handler_flags
-	    & Alter_inplace_info::ALTER_COLUMN_NAME) {
+	    & ALTER_COLUMN_NAME) {
 		List_iterator_fast<Create_field> cf_it(
 			ha_alter_info->alter_info->create_list);
 
@@ -3627,7 +6404,7 @@ err_exit_no_heap:
 			cf_it.rewind();
 			while (Create_field* cf = cf_it++) {
 				if (cf->field == *fp) {
-					name = cf->field_name;
+					name = cf->field_name.str;
 					goto check_if_ok_to_rename;
 				}
 			}
@@ -3637,7 +6414,7 @@ check_if_ok_to_rename:
 			/* Prohibit renaming a column from FTS_DOC_ID
 			if full-text indexes exist. */
 			if (!my_strcasecmp(system_charset_info,
-					   (*fp)->field_name,
+					   (*fp)->field_name.str,
 					   FTS_DOC_ID_COL_NAME)
 			    && innobase_fulltext_exist(altered_table)) {
 				my_error(ER_INNODB_FT_WRONG_DOCID_COLUMN,
@@ -3646,16 +6423,18 @@ check_if_ok_to_rename:
 			}
 
 			/* Prohibit renaming a column to an internal column. */
-			const char*	s = prebuilt->table->col_names;
+			const char*	s = m_prebuilt->table->col_names;
 			unsigned j;
 			/* Skip user columns.
 			MySQL should have checked these already.
 			We want to allow renaming of c1 to c2, c2 to c1. */
 			for (j = 0; j < table->s->fields; j++) {
-				s += strlen(s) + 1;
+				if (!innobase_is_v_fld(table->field[j])) {
+					s += strlen(s) + 1;
+				}
 			}
 
-			for (; j < prebuilt->table->n_def; j++) {
+			for (; j < m_prebuilt->table->n_def; j++) {
 				if (!my_strcasecmp(
 					    system_charset_info, name, s)) {
 					my_error(ER_WRONG_COLUMN_NAME, MYF(0),
@@ -3668,22 +6447,18 @@ check_if_ok_to_rename:
 		}
 	}
 
-	if (!innobase_table_flags(altered_table,
-				  ha_alter_info->create_info,
-				  user_thd,
-				  srv_file_per_table
-				  || indexed_table->space != 0,
-				  &flags, &flags2)) {
+	if (!info.innobase_table_flags()) {
 		goto err_exit_no_heap;
 	}
 
-	/* Preserve this flag, because it currenlty can't be changed during
-	ALTER TABLE*/
-	if (flags2 & DICT_TF2_USE_TABLESPACE) {
-		flags |= prebuilt->table->flags & 1U << DICT_TF_POS_DATA_DIR;
+	if (info.flags2() & DICT_TF2_USE_FILE_PER_TABLE) {
+		/* Preserve the DATA DIRECTORY attribute, because it
+		currently cannot be changed during ALTER TABLE. */
+		info.flags_set(m_prebuilt->table->flags
+			       & 1U << DICT_TF_POS_DATA_DIR);
 	}
 
-	max_col_len = DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(flags);
+	max_col_len = DICT_MAX_FIELD_LEN_BY_FORMAT_FLAG(info.flags());
 
 	/* Check each index's column length to make sure they do not
 	exceed limit */
@@ -3735,11 +6510,11 @@ check_if_ok_to_rename:
 			/* We need to drop any corrupted fts indexes
 			before we add a new fts index. */
 			if (add_fts_idx && index->type & DICT_CORRUPT) {
-				ib_errf(user_thd, IB_LOG_LEVEL_ERROR,
+				ib_errf(m_user_thd, IB_LOG_LEVEL_ERROR,
 					ER_INNODB_INDEX_CORRUPT,
 					"Fulltext index '%s' is corrupt. "
 					"you should drop this index first.",
-					index->name);
+					index->name());
 
 				goto err_exit_no_heap;
 			}
@@ -3762,11 +6537,12 @@ check_if_ok_to_rename:
 	n_drop_fk = 0;
 
 	if (ha_alter_info->handler_flags
-	    & (INNOBASE_ALTER_NOREBUILD | INNOBASE_ALTER_REBUILD)) {
+	    & (INNOBASE_ALTER_NOREBUILD | INNOBASE_ALTER_REBUILD
+	       | INNOBASE_ALTER_INSTANT)) {
 		heap = mem_heap_create(1024);
 
 		if (ha_alter_info->handler_flags
-		    & Alter_inplace_info::ALTER_COLUMN_NAME) {
+		    & ALTER_COLUMN_NAME) {
 			col_names = innobase_get_col_names(
 				ha_alter_info, altered_table, table,
 				indexed_table, heap);
@@ -3779,7 +6555,7 @@ check_if_ok_to_rename:
 	}
 
 	if (ha_alter_info->handler_flags
-	    & Alter_inplace_info::DROP_FOREIGN_KEY) {
+	    & ALTER_DROP_FOREIGN_KEY) {
 		DBUG_ASSERT(ha_alter_info->alter_info->drop_list.elements > 0);
 
 		drop_fk = static_cast<dict_foreign_t**>(
@@ -3797,8 +6573,8 @@ check_if_ok_to_rename:
 			}
 
 			for (dict_foreign_set::iterator it
-				= prebuilt->table->foreign_set.begin();
-			     it != prebuilt->table->foreign_set.end();
+				= m_prebuilt->table->foreign_set.begin();
+			     it != m_prebuilt->table->foreign_set.end();
 			     ++it) {
 
 				dict_foreign_t*	foreign = *it;
@@ -3818,13 +6594,14 @@ check_if_ok_to_rename:
 			}
 
 			my_error(ER_CANT_DROP_FIELD_OR_KEY, MYF(0),
-				 drop->name);
+				drop->type_name(), drop->name);
 			goto err_exit;
 found_fk:
 			continue;
 		}
 
 		DBUG_ASSERT(n_drop_fk > 0);
+
 		DBUG_ASSERT(n_drop_fk
 			    == ha_alter_info->alter_info->drop_list.elements);
 	} else {
@@ -3835,9 +6612,9 @@ found_fk:
 		dict_index_t*	drop_primary = NULL;
 
 		DBUG_ASSERT(ha_alter_info->handler_flags
-			    & (Alter_inplace_info::DROP_INDEX
-			       | Alter_inplace_info::DROP_UNIQUE_INDEX
-			       | Alter_inplace_info::DROP_PK_INDEX));
+			    & (ALTER_DROP_NON_UNIQUE_NON_PRIM_INDEX
+			       | ALTER_DROP_UNIQUE_INDEX
+			       | ALTER_DROP_PK_INDEX));
 		/* Check which indexes to drop. */
 		drop_index = static_cast<dict_index_t**>(
 			mem_heap_alloc(
@@ -3848,19 +6625,19 @@ found_fk:
 			const KEY*	key
 				= ha_alter_info->index_drop_buffer[i];
 			dict_index_t*	index
-				= dict_table_get_index_on_name_and_min_id(
-					indexed_table, key->name);
+				= dict_table_get_index_on_name(
+					indexed_table, key->name.str);
 
 			if (!index) {
 				push_warning_printf(
-					user_thd,
+					m_user_thd,
 					Sql_condition::WARN_LEVEL_WARN,
 					HA_ERR_WRONG_INDEX,
-					"InnoDB could not find key "
-					"with name %s", key->name);
+					"InnoDB could not find key"
+					" with name %s", key->name);
 			} else {
 				ut_ad(!index->to_be_dropped);
-				if (!dict_index_is_clust(index)) {
+				if (!index->is_primary()) {
 					drop_index[n_drop_index++] = index;
 				} else {
 					drop_primary = index;
@@ -3877,8 +6654,8 @@ found_fk:
 		    && !DICT_TF2_FLAG_IS_SET(
 			indexed_table, DICT_TF2_FTS_HAS_DOC_ID)) {
 			dict_index_t*	fts_doc_index
-				= dict_table_get_index_on_name(
-					indexed_table, FTS_DOC_ID_INDEX_NAME);
+				= indexed_table->fts_doc_id_index;
+			ut_ad(fts_doc_index);
 
 			// Add some fault tolerance for non-debug builds.
 			if (fts_doc_index == NULL) {
@@ -3891,7 +6668,7 @@ found_fk:
 				if (!my_strcasecmp(
 					    system_charset_info,
 					    FTS_DOC_ID_INDEX_NAME,
-					    table->key_info[i].name)) {
+					    table->key_info[i].name.str)) {
 					/* The index exists in the MySQL
 					data dictionary. Do not drop it,
 					even though it is no longer needed
@@ -3908,7 +6685,7 @@ check_if_can_drop_indexes:
 
 		/* Prevent a race condition between DROP INDEX and
 		CREATE TABLE adding FOREIGN KEY constraints. */
-		row_mysql_lock_data_dictionary(prebuilt->trx);
+		row_mysql_lock_data_dictionary(m_prebuilt->trx);
 
 		if (!n_drop_index) {
 			drop_index = NULL;
@@ -3920,19 +6697,19 @@ check_if_can_drop_indexes:
 			}
 		}
 
-		if (prebuilt->trx->check_foreigns) {
+		if (m_prebuilt->trx->check_foreigns) {
 			for (uint i = 0; i < n_drop_index; i++) {
-			     dict_index_t*	index = drop_index[i];
+				dict_index_t*	index = drop_index[i];
 
 				if (innobase_check_foreign_key_index(
-					ha_alter_info, index,
-					indexed_table, col_names,
-					prebuilt->trx, drop_fk, n_drop_fk)) {
+						ha_alter_info, index,
+						indexed_table, col_names,
+						m_prebuilt->trx, drop_fk, n_drop_fk)) {
 					row_mysql_unlock_data_dictionary(
-						prebuilt->trx);
-					prebuilt->trx->error_info = index;
+						m_prebuilt->trx);
+					m_prebuilt->trx->error_info = index;
 					print_error(HA_ERR_DROP_INDEX_FK,
-						    MYF(0));
+						MYF(0));
 					goto err_exit;
 				}
 			}
@@ -3940,44 +6717,83 @@ check_if_can_drop_indexes:
 			/* If a primary index is dropped, need to check
 			any depending foreign constraints get affected */
 			if (drop_primary
-			    && innobase_check_foreign_key_index(
-				ha_alter_info, drop_primary,
-				indexed_table, col_names,
-				prebuilt->trx, drop_fk, n_drop_fk)) {
-				row_mysql_unlock_data_dictionary(prebuilt->trx);
+				&& innobase_check_foreign_key_index(
+					ha_alter_info, drop_primary,
+					indexed_table, col_names,
+					m_prebuilt->trx, drop_fk, n_drop_fk)) {
+				row_mysql_unlock_data_dictionary(m_prebuilt->trx);
 				print_error(HA_ERR_DROP_INDEX_FK, MYF(0));
 				goto err_exit;
 			}
 		}
 
-		row_mysql_unlock_data_dictionary(prebuilt->trx);
+		row_mysql_unlock_data_dictionary(m_prebuilt->trx);
 	} else {
 		drop_index = NULL;
 	}
 
 	/* Check if any of the existing indexes are marked as corruption
 	and if they are, refuse adding more indexes. */
-	if (ha_alter_info->handler_flags & Alter_inplace_info::ADD_INDEX) {
+	if (ha_alter_info->handler_flags & ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX) {
 		for (dict_index_t* index = dict_table_get_first_index(indexed_table);
 		     index != NULL; index = dict_table_get_next_index(index)) {
 
-			if (!index->to_be_dropped && dict_index_is_corrupted(index)) {
-				char	index_name[MAX_FULL_NAME_LEN + 1];
-
-				innobase_format_name(index_name, sizeof index_name,
-					index->name, TRUE);
-
-				my_error(ER_INDEX_CORRUPT, MYF(0), index_name);
+			if (!index->to_be_dropped && index->is_committed()
+			    && index->is_corrupted()) {
+				my_error(ER_INDEX_CORRUPT, MYF(0), index->name());
 				goto err_exit;
 			}
 		}
 	}
 
+	n_rename_index = 0;
+	rename_index = NULL;
+
+#ifdef MYSQL_RENAME_INDEX
+
+	n_rename_index = ha_alter_info->index_rename_count;
+
+	/* Create a list of dict_index_t objects that are to be renamed,
+	also checking for requests to rename nonexistent indexes. If
+	the table is going to be rebuilt (new_clustered == true in
+	prepare_inplace_alter_table_dict()), then this can be skipped,
+	but we don't for simplicity (we have not determined the value of
+	new_clustered yet). */
+	if (n_rename_index > 0) {
+		rename_index = static_cast<dict_index_t**>(
+			mem_heap_alloc(
+				heap,
+				n_rename_index * sizeof(*rename_index)));
+		for (ulint i = 0; i < n_rename_index; i++) {
+			dict_index_t*	index = NULL;
+			const char*	old_name = NULL;
+
+			const char*	old_name = ha_alter_info
+				->index_rename_buffer[i].old_key->name;
+
+			index = dict_table_get_index_on_name(indexed_table,
+							     old_name);
+
+			if (index == NULL) {
+				my_error(ER_KEY_DOES_NOT_EXITS, MYF(0),
+					 old_name,
+					 m_prebuilt->table->name.m_name);
+				goto err_exit;
+			}
+
+			rename_index[i] = index;
+		}
+	}
+#endif /* MYSQL_RENAME_INDEX */
+
 	n_add_fk = 0;
 
 	if (ha_alter_info->handler_flags
-	    & Alter_inplace_info::ADD_FOREIGN_KEY) {
-		ut_ad(!prebuilt->trx->check_foreigns);
+	    & ALTER_ADD_FOREIGN_KEY) {
+		ut_ad(!m_prebuilt->trx->check_foreigns);
+
+		alter_fill_stored_column(altered_table, m_prebuilt->table,
+					 &s_cols, &s_heap);
 
 		add_fk = static_cast<dict_foreign_t**>(
 			mem_heap_zalloc(
@@ -3987,54 +6803,90 @@ check_if_can_drop_indexes:
 
 		if (!innobase_get_foreign_key_info(
 			    ha_alter_info, table_share,
-			    prebuilt->table, col_names,
+			    m_prebuilt->table, col_names,
 			    drop_index, n_drop_index,
-			    add_fk, &n_add_fk, prebuilt->trx)) {
+			    add_fk, &n_add_fk, m_prebuilt->trx, s_cols)) {
 err_exit:
 			if (n_drop_index) {
-				row_mysql_lock_data_dictionary(prebuilt->trx);
+				row_mysql_lock_data_dictionary(m_prebuilt->trx);
 
 				/* Clear the to_be_dropped flags, which might
 				have been set at this point. */
 				for (ulint i = 0; i < n_drop_index; i++) {
-					DBUG_ASSERT(*drop_index[i]->name
-						    != TEMP_INDEX_PREFIX);
+					ut_ad(drop_index[i]->is_committed());
 					drop_index[i]->to_be_dropped = 0;
 				}
 
-				row_mysql_unlock_data_dictionary(prebuilt->trx);
+				row_mysql_unlock_data_dictionary(
+					m_prebuilt->trx);
 			}
 
 			if (heap) {
 				mem_heap_free(heap);
 			}
 
+			if (s_cols != NULL) {
+				UT_DELETE(s_cols);
+				mem_heap_free(s_heap);
+			}
+
 			goto err_exit_no_heap;
+		}
+
+		if (s_cols != NULL) {
+			UT_DELETE(s_cols);
+			mem_heap_free(s_heap);
 		}
 	}
 
+	const ha_table_option_struct& alt_opt=
+		*ha_alter_info->create_info->option_struct;
+
 	if (!(ha_alter_info->handler_flags & INNOBASE_ALTER_DATA)
-	    || ((ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE)
-		== Alter_inplace_info::CHANGE_CREATE_OPTION
-		&& !innobase_need_rebuild(ha_alter_info, table))) {
+	    || ((ha_alter_info->handler_flags & ~(INNOBASE_INPLACE_IGNORE
+						  | INNOBASE_ALTER_NOCREATE
+						  | INNOBASE_ALTER_INSTANT))
+		== ALTER_OPTIONS
+		&& !alter_options_need_rebuild(ha_alter_info, table))) {
 
 		if (heap) {
 			ha_alter_info->handler_ctx
 				= new ha_innobase_inplace_ctx(
-					prebuilt,
+					(*m_prebuilt_ptr),
 					drop_index, n_drop_index,
+					rename_index, n_rename_index,
 					drop_fk, n_drop_fk,
 					add_fk, n_add_fk,
 					ha_alter_info->online,
 					heap, indexed_table,
-					col_names, ULINT_UNDEFINED, 0, 0);
+					col_names, ULINT_UNDEFINED, 0, 0,
+					(ha_alter_info->ignore
+					 || !thd_is_strict_mode(m_user_thd)),
+					alt_opt.page_compressed,
+					alt_opt.page_compression_level);
 		}
 
-func_exit:
-		DBUG_ASSERT(prebuilt->trx->dict_operation_lock_mode == 0);
-		if (ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE) {
-			online_retry_drop_indexes(prebuilt->table, user_thd);
+		DBUG_ASSERT(m_prebuilt->trx->dict_operation_lock_mode == 0);
+		if (ha_alter_info->handler_flags & ~(INNOBASE_INPLACE_IGNORE)) {
+
+			online_retry_drop_indexes(
+				m_prebuilt->table, m_user_thd);
+
 		}
+
+		if ((ha_alter_info->handler_flags
+		     & ALTER_DROP_VIRTUAL_COLUMN)
+		    && prepare_inplace_drop_virtual(ha_alter_info, table)) {
+			DBUG_RETURN(true);
+		}
+
+		if ((ha_alter_info->handler_flags
+		     & ALTER_ADD_VIRTUAL_COLUMN)
+		    && prepare_inplace_add_virtual(
+			    ha_alter_info, altered_table, table)) {
+			DBUG_RETURN(true);
+		}
+
 		DBUG_RETURN(false);
 	}
 
@@ -4043,25 +6895,23 @@ func_exit:
 	add a Doc ID hidden column and rebuild the primary index */
 	if (innobase_fulltext_exist(altered_table)) {
 		ulint	doc_col_no;
+		ulint	num_v = 0;
 
 		if (!innobase_fts_check_doc_id_col(
-			    prebuilt->table, altered_table, &fts_doc_col_no)) {
-			fts_doc_col_no = altered_table->s->stored_fields;
+			    m_prebuilt->table,
+			    altered_table, &fts_doc_col_no, &num_v)) {
+
+			fts_doc_col_no = altered_table->s->fields - num_v;
 			add_fts_doc_id = true;
 			add_fts_doc_id_idx = true;
 
-			push_warning_printf(
-				user_thd,
-				Sql_condition::WARN_LEVEL_WARN,
-				HA_ERR_WRONG_INDEX,
-				"InnoDB rebuilding table to add column "
-				FTS_DOC_ID_COL_NAME);
 		} else if (fts_doc_col_no == ULINT_UNDEFINED) {
 			goto err_exit;
 		}
 
 		switch (innobase_fts_check_doc_id_index(
-				prebuilt->table, altered_table, &doc_col_no)) {
+				m_prebuilt->table, altered_table,
+				&doc_col_no)) {
 		case FTS_NOT_EXIST_DOC_ID_INDEX:
 			add_fts_doc_id_idx = true;
 			break;
@@ -4070,32 +6920,27 @@ func_exit:
 				 FTS_DOC_ID_INDEX_NAME);
 			goto err_exit;
 		case FTS_EXIST_DOC_ID_INDEX:
-			DBUG_ASSERT(doc_col_no == fts_doc_col_no
-				    || doc_col_no == ULINT_UNDEFINED
-				    || (ha_alter_info->handler_flags
-					& (Alter_inplace_info::ALTER_COLUMN_ORDER
-					   | Alter_inplace_info::DROP_COLUMN
-					   | Alter_inplace_info::ADD_COLUMN)));
+			DBUG_ASSERT(
+				doc_col_no == fts_doc_col_no
+				|| doc_col_no == ULINT_UNDEFINED
+				|| (ha_alter_info->handler_flags
+				    & (ALTER_STORED_COLUMN_ORDER
+				       | ALTER_DROP_STORED_COLUMN
+				       | ALTER_ADD_STORED_BASE_COLUMN)));
 		}
 	}
 
 	/* See if an AUTO_INCREMENT column was added. */
-	uint i = 0, innodb_idx= 0;
+	uint	i = 0;
+	ulint	num_v = 0;
 	List_iterator_fast<Create_field> cf_it(
 		ha_alter_info->alter_info->create_list);
 	while (const Create_field* new_field = cf_it++) {
 		const Field*	field;
-                if (!new_field->stored_in_db) {
-                  i++;
-                  continue;
-                }
 
 		DBUG_ASSERT(i < altered_table->s->fields);
-		DBUG_ASSERT(innodb_idx < altered_table->s->stored_fields);
 
 		for (uint old_i = 0; table->field[old_i]; old_i++) {
-                        if (!table->field[old_i]->stored_in_db)
-                          continue;
 			if (new_field->field == table->field[old_i]) {
 				goto found_col;
 			}
@@ -4104,7 +6949,7 @@ func_exit:
 		/* This is an added column. */
 		DBUG_ASSERT(!new_field->field);
 		DBUG_ASSERT(ha_alter_info->handler_flags
-			    & Alter_inplace_info::ADD_COLUMN);
+			    & ALTER_ADD_COLUMN);
 
 		field = altered_table->field[i];
 
@@ -4119,36 +6964,108 @@ func_exit:
 				my_error(ER_WRONG_AUTO_KEY, MYF(0));
 				goto err_exit;
 			}
-			add_autoinc_col_no = innodb_idx;
 
-			autoinc_col_max_value = innobase_get_int_col_max_value(
-				field);
+			/* Get the col no of the old table non-virtual column array */
+			add_autoinc_col_no = i - num_v;
+
+			autoinc_col_max_value = innobase_get_int_col_max_value(field);
 		}
 found_col:
+		if (innobase_is_v_fld(new_field)) {
+			++num_v;
+		}
+
 		i++;
-                innodb_idx++;
 	}
 
 	DBUG_ASSERT(heap);
-	DBUG_ASSERT(user_thd == prebuilt->trx->mysql_thd);
+	DBUG_ASSERT(m_user_thd == m_prebuilt->trx->mysql_thd);
 	DBUG_ASSERT(!ha_alter_info->handler_ctx);
 
 	ha_alter_info->handler_ctx = new ha_innobase_inplace_ctx(
-		prebuilt,
+		(*m_prebuilt_ptr),
 		drop_index, n_drop_index,
+		rename_index, n_rename_index,
 		drop_fk, n_drop_fk, add_fk, n_add_fk,
 		ha_alter_info->online,
-		heap, prebuilt->table, col_names,
+		heap, m_prebuilt->table, col_names,
 		add_autoinc_col_no,
 		ha_alter_info->create_info->auto_increment_value,
-		autoinc_col_max_value);
+		autoinc_col_max_value,
+		ha_alter_info->ignore || !thd_is_strict_mode(m_user_thd),
+		alt_opt.page_compressed, alt_opt.page_compression_level);
 
 	DBUG_RETURN(prepare_inplace_alter_table_dict(
 			    ha_alter_info, altered_table, table,
 			    table_share->table_name.str,
-			    flags, flags2,
+			    info.flags(), info.flags2(),
 			    fts_doc_col_no, add_fts_doc_id,
 			    add_fts_doc_id_idx));
+}
+
+/** Check that the column is part of a virtual index(index contains
+virtual column) in the table
+@param[in]	table		Table containing column
+@param[in]	col		column to be checked
+@return true if this column is indexed with other virtual columns */
+static
+bool
+dict_col_in_v_indexes(
+	dict_table_t*	table,
+	dict_col_t*	col)
+{
+	for (dict_index_t* index = dict_table_get_next_index(
+		dict_table_get_first_index(table)); index != NULL;
+		index = dict_table_get_next_index(index)) {
+		if (!dict_index_has_virtual(index)) {
+			continue;
+		}
+		for (ulint k = 0; k < index->n_fields; k++) {
+			dict_field_t*   field
+				= dict_index_get_nth_field(index, k);
+			if (field->col->ind == col->ind) {
+				return(true);
+			}
+		}
+	}
+
+	return(false);
+}
+
+/* Check whether a columnn length change alter operation requires
+to rebuild the template.
+@param[in]	altered_table	TABLE object for new version of table.
+@param[in]	ha_alter_info	Structure describing changes to be done
+				by ALTER TABLE and holding data used
+				during in-place alter.
+@param[in]	table		table being altered
+@return TRUE if needs rebuild. */
+static
+bool
+alter_templ_needs_rebuild(
+	TABLE*                  altered_table,
+	Alter_inplace_info*     ha_alter_info,
+	dict_table_t*		table)
+{
+        ulint	i = 0;
+        List_iterator_fast<Create_field>  cf_it(
+                ha_alter_info->alter_info->create_list);
+
+	for (Field** fp = altered_table->field; *fp; fp++, i++) {
+		cf_it.rewind();
+		while (const Create_field* cf = cf_it++) {
+			for (ulint j=0; j < table->n_cols; j++) {
+				dict_col_t* cols
+                                   = dict_table_get_nth_col(table, j);
+				if (cf->length > cols->len
+				    && dict_col_in_v_indexes(table, cols)) {
+					return(true);
+				}
+			}
+		}
+	}
+
+	return(false);
 }
 
 /** Get the name of an erroneous key.
@@ -4168,7 +7085,7 @@ get_error_key_name(
 	} else if (ha_alter_info->key_count == 0) {
 		return(dict_table_get_first_index(table)->name);
 	} else {
-		return(ha_alter_info->key_info_buffer[error_key_num].name);
+		return(ha_alter_info->key_info_buffer[error_key_num].name.str);
 	}
 }
 
@@ -4177,41 +7094,46 @@ specified using Alter_inplace_info.
 The level of concurrency allowed during this operation depends
 on the return value from check_if_supported_inplace_alter().
 
-@param altered_table	TABLE object for new version of table.
-@param ha_alter_info	Structure describing changes to be done
+@param altered_table TABLE object for new version of table.
+@param ha_alter_info Structure describing changes to be done
 by ALTER TABLE and holding data used during in-place alter.
 
-@retval true		Failure
-@retval false		Success
+@retval true Failure
+@retval false Success
 */
-UNIV_INTERN
+
 bool
 ha_innobase::inplace_alter_table(
 /*=============================*/
 	TABLE*			altered_table,
 	Alter_inplace_info*	ha_alter_info)
 {
-	dberr_t	error;
-
+	dberr_t			error;
+	dict_add_v_col_t*	add_v = NULL;
+	dict_vcol_templ_t*	s_templ = NULL;
+	dict_vcol_templ_t*	old_templ = NULL;
+	struct TABLE*		eval_table = altered_table;
+	bool			rebuild_templ = false;
 	DBUG_ENTER("inplace_alter_table");
 	DBUG_ASSERT(!srv_read_only_mode);
 
-#ifdef UNIV_SYNC_DEBUG
-	ut_ad(!rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
-	ut_ad(!rw_lock_own(&dict_operation_lock, RW_LOCK_SHARED));
-#endif /* UNIV_SYNC_DEBUG */
+	ut_ad(!sync_check_iterate(sync_check()));
+	ut_ad(!rw_lock_own(dict_operation_lock, RW_LOCK_X));
+	ut_ad(!rw_lock_own(dict_operation_lock, RW_LOCK_S));
 
-	DEBUG_SYNC(user_thd, "innodb_inplace_alter_table_enter");
+	DEBUG_SYNC(m_user_thd, "innodb_inplace_alter_table_enter");
 
 	if (!(ha_alter_info->handler_flags & INNOBASE_ALTER_DATA)) {
 ok_exit:
-		DEBUG_SYNC(user_thd, "innodb_after_inplace_alter_table");
+		DEBUG_SYNC(m_user_thd, "innodb_after_inplace_alter_table");
 		DBUG_RETURN(false);
 	}
 
-	if ((ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE)
-	    == Alter_inplace_info::CHANGE_CREATE_OPTION
-	    && !innobase_need_rebuild(ha_alter_info, table)) {
+	if ((ha_alter_info->handler_flags & ~(INNOBASE_INPLACE_IGNORE
+					      | INNOBASE_ALTER_NOCREATE
+					      | INNOBASE_ALTER_INSTANT))
+	    == ALTER_OPTIONS
+	    && !alter_options_need_rebuild(ha_alter_info, table)) {
 		goto ok_exit;
 	}
 
@@ -4221,11 +7143,75 @@ ok_exit:
 
 	DBUG_ASSERT(ctx);
 	DBUG_ASSERT(ctx->trx);
-	DBUG_ASSERT(ctx->prebuilt == prebuilt);
+	DBUG_ASSERT(ctx->prebuilt == m_prebuilt);
 
-	if (prebuilt->table->file_unreadable
-	    || dict_table_is_discarded(prebuilt->table)) {
+	if (ctx->is_instant()) goto ok_exit;
+
+	dict_index_t*	pk = dict_table_get_first_index(m_prebuilt->table);
+	ut_ad(pk != NULL);
+
+	/* For partitioned tables this could be already allocated from a
+	previous partition invocation. For normal tables this is NULL. */
+	UT_DELETE(ctx->m_stage);
+
+	ctx->m_stage = UT_NEW_NOKEY(ut_stage_alter_t(pk));
+
+	if (!m_prebuilt->table->is_readable()) {
 		goto all_done;
+	}
+
+	/* If we are doing a table rebuilding or having added virtual
+	columns in the same clause, we will need to build a table template
+	that carries translation information between MySQL TABLE and InnoDB
+	table, which indicates the virtual columns and their base columns
+	info. This is used to do the computation callback, so that the
+	data in base columns can be extracted send to server.
+	If the Column length changes and it is a part of virtual
+	index then we need to rebuild the template. */
+	rebuild_templ
+	     = ctx->need_rebuild()
+	       || ((ha_alter_info->handler_flags
+		& ALTER_COLUMN_EQUAL_PACK_LENGTH)
+		&& alter_templ_needs_rebuild(
+		   altered_table, ha_alter_info, ctx->new_table));
+
+	if ((ctx->new_table->n_v_cols > 0) && rebuild_templ) {
+		/* Save the templ if isn't NULL so as to restore the
+		original state in case of alter operation failures. */
+		if (ctx->new_table->vc_templ != NULL && !ctx->need_rebuild()) {
+			old_templ = ctx->new_table->vc_templ;
+		}
+		s_templ = UT_NEW_NOKEY(dict_vcol_templ_t());
+
+		innobase_build_v_templ(
+			altered_table, ctx->new_table, s_templ, NULL, false);
+
+		ctx->new_table->vc_templ = s_templ;
+	} else if (ctx->num_to_add_vcol > 0 && ctx->num_to_drop_vcol == 0) {
+		/* if there is ongoing drop virtual column, then we disallow
+		inplace add index on newly added virtual column, so it does
+		not need to come in here to rebuild template with add_v.
+		Please also see the assertion in innodb_v_adjust_idx_col() */
+
+		s_templ = UT_NEW_NOKEY(dict_vcol_templ_t());
+
+		add_v = static_cast<dict_add_v_col_t*>(
+			mem_heap_alloc(ctx->heap, sizeof *add_v));
+		add_v->n_v_col = ctx->num_to_add_vcol;
+		add_v->v_col = ctx->add_vcol;
+		add_v->v_col_name = ctx->add_vcol_name;
+
+		innobase_build_v_templ(
+			altered_table, ctx->new_table, s_templ, add_v, false);
+		old_templ = ctx->new_table->vc_templ;
+		ctx->new_table->vc_templ = s_templ;
+	}
+
+	/* Drop virtual column without rebuild will keep dict table
+	unchanged, we use old table to evaluate virtual column value
+	in innobase_get_computed_value(). */
+	if (!ctx->need_rebuild() && ctx->num_to_drop_vcol > 0) {
+		eval_table = table;
 	}
 
 	/* Read the clustered index of the table and build
@@ -4235,19 +7221,22 @@ ok_exit:
 			error = DB_OUT_OF_MEMORY; goto oom;);
 
 	error = row_merge_build_indexes(
-		prebuilt->trx,
-		prebuilt->table, ctx->new_table,
+		m_prebuilt->trx,
+		m_prebuilt->table, ctx->new_table,
 		ctx->online,
 		ctx->add_index, ctx->add_key_numbers, ctx->num_to_add_index,
-		altered_table, ctx->add_cols, ctx->col_map,
-		ctx->add_autoinc, ctx->sequence);
+		altered_table, ctx->defaults, ctx->col_map,
+		ctx->add_autoinc, ctx->sequence, ctx->skip_pk_sort,
+		ctx->m_stage, add_v, eval_table, ctx->allow_not_null);
+
 #ifndef DBUG_OFF
 oom:
 #endif /* !DBUG_OFF */
 	if (error == DB_SUCCESS && ctx->online && ctx->need_rebuild()) {
 		DEBUG_SYNC_C("row_log_table_apply1_before");
 		error = row_log_table_apply(
-			ctx->thr, prebuilt->table, altered_table);
+			ctx->thr, m_prebuilt->table, altered_table,
+			ctx->m_stage, ctx->new_table);
 	}
 
 	/* Init online ddl status variables */
@@ -4255,11 +7244,20 @@ oom:
 	onlineddl_rowlog_pct_used = 0;
 	onlineddl_pct_progress = 0;
 
+	if (s_templ) {
+		ut_ad(ctx->need_rebuild() || ctx->num_to_add_vcol > 0
+		      || rebuild_templ);
+		dict_free_vc_templ(s_templ);
+		UT_DELETE(s_templ);
+
+		ctx->new_table->vc_templ = old_templ;
+	}
+
 	DEBUG_SYNC_C("inplace_after_index_build");
 
 	DBUG_EXECUTE_IF("create_index_fail",
 			error = DB_DUPLICATE_KEY;
-			prebuilt->trx->error_key_num = ULINT_UNDEFINED;);
+			m_prebuilt->trx->error_key_num = ULINT_UNDEFINED;);
 
 	/* After an error, remove all those index definitions
 	from the dictionary which were defined. */
@@ -4270,49 +7268,37 @@ oom:
 	case DB_SUCCESS:
 		ut_d(mutex_enter(&dict_sys->mutex));
 		ut_d(dict_table_check_for_dup_indexes(
-			     prebuilt->table, CHECK_PARTIAL_OK));
+			     m_prebuilt->table, CHECK_PARTIAL_OK));
 		ut_d(mutex_exit(&dict_sys->mutex));
 		/* prebuilt->table->n_ref_count can be anything here,
 		given that we hold at most a shared lock on the table. */
 		goto ok_exit;
 	case DB_DUPLICATE_KEY:
-		if (prebuilt->trx->error_key_num == ULINT_UNDEFINED
+		if (m_prebuilt->trx->error_key_num == ULINT_UNDEFINED
 		    || ha_alter_info->key_count == 0) {
 			/* This should be the hidden index on
 			FTS_DOC_ID, or there is no PRIMARY KEY in the
 			table. Either way, we should be seeing and
 			reporting a bogus duplicate key error. */
 			dup_key = NULL;
-		} else if (prebuilt->trx->error_key_num == 0) {
-			dup_key = &ha_alter_info->key_info_buffer[
-				prebuilt->trx->error_key_num];
 		} else {
-			/* Check if there is generated cluster index column */
-			if (ctx->num_to_add_index > ha_alter_info->key_count) {
-				DBUG_ASSERT(prebuilt->trx->error_key_num
-					    <= ha_alter_info->key_count);
-				dup_key = &ha_alter_info->key_info_buffer[
-					prebuilt->trx->error_key_num - 1];
-			}
-			else {
-				DBUG_ASSERT(prebuilt->trx->error_key_num
-					    < ha_alter_info->key_count);
-				dup_key = &ha_alter_info->key_info_buffer[
-					prebuilt->trx->error_key_num];
-			}
+			DBUG_ASSERT(m_prebuilt->trx->error_key_num
+				    < ha_alter_info->key_count);
+			dup_key = &ha_alter_info->key_info_buffer[
+				m_prebuilt->trx->error_key_num];
 		}
 		print_keydup_error(altered_table, dup_key, MYF(0));
 		break;
 	case DB_ONLINE_LOG_TOO_BIG:
 		DBUG_ASSERT(ctx->online);
 		my_error(ER_INNODB_ONLINE_LOG_TOO_BIG, MYF(0),
-			 get_error_key_name(prebuilt->trx->error_key_num,
-					    ha_alter_info, prebuilt->table));
+			 get_error_key_name(m_prebuilt->trx->error_key_num,
+					    ha_alter_info, m_prebuilt->table));
 		break;
 	case DB_INDEX_CORRUPT:
 		my_error(ER_INDEX_CORRUPT, MYF(0),
-			 get_error_key_name(prebuilt->trx->error_key_num,
-					    ha_alter_info, prebuilt->table));
+			 get_error_key_name(m_prebuilt->trx->error_key_num,
+					    ha_alter_info, m_prebuilt->table));
 		break;
 	case DB_DECRYPTION_FAILED: {
 		String str;
@@ -4324,19 +7310,20 @@ oom:
 	default:
 		my_error_innodb(error,
 				table_share->table_name.str,
-				prebuilt->table->flags);
+				m_prebuilt->table->flags);
 	}
 
 	/* prebuilt->table->n_ref_count can be anything here, given
 	that we hold at most a shared lock on the table. */
-	prebuilt->trx->error_info = NULL;
+	m_prebuilt->trx->error_info = NULL;
 	ctx->trx->error_state = DB_SUCCESS;
+	ctx->clear_added_indexes();
 
 	DBUG_RETURN(true);
 }
 
 /** Free the modification log for online table rebuild.
-@param table	table that was being rebuilt online */
+@param table table that was being rebuilt online */
 static
 void
 innobase_online_rebuild_log_free(
@@ -4346,9 +7333,7 @@ innobase_online_rebuild_log_free(
 	dict_index_t* clust_index = dict_table_get_first_index(table);
 
 	ut_ad(mutex_own(&dict_sys->mutex));
-#ifdef UNIV_SYNC_DEBUG
-	ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
-#endif /* UNIV_SYNC_DEBUG */
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
 
 	rw_lock_x_lock(&clust_index->lock);
 
@@ -4365,12 +7350,67 @@ innobase_online_rebuild_log_free(
 	rw_lock_x_unlock(&clust_index->lock);
 }
 
+/** For each user column, which is part of an index which is not going to be
+dropped, it checks if the column number of the column is same as col_no
+argument passed.
+@param[in]	table		table
+@param[in]	col_no		column number
+@param[in]	is_v		if this is a virtual column
+@param[in]	only_committed	whether to consider only committed indexes
+@retval true column exists
+@retval false column does not exist, true if column is system column or
+it is in the index. */
+static
+bool
+check_col_exists_in_indexes(
+	const dict_table_t*	table,
+	ulint			col_no,
+	bool			is_v,
+	bool			only_committed = false)
+{
+	/* This function does not check system columns */
+	if (!is_v && dict_table_get_nth_col(table, col_no)->mtype == DATA_SYS) {
+		return(true);
+	}
+
+	for (const dict_index_t* index = dict_table_get_first_index(table);
+	     index;
+	     index = dict_table_get_next_index(index)) {
+
+		if (only_committed
+		    ? !index->is_committed()
+		    : index->to_be_dropped) {
+			continue;
+		}
+
+		for (ulint i = 0; i < index->n_user_defined_cols; i++) {
+			const dict_col_t* idx_col
+				= dict_index_get_nth_col(index, i);
+
+			if (is_v && idx_col->is_virtual()) {
+				const dict_v_col_t*   v_col = reinterpret_cast<
+					const dict_v_col_t*>(idx_col);
+				if (v_col->v_pos == col_no) {
+					return(true);
+				}
+			}
+
+			if (!is_v && !idx_col->is_virtual()
+			    && dict_col_get_no(idx_col) == col_no) {
+				return(true);
+			}
+		}
+	}
+
+	return(false);
+}
+
 /** Rollback a secondary index creation, drop the indexes with
 temparary index prefix
-@param user_table	InnoDB table
-@param table		the TABLE
-@param locked		TRUE=table locked, FALSE=may need to do a lazy drop
-@param trx		the transaction
+@param user_table InnoDB table
+@param table the TABLE
+@param locked TRUE=table locked, FALSE=may need to do a lazy drop
+@param trx the transaction
 */
 static MY_ATTRIBUTE((nonnull))
 void
@@ -4400,11 +7440,11 @@ for inplace_alter_table() and thus might be higher than during
 prepare_inplace_alter_table(). (E.g concurrent writes were blocked
 during prepare, but might not be during commit).
 
-@param ha_alter_info	Data used during in-place alter.
-@param table		the TABLE
-@param prebuilt		the prebuilt struct
-@retval true		Failure
-@retval false		Success
+@param ha_alter_info Data used during in-place alter.
+@param table the TABLE
+@param prebuilt the prebuilt struct
+@retval true Failure
+@retval false Success
 */
 inline MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
@@ -4428,6 +7468,8 @@ rollback_inplace_alter_table(
 		goto func_exit;
 	}
 
+	trx_start_for_ddl(ctx->trx, ctx->need_rebuild()
+			  ? TRX_DICT_OP_TABLE : TRX_DICT_OP_INDEX);
 	row_mysql_lock_data_dictionary(ctx->trx);
 
 	if (ctx->need_rebuild()) {
@@ -4439,13 +7481,13 @@ rollback_inplace_alter_table(
 	if (!ctx->new_table) {
 		ut_ad(ctx->need_rebuild());
 	} else if (ctx->need_rebuild()) {
-		dberr_t	err;
+		dberr_t	err= DB_SUCCESS;
 		ulint	flags	= ctx->new_table->flags;
 
 		/* Since the FTS index specific auxiliary tables has
 		not yet registered with "table->fts" by fts_add_index(),
 		we will need explicitly delete them here */
-		if (DICT_TF2_FLAG_IS_SET(ctx->new_table, DICT_TF2_FTS)) {
+		if (dict_table_has_fts_index(ctx->new_table)) {
 
 			err = innobase_drop_fts_index_table(
 				ctx->new_table, ctx->trx);
@@ -4458,18 +7500,7 @@ rollback_inplace_alter_table(
 			}
 		}
 
-		/* Drop the table. */
-		dict_table_close(ctx->new_table, TRUE, FALSE);
-
-#if defined UNIV_DEBUG || defined UNIV_DDL_DEBUG
-		/* Nobody should have initialized the stats of the
-		newly created table yet. When this is the case, we
-		know that it has not been added for background stats
-		gathering. */
-		ut_a(!ctx->new_table->stat_initialized);
-#endif /* UNIV_DEBUG || UNIV_DDL_DEBUG */
-
-		err = row_merge_drop_table(ctx->trx, ctx->new_table);
+		dict_table_close_and_drop(ctx->trx, ctx->new_table);
 
 		switch (err) {
 		case DB_SUCCESS:
@@ -4481,10 +7512,8 @@ rollback_inplace_alter_table(
 		}
 	} else {
 		DBUG_ASSERT(!(ha_alter_info->handler_flags
-			      & Alter_inplace_info::ADD_PK_INDEX));
+			      & ALTER_ADD_PK_INDEX));
 		DBUG_ASSERT(ctx->new_table == prebuilt->table);
-
-		trx_start_for_ddl(ctx->trx, TRX_DICT_OP_INDEX);
 
 		innobase_rollback_sec_index(
 			prebuilt->table, table, FALSE, ctx->trx);
@@ -4492,7 +7521,7 @@ rollback_inplace_alter_table(
 
 	trx_commit_for_mysql(ctx->trx);
 	row_mysql_unlock_data_dictionary(ctx->trx);
-	trx_free_for_mysql(ctx->trx);
+	trx_free(ctx->trx);
 
 func_exit:
 #ifndef DBUG_OFF
@@ -4522,12 +7551,36 @@ func_exit:
 			commit_inplace_alter_table(). */
 			for (ulint i = 0; i < ctx->num_to_drop_index; i++) {
 				dict_index_t*	index = ctx->drop_index[i];
-				DBUG_ASSERT(*index->name != TEMP_INDEX_PREFIX);
-
+				DBUG_ASSERT(index->is_committed());
 				index->to_be_dropped = 0;
 			}
 
 			row_mysql_unlock_data_dictionary(prebuilt->trx);
+		}
+	}
+
+	/* Reset dict_col_t::ord_part for those columns fail to be indexed,
+	we do this by checking every existing column, if any current
+	index would index them */
+	for (ulint i = 0; i < dict_table_get_n_cols(prebuilt->table); i++) {
+		dict_col_t& col = prebuilt->table->cols[i];
+		if (!col.ord_part) {
+			continue;
+		}
+		if (!check_col_exists_in_indexes(prebuilt->table, i, false,
+						 true)) {
+			col.ord_part = 0;
+		}
+	}
+
+	for (ulint i = 0; i < dict_table_get_n_v_cols(prebuilt->table); i++) {
+		dict_col_t& col = prebuilt->table->v_cols[i].m_col;
+		if (!col.ord_part) {
+			continue;
+		}
+		if (!check_col_exists_in_indexes(prebuilt->table, i, true,
+						 true)) {
+			col.ord_part = 0;
 		}
 	}
 
@@ -4537,11 +7590,11 @@ func_exit:
 }
 
 /** Drop a FOREIGN KEY constraint from the data dictionary tables.
-@param trx		data dictionary transaction
-@param table_name	Table name in MySQL
-@param foreign_id	Foreign key constraint identifier
-@retval true		Failure
-@retval false		Success */
+@param trx data dictionary transaction
+@param table_name Table name in MySQL
+@param foreign_id Foreign key constraint identifier
+@retval true Failure
+@retval false Success */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 innobase_drop_foreign_try(
@@ -4555,9 +7608,7 @@ innobase_drop_foreign_try(
 	DBUG_ASSERT(trx_get_dict_operation(trx) == TRX_DICT_OP_INDEX);
 	ut_ad(trx->dict_operation_lock_mode == RW_X_LATCH);
 	ut_ad(mutex_own(&dict_sys->mutex));
-#ifdef UNIV_SYNC_DEBUG
-	ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
-#endif /* UNIV_SYNC_DEBUG */
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
 
 	/* Drop the constraint from the data dictionary. */
 	static const char sql[] =
@@ -4590,19 +7641,19 @@ innobase_drop_foreign_try(
 }
 
 /** Rename a column in the data dictionary tables.
-@param user_table	InnoDB table that was being altered
-@param trx		data dictionary transaction
-@param table_name	Table name in MySQL
-@param nth_col		0-based index of the column
-@param from		old column name
-@param to		new column name
-@param new_clustered	whether the table has been rebuilt
-@retval true		Failure
-@retval false		Success */
+@param[in] user_table	InnoDB table that was being altered
+@param[in] trx		data dictionary transaction
+@param[in] table_name	Table name in MySQL
+@param[in] nth_col	0-based index of the column
+@param[in] from		old column name
+@param[in] to		new column name
+@param[in] new_clustered whether the table has been rebuilt
+@param[in] is_virtual	whether it is a virtual column
+@retval true Failure
+@retval false Success */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 innobase_rename_column_try(
-/*=======================*/
 	const dict_table_t*	user_table,
 	trx_t*			trx,
 	const char*		table_name,
@@ -4619,9 +7670,7 @@ innobase_rename_column_try(
 	DBUG_ASSERT(trx_get_dict_operation(trx) == TRX_DICT_OP_INDEX);
 	ut_ad(trx->dict_operation_lock_mode == RW_X_LATCH);
 	ut_ad(mutex_own(&dict_sys->mutex));
-#ifdef UNIV_SYNC_DEBUG
-	ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
-#endif /* UNIV_SYNC_DEBUG */
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
 
 	if (new_clustered) {
 		goto rename_foreign;
@@ -4631,7 +7680,6 @@ innobase_rename_column_try(
 
 	pars_info_add_ull_literal(info, "tableid", user_table->id);
 	pars_info_add_int4_literal(info, "nth", nth_col);
-	pars_info_add_str_literal(info, "old", from);
 	pars_info_add_str_literal(info, "new", to);
 
 	trx->op_info = "renaming column in SYS_COLUMNS";
@@ -4641,7 +7689,7 @@ innobase_rename_column_try(
 		"PROCEDURE RENAME_SYS_COLUMNS_PROC () IS\n"
 		"BEGIN\n"
 		"UPDATE SYS_COLUMNS SET NAME=:new\n"
-		"WHERE TABLE_ID=:tableid AND NAME=:old\n"
+		"WHERE TABLE_ID=:tableid\n"
 		"AND POS=:nth;\n"
 		"END;\n",
 		FALSE, trx);
@@ -4665,8 +7713,10 @@ err_exit:
 	     index = dict_table_get_next_index(index)) {
 
 		for (ulint i = 0; i < dict_index_get_n_fields(index); i++) {
-			if (strcmp(dict_index_get_nth_field(index, i)->name,
-				   from)) {
+			if (my_strcasecmp(
+				system_charset_info,
+				dict_index_get_nth_field(index, i)->name,
+				from)) {
 				continue;
 			}
 
@@ -4674,7 +7724,6 @@ err_exit:
 
 			pars_info_add_ull_literal(info, "indexid", index->id);
 			pars_info_add_int4_literal(info, "nth", i);
-			pars_info_add_str_literal(info, "old", from);
 			pars_info_add_str_literal(info, "new", to);
 
 			error = que_eval_sql(
@@ -4683,14 +7732,14 @@ err_exit:
 				"BEGIN\n"
 
 				"UPDATE SYS_FIELDS SET COL_NAME=:new\n"
-				"WHERE INDEX_ID=:indexid AND COL_NAME=:old\n"
+				"WHERE INDEX_ID=:indexid\n"
 				"AND POS=:nth;\n"
 
 				/* Try again, in case there is a prefix_len
 				encoded in SYS_FIELDS.POS */
 
 				"UPDATE SYS_FIELDS SET COL_NAME=:new\n"
-				"WHERE INDEX_ID=:indexid AND COL_NAME=:old\n"
+				"WHERE INDEX_ID=:indexid\n"
 				"AND POS>=65536*:nth AND POS<65536*(:nth+1);\n"
 
 				"END;\n",
@@ -4716,7 +7765,9 @@ rename_foreign:
 		foreign_modified = false;
 
 		for (unsigned i = 0; i < foreign->n_fields; i++) {
-			if (strcmp(foreign->foreign_col_names[i], from)) {
+			if (my_strcasecmp(system_charset_info,
+					  foreign->foreign_col_names[i],
+					  from)) {
 				continue;
 			}
 
@@ -4724,7 +7775,6 @@ rename_foreign:
 
 			pars_info_add_str_literal(info, "id", foreign->id);
 			pars_info_add_int4_literal(info, "nth", i);
-			pars_info_add_str_literal(info, "old", from);
 			pars_info_add_str_literal(info, "new", to);
 
 			error = que_eval_sql(
@@ -4733,8 +7783,7 @@ rename_foreign:
 				"BEGIN\n"
 				"UPDATE SYS_FOREIGN_COLS\n"
 				"SET FOR_COL_NAME=:new\n"
-				"WHERE ID=:id AND POS=:nth\n"
-				"AND FOR_COL_NAME=:old;\n"
+				"WHERE ID=:id AND POS=:nth;\n"
 				"END;\n",
 				FALSE, trx);
 
@@ -4758,7 +7807,9 @@ rename_foreign:
 		dict_foreign_t*	foreign = *it;
 
 		for (unsigned i = 0; i < foreign->n_fields; i++) {
-			if (strcmp(foreign->referenced_col_names[i], from)) {
+			if (my_strcasecmp(system_charset_info,
+					  foreign->referenced_col_names[i],
+					  from)) {
 				continue;
 			}
 
@@ -4766,7 +7817,6 @@ rename_foreign:
 
 			pars_info_add_str_literal(info, "id", foreign->id);
 			pars_info_add_int4_literal(info, "nth", i);
-			pars_info_add_str_literal(info, "old", from);
 			pars_info_add_str_literal(info, "new", to);
 
 			error = que_eval_sql(
@@ -4775,8 +7825,7 @@ rename_foreign:
 				"BEGIN\n"
 				"UPDATE SYS_FOREIGN_COLS\n"
 				"SET REF_COL_NAME=:new\n"
-				"WHERE ID=:id AND POS=:nth\n"
-				"AND REF_COL_NAME=:old;\n"
+				"WHERE ID=:id AND POS=:nth;\n"
 				"END;\n",
 				FALSE, trx);
 
@@ -4801,13 +7850,13 @@ rename_foreign:
 }
 
 /** Rename columns in the data dictionary tables.
-@param ha_alter_info	Data used during in-place alter.
-@param ctx		In-place ALTER TABLE context
-@param table		the TABLE
-@param trx		data dictionary transaction
-@param table_name	Table name in MySQL
-@retval true		Failure
-@retval false		Success */
+@param ha_alter_info Data used during in-place alter.
+@param ctx In-place ALTER TABLE context
+@param table the TABLE
+@param trx data dictionary transaction
+@param table_name Table name in MySQL
+@retval true Failure
+@retval false Success */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 innobase_rename_columns_try(
@@ -4820,24 +7869,33 @@ innobase_rename_columns_try(
 {
 	List_iterator_fast<Create_field> cf_it(
 		ha_alter_info->alter_info->create_list);
-	uint i = 0;
+	uint	i = 0;
+	ulint	num_v = 0;
 
 	DBUG_ASSERT(ctx);
 	DBUG_ASSERT(ha_alter_info->handler_flags
-		    & Alter_inplace_info::ALTER_COLUMN_NAME);
+		    & ALTER_COLUMN_NAME);
 
 	for (Field** fp = table->field; *fp; fp++, i++) {
-		if (!((*fp)->flags & FIELD_IS_RENAMED) || !((*fp)->stored_in_db)) {
-			continue;
+		bool	is_virtual = innobase_is_v_fld(*fp);
+
+		if (!((*fp)->flags & FIELD_IS_RENAMED)) {
+			goto processed_field;
 		}
 
 		cf_it.rewind();
 		while (Create_field* cf = cf_it++) {
 			if (cf->field == *fp) {
+				ulint	col_n = is_virtual
+						? dict_create_v_col_pos(
+							num_v, i)
+						: i - num_v;
+
 				if (innobase_rename_column_try(
-					    ctx->old_table, trx, table_name, i,
-					    cf->field->field_name,
-					    cf->field_name,
+					    ctx->old_table, trx, table_name,
+					    col_n,
+					    cf->field->field_name.str,
+					    cf->field_name.str,
 					    ctx->need_rebuild())) {
 					return(true);
 				}
@@ -4847,139 +7905,351 @@ innobase_rename_columns_try(
 
 		ut_error;
 processed_field:
+		if (is_virtual) {
+			num_v++;
+		}
+
 		continue;
 	}
 
 	return(false);
 }
 
-/** Rename columns in the data dictionary cache
-as part of commit_cache_norebuild().
-@param ha_alter_info	Data used during in-place alter.
-@param table		the TABLE
-@param user_table	InnoDB table that was being altered */
-static MY_ATTRIBUTE((nonnull))
-void
-innobase_rename_columns_cache(
-/*==========================*/
-	Alter_inplace_info*	ha_alter_info,
-	const TABLE*		table,
-	dict_table_t*		user_table)
+/** Enlarge a column in the data dictionary tables.
+@param user_table InnoDB table that was being altered
+@param trx data dictionary transaction
+@param table_name Table name in MySQL
+@param nth_col 0-based index of the column
+@param new_len new column length, in bytes
+@param is_v if it's a virtual column
+@retval true Failure
+@retval false Success */
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
+bool
+innobase_enlarge_column_try(
+/*========================*/
+	const dict_table_t*	user_table,
+	trx_t*			trx,
+	const char*		table_name,
+	ulint			nth_col,
+	ulint			new_len,
+	bool			is_v)
 {
-	if (!(ha_alter_info->handler_flags
-	      & Alter_inplace_info::ALTER_COLUMN_NAME)) {
-		return;
+	pars_info_t*	info;
+	dberr_t		error;
+#ifdef UNIV_DEBUG
+	dict_col_t*	col;
+#endif /* UNIV_DEBUG */
+	dict_v_col_t*	v_col;
+	ulint		pos;
+
+	DBUG_ENTER("innobase_enlarge_column_try");
+
+	DBUG_ASSERT(trx_get_dict_operation(trx) == TRX_DICT_OP_INDEX);
+	ut_ad(trx->dict_operation_lock_mode == RW_X_LATCH);
+	ut_ad(mutex_own(&dict_sys->mutex));
+	ut_ad(rw_lock_own(dict_operation_lock, RW_LOCK_X));
+
+	if (is_v) {
+		v_col = dict_table_get_nth_v_col(user_table, nth_col);
+		pos = dict_create_v_col_pos(v_col->v_pos, v_col->m_col.ind);
+#ifdef UNIV_DEBUG
+		col = &v_col->m_col;
+#endif /* UNIV_DEBUG */
+	} else {
+#ifdef UNIV_DEBUG
+		col = dict_table_get_nth_col(user_table, nth_col);
+#endif /* UNIV_DEBUG */
+		pos = nth_col;
 	}
 
+#ifdef UNIV_DEBUG
+	ut_ad(col->len < new_len);
+	switch (col->mtype) {
+	case DATA_MYSQL:
+		/* NOTE: we could allow this when !(prtype & DATA_BINARY_TYPE)
+		and ROW_FORMAT is not REDUNDANT and mbminlen<mbmaxlen.
+		That is, we treat a UTF-8 CHAR(n) column somewhat like
+		a VARCHAR. */
+		ut_error;
+	case DATA_BINARY:
+	case DATA_VARCHAR:
+	case DATA_VARMYSQL:
+	case DATA_DECIMAL:
+	case DATA_BLOB:
+		break;
+	default:
+		ut_error;
+	}
+#endif /* UNIV_DEBUG */
+	info = pars_info_create();
+
+	pars_info_add_ull_literal(info, "tableid", user_table->id);
+	pars_info_add_int4_literal(info, "nth", pos);
+	pars_info_add_int4_literal(info, "new", new_len);
+
+	trx->op_info = "resizing column in SYS_COLUMNS";
+
+	error = que_eval_sql(
+		info,
+		"PROCEDURE RESIZE_SYS_COLUMNS_PROC () IS\n"
+		"BEGIN\n"
+		"UPDATE SYS_COLUMNS SET LEN=:new\n"
+		"WHERE TABLE_ID=:tableid AND POS=:nth;\n"
+		"END;\n",
+		FALSE, trx);
+
+	DBUG_EXECUTE_IF("ib_resize_column_error",
+			error = DB_OUT_OF_FILE_SPACE;);
+
+	trx->op_info = "";
+	trx->error_state = DB_SUCCESS;
+
+	if (error != DB_SUCCESS) {
+		my_error_innodb(error, table_name, 0);
+		DBUG_RETURN(true);
+	}
+
+	DBUG_RETURN(false);
+}
+
+/** Enlarge columns in the data dictionary tables.
+@param ha_alter_info Data used during in-place alter.
+@param table the TABLE
+@param user_table InnoDB table that was being altered
+@param trx data dictionary transaction
+@param table_name Table name in MySQL
+@retval true Failure
+@retval false Success */
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
+bool
+innobase_enlarge_columns_try(
+/*=========================*/
+	Alter_inplace_info*	ha_alter_info,
+	const TABLE*		table,
+	const dict_table_t*	user_table,
+	trx_t*			trx,
+	const char*		table_name)
+{
 	List_iterator_fast<Create_field> cf_it(
 		ha_alter_info->alter_info->create_list);
-	uint i = 0;
+	ulint	i = 0;
+	ulint	num_v = 0;
+	bool	is_v;
 
 	for (Field** fp = table->field; *fp; fp++, i++) {
-		if (!((*fp)->flags & FIELD_IS_RENAMED)) {
-			continue;
+		ulint	idx;
+
+		if (innobase_is_v_fld(*fp)) {
+			is_v = true;
+			idx = num_v;
+			num_v++;
+		} else {
+			idx = i - num_v;
+			is_v = false;
 		}
 
 		cf_it.rewind();
 		while (Create_field* cf = cf_it++) {
 			if (cf->field == *fp) {
-				dict_mem_table_col_rename(user_table, i,
-							  cf->field->field_name,
-							  cf->field_name);
-				goto processed_field;
+				if ((*fp)->is_equal(cf)
+				    == IS_EQUAL_PACK_LENGTH
+				    && innobase_enlarge_column_try(
+					    user_table, trx, table_name,
+					    idx, static_cast<ulint>(cf->length), is_v)) {
+					return(true);
+				}
+
+				break;
 			}
 		}
+	}
 
-		ut_error;
-processed_field:
-		continue;
+	return(false);
+}
+
+/** Rename or enlarge columns in the data dictionary cache
+as part of commit_cache_norebuild().
+@param ha_alter_info Data used during in-place alter.
+@param table the TABLE
+@param user_table InnoDB table that was being altered */
+static MY_ATTRIBUTE((nonnull))
+void
+innobase_rename_or_enlarge_columns_cache(
+/*=====================================*/
+	Alter_inplace_info*	ha_alter_info,
+	const TABLE*		table,
+	dict_table_t*		user_table)
+{
+	if (!(ha_alter_info->handler_flags
+	      & (ALTER_COLUMN_EQUAL_PACK_LENGTH
+		 | ALTER_COLUMN_NAME))) {
+		return;
+	}
+
+	List_iterator_fast<Create_field> cf_it(
+		ha_alter_info->alter_info->create_list);
+	uint	i = 0;
+	ulint	num_v = 0;
+
+	for (Field** fp = table->field; *fp; fp++, i++) {
+		bool	is_virtual = innobase_is_v_fld(*fp);
+
+		cf_it.rewind();
+		while (Create_field* cf = cf_it++) {
+			if (cf->field != *fp) {
+				continue;
+			}
+
+			ulint	col_n = is_virtual ? num_v : i - num_v;
+
+			if ((*fp)->is_equal(cf) == IS_EQUAL_PACK_LENGTH) {
+				if (is_virtual) {
+					dict_table_get_nth_v_col(
+						user_table, col_n)->m_col.len
+					= cf->length;
+				} else {
+					dict_table_get_nth_col(
+						user_table, col_n)->len
+					= cf->length;
+				}
+			}
+
+			if ((*fp)->flags & FIELD_IS_RENAMED) {
+				dict_mem_table_col_rename(
+					user_table, col_n,
+					cf->field->field_name.str,
+					cf->field_name.str, is_virtual);
+			}
+
+			break;
+		}
+
+		if (is_virtual) {
+			num_v++;
+		}
 	}
 }
 
-/** Get the auto-increment value of the table on commit.
-@param[in] ha_alter_info	Data used during in-place alter
-@param[in,out] ctx		In-place ALTER TABLE context
-				return autoinc value in ctx->max_autoinc
-@param altered_table[in]	MySQL table that is being altered
-@param old_table[in]	MySQL table as it is before the ALTER operation
-retval true Failure
-@retval false Success*/
-static MY_ATTRIBUTE((nonnull, warn_unused_result))
+/** Set the auto-increment value of the table on commit.
+@param ha_alter_info Data used during in-place alter
+@param ctx In-place ALTER TABLE context
+@param altered_table MySQL table that is being altered
+@param old_table MySQL table as it is before the ALTER operation
+@return whether the operation failed (and my_error() was called) */
+static MY_ATTRIBUTE((nonnull))
 bool
-commit_get_autoinc(
-/*===============*/
+commit_set_autoinc(
 	Alter_inplace_info*	ha_alter_info,
 	ha_innobase_inplace_ctx*ctx,
 	const TABLE*		altered_table,
 	const TABLE*		old_table)
 {
-
-	DBUG_ENTER("commit_get_autoinc");
+	DBUG_ENTER("commit_set_autoinc");
 
 	if (!altered_table->found_next_number_field) {
 		/* There is no AUTO_INCREMENT column in the table
 		after the ALTER operation. */
-		ctx->max_autoinc = 0;
 	} else if (ctx->add_autoinc != ULINT_UNDEFINED) {
+		ut_ad(ctx->need_rebuild());
 		/* An AUTO_INCREMENT column was added. Get the last
 		value from the sequence, which may be based on a
 		supplied AUTO_INCREMENT value. */
-		ctx->max_autoinc = ctx->sequence.last();
+		ib_uint64_t autoinc = ctx->sequence.last();
+		ctx->new_table->autoinc = autoinc;
+		/* Bulk index creation does not update
+		PAGE_ROOT_AUTO_INC, so we must persist the "last used"
+		value here. */
+		btr_write_autoinc(dict_table_get_first_index(ctx->new_table),
+				  autoinc - 1, true);
 	} else if ((ha_alter_info->handler_flags
-		    & Alter_inplace_info::CHANGE_CREATE_OPTION)
+		    & ALTER_CHANGE_CREATE_OPTION)
 		   && (ha_alter_info->create_info->used_fields
 		       & HA_CREATE_USED_AUTO)) {
 
-		/* Check if the table is discarded */
-		if(dict_table_is_discarded(ctx->old_table)) {
+		if (!ctx->old_table->space) {
+			my_error(ER_TABLESPACE_DISCARDED, MYF(0),
+				 old_table->s->table_name.str);
 			DBUG_RETURN(true);
 		}
 
-		/* An AUTO_INCREMENT value was supplied, but the table was not
-		rebuilt. Get the user-supplied value or the last value from the
-		sequence. */
-		ib_uint64_t	max_value_table;
-		dberr_t		err;
+		/* An AUTO_INCREMENT value was supplied by the user.
+		It must be persisted to the data file. */
+		const Field*	ai	= old_table->found_next_number_field;
+		ut_ad(!strcmp(dict_table_get_col_name(ctx->old_table,
+						      innodb_col_no(ai)),
+			      ai->field_name.str));
 
-		Field*	autoinc_field =
-			old_table->found_next_number_field;
-		KEY*	autoinc_key =
-			old_table->key_info + old_table->s->next_number_index;
-
-		dict_index_t*	index = dict_table_get_index_on_name(
-			ctx->old_table, autoinc_key->name);
-
-		ctx->max_autoinc =
-			ha_alter_info->create_info->auto_increment_value;
-
-		dict_table_autoinc_lock(ctx->old_table);
-
-		err = row_search_max_autoinc(
-			index, autoinc_field->field_name, &max_value_table);
-
-		if (err != DB_SUCCESS) {
-			ut_ad(0);
-			ctx->max_autoinc = 0;
-		} else if (ctx->max_autoinc <= max_value_table) {
-			ulonglong	col_max_value;
-			ulonglong	offset;
-
-			col_max_value = innobase_get_int_col_max_value(
-				old_table->found_next_number_field);
-
-			offset = ctx->prebuilt->autoinc_offset;
-			ctx->max_autoinc = innobase_next_autoinc(
-				max_value_table, 1, 1, offset,
-				col_max_value);
+		ib_uint64_t	autoinc
+			= ha_alter_info->create_info->auto_increment_value;
+		if (autoinc == 0) {
+			autoinc = 1;
 		}
-		dict_table_autoinc_unlock(ctx->old_table);
-	} else {
-		/* An AUTO_INCREMENT value was not specified.
-		Read the old counter value from the table. */
-		ut_ad(old_table->found_next_number_field);
-		dict_table_autoinc_lock(ctx->old_table);
-		ctx->max_autoinc = ctx->old_table->autoinc;
-		dict_table_autoinc_unlock(ctx->old_table);
+
+		if (autoinc >= ctx->old_table->autoinc) {
+			/* Persist the predecessor of the
+			AUTO_INCREMENT value as the last used one. */
+			ctx->new_table->autoinc = autoinc--;
+		} else {
+			/* Mimic ALGORITHM=COPY in the following scenario:
+
+			CREATE TABLE t (a SERIAL);
+			INSERT INTO t SET a=100;
+			ALTER TABLE t AUTO_INCREMENT = 1;
+			INSERT INTO t SET a=NULL;
+			SELECT * FROM t;
+
+			By default, ALGORITHM=INPLACE would reset the
+			sequence to 1, while after ALGORITHM=COPY, the
+			last INSERT would use a value larger than 100.
+
+			We could only search the tree to know current
+			max counter in the table and compare. */
+			const dict_col_t*	autoinc_col
+				= dict_table_get_nth_col(ctx->old_table,
+							 innodb_col_no(ai));
+			dict_index_t*		index
+				= dict_table_get_first_index(ctx->old_table);
+			while (index != NULL
+			       && index->fields[0].col != autoinc_col) {
+				index = dict_table_get_next_index(index);
+			}
+
+			ut_ad(index);
+
+			ib_uint64_t	max_in_table = index
+				? row_search_max_autoinc(index)
+				: 0;
+
+			if (autoinc <= max_in_table) {
+				ctx->new_table->autoinc = innobase_next_autoinc(
+					max_in_table, 1,
+					ctx->prebuilt->autoinc_increment,
+					ctx->prebuilt->autoinc_offset,
+					innobase_get_int_col_max_value(ai));
+				/* Persist the maximum value as the
+				last used one. */
+				autoinc = max_in_table;
+			} else {
+				/* Persist the predecessor of the
+				AUTO_INCREMENT value as the last used one. */
+				ctx->new_table->autoinc = autoinc--;
+			}
+		}
+
+		btr_write_autoinc(dict_table_get_first_index(ctx->new_table),
+				  autoinc, true);
+	} else if (ctx->need_rebuild()) {
+		/* No AUTO_INCREMENT value was specified.
+		Copy it from the old table. */
+		ctx->new_table->autoinc = ctx->old_table->autoinc;
+		/* The persistent value was already copied in
+		prepare_inplace_alter_table_dict() when ctx->new_table
+		was created. If this was a LOCK=NONE operation, the
+		AUTO_INCREMENT values would be updated during
+		row_log_table_apply(). If this was LOCK!=NONE,
+		the table contents could not possibly have changed
+		between prepare_inplace and commit_inplace. */
 	}
 
 	DBUG_RETURN(false);
@@ -4987,12 +8257,12 @@ commit_get_autoinc(
 
 /** Add or drop foreign key constraints to the data dictionary tables,
 but do not touch the data dictionary cache.
-@param ha_alter_info	Data used during in-place alter
-@param ctx		In-place ALTER TABLE context
-@param trx		Data dictionary transaction
-@param table_name	Table name in MySQL
-@retval true		Failure
-@retval false		Success
+@param ha_alter_info Data used during in-place alter
+@param ctx In-place ALTER TABLE context
+@param trx Data dictionary transaction
+@param table_name Table name in MySQL
+@retval true Failure
+@retval false Success
 */
 static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
@@ -5019,7 +8289,7 @@ innobase_update_foreign_try(
 		      || fk->foreign_table == ctx->old_table);
 
 		dberr_t error = dict_create_add_foreign_id(
-			&foreign_id, ctx->old_table->name, fk);
+			&foreign_id, ctx->old_table->name.m_name, fk);
 
 		if (error != DB_SUCCESS) {
 			my_error(ER_TOO_LONG_IDENT, MYF(0),
@@ -5047,7 +8317,7 @@ innobase_update_foreign_try(
 		names, while the columns in ctx->old_table have not
 		been renamed yet. */
 		error = dict_create_add_foreign_to_dictionary(
-			(dict_table_t*)ctx->old_table,ctx->old_table->name, fk, trx);
+			ctx->old_table->name.m_name, fk, trx);
 
 		DBUG_EXECUTE_IF(
 			"innodb_test_cannot_add_fk_system",
@@ -5090,6 +8360,8 @@ innobase_update_foreign_cache(
 
 	DBUG_ENTER("innobase_update_foreign_cache");
 
+	ut_ad(mutex_own(&dict_sys->mutex));
+
 	user_table = ctx->old_table;
 
 	/* Discard the added foreign keys, because we will
@@ -5121,17 +8393,23 @@ innobase_update_foreign_cache(
 	/* Load the old or added foreign keys from the data dictionary
 	and prevent the table from being evicted from the data
 	dictionary cache (work around the lack of WL#6049). */
-	err = dict_load_foreigns(user_table->name,
+	dict_names_t	fk_tables;
+
+	err = dict_load_foreigns(user_table->name.m_name,
 				 ctx->col_names, false, true,
-				 DICT_ERR_IGNORE_NONE);
+				 DICT_ERR_IGNORE_NONE,
+				 fk_tables);
 
 	if (err == DB_CANNOT_ADD_CONSTRAINT) {
+		fk_tables.clear();
+
 		/* It is possible there are existing foreign key are
 		loaded with "foreign_key checks" off,
 		so let's retry the loading with charset_check is off */
-		err = dict_load_foreigns(user_table->name,
+		err = dict_load_foreigns(user_table->name.m_name,
 					 ctx->col_names, false, false,
-					 DICT_ERR_IGNORE_NONE);
+					 DICT_ERR_IGNORE_NONE,
+					 fk_tables);
 
 		/* The load with "charset_check" off is successful, warn
 		the user that the foreign key has loaded with mis-matched
@@ -5143,24 +8421,192 @@ innobase_update_foreign_cache(
 				ER_ALTER_INFO,
 				"Foreign key constraints for table '%s'"
 				" are loaded with charset check off",
-				user_table->name);
+				user_table->name.m_name);
 		}
+	}
+
+	/* For complete loading of foreign keys, all associated tables must
+	also be loaded. */
+	while (err == DB_SUCCESS && !fk_tables.empty()) {
+		dict_table_t*	table = dict_load_table(
+			fk_tables.front(), true, DICT_ERR_IGNORE_NONE);
+
+		if (table == NULL) {
+			table_name_t	table_name;
+			table_name.m_name = const_cast<char*>(
+						fk_tables.front());
+
+			err = DB_TABLE_NOT_FOUND;
+			ib::error()
+				<< "Failed to load table '" << table_name
+				<< "' which has a foreign key constraint with"
+				<< " table '" << user_table->name << "'.";
+			break;
+		}
+
+		fk_tables.pop_front();
 	}
 
 	DBUG_RETURN(err);
 }
 
+/** Changes SYS_COLUMNS.PRTYPE for one column.
+@param[in,out]	trx	transaction
+@param[in]	table_name	table name
+@param[in]	tableid	table ID as in SYS_TABLES
+@param[in]	pos	column position
+@param[in]	prtype	new precise type
+@return		boolean flag
+@retval	true	on failure
+@retval false	on success */
+static
+bool
+vers_change_field_try(
+	trx_t* trx,
+	const char* table_name,
+	const table_id_t tableid,
+	const ulint pos,
+	const ulint prtype)
+{
+	DBUG_ENTER("vers_change_field_try");
+
+	pars_info_t* info = pars_info_create();
+
+	pars_info_add_int4_literal(info, "prtype", prtype);
+	pars_info_add_ull_literal(info,"tableid", tableid);
+	pars_info_add_int4_literal(info, "pos", pos);
+
+	dberr_t error = que_eval_sql(info,
+				     "PROCEDURE CHANGE_COLUMN_MTYPE () IS\n"
+				     "BEGIN\n"
+				     "UPDATE SYS_COLUMNS SET PRTYPE=:prtype\n"
+				     "WHERE TABLE_ID=:tableid AND POS=:pos;\n"
+				     "END;\n",
+				     false, trx);
+
+	if (error != DB_SUCCESS) {
+		my_error_innodb(error, table_name, 0);
+		trx->error_state = DB_SUCCESS;
+		trx->op_info = "";
+		DBUG_RETURN(true);
+	}
+
+	DBUG_RETURN(false);
+}
+
+/** Changes fields WITH/WITHOUT SYSTEM VERSIONING property in SYS_COLUMNS.
+@param[in]	ha_alter_info	alter info
+@param[in]	ctx	alter inplace context
+@param[in]	trx	transaction
+@param[in]	table	old table
+@return		boolean flag
+@retval	true	on failure
+@retval false	on success */
+static
+bool
+vers_change_fields_try(
+	const Alter_inplace_info* ha_alter_info,
+	const ha_innobase_inplace_ctx* ctx,
+	trx_t* trx,
+	const TABLE* table)
+{
+	DBUG_ENTER("vers_change_fields_try");
+
+	DBUG_ASSERT(ha_alter_info);
+	DBUG_ASSERT(ctx);
+
+	List_iterator_fast<Create_field> it(
+	    ha_alter_info->alter_info->create_list);
+
+	while (const Create_field* create_field = it++) {
+		if (!create_field->field) {
+			continue;
+		}
+		if (create_field->versioning
+		    == Column_definition::VERSIONING_NOT_SET) {
+			continue;
+		}
+
+		const dict_table_t* new_table = ctx->new_table;
+		const uint pos = innodb_col_no(create_field->field);
+		const dict_col_t* col = dict_table_get_nth_col(new_table, pos);
+
+		DBUG_ASSERT(!col->vers_sys_start());
+		DBUG_ASSERT(!col->vers_sys_end());
+
+		ulint new_prtype
+		    = create_field->versioning
+			      == Column_definition::WITHOUT_VERSIONING
+			  ? col->prtype & ~DATA_VERSIONED
+			  : col->prtype | DATA_VERSIONED;
+
+		if (vers_change_field_try(trx, table->s->table_name.str,
+					  new_table->id, pos,
+					  new_prtype)) {
+			DBUG_RETURN(true);
+		}
+	}
+
+	DBUG_RETURN(false);
+}
+
+/** Changes WITH/WITHOUT SYSTEM VERSIONING for fields
+in the data dictionary cache.
+@param ha_alter_info Data used during in-place alter
+@param ctx In-place ALTER TABLE context
+@param table MySQL table as it is before the ALTER operation */
+static
+void
+vers_change_fields_cache(
+	Alter_inplace_info*		ha_alter_info,
+	const ha_innobase_inplace_ctx*	ctx,
+	const TABLE*			table)
+{
+	DBUG_ENTER("vers_change_fields_cache");
+
+	DBUG_ASSERT(ha_alter_info);
+	DBUG_ASSERT(ctx);
+	DBUG_ASSERT(ha_alter_info->handler_flags & ALTER_COLUMN_UNVERSIONED);
+
+	List_iterator_fast<Create_field> it(
+	    ha_alter_info->alter_info->create_list);
+
+	while (const Create_field* create_field = it++) {
+		if (!create_field->field) {
+			continue;
+		}
+		dict_col_t* col = dict_table_get_nth_col(
+		    ctx->new_table, innodb_col_no(create_field->field));
+
+		if (create_field->versioning
+		    == Column_definition::WITHOUT_VERSIONING) {
+
+			DBUG_ASSERT(!col->vers_sys_start());
+			DBUG_ASSERT(!col->vers_sys_end());
+			col->prtype &= ~DATA_VERSIONED;
+		} else if (create_field->versioning
+			   == Column_definition::WITH_VERSIONING) {
+
+			DBUG_ASSERT(!col->vers_sys_start());
+			DBUG_ASSERT(!col->vers_sys_end());
+			col->prtype |= DATA_VERSIONED;
+		}
+	}
+
+	DBUG_VOID_RETURN;
+}
+
 /** Commit the changes made during prepare_inplace_alter_table()
 and inplace_alter_table() inside the data dictionary tables,
 when rebuilding the table.
-@param ha_alter_info	Data used during in-place alter
-@param ctx		In-place ALTER TABLE context
-@param altered_table	MySQL table that is being altered
-@param old_table	MySQL table as it is before the ALTER operation
-@param trx		Data dictionary transaction
-@param table_name	Table name in MySQL
-@retval true		Failure
-@retval false		Success
+@param ha_alter_info Data used during in-place alter
+@param ctx In-place ALTER TABLE context
+@param altered_table MySQL table that is being altered
+@param old_table MySQL table as it is before the ALTER operation
+@param trx Data dictionary transaction
+@param table_name Table name in MySQL
+@retval true Failure
+@retval false Success
 */
 inline MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
@@ -5180,20 +8626,17 @@ commit_try_rebuild(
 	DBUG_ASSERT(ctx->need_rebuild());
 	DBUG_ASSERT(trx->dict_operation_lock_mode == RW_X_LATCH);
 	DBUG_ASSERT(!(ha_alter_info->handler_flags
-		      & Alter_inplace_info::DROP_FOREIGN_KEY)
+		      & ALTER_DROP_FOREIGN_KEY)
 		    || ctx->num_to_drop_fk > 0);
-	DBUG_ASSERT(ctx->num_to_drop_fk
-		    == ha_alter_info->alter_info->drop_list.elements);
 
 	for (dict_index_t* index = dict_table_get_first_index(rebuilt_table);
 	     index;
 	     index = dict_table_get_next_index(index)) {
 		DBUG_ASSERT(dict_index_get_online_status(index)
 			    == ONLINE_INDEX_COMPLETE);
-		DBUG_ASSERT(*index->name != TEMP_INDEX_PREFIX);
-		if (dict_index_is_corrupted(index)) {
-			my_error(ER_INDEX_CORRUPT, MYF(0),
-				 index->name);
+		DBUG_ASSERT(index->is_committed());
+		if (index->is_corrupted()) {
+			my_error(ER_INDEX_CORRUPT, MYF(0), index->name());
 			DBUG_RETURN(true);
 		}
 	}
@@ -5209,7 +8652,7 @@ commit_try_rebuild(
 	for (ulint i = 0; i < ctx->num_to_drop_index; i++) {
 		dict_index_t*	index = ctx->drop_index[i];
 		DBUG_ASSERT(index->table == user_table);
-		DBUG_ASSERT(*index->name != TEMP_INDEX_PREFIX);
+		DBUG_ASSERT(index->is_committed());
 		DBUG_ASSERT(index->to_be_dropped);
 		index->to_be_dropped = 0;
 	}
@@ -5220,8 +8663,33 @@ commit_try_rebuild(
 
 	if (ctx->online) {
 		DEBUG_SYNC_C("row_log_table_apply2_before");
+
+		dict_vcol_templ_t* s_templ  = NULL;
+
+		if (ctx->new_table->n_v_cols > 0) {
+			s_templ = UT_NEW_NOKEY(
+					dict_vcol_templ_t());
+			s_templ->vtempl = NULL;
+
+			innobase_build_v_templ(
+				altered_table, ctx->new_table, s_templ,
+				NULL, true);
+			ctx->new_table->vc_templ = s_templ;
+		}
+
 		error = row_log_table_apply(
-			ctx->thr, user_table, altered_table);
+			ctx->thr, user_table, altered_table,
+			static_cast<ha_innobase_inplace_ctx*>(
+				ha_alter_info->handler_ctx)->m_stage,
+			ctx->new_table);
+
+		if (s_templ) {
+			ut_ad(ctx->need_rebuild());
+			dict_free_vc_templ(s_templ);
+			UT_DELETE(s_templ);
+			ctx->new_table->vc_templ = NULL;
+		}
+
 		ulint	err_key = thr_get_trx(ctx->thr)->error_key_num;
 
 		switch (error) {
@@ -5234,20 +8702,11 @@ commit_try_rebuild(
 				FTS_DOC_ID. */
 				dup_key = NULL;
 			} else {
-				if (ctx->num_to_add_index > ha_alter_info->key_count) {
-					DBUG_ASSERT(err_key <=
-						    ha_alter_info->key_count);
-					dup_key = &ha_alter_info
-						->key_info_buffer[err_key - 1];
-				}
-				else {
-					DBUG_ASSERT(err_key <
-						    ha_alter_info->key_count);
-					dup_key = &ha_alter_info
-						->key_info_buffer[err_key];
-				}
+				DBUG_ASSERT(err_key <
+					    ha_alter_info->key_count);
+				dup_key = &ha_alter_info
+					->key_info_buffer[err_key];
 			}
-
 			print_keydup_error(altered_table, dup_key, MYF(0));
 			DBUG_RETURN(true);
 		case DB_ONLINE_LOG_TOO_BIG:
@@ -5267,7 +8726,7 @@ commit_try_rebuild(
 	}
 
 	if ((ha_alter_info->handler_flags
-	     & Alter_inplace_info::ALTER_COLUMN_NAME)
+	     & ALTER_COLUMN_NAME)
 	    && innobase_rename_columns_try(ha_alter_info, ctx, old_table,
 					   trx, table_name)) {
 		DBUG_RETURN(true);
@@ -5277,7 +8736,7 @@ commit_try_rebuild(
 
 	/* The new table must inherit the flag from the
 	"parent" table. */
-	if (dict_table_is_discarded(user_table)) {
+	if (!user_table->space) {
 		rebuilt_table->file_unreadable = true;
 		rebuilt_table->flags2 |= DICT_TF2_DISCARDED;
 	}
@@ -5293,34 +8752,20 @@ commit_try_rebuild(
 		user_table, rebuilt_table, ctx->tmp_name, trx);
 
 	/* We must be still holding a table handle. */
-	DBUG_ASSERT(user_table->n_ref_count >= 1);
+	DBUG_ASSERT(user_table->get_ref_count() == 1);
 
 	DBUG_EXECUTE_IF("ib_ddl_crash_after_rename", DBUG_SUICIDE(););
 	DBUG_EXECUTE_IF("ib_rebuild_cannot_rename", error = DB_ERROR;);
-
-	if (user_table->n_ref_count > 1) {
-		/* This should only occur when an innodb_memcached
-		connection with innodb_api_enable_mdl=off was started
-		before commit_inplace_alter_table() locked the data
-		dictionary. We must roll back the ALTER TABLE, because
-		we cannot drop a table while it is being used. */
-
-		/* Normally, n_ref_count must be 1, because purge
-		cannot be executing on this very table as we are
-		holding dict_operation_lock X-latch. */
-
-		error = DB_LOCK_WAIT_TIMEOUT;
-	}
 
 	switch (error) {
 	case DB_SUCCESS:
 		DBUG_RETURN(false);
 	case DB_TABLESPACE_EXISTS:
-		ut_a(rebuilt_table->n_ref_count == 1);
+		ut_a(rebuilt_table->get_ref_count() == 1);
 		my_error(ER_TABLESPACE_EXISTS, MYF(0), ctx->tmp_name);
 		DBUG_RETURN(true);
 	case DB_DUPLICATE_KEY:
-		ut_a(rebuilt_table->n_ref_count == 1);
+		ut_a(rebuilt_table->get_ref_count() == 1);
 		my_error(ER_TABLE_EXISTS_ERROR, MYF(0), ctx->tmp_name);
 		DBUG_RETURN(true);
 	default:
@@ -5331,7 +8776,7 @@ commit_try_rebuild(
 
 /** Apply the changes made during commit_try_rebuild(),
 to the data dictionary cache and the file system.
-@param ctx	In-place ALTER TABLE context */
+@param ctx In-place ALTER TABLE context */
 inline MY_ATTRIBUTE((nonnull))
 void
 commit_cache_rebuild(
@@ -5341,91 +8786,128 @@ commit_cache_rebuild(
 	dberr_t		error;
 
 	DBUG_ENTER("commit_cache_rebuild");
+	DEBUG_SYNC_C("commit_cache_rebuild");
 	DBUG_ASSERT(ctx->need_rebuild());
-	DBUG_ASSERT(dict_table_is_discarded(ctx->old_table)
-		    == dict_table_is_discarded(ctx->new_table));
+	DBUG_ASSERT(!ctx->old_table->space == !ctx->new_table->space);
 
 	const char* old_name = mem_heap_strdup(
-		ctx->heap, ctx->old_table->name);
+		ctx->heap, ctx->old_table->name.m_name);
 
 	/* We already committed and redo logged the renames,
 	so this must succeed. */
 	error = dict_table_rename_in_cache(
-		ctx->old_table, ctx->tmp_name, FALSE);
+		ctx->old_table, ctx->tmp_name, false);
 	ut_a(error == DB_SUCCESS);
 
 	error = dict_table_rename_in_cache(
-		ctx->new_table, old_name, FALSE);
+		ctx->new_table, old_name, false);
 	ut_a(error == DB_SUCCESS);
 
 	DBUG_VOID_RETURN;
 }
 
+/** Set of column numbers */
+typedef std::set<ulint, std::less<ulint>, ut_allocator<ulint> >	col_set;
+
 /** Store the column number of the columns in a list belonging
 to indexes which are not being dropped.
 @param[in]	ctx		In-place ALTER TABLE context
-@param[out]	drop_col_list	list which will be set, containing columns
-				which is part of index being dropped */
+@param[in, out]	drop_col_list	list which will be set, containing columns
+				which is part of index being dropped
+@param[in, out]	drop_v_col_list	list which will be set, containing
+				virtual columns which is part of index
+				being dropped */
 static
 void
 get_col_list_to_be_dropped(
-	ha_innobase_inplace_ctx*	ctx,
-	std::set<ulint>&		drop_col_list)
+	const ha_innobase_inplace_ctx*	ctx,
+	col_set&			drop_col_list,
+	col_set&			drop_v_col_list)
 {
 	for (ulint index_count = 0; index_count < ctx->num_to_drop_index;
 	     index_count++) {
-		dict_index_t*	index = ctx->drop_index[index_count];
+		const dict_index_t*	index = ctx->drop_index[index_count];
 
 		for (ulint col = 0; col < index->n_user_defined_cols; col++) {
-			ulint	col_no = dict_index_get_nth_col_no(index, col);
-			drop_col_list.insert(col_no);
+			const dict_col_t*	idx_col
+				= dict_index_get_nth_col(index, col);
+
+			if (idx_col->is_virtual()) {
+				const dict_v_col_t*	v_col
+					= reinterpret_cast<
+						const dict_v_col_t*>(idx_col);
+				drop_v_col_list.insert(v_col->v_pos);
+
+			} else {
+				ulint	col_no = dict_col_get_no(idx_col);
+				drop_col_list.insert(col_no);
+			}
 		}
 	}
 }
 
-/** For each column, which is part of an index which is not going to be
-dropped, it checks if the column number of the column is same as col_no
-argument passed.
-@param[in]	table	table object
-@param[in]	col_no	column number of the column which is to be checked
-@retval true column exists
-@retval false column does not exist. */
+/** Change PAGE_COMPRESSED to ON or change the PAGE_COMPRESSION_LEVEL.
+@param[in]	level		PAGE_COMPRESSION_LEVEL
+@param[in]	table		table before the change
+@param[in,out]	trx		data dictionary transaction
+@param[in]	table_name	table name in MariaDB
+@return	whether the operation succeeded */
+MY_ATTRIBUTE((nonnull, warn_unused_result))
 static
 bool
-check_col_exists_in_indexes(
+innobase_page_compression_try(
+	uint			level,
 	const dict_table_t*	table,
-	ulint			col_no)
+	trx_t*			trx,
+	const char*		table_name)
 {
-	for (dict_index_t* index = dict_table_get_first_index(table); index;
-	     index = dict_table_get_next_index(index)) {
+	DBUG_ENTER("innobase_page_compression_try");
+	DBUG_ASSERT(level >= 1);
+	DBUG_ASSERT(level <= 9);
 
-		if (index->to_be_dropped) {
-			continue;
-		}
+	unsigned flags = table->flags
+		& ~(0xFU << DICT_TF_POS_PAGE_COMPRESSION_LEVEL);
+	flags |= 1U << DICT_TF_POS_PAGE_COMPRESSION
+		| level << DICT_TF_POS_PAGE_COMPRESSION_LEVEL;
 
-		for (ulint col = 0; col < index->n_user_defined_cols; col++) {
-
-			ulint	index_col_no = dict_index_get_nth_col_no(
-						index, col);
-			if (col_no == index_col_no) {
-				return(true);
-			}
-		}
+	if (table->flags == flags) {
+		DBUG_RETURN(false);
 	}
 
-	return(false);
+	pars_info_t* info = pars_info_create();
+
+	pars_info_add_ull_literal(info, "id", table->id);
+	pars_info_add_int4_literal(info, "type",
+				   dict_tf_to_sys_tables_type(flags));
+
+	dberr_t error = que_eval_sql(info,
+				     "PROCEDURE CHANGE_COMPRESSION () IS\n"
+				     "BEGIN\n"
+				     "UPDATE SYS_TABLES SET TYPE=:type\n"
+				     "WHERE ID=:id;\n"
+				     "END;\n",
+				     false, trx);
+
+	if (error != DB_SUCCESS) {
+		my_error_innodb(error, table_name, 0);
+		trx->error_state = DB_SUCCESS;
+		trx->op_info = "";
+		DBUG_RETURN(true);
+	}
+
+	DBUG_RETURN(false);
 }
 
 /** Commit the changes made during prepare_inplace_alter_table()
 and inplace_alter_table() inside the data dictionary tables,
 when not rebuilding the table.
-@param ha_alter_info	Data used during in-place alter
-@param ctx		In-place ALTER TABLE context
-@param old_table	MySQL table as it is before the ALTER operation
-@param trx		Data dictionary transaction
-@param table_name	Table name in MySQL
-@retval true		Failure
-@retval false		Success
+@param ha_alter_info Data used during in-place alter
+@param ctx In-place ALTER TABLE context
+@param old_table MySQL table as it is before the ALTER operation
+@param trx Data dictionary transaction
+@param table_name Table name in MySQL
+@retval true Failure
+@retval false Success
 */
 inline MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
@@ -5433,6 +8915,7 @@ commit_try_norebuild(
 /*=================*/
 	Alter_inplace_info*	ha_alter_info,
 	ha_innobase_inplace_ctx*ctx,
+	TABLE*			altered_table,
 	const TABLE*		old_table,
 	trx_t*			trx,
 	const char*		table_name)
@@ -5441,17 +8924,26 @@ commit_try_norebuild(
 	DBUG_ASSERT(!ctx->need_rebuild());
 	DBUG_ASSERT(trx->dict_operation_lock_mode == RW_X_LATCH);
 	DBUG_ASSERT(!(ha_alter_info->handler_flags
-		      & Alter_inplace_info::DROP_FOREIGN_KEY)
+		      & ALTER_DROP_FOREIGN_KEY)
 		    || ctx->num_to_drop_fk > 0);
 	DBUG_ASSERT(ctx->num_to_drop_fk
-		    == ha_alter_info->alter_info->drop_list.elements);
+		    == ha_alter_info->alter_info->drop_list.elements
+		    || ctx->num_to_drop_vcol
+		       == ha_alter_info->alter_info->drop_list.elements);
+
+	if (ctx->page_compression_level
+	    && innobase_page_compression_try(ctx->page_compression_level,
+					     ctx->new_table, trx,
+					     table_name)) {
+		DBUG_RETURN(true);
+	}
 
 	for (ulint i = 0; i < ctx->num_to_add_index; i++) {
 		dict_index_t*	index = ctx->add_index[i];
 		DBUG_ASSERT(dict_index_get_online_status(index)
 			    == ONLINE_INDEX_COMPLETE);
-		DBUG_ASSERT(*index->name == TEMP_INDEX_PREFIX);
-		if (dict_index_is_corrupted(index)) {
+		DBUG_ASSERT(!index->is_committed());
+		if (index->is_corrupted()) {
 			/* Report a duplicate key
 			error for the index that was
 			flagged corrupted, most likely
@@ -5464,7 +8956,7 @@ commit_try_norebuild(
 			with a detailed reason once
 			WL#6379 has been implemented. */
 			my_error(ER_DUP_UNKNOWN_IN_INDEX,
-				 MYF(0), index->name + 1);
+				 MYF(0), index->name());
 			DBUG_RETURN(true);
 		}
 	}
@@ -5473,19 +8965,34 @@ commit_try_norebuild(
 		DBUG_RETURN(true);
 	}
 
+	if ((ha_alter_info->handler_flags & ALTER_COLUMN_UNVERSIONED)
+	    && vers_change_fields_try(ha_alter_info, ctx, trx, old_table)) {
+		DBUG_RETURN(true);
+	}
+
 	dberr_t	error;
 
-	/* We altered the table in place. */
-	/* Lose the TEMP_INDEX_PREFIX. */
+	/* We altered the table in place. Mark the indexes as committed. */
 	for (ulint i = 0; i < ctx->num_to_add_index; i++) {
 		dict_index_t*	index = ctx->add_index[i];
 		DBUG_ASSERT(dict_index_get_online_status(index)
 			    == ONLINE_INDEX_COMPLETE);
-		DBUG_ASSERT(*index->name
-			    == TEMP_INDEX_PREFIX);
+		DBUG_ASSERT(!index->is_committed());
 		error = row_merge_rename_index_to_add(
 			trx, ctx->new_table->id, index->id);
-		if (error != DB_SUCCESS) {
+		switch (error) {
+		case DB_SUCCESS:
+			break;
+		case DB_TOO_MANY_CONCURRENT_TRXS:
+			/* If we wrote some undo log here, then the
+			persistent data dictionary for this table may
+			probably be corrupted. This is because a
+			'trigger' on SYS_INDEXES could already have invoked
+			btr_free_if_exists(), which cannot be rolled back. */
+			DBUG_ASSERT(trx->undo_no == 0);
+			my_error(ER_TOO_MANY_CONCURRENT_TRXS, MYF(0));
+			DBUG_RETURN(true);
+		default:
 			sql_print_error(
 				"InnoDB: rename index to add: %lu\n",
 				(ulong) error);
@@ -5497,14 +9004,11 @@ commit_try_norebuild(
 	}
 
 	/* Drop any indexes that were requested to be dropped.
-	Rename them to TEMP_INDEX_PREFIX in the data
-	dictionary first. We do not bother to rename
-	index->name in the dictionary cache, because the index
-	is about to be freed after row_merge_drop_indexes_dict(). */
+	Flag them in the data dictionary first. */
 
 	for (ulint i = 0; i < ctx->num_to_drop_index; i++) {
 		dict_index_t*	index = ctx->drop_index[i];
-		DBUG_ASSERT(*index->name != TEMP_INDEX_PREFIX);
+		DBUG_ASSERT(index->is_committed());
 		DBUG_ASSERT(index->table == ctx->new_table);
 		DBUG_ASSERT(index->to_be_dropped);
 
@@ -5521,47 +9025,138 @@ commit_try_norebuild(
 		}
 	}
 
-	if (!(ha_alter_info->handler_flags
-	      & Alter_inplace_info::ALTER_COLUMN_NAME)) {
-		DBUG_RETURN(false);
+	if ((ha_alter_info->handler_flags
+	     & ALTER_COLUMN_NAME)
+	    && innobase_rename_columns_try(ha_alter_info, ctx, old_table,
+					   trx, table_name)) {
+		DBUG_RETURN(true);
 	}
 
-	DBUG_RETURN(innobase_rename_columns_try(ha_alter_info, ctx,
-						old_table, trx, table_name));
+	if ((ha_alter_info->handler_flags
+	     & ALTER_COLUMN_EQUAL_PACK_LENGTH)
+	    && innobase_enlarge_columns_try(ha_alter_info, old_table,
+					    ctx->old_table, trx, table_name)) {
+		DBUG_RETURN(true);
+	}
+
+#ifdef MYSQL_RENAME_INDEX
+	if ((ha_alter_info->handler_flags
+	     & ALTER_RENAME_INDEX)
+	    && rename_indexes_in_data_dictionary(ctx, ha_alter_info, trx)) {
+		DBUG_RETURN(true);
+	}
+#endif /* MYSQL_RENAME_INDEX */
+
+	if ((ha_alter_info->handler_flags
+	     & ALTER_DROP_VIRTUAL_COLUMN)
+	    && innobase_drop_virtual_try(ha_alter_info, ctx->old_table, trx)) {
+		DBUG_RETURN(true);
+	}
+
+	if ((ha_alter_info->handler_flags
+	     & ALTER_ADD_VIRTUAL_COLUMN)
+	    && innobase_add_virtual_try(ha_alter_info, ctx->old_table, trx)) {
+		DBUG_RETURN(true);
+	}
+
+	if (innobase_add_instant_try(ctx, altered_table, old_table, trx)) {
+		DBUG_RETURN(true);
+	}
+
+	DBUG_RETURN(false);
 }
 
 /** Commit the changes to the data dictionary cache
 after a successful commit_try_norebuild() call.
-@param ctx		In-place ALTER TABLE context
-@param table		the TABLE before the ALTER
-@param trx		Data dictionary transaction object
-(will be started and committed)
-@return whether all replacements were found for dropped indexes */
-inline MY_ATTRIBUTE((nonnull, warn_unused_result))
-bool
+@param ha_alter_info algorithm=inplace context
+@param ctx In-place ALTER TABLE context for the current partition
+@param table the TABLE before the ALTER
+@param trx Data dictionary transaction
+(will be started and committed, for DROP INDEX) */
+inline MY_ATTRIBUTE((nonnull))
+void
 commit_cache_norebuild(
 /*===================*/
+	Alter_inplace_info*	ha_alter_info,
 	ha_innobase_inplace_ctx*ctx,
 	const TABLE*		table,
 	trx_t*			trx)
 {
 	DBUG_ENTER("commit_cache_norebuild");
-
-	bool	found = true;
-
 	DBUG_ASSERT(!ctx->need_rebuild());
+	DBUG_ASSERT(ctx->new_table->space != fil_system.temp_space);
+	DBUG_ASSERT(!ctx->new_table->is_temporary());
 
-	std::set<ulint>			drop_list;
-	std::set<ulint>::const_iterator	col_it;
+	if (ctx->page_compression_level) {
+		DBUG_ASSERT(ctx->new_table->space != fil_system.sys_space);
+		ctx->new_table->flags &=
+			~(0xFU << DICT_TF_POS_PAGE_COMPRESSION_LEVEL);
+		ctx->new_table->flags |= 1 << DICT_TF_POS_PAGE_COMPRESSION
+			| (ctx->page_compression_level
+			   << DICT_TF_POS_PAGE_COMPRESSION_LEVEL);
+
+		if (fil_space_t* space = ctx->new_table->space) {
+			bool update = !(space->flags
+					& FSP_FLAGS_MASK_PAGE_COMPRESSION);
+			mutex_enter(&fil_system.mutex);
+			space->flags = (~FSP_FLAGS_MASK_MEM_COMPRESSION_LEVEL
+					& (space->flags
+					   | FSP_FLAGS_MASK_PAGE_COMPRESSION))
+				| ctx->page_compression_level
+				<< FSP_FLAGS_MEM_COMPRESSION_LEVEL;
+			mutex_exit(&fil_system.mutex);
+
+			if (update) {
+				/* Maybe we should introduce an undo
+				log record for updating tablespace
+				flags, and perform the update already
+				in innobase_page_compression_try().
+
+				If the server is killed before the
+				following mini-transaction commit
+				becomes durable, fsp_flags_try_adjust()
+				will perform the equivalent adjustment
+				and warn "adjusting FSP_SPACE_FLAGS". */
+				mtr_t	mtr;
+				mtr.start();
+				if (buf_block_t* b = buf_page_get(
+					    page_id_t(space->id, 0),
+					    page_size_t(space->flags),
+					    RW_X_LATCH, &mtr)) {
+					mtr.set_named_space(space);
+					mlog_write_ulint(
+						FSP_HEADER_OFFSET
+						+ FSP_SPACE_FLAGS + b->frame,
+						space->flags
+						& ~FSP_FLAGS_MEM_MASK,
+						MLOG_4BYTES, &mtr);
+				}
+				mtr.commit();
+			}
+		}
+	}
+
+	col_set			drop_list;
+	col_set			v_drop_list;
+	col_set::const_iterator col_it;
 
 	/* Check if the column, part of an index to be dropped is part of any
 	other index which is not being dropped. If it so, then set the ord_part
 	of the column to 0. */
-	get_col_list_to_be_dropped(ctx, drop_list);
+	get_col_list_to_be_dropped(ctx, drop_list, v_drop_list);
 
-	for(col_it = drop_list.begin(); col_it != drop_list.end(); ++col_it) {
-		if (!check_col_exists_in_indexes(ctx->new_table, *col_it)) {
+	for (col_it = drop_list.begin(); col_it != drop_list.end(); ++col_it) {
+		if (!check_col_exists_in_indexes(ctx->new_table,
+						 *col_it, false)) {
 			ctx->new_table->cols[*col_it].ord_part = 0;
+		}
+	}
+
+	for (col_it = v_drop_list.begin();
+	     col_it != v_drop_list.end(); ++col_it) {
+		if (!check_col_exists_in_indexes(ctx->new_table,
+						 *col_it, true)) {
+			ctx->new_table->v_cols[*col_it].m_col.ord_part = 0;
 		}
 	}
 
@@ -5569,8 +9164,8 @@ commit_cache_norebuild(
 		dict_index_t*	index = ctx->add_index[i];
 		DBUG_ASSERT(dict_index_get_online_status(index)
 			    == ONLINE_INDEX_COMPLETE);
-		DBUG_ASSERT(*index->name == TEMP_INDEX_PREFIX);
-		index->name++;
+		DBUG_ASSERT(!index->is_committed());
+		index->set_committed(true);
 	}
 
 	if (ctx->num_to_drop_index) {
@@ -5579,13 +9174,13 @@ commit_cache_norebuild(
 		(after renaming the indexes), so that in the
 		event of a crash, crash recovery will drop the
 		indexes, because it drops all indexes whose
-		names start with TEMP_INDEX_PREFIX. Once we
+		names start with TEMP_INDEX_PREFIX_STR. Once we
 		have started dropping an index tree, there is
 		no way to roll it back. */
 
 		for (ulint i = 0; i < ctx->num_to_drop_index; i++) {
 			dict_index_t*	index = ctx->drop_index[i];
-			DBUG_ASSERT(*index->name != TEMP_INDEX_PREFIX);
+			DBUG_ASSERT(index->is_committed());
 			DBUG_ASSERT(index->table == ctx->new_table);
 			DBUG_ASSERT(index->to_be_dropped);
 
@@ -5594,7 +9189,7 @@ commit_cache_norebuild(
 
 			if (!dict_foreign_replace_index(
 				    index->table, ctx->col_names, index)) {
-				found = false;
+				ut_a(!ctx->prebuilt->trx->check_foreigns);
 			}
 
 			/* Mark the index dropped
@@ -5609,7 +9204,7 @@ commit_cache_norebuild(
 
 		for (ulint i = 0; i < ctx->num_to_drop_index; i++) {
 			dict_index_t*	index = ctx->drop_index[i];
-			DBUG_ASSERT(*index->name != TEMP_INDEX_PREFIX);
+			DBUG_ASSERT(index->is_committed());
 			DBUG_ASSERT(index->table == ctx->new_table);
 
 			if (index->type & DICT_FTS) {
@@ -5626,17 +9221,35 @@ commit_cache_norebuild(
 		trx_commit_for_mysql(trx);
 	}
 
-	DBUG_RETURN(found);
+	if (!ctx->is_instant()) {
+		innobase_rename_or_enlarge_columns_cache(
+			ha_alter_info, table, ctx->new_table);
+	}
+
+	if (ha_alter_info->handler_flags & ALTER_COLUMN_UNVERSIONED) {
+		vers_change_fields_cache(ha_alter_info, ctx, table);
+	}
+
+#ifdef MYSQL_RENAME_INDEX
+	rename_indexes_in_cache(ctx, ha_alter_info);
+#endif
+
+	ctx->new_table->fts_doc_id_index
+		= ctx->new_table->fts
+		? dict_table_get_index_on_name(
+			ctx->new_table, FTS_DOC_ID_INDEX_NAME)
+		: NULL;
+	DBUG_ASSERT((ctx->new_table->fts == NULL)
+		    == (ctx->new_table->fts_doc_id_index == NULL));
+	DBUG_VOID_RETURN;
 }
 
 /** Adjust the persistent statistics after non-rebuilding ALTER TABLE.
 Remove statistics for dropped indexes, add statistics for created indexes
 and rename statistics for renamed indexes.
-@param ha_alter_info	Data used during in-place alter
-@param ctx		In-place ALTER TABLE context
-@param altered_table	MySQL table that is being altered
-@param table_name	Table name in MySQL
-@param thd		MySQL connection
+@param ha_alter_info Data used during in-place alter
+@param ctx In-place ALTER TABLE context
+@param thd MySQL connection
 */
 static
 void
@@ -5644,8 +9257,6 @@ alter_stats_norebuild(
 /*==================*/
 	Alter_inplace_info*		ha_alter_info,
 	ha_innobase_inplace_ctx*	ctx,
-	TABLE*				altered_table,
-	const char*			table_name,
 	THD*				thd)
 {
 	ulint	i;
@@ -5657,7 +9268,19 @@ alter_stats_norebuild(
 		DBUG_VOID_RETURN;
 	}
 
-	/* TODO: This will not drop the (unused) statistics for
+	/* Delete corresponding rows from the stats table. We do this
+	in a separate transaction from trx, because lock waits are not
+	allowed in a data dictionary transaction. (Lock waits are possible
+	on the statistics table, because it is directly accessible by users,
+	not covered by the dict_operation_lock.)
+
+	Because the data dictionary changes were already committed, orphaned
+	rows may be left in the statistics table if the system crashes.
+
+	FIXME: each change to the statistics tables is being committed in a
+	separate transaction, meaning that the operation is not atomic
+
+	FIXME: This will not drop the (unused) statistics for
 	FTS_DOC_ID_INDEX if it was a hidden index, dropped together
 	with the last renamining FULLTEXT index. */
 	for (i = 0; i < ha_alter_info->index_drop_count; i++) {
@@ -5672,13 +9295,38 @@ alter_stats_norebuild(
 		char	errstr[1024];
 
 		if (dict_stats_drop_index(
-			    ctx->new_table->name, key->name,
+			    ctx->new_table->name.m_name, key->name.str,
 			    errstr, sizeof errstr) != DB_SUCCESS) {
 			push_warning(thd,
 				     Sql_condition::WARN_LEVEL_WARN,
 				     ER_LOCK_WAIT_TIMEOUT, errstr);
 		}
 	}
+
+#ifdef MYSQL_RENAME_INDEX
+	for (i = 0; i < ha_alter_info->index_rename_count; i++) {
+		KEY_PAIR*	pair = &ha_alter_info->index_rename_buffer[i];
+		dberr_t		err;
+
+		err = dict_stats_rename_index(ctx->new_table,
+					      pair->old_key->name,
+					      pair->new_key->name);
+
+		if (err != DB_SUCCESS) {
+			push_warning_printf(
+				thd,
+				Sql_condition::WARN_LEVEL_WARN,
+				ER_ERROR_ON_RENAME,
+				"Error renaming an index of table '%s'"
+				" from '%s' to '%s' in InnoDB persistent"
+				" statistics storage: %s",
+				table_name,
+				pair->old_key->name,
+				pair->new_key->name,
+				ut_strerr(err));
+		}
+	}
+#endif /* MYSQL_RENAME_INDEX */
 
 	for (i = 0; i < ctx->num_to_add_index; i++) {
 		dict_index_t*	index = ctx->add_index[i];
@@ -5696,9 +9344,9 @@ alter_stats_norebuild(
 /** Adjust the persistent statistics after rebuilding ALTER TABLE.
 Remove statistics for dropped indexes, add statistics for created indexes
 and rename statistics for renamed indexes.
-@param table		InnoDB table that was rebuilt by ALTER TABLE
-@param table_name	Table name in MySQL
-@param thd		MySQL connection
+@param table InnoDB table that was rebuilt by ALTER TABLE
+@param table_name Table name in MySQL
+@param thd MySQL connection
 */
 static
 void
@@ -5710,22 +9358,35 @@ alter_stats_rebuild(
 {
 	DBUG_ENTER("alter_stats_rebuild");
 
-	if (dict_table_is_discarded(table)
+	if (!table->space
 	    || !dict_stats_is_persistent_enabled(table)) {
 		DBUG_VOID_RETURN;
 	}
 
-	dberr_t	ret;
+#ifndef DBUG_OFF
+	bool	file_unreadable_orig = false;
+#endif /* DBUG_OFF */
 
-	ret = dict_stats_update(table, DICT_STATS_RECALC_PERSISTENT);
+	DBUG_EXECUTE_IF(
+		"ib_rename_index_fail2",
+		file_unreadable_orig = table->file_unreadable;
+		table->file_unreadable = true;
+	);
+
+	dberr_t	ret = dict_stats_update(table, DICT_STATS_RECALC_PERSISTENT);
+
+	DBUG_EXECUTE_IF(
+		"ib_rename_index_fail2",
+		table->file_unreadable = file_unreadable_orig;
+	);
 
 	if (ret != DB_SUCCESS) {
 		push_warning_printf(
 			thd,
 			Sql_condition::WARN_LEVEL_WARN,
 			ER_ALTER_INFO,
-			"Error updating stats for table '%s' "
-			"after table rebuild: %s",
+			"Error updating stats for table '%s'"
+			" after table rebuild: %s",
 			table_name, ut_strerr(ret));
 	}
 
@@ -5736,7 +9397,7 @@ alter_stats_rebuild(
 # define DBUG_INJECT_CRASH(prefix, count)			\
 do {								\
 	char buf[32];						\
-	ut_snprintf(buf, sizeof buf, prefix "_%u", count);	\
+	snprintf(buf, sizeof buf, prefix "_%u", count);	\
 	DBUG_EXECUTE_IF(buf, DBUG_SUICIDE(););			\
 } while (0)
 #else
@@ -5750,14 +9411,14 @@ during this operation will be the same as for
 inplace_alter_table() and thus might be higher than during
 prepare_inplace_alter_table(). (E.g concurrent writes were
 blocked during prepare, but might not be during commit).
-@param altered_table	TABLE object for new version of table.
-@param ha_alter_info	Structure describing changes to be done
+@param altered_table TABLE object for new version of table.
+@param ha_alter_info Structure describing changes to be done
 by ALTER TABLE and holding data used during in-place alter.
-@param commit		true => Commit, false => Rollback.
-@retval true		Failure
-@retval false		Success
+@param commit true => Commit, false => Rollback.
+@retval true Failure
+@retval false Success
 */
-UNIV_INTERN
+
 bool
 ha_innobase::commit_inplace_alter_table(
 /*====================================*/
@@ -5765,32 +9426,40 @@ ha_innobase::commit_inplace_alter_table(
 	Alter_inplace_info*	ha_alter_info,
 	bool			commit)
 {
-	dberr_t				error;
-	ha_innobase_inplace_ctx*	ctx0
-		= static_cast<ha_innobase_inplace_ctx*>
+	dberr_t	error;
+	ha_innobase_inplace_ctx*ctx0;
+	struct mtr_buf_copy_t	logs;
+
+	ctx0 = static_cast<ha_innobase_inplace_ctx*>
 		(ha_alter_info->handler_ctx);
+
 #ifndef DBUG_OFF
-	uint				crash_inject_count	= 1;
-	uint				crash_fail_inject_count	= 1;
-	uint				failure_inject_count	= 1;
-#endif
+	uint	crash_inject_count	= 1;
+	uint	crash_fail_inject_count	= 1;
+	uint	failure_inject_count	= 1;
+#endif /* DBUG_OFF */
 
 	DBUG_ENTER("commit_inplace_alter_table");
 	DBUG_ASSERT(!srv_read_only_mode);
-	DBUG_ASSERT(!ctx0 || ctx0->prebuilt == prebuilt);
-	DBUG_ASSERT(!ctx0 || ctx0->old_table == prebuilt->table);
+	DBUG_ASSERT(!ctx0 || ctx0->prebuilt == m_prebuilt);
+	DBUG_ASSERT(!ctx0 || ctx0->old_table == m_prebuilt->table);
 
 	DEBUG_SYNC_C("innodb_commit_inplace_alter_table_enter");
 
 	DEBUG_SYNC_C("innodb_commit_inplace_alter_table_wait");
+
+	if (ctx0 != NULL && ctx0->m_stage != NULL) {
+		ctx0->m_stage->begin_phase_end();
+	}
 
 	if (!commit) {
 		/* A rollback is being requested. So far we may at
 		most have created some indexes. If any indexes were to
 		be dropped, they would actually be dropped in this
 		method if commit=true. */
-		DBUG_RETURN(rollback_inplace_alter_table(
-				    ha_alter_info, table, prebuilt));
+		const bool	ret = rollback_inplace_alter_table(
+			ha_alter_info, table, m_prebuilt);
+		DBUG_RETURN(ret);
 	}
 
 	if (!(ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE)) {
@@ -5814,22 +9483,22 @@ ha_innobase::commit_inplace_alter_table(
 	}
 
 	DBUG_ASSERT(ctx0 == ctx_array[0]);
-	ut_ad(prebuilt->table == ctx0->old_table);
+	ut_ad(m_prebuilt->table == ctx0->old_table);
 	ha_alter_info->group_commit_ctx = NULL;
 
-	trx_start_if_not_started_xa(prebuilt->trx);
+	trx_start_if_not_started_xa(m_prebuilt->trx, true);
 
 	for (inplace_alter_handler_ctx** pctx = ctx_array; *pctx; pctx++) {
 		ha_innobase_inplace_ctx*	ctx
 			= static_cast<ha_innobase_inplace_ctx*>(*pctx);
-		DBUG_ASSERT(ctx->prebuilt->trx == prebuilt->trx);
+		DBUG_ASSERT(ctx->prebuilt->trx == m_prebuilt->trx);
 
 		/* If decryption failed for old table or new table
 		fail here. */
-		if ((ctx->old_table->file_unreadable &&
-		     fil_space_get(ctx->old_table->space) != NULL)||
-		    (ctx->new_table->file_unreadable &&
-		     fil_space_get(ctx->new_table->space) != NULL)) {
+		if ((!ctx->old_table->is_readable()
+		     && ctx->old_table->space)
+		    || (!ctx->new_table->is_readable()
+			&& ctx->new_table->space)) {
 			String str;
 			const char* engine= table_type();
 			get_error_message(HA_ERR_DECRYPTION_FAILED, &str);
@@ -5846,7 +9515,7 @@ ha_innobase::commit_inplace_alter_table(
 		holding InnoDB locks only, not MySQL locks. */
 
 		error = row_merge_lock_table(
-			prebuilt->trx, ctx->old_table, LOCK_X);
+			m_prebuilt->trx, ctx->old_table, LOCK_X);
 
 		if (error != DB_SUCCESS) {
 			my_error_innodb(
@@ -5855,7 +9524,7 @@ ha_innobase::commit_inplace_alter_table(
 		}
 	}
 
-	DEBUG_SYNC(user_thd, "innodb_alter_commit_after_lock_table");
+	DEBUG_SYNC(m_user_thd, "innodb_alter_commit_after_lock_table");
 
 	const bool	new_clustered	= ctx0->need_rebuild();
 	trx_t*		trx		= ctx0->trx;
@@ -5884,13 +9553,15 @@ ha_innobase::commit_inplace_alter_table(
 
 	if (!trx) {
 		DBUG_ASSERT(!new_clustered);
-		trx = innobase_trx_allocate(user_thd);
+		trx = innobase_trx_allocate(m_user_thd);
 	}
 
 	trx_start_for_ddl(trx, TRX_DICT_OP_INDEX);
 	/* Latch the InnoDB data dictionary exclusively so that no deadlocks
 	or lock waits can happen in it during the data dictionary operation. */
 	row_mysql_lock_data_dictionary(trx);
+
+	ut_ad(log_append_on_checkpoint(NULL) == NULL);
 
 	/* Prevent the background statistics collection from accessing
 	the tables. */
@@ -5951,9 +9622,8 @@ ha_innobase::commit_inplace_alter_table(
 		if (retry_count < 100) {
 			retry_count++;
 		} else {
-			ib_logf(IB_LOG_LEVEL_INFO,
-				"Drop index waiting for background sync"
-				" to finish");
+			ib::info() << "Drop index waiting for background sync"
+				" to finish";
 			retry_count = 0;
 		}
 
@@ -5970,17 +9640,13 @@ ha_innobase::commit_inplace_alter_table(
 
 		DBUG_ASSERT(new_clustered == ctx->need_rebuild());
 
-		if (commit_get_autoinc(ha_alter_info, ctx, altered_table,
-			table)) {
-			fail = true;
-			my_error(ER_TABLESPACE_DISCARDED, MYF(0),
-				 table->s->table_name.str);
-			goto rollback_trx;
-		}
+		fail = commit_set_autoinc(ha_alter_info, ctx, altered_table,
+					  table);
 
-		if (ctx->need_rebuild()) {
+		if (fail) {
+		} else if (ctx->need_rebuild()) {
 			ctx->tmp_name = dict_mem_create_temporary_tablename(
-				ctx->heap, ctx->new_table->name,
+				ctx->heap, ctx->new_table->name.m_name,
 				ctx->new_table->id);
 
 			fail = commit_try_rebuild(
@@ -5988,7 +9654,7 @@ ha_innobase::commit_inplace_alter_table(
 				trx, table_share->table_name.str);
 		} else {
 			fail = commit_try_norebuild(
-				ha_alter_info, ctx, table, trx,
+				ha_alter_info, ctx, altered_table, table, trx,
 				table_share->table_name.str);
 		}
 		DBUG_INJECT_CRASH("ib_commit_inplace_crash",
@@ -5997,8 +9663,11 @@ ha_innobase::commit_inplace_alter_table(
 		{
 			/* Generate a dynamic dbug text. */
 			char buf[32];
-			ut_snprintf(buf, sizeof buf, "ib_commit_inplace_fail_%u",
+
+			snprintf(buf, sizeof buf,
+				    "ib_commit_inplace_fail_%u",
 				    failure_inject_count++);
+
 			DBUG_EXECUTE_IF(buf,
 					my_error(ER_INTERNAL_ERROR, MYF(0),
 						 "Injected error!");
@@ -6008,12 +9677,17 @@ ha_innobase::commit_inplace_alter_table(
 #endif
 	}
 
-rollback_trx:
-
 	/* Commit or roll back the changes to the data dictionary. */
+	DEBUG_SYNC(m_user_thd, "innodb_alter_inplace_before_commit");
 
 	if (fail) {
 		trx_rollback_for_mysql(trx);
+		for (inplace_alter_handler_ctx** pctx = ctx_array;
+		     *pctx; pctx++) {
+			ha_innobase_inplace_ctx*	ctx
+				= static_cast<ha_innobase_inplace_ctx*>(*pctx);
+			ctx->rollback_instant();
+		}
 	} else if (!new_clustered) {
 		trx_commit_for_mysql(trx);
 	} else {
@@ -6037,7 +9711,7 @@ rollback_trx:
 				/* Out of memory or a problem will occur
 				when renaming files. */
 				fail = true;
-				my_error_innodb(error, ctx->old_table->name,
+				my_error_innodb(error, ctx->old_table->name.m_name,
 						ctx->old_table->flags);
 			}
 			DBUG_INJECT_CRASH("ib_commit_inplace_crash",
@@ -6055,10 +9729,30 @@ rollback_trx:
 		ut_ad(!trx->fts_trx);
 
 		if (fail) {
-			mtr_set_log_mode(&mtr, MTR_LOG_NO_REDO);
+			mtr.set_log_mode(MTR_LOG_NO_REDO);
 			mtr_commit(&mtr);
 			trx_rollback_for_mysql(trx);
 		} else {
+			ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE));
+			ut_ad(trx->has_logged());
+
+			if (mtr.get_log()->size() > 0) {
+				ut_ad(*mtr.get_log()->front()->begin()
+				      == MLOG_FILE_RENAME2);
+
+				/* Append the MLOG_FILE_RENAME2
+				records on checkpoint, as a separate
+				mini-transaction before the one that
+				contains the MLOG_CHECKPOINT marker. */
+				static const byte	multi
+					= MLOG_MULTI_REC_END;
+
+				mtr.get_log()->for_each_block(logs);
+				logs.m_buf.push(&multi, sizeof multi);
+
+				log_append_on_checkpoint(&logs.m_buf);
+			}
+
 			/* The following call commits the
 			mini-transaction, making the data dictionary
 			transaction committed at mtr.end_lsn. The
@@ -6066,8 +9760,6 @@ rollback_trx:
 			log_buffer_flush_to_disk() returns. In the
 			logical sense the commit in the file-based
 			data structures happens here. */
-			ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE));
-			ut_ad(trx->insert_undo || trx->update_undo);
 
 			trx_commit_low(trx, &mtr);
 		}
@@ -6077,6 +9769,7 @@ rollback_trx:
 		and the .frm files must be swapped manually by
 		the administrator. No loss of data. */
 		DBUG_EXECUTE_IF("innodb_alter_commit_crash_after_commit",
+				log_make_checkpoint_at(LSN_MAX, TRUE);
 				log_buffer_flush_to_disk();
 				DBUG_SUICIDE(););
 	}
@@ -6092,7 +9785,6 @@ rollback_trx:
 	update the in-memory structures, close some handles, release
 	temporary files, and (unless we rolled back) update persistent
 	statistics. */
-
 	for (inplace_alter_handler_ctx** pctx = ctx_array;
 	     *pctx; pctx++) {
 		ha_innobase_inplace_ctx*	ctx
@@ -6106,20 +9798,10 @@ rollback_trx:
 
 		if (fail) {
 			if (new_clustered) {
-				dict_table_close(ctx->new_table,
-						 TRUE, FALSE);
-
-#if defined UNIV_DEBUG || defined UNIV_DDL_DEBUG
-				/* Nobody should have initialized the
-				stats of the newly created table
-				yet. When this is the case, we know
-				that it has not been added for
-				background stats gathering. */
-				ut_a(!ctx->new_table->stat_initialized);
-#endif /* UNIV_DEBUG || UNIV_DDL_DEBUG */
-
 				trx_start_for_ddl(trx, TRX_DICT_OP_TABLE);
-				row_merge_drop_table(trx, ctx->new_table);
+
+				dict_table_close_and_drop(trx, ctx->new_table);
+
 				trx_commit_for_mysql(trx);
 				ctx->new_table = NULL;
 			} else {
@@ -6154,15 +9836,18 @@ rollback_trx:
 			implemented yet. */
 			ctx->old_table->to_be_dropped = true;
 
+			DBUG_PRINT("to_be_dropped",
+				   ("table: %s", ctx->old_table->name.m_name));
+
 			/* Rename the tablespace files. */
 			commit_cache_rebuild(ctx);
 
-			error = innobase_update_foreign_cache(ctx, user_thd);
+			error = innobase_update_foreign_cache(ctx, m_user_thd);
 			if (error != DB_SUCCESS) {
 				goto foreign_fail;
 			}
 		} else {
-			error = innobase_update_foreign_cache(ctx, user_thd);
+			error = innobase_update_foreign_cache(ctx, m_user_thd);
 
 			if (error != DB_SUCCESS) {
 foreign_fail:
@@ -6172,34 +9857,26 @@ foreign_fail:
 				kill and restart the server,
 				but the *.frm file has not
 				been replaced yet. */
-				my_error(ER_CANNOT_ADD_FOREIGN,
-					 MYF(0));
-				sql_print_error(
-					"InnoDB: dict_load_foreigns()"
-					" returned %u for %s",
-					(unsigned) error,
-					thd_query_string(user_thd)
-					->str);
-				ut_ad(0);
+				push_warning_printf(
+					m_user_thd,
+					Sql_condition::WARN_LEVEL_WARN,
+					ER_ALTER_INFO,
+					"InnoDB: Could not add foreign"
+					" key constraints.");
 			} else {
-				if (!commit_cache_norebuild(
-					    ctx, table, trx)) {
-					ut_a(!prebuilt->trx->check_foreigns);
-				}
-
-				innobase_rename_columns_cache(
-					ha_alter_info, table,
-					ctx->new_table);
+				commit_cache_norebuild(ha_alter_info, ctx,
+						       table, trx);
 			}
 		}
+
+		dict_mem_table_free_foreign_vcol_set(ctx->new_table);
+		dict_mem_table_fill_foreign_vcol_set(ctx->new_table);
+
 		DBUG_INJECT_CRASH("ib_commit_inplace_crash",
 				  crash_inject_count++);
 	}
 
-	/* Invalidate the index translation table. In partitioned
-	tables, there is one TABLE_SHARE (and also only one TABLE)
-	covering all partitions. */
-	share->idx_trans_tbl.index_count = 0;
+	log_append_on_checkpoint(NULL);
 
 	/* Tell the InnoDB server that there might be work for
 	utility threads: */
@@ -6229,7 +9906,7 @@ foreign_fail:
 
 		row_mysql_unlock_data_dictionary(trx);
 		if (trx != ctx0->trx) {
-			trx_free_for_mysql(trx);
+			trx_free(trx);
 		}
 		DBUG_RETURN(true);
 	}
@@ -6248,13 +9925,56 @@ foreign_fail:
 			= static_cast<ha_innobase_inplace_ctx*>(*pctx);
 
 		if (ctx->trx) {
-			trx_free_for_mysql(ctx->trx);
-			ctx->trx = NULL;
+			trx_free(ctx->trx);
 		}
 	}
 
+	if (ctx0->num_to_drop_vcol || ctx0->num_to_add_vcol) {
+		DBUG_ASSERT(ctx0->old_table->get_ref_count() == 1);
+
+		trx_commit_for_mysql(m_prebuilt->trx);
+#ifdef BTR_CUR_HASH_ADAPT
+		if (btr_search_enabled) {
+			btr_search_disable(false);
+			btr_search_enable();
+		}
+#endif /* BTR_CUR_HASH_ADAPT */
+
+		char	tb_name[FN_REFLEN];
+		ut_strcpy(tb_name, m_prebuilt->table->name.m_name);
+
+		tb_name[strlen(m_prebuilt->table->name.m_name)] = 0;
+
+		dict_table_close(m_prebuilt->table, true, false);
+		dict_table_remove_from_cache(m_prebuilt->table);
+		m_prebuilt->table = dict_table_open_on_name(
+			tb_name, TRUE, TRUE, DICT_ERR_IGNORE_NONE);
+
+		/* Drop outdated table stats. */
+		char	errstr[1024];
+		if (dict_stats_drop_table(
+			    m_prebuilt->table->name.m_name,
+			    errstr, sizeof(errstr))
+		    != DB_SUCCESS) {
+			push_warning_printf(
+				m_user_thd,
+				Sql_condition::WARN_LEVEL_WARN,
+				ER_ALTER_INFO,
+				"Deleting persistent statistics"
+				" for table '%s' in"
+				" InnoDB failed: %s",
+				table->s->table_name.str,
+				errstr);
+		}
+
+		row_mysql_unlock_data_dictionary(trx);
+		trx_free(trx);
+		MONITOR_ATOMIC_DEC(MONITOR_PENDING_ALTER_TABLE);
+		DBUG_RETURN(false);
+	}
+
 	/* Release the table locks. */
-	trx_commit_for_mysql(prebuilt->trx);
+	trx_commit_for_mysql(m_prebuilt->trx);
 
 	DBUG_EXECUTE_IF("ib_ddl_crash_after_user_trx_commit", DBUG_SUICIDE(););
 
@@ -6264,14 +9984,6 @@ foreign_fail:
 			= static_cast<ha_innobase_inplace_ctx*>
 			(*pctx);
 		DBUG_ASSERT(ctx->need_rebuild() == new_clustered);
-
-		if (altered_table->found_next_number_field) {
-			dict_table_t* t = ctx->new_table;
-
-			dict_table_autoinc_lock(t);
-			dict_table_autoinc_initialize(t, ctx->max_autoinc);
-			dict_table_autoinc_unlock(t);
-		}
 
 		/* Publish the created fulltext index, if any.
 		Note that a fulltext index can be created without
@@ -6315,15 +10027,20 @@ foreign_fail:
 
 			char	errstr[1024];
 
-			DBUG_ASSERT(0 == strcmp(ctx->old_table->name,
+			DBUG_ASSERT(0 == strcmp(ctx->old_table->name.m_name,
 						ctx->tmp_name));
 
+			DBUG_EXECUTE_IF(
+				"ib_rename_index_fail3",
+				DBUG_SET("+d,innodb_report_deadlock");
+			);
+
 			if (dict_stats_drop_table(
-				    ctx->new_table->name,
+				    ctx->new_table->name.m_name,
 				    errstr, sizeof(errstr))
 			    != DB_SUCCESS) {
 				push_warning_printf(
-					user_thd,
+					m_user_thd,
 					Sql_condition::WARN_LEVEL_WARN,
 					ER_ALTER_INFO,
 					"Deleting persistent statistics"
@@ -6333,10 +10050,19 @@ foreign_fail:
 					errstr);
 			}
 
+			DBUG_EXECUTE_IF(
+				"ib_rename_index_fail3",
+				DBUG_SET("-d,innodb_report_deadlock");
+			);
+
 			DBUG_EXECUTE_IF("ib_ddl_crash_before_commit",
 					DBUG_SUICIDE(););
 
-			trx_t* const	user_trx = prebuilt->trx;
+			ut_ad(m_prebuilt != ctx->prebuilt
+			      || ctx == ctx0);
+			bool update_own_prebuilt =
+				(m_prebuilt == ctx->prebuilt);
+			trx_t* const	user_trx = m_prebuilt->trx;
 
 			row_prebuilt_free(ctx->prebuilt, TRUE);
 
@@ -6346,22 +10072,34 @@ foreign_fail:
 			before this is completed, some orphan tables
 			with ctx->tmp_name may be recovered. */
 			trx_start_for_ddl(trx, TRX_DICT_OP_TABLE);
-			row_merge_drop_table(trx, ctx->old_table);
+			error = row_merge_drop_table(trx, ctx->old_table);
+
+			if (error != DB_SUCCESS) {
+				ib::error() << "Inplace alter table " << ctx->old_table->name
+					    << " dropping copy of the old table failed error "
+					    << error
+					    << ". tmp_name " << (ctx->tmp_name ? ctx->tmp_name : "N/A")
+					    << " new_table " << ctx->new_table->name;
+			}
+
 			trx_commit_for_mysql(trx);
 
 			/* Rebuild the prebuilt object. */
 			ctx->prebuilt = row_create_prebuilt(
 				ctx->new_table, altered_table->s->reclength);
-			trx_start_if_not_started(user_trx);
+			if (update_own_prebuilt) {
+				m_prebuilt = ctx->prebuilt;
+			}
+			trx_start_if_not_started(user_trx, true);
 			user_trx->will_lock++;
-			prebuilt->trx = user_trx;
+			m_prebuilt->trx = user_trx;
 		}
 		DBUG_INJECT_CRASH("ib_commit_inplace_crash",
 				  crash_inject_count++);
 	}
 
 	row_mysql_unlock_data_dictionary(trx);
-	trx_free_for_mysql(trx);
+	trx_free(trx);
 
 	/* TODO: The following code could be executed
 	while allowing concurrent access to the table
@@ -6377,7 +10115,7 @@ foreign_fail:
 
 			alter_stats_rebuild(
 				ctx->new_table, table->s->table_name.str,
-				user_thd);
+				m_user_thd);
 			DBUG_INJECT_CRASH("ib_commit_inplace_crash",
 					  crash_inject_count++);
 		}
@@ -6389,41 +10127,40 @@ foreign_fail:
 				(*pctx);
 			DBUG_ASSERT(!ctx->need_rebuild());
 
-			alter_stats_norebuild(
-				ha_alter_info, ctx, altered_table,
-				table->s->table_name.str, user_thd);
+			alter_stats_norebuild(ha_alter_info, ctx, m_user_thd);
 			DBUG_INJECT_CRASH("ib_commit_inplace_crash",
 					  crash_inject_count++);
 		}
 	}
+
+	innobase_parse_hint_from_comment(
+		m_user_thd, m_prebuilt->table, altered_table->s);
 
 	/* TODO: Also perform DROP TABLE and DROP INDEX after
 	the MDL downgrade. */
 
 #ifndef DBUG_OFF
 	dict_index_t* clust_index = dict_table_get_first_index(
-		prebuilt->table);
+		ctx0->prebuilt->table);
 	DBUG_ASSERT(!clust_index->online_log);
 	DBUG_ASSERT(dict_index_get_online_status(clust_index)
 		    == ONLINE_INDEX_COMPLETE);
 
-	for (dict_index_t* index = dict_table_get_first_index(
-		     prebuilt->table);
+	for (dict_index_t* index = clust_index;
 	     index;
 	     index = dict_table_get_next_index(index)) {
 		DBUG_ASSERT(!index->to_be_dropped);
 	}
 #endif /* DBUG_OFF */
-
 	MONITOR_ATOMIC_DEC(MONITOR_PENDING_ALTER_TABLE);
 	DBUG_RETURN(false);
 }
 
 /**
-@param thd - the session
-@param start_value - the lower bound
-@param max_value - the upper bound (inclusive) */
-UNIV_INTERN
+@param thd the session
+@param start_value the lower bound
+@param max_value the upper bound (inclusive) */
+
 ib_sequence_t::ib_sequence_t(
 	THD*		thd,
 	ulonglong	start_value,
@@ -6460,7 +10197,7 @@ ib_sequence_t::ib_sequence_t(
 /**
 Postfix increment
 @return the next value to insert */
-UNIV_INTERN
+
 ulonglong
 ib_sequence_t::operator++(int) UNIV_NOTHROW
 {

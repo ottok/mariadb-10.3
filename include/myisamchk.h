@@ -1,4 +1,5 @@
 /* Copyright (C) 2006 MySQL AB
+   Copyright (c) 2017, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -16,14 +17,6 @@
 
 /* Definitions needed for myisamchk/mariachk.c */
 
-/*
-  Entries marked as "QQ to be removed" are NOT used to
-  pass check/repair options to xxx_check.c. They are used
-  internally by xxxchk.c or/and ha_xxxx.cc and should NOT
-  be stored together with other flags. They should be removed
-  from the following list to make addition of new flags possible.
-*/
-
 #ifndef _myisamchk_h
 #define _myisamchk_h
 
@@ -32,13 +25,13 @@
   to xxxcheck.c follows:
 */
 
-#define TT_USEFRM               1
-#define TT_FOR_UPGRADE          2
-#define TT_FROM_MYSQL           4
+#define TT_USEFRM               1U
+#define TT_FOR_UPGRADE          2U
+#define TT_FROM_MYSQL           4U
 
 /* Bits set in out_flag */
-#define O_NEW_DATA	2
-#define O_DATA_LOST	4
+#define O_NEW_DATA	2U
+#define O_DATA_LOST	4U
 
 typedef struct st_sort_key_blocks		/* Used when sorting */
 {
@@ -66,6 +59,7 @@ typedef enum
   MI_STATS_METHOD_IGNORE_NULLS
 } enum_handler_stats_method;
 
+struct st_myisam_info;
 
 typedef struct st_handler_check_param
 {
@@ -106,12 +100,13 @@ typedef struct st_handler_check_param
   time_t backup_time;                           /* To sign backup files */
   ulong rec_per_key_part[HA_MAX_KEY_SEG * HA_MAX_POSSIBLE_KEY];
   double new_rec_per_key_part[HA_MAX_KEY_SEG * HA_MAX_POSSIBLE_KEY];
-  uint out_flag, warning_printed, error_printed, note_printed, verbose;
+  uint out_flag, error_printed, verbose;
   uint opt_sort_key, total_files, max_level;
   uint key_cache_block_size, pagecache_block_size;
   int tmpfile_createflag, err_count;
   myf myf_rw;
   uint16 language;
+  my_bool warning_printed, note_printed, wrong_trd_printed;
   my_bool using_global_keycache, opt_lock_memory, opt_follow_links;
   my_bool retry_repair, force_sort, calc_checksum, static_row_size;
   char temp_filename[FN_REFLEN];
@@ -121,6 +116,8 @@ typedef struct st_handler_check_param
   uint stage, max_stage;
   uint progress_counter;             /* How often to call _report_progress() */
   ulonglong progress, max_progress;
+
+  int (*fix_record)(struct st_myisam_info *info, uchar *record, int keynum);
 
   mysql_mutex_t print_msg_mutex;
   my_bool need_print_msg_lock;

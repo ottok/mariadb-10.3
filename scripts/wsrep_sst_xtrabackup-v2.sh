@@ -73,7 +73,7 @@ ssl_cert=""
 ssl_ca=""
 ssl_key=""
 
-if which pv &>/dev/null && pv --help | grep -q FORMAT;then 
+if pv --help 2>/dev/null | grep -q FORMAT;then
     pvopts+=$pvformat
 fi
 pcmd="pv $pvopts"
@@ -252,10 +252,7 @@ get_transfer()
     TSST_PORT=${WSREP_SST_OPT_PORT:-4444}
 
     if [[ $tfmt == 'nc' ]];then
-        if [[ ! -x `which nc` ]];then 
-            wsrep_log_error "nc(netcat) not found in path: $PATH"
-            exit 2
-        fi
+        wsrep_check_programs nc
 
         if [[ $encrypt -eq 2 || $encrypt -eq 3 || $encrypt -eq 4 ]]; then
             wsrep_log_error "******** FATAL ERROR *********************** "
@@ -292,10 +289,7 @@ get_transfer()
     else
         tfmt='socat'
         wsrep_log_info "Using socat as streamer"
-        if [[ ! -x `which socat` ]];then 
-            wsrep_log_error "socat not found in path: $PATH"
-            exit 2
-        fi
+        wsrep_check_programs socat
 
         donor_extra=""
         joiner_extra=""
@@ -421,7 +415,7 @@ get_footprint()
 adjust_progress()
 {
 
-    if [[ ! -x `which pv` ]];then 
+    if ! command -v pv >/dev/null;then
         wsrep_log_error "pv not found in path: $PATH"
         wsrep_log_error "Disabling all progress/rate-limiting"
         pcmd=""
@@ -706,7 +700,7 @@ recv_joiner()
     pushd ${dir} 1>/dev/null
     set +e
 
-    if [[ $tmt -gt 0 && -x `which timeout` ]];then 
+    if [[ $tmt -gt 0 ]] && command -v timeout >/dev/null;then
         if timeout --help | grep -q -- '-k';then 
             ltcmd="timeout -k $(( tmt+10 )) $tmt $tcmd"
         else 
@@ -823,10 +817,7 @@ monitor_process()
 }
 
 
-if [[ ! -x `which $INNOBACKUPEX_BIN` ]];then 
-    wsrep_log_error "innobackupex not in path: $PATH"
-    exit 2
-fi
+wsrep_check_programs "$INNOBACKUPEX_BIN"
 
 # check the version, we require XB-2.4 to ensure that we can pass the
 # datadir via the command-line option
@@ -867,7 +858,7 @@ INNOEXTRA=""
 
 if [[ $ssyslog -eq 1 ]];then 
 
-    if [[ ! -x `which logger` ]];then 
+    if ! command -v logger >/dev/null;then
         wsrep_log_error "logger not in path: $PATH. Ignoring"
     else
 
@@ -1172,7 +1163,7 @@ then
 
             wsrep_log_info "Compressed qpress files found"
 
-            if [[ ! -x `which qpress` ]];then 
+            if ! command -v qpress >/dev/null;then
                 wsrep_log_error "qpress not found in path: $PATH"
                 exit 22
             fi

@@ -32,18 +32,20 @@
 #define MYSQL_CLIENT
 #undef MYSQL_SERVER
 #define TABLE TABLE_CLIENT
+/* This hack is here to avoid adding COMPRESSED data types to libmariadb. */
+#define MYSQL_TYPE_TIME2 MYSQL_TYPE_TIME2,MYSQL_TYPE_BLOB_COMPRESSED=140,MYSQL_TYPE_VARCHAR_COMPRESSED=141
 #include "client_priv.h"
+#undef MYSQL_TYPE_TIME2
 #include <my_time.h>
 #include <sslopt-vars.h>
 /* That one is necessary for defines of OPTION_NO_FOREIGN_KEY_CHECKS etc */
 #include "sql_priv.h"
+#include "sql_basic_types.h"
 #include "log_event.h"
 #include "compat56.h"
 #include "sql_common.h"
 #include "my_dir.h"
 #include <welcome_copyright_notice.h> // ORACLE_WELCOME_COPYRIGHT_NOTICE
-
-
 #include "sql_string.h"   // needed for Rpl_filter
 #include "sql_list.h"     // needed for Rpl_filter
 #include "rpl_filter.h"
@@ -52,16 +54,25 @@
 
 #include <algorithm>
 
+#define my_net_write ma_net_write
+#define net_flush ma_net_flush
+#define cli_safe_read mysql_net_read_packet
+#define my_net_read ma_net_read
+extern "C" unsigned char *mysql_net_store_length(unsigned char *packet, size_t length);
+#define net_store_length mysql_net_store_length
+
 Rpl_filter *binlog_filter= 0;
 
 #define BIN_LOG_HEADER_SIZE	4
 #define PROBE_HEADER_LEN	(EVENT_LEN_OFFSET+4)
 
-
-#define CLIENT_CAPABILITIES	(CLIENT_LONG_PASSWORD | CLIENT_LONG_FLAG | CLIENT_LOCAL_FILES)
-
 /* Needed for Rpl_filter */
 CHARSET_INFO* system_charset_info= &my_charset_utf8_general_ci;
+
+/* Needed for Flashback */
+DYNAMIC_ARRAY binlog_events; // Storing the events output string
+DYNAMIC_ARRAY events_in_stmt; // Storing the events that in one statement
+String stop_event_string; // Storing the STOP_EVENT output string
 
 char server_version[SERVER_VERSION_LENGTH];
 ulong server_id = 0;
@@ -78,7 +89,8 @@ static char *result_file_name= 0;
 static const char *output_prefix= "";
 
 #ifndef DBUG_OFF
-static const char* default_dbug_option = "d:t:o,/tmp/mysqlbinlog.trace";
+static const char *default_dbug_option = "d:t:o,/tmp/mysqlbinlog.trace";
+const char *current_dbug_option= default_dbug_option;
 #endif
 static const char *load_groups[]=
 { "mysqlbinlog", "client", "client-server", "client-mariadb", 0 };
@@ -86,7 +98,7 @@ static const char *load_groups[]=
 static void error(const char *format, ...) ATTRIBUTE_FORMAT(printf, 1, 2);
 static void warning(const char *format, ...) ATTRIBUTE_FORMAT(printf, 1, 2);
 
-static bool one_database=0, to_last_remote_log= 0, disable_log_bin= 0;
+static bool one_database=0, one_table=0, to_last_remote_log= 0, disable_log_bin= 0;
 static bool opt_hexdump= 0, opt_version= 0;
 const char *base64_output_mode_names[]=
 {"NEVER", "AUTO", "ALWAYS", "UNSPEC", "DECODE-ROWS", NullS};
@@ -96,7 +108,10 @@ TYPELIB base64_output_mode_typelib=
 static enum_base64_output_mode opt_base64_output_mode= BASE64_OUTPUT_UNSPEC;
 static char *opt_base64_output_mode_str= NullS;
 static char* database= 0;
+static char* table= 0;
 static my_bool force_opt= 0, short_form= 0, remote_opt= 0;
+static my_bool print_row_count= 0, print_row_event_positions= 0;
+static my_bool print_row_count_used= 0, print_row_event_positions_used= 0;
 static my_bool debug_info_flag, debug_check_flag;
 static my_bool force_if_open_opt= 1;
 static my_bool opt_raw_mode= 0, opt_stop_never= 0;
@@ -128,6 +143,12 @@ static ulonglong rec_count= 0;
 static MYSQL* mysql = NULL;
 static const char* dirname_for_local_load= 0;
 static bool opt_skip_annotate_row_events= 0;
+
+static my_bool opt_flashback;
+#ifdef WHEN_FLASHBACK_REVIEW_READY
+static my_bool opt_flashback_review;
+static char *flashback_review_dbname, *flashback_review_tablename;
+#endif
 
 /**
   Pointer to the Format_description_log_event of the currently active binlog.
@@ -206,14 +227,16 @@ void keep_annotate_event(Annotate_rows_log_event* event)
   annotate_event= event;
 }
 
-void print_annotate_event(PRINT_EVENT_INFO *print_event_info)
+bool print_annotate_event(PRINT_EVENT_INFO *print_event_info)
 {
+  bool error= 0;
   if (annotate_event)
   {
-    annotate_event->print(result_file, print_event_info);
+    error= annotate_event->print(result_file, print_event_info);
     delete annotate_event;  // the event should not be printed more than once
     annotate_event= 0;
   }
+  return error;
 }
 
 static Exit_status dump_local_log_entries(PRINT_EVENT_INFO *, const char*);
@@ -416,7 +439,7 @@ File Load_log_processor::prepare_new_file_for_old_format(Load_log_event *le,
     return -1;
   }
   
-  le->set_fname_outside_temp_buf(filename,len+(uint) strlen(tail));
+  le->set_fname_outside_temp_buf(filename,len+strlen(tail));
   
   return file;
 }
@@ -514,7 +537,7 @@ Exit_status Load_log_processor::process_first_event(const char *bname,
                                                     uint file_id,
                                                     Create_file_log_event *ce)
 {
-  uint full_len= target_dir_name_len + blen + 9 + 9 + 1;
+  size_t full_len= target_dir_name_len + blen + 9 + 9 + 1;
   Exit_status retval= OK_CONTINUE;
   char *fname, *ptr;
   File file;
@@ -560,7 +583,7 @@ Exit_status Load_log_processor::process_first_event(const char *bname,
   }
 
   if (ce)
-    ce->set_fname_outside_temp_buf(fname, (uint) strlen(fname));
+    ce->set_fname_outside_temp_buf(fname, strlen(fname));
 
   if (my_write(file, (uchar*)block, block_len, MYF(MY_WME|MY_NABP)))
   {
@@ -589,7 +612,7 @@ Exit_status Load_log_processor::process_first_event(const char *bname,
 Exit_status  Load_log_processor::process(Create_file_log_event *ce)
 {
   const char *bname= ce->fname + dirname_length(ce->fname);
-  uint blen= ce->fname_len - (bname-ce->fname);
+  size_t blen= ce->fname_len - (bname-ce->fname);
 
   return process_first_event(bname, blen, ce->block, ce->block_len,
                              ce->file_id, ce);
@@ -777,7 +800,7 @@ print_use_stmt(PRINT_EVENT_INFO* pinfo, const Query_log_event *ev)
 static void
 print_skip_replication_statement(PRINT_EVENT_INFO *pinfo, const Log_event *ev)
 {
-  int cur_val;
+  bool cur_val;
 
   cur_val= (ev->flags & LOG_EVENT_SKIP_REPLICATION_F) != 0;
   if (cur_val == pinfo->skip_replication)
@@ -786,6 +809,23 @@ print_skip_replication_statement(PRINT_EVENT_INFO *pinfo, const Log_event *ev)
           cur_val, pinfo->delimiter);
   pinfo->skip_replication= cur_val;
 }
+
+/**
+  Indicates whether the given table should be filtered out,
+  according to the --table=X option.
+
+  @param log_tblname Name of table.
+
+  @return nonzero if the table with the given name should be
+  filtered out, 0 otherwise.
+*/
+static bool shall_skip_table(const char *log_tblname)
+{
+  return one_table &&
+         (log_tblname != NULL) &&
+         strcmp(log_tblname, table);
+}
+
 
 /**
   Prints the given event in base64 format.
@@ -812,8 +852,9 @@ write_event_header_and_base64(Log_event *ev, FILE *result_file,
   DBUG_ENTER("write_event_header_and_base64");
 
   /* Write header and base64 output to cache */
-  ev->print_header(head, print_event_info, FALSE);
-  ev->print_base64(body, print_event_info, FALSE);
+  if (ev->print_header(head, print_event_info, FALSE) ||
+      ev->print_base64(body, print_event_info, FALSE))
+    DBUG_RETURN(ERROR_STOP);
 
   /* Read data from cache and write to result file */
   if (copy_event_cache_to_file_and_reinit(head, result_file) ||
@@ -835,24 +876,20 @@ static bool print_base64(PRINT_EVENT_INFO *print_event_info, Log_event *ev)
     passed --short-form, because --short-form disables printing
     row events.
   */
+
   if (!print_event_info->printed_fd_event && !short_form &&
-      opt_base64_output_mode != BASE64_OUTPUT_DECODE_ROWS)
+      opt_base64_output_mode != BASE64_OUTPUT_DECODE_ROWS &&
+      opt_base64_output_mode != BASE64_OUTPUT_NEVER)
   {
     const char* type_str= ev->get_type_str();
-    if (opt_base64_output_mode == BASE64_OUTPUT_NEVER)
-      error("--base64-output=never specified, but binlog contains a "
-            "%s event which must be printed in base64.",
-            type_str);
-    else
-      error("malformed binlog: it does not contain any "
-            "Format_description_log_event. I now found a %s event, which "
+    error("malformed binlog: it does not contain any "
+            "Format_description_log_event. Found a %s event, which "
             "is not safe to process without a "
             "Format_description_log_event.",
             type_str);
     return 1;
   }
-  ev->print(result_file, print_event_info);
-  return print_event_info->head_cache.error == -1;
+  return ev->print(result_file, print_event_info);
 }
 
 
@@ -862,6 +899,27 @@ static bool print_row_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
   Table_map_log_event *ignored_map= 
     print_event_info->m_table_map_ignored.get_table(table_id);
   bool skip_event= (ignored_map != NULL);
+  char ll_buff[21];
+  bool result= 0;
+
+  if (opt_flashback)
+  {
+    Rows_log_event *e= (Rows_log_event*) ev;
+    // The last Row_log_event will be the first event in Flashback
+    if (is_stmt_end)
+      e->clear_flags(Rows_log_event::STMT_END_F);
+    // The first Row_log_event will be the last event in Flashback
+    if (events_in_stmt.elements == 0)
+      e->set_flags(Rows_log_event::STMT_END_F);
+    // Update the temp_buf
+    e->update_flags();
+
+    if (insert_dynamic(&events_in_stmt, (uchar *) &ev))
+    {
+      error("Out of memory: can't allocate memory to store the flashback events.");
+      exit(1);
+    }
+  }
 
   /* 
      end of statement check:
@@ -914,7 +972,40 @@ static bool print_row_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
   if (skip_event)
     return 0;
 
-  return print_base64(print_event_info, ev);
+  if (!opt_flashback)
+    result= print_base64(print_event_info, ev);
+  else
+  {
+    if (is_stmt_end)
+    {
+      Log_event *e= NULL;
+
+      // Print the row_event from the last one to the first one
+      for (uint i= events_in_stmt.elements; i > 0; --i)
+      {
+        e= *(dynamic_element(&events_in_stmt, i - 1, Log_event**));
+        result= result || print_base64(print_event_info, e);
+      }
+      // Copy all output into the Log_event
+      ev->output_buf.copy(e->output_buf);
+      // Delete Log_event
+      for (uint i= 0; i < events_in_stmt.elements-1; ++i)
+      {
+        e= *(dynamic_element(&events_in_stmt, i, Log_event**));
+        delete e;
+      }
+      reset_dynamic(&events_in_stmt);
+    }
+  }
+
+  if (is_stmt_end && !result)
+  {
+    if (print_event_info->print_row_count)
+      fprintf(result_file, "# Number of rows: %s\n",
+              llstr(print_event_info->row_events, ll_buff));
+    print_event_info->row_events= 0;
+  }
+  return result;
 }
 
 
@@ -945,9 +1036,14 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
   Log_event_type ev_type= ev->get_type_code();
   my_bool destroy_evt= TRUE;
   DBUG_ENTER("process_event");
-  print_event_info->short_form= short_form;
   Exit_status retval= OK_CONTINUE;
   IO_CACHE *const head= &print_event_info->head_cache;
+
+  /* Bypass flashback settings to event */
+  ev->is_flashback= opt_flashback;
+#ifdef WHEN_FLASHBACK_REVIEW_READY
+  ev->need_flashback_review= opt_flashback_review;
+#endif
 
   /*
     Format events are not concerned by --offset and such, we always need to
@@ -985,7 +1081,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       retval= OK_STOP;
       goto end;
     }
-    if (!short_form)
+    if (print_row_event_positions)
       fprintf(result_file, "# at %s\n",llstr(pos,ll_buff));
 
     if (!opt_hexdump)
@@ -999,6 +1095,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
 
     switch (ev_type) {
     case QUERY_EVENT:
+    case QUERY_COMPRESSED_EVENT:
     {
       Query_log_event *qe= (Query_log_event*)ev;
       if (!qe->is_trans_keyword())
@@ -1025,7 +1122,8 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       else
       {
         print_skip_replication_statement(print_event_info, ev);
-        ev->print(result_file, print_event_info);
+        if (ev->print(result_file, print_event_info))
+          goto err;
       }
       if (head->error == -1)
         goto err;
@@ -1060,8 +1158,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       else
       {
         print_skip_replication_statement(print_event_info, ev);
-        ce->print(result_file, print_event_info, TRUE);
-        if (head->error == -1)
+        if (ce->print(result_file, print_event_info, TRUE))
           goto err;
       }
       // If this binlog is not 3.23 ; why this test??
@@ -1084,8 +1181,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
         the subsequent call load_processor.process fails, because the
         output of Append_block_log_event::print is only a comment.
       */
-      ev->print(result_file, print_event_info);
-      if (head->error == -1)
+      if (ev->print(result_file, print_event_info))
         goto err;
       if ((retval= load_processor.process((Append_block_log_event*) ev)) !=
           OK_CONTINUE)
@@ -1094,8 +1190,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
 
     case EXEC_LOAD_EVENT:
     {
-      ev->print(result_file, print_event_info);
-      if (head->error == -1)
+      if (ev->print(result_file, print_event_info))
         goto err;
       Execute_load_log_event *exv= (Execute_load_log_event*)ev;
       Create_file_log_event *ce= load_processor.grab_event(exv->file_id);
@@ -1106,15 +1201,16 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       */
       if (ce)
       {
+        bool error;
         /*
           We must not convert earlier, since the file is used by
           my_open() in Load_log_processor::append().
         */
         convert_path_to_forward_slashes((char*) ce->fname);
-	ce->print(result_file, print_event_info, TRUE);
+	error= ce->print(result_file, print_event_info, TRUE);
 	my_free((void*)ce->fname);
 	delete ce;
-        if (head->error == -1)
+        if (error)
           goto err;
       }
       else
@@ -1125,10 +1221,10 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
     case FORMAT_DESCRIPTION_EVENT:
       delete glob_description_event;
       glob_description_event= (Format_description_log_event*) ev;
+      destroy_evt= 0;
       print_event_info->common_header_len=
         glob_description_event->common_header_len;
-      ev->print(result_file, print_event_info);
-      if (head->error == -1)
+      if (ev->print(result_file, print_event_info))
         goto err;
       if (!remote_opt)
       {
@@ -1158,8 +1254,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       }
       break;
     case BEGIN_LOAD_QUERY_EVENT:
-      ev->print(result_file, print_event_info);
-      if (head->error == -1)
+      if (ev->print(result_file, print_event_info))
         goto err;
       if ((retval= load_processor.process((Begin_load_query_log_event*) ev)) !=
           OK_CONTINUE)
@@ -1177,11 +1272,9 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
         {
           convert_path_to_forward_slashes(fname);
           print_skip_replication_statement(print_event_info, ev);
-          exlq->print(result_file, print_event_info, fname);
-          if (head->error == -1)
+          if (exlq->print(result_file, print_event_info, fname))
           {
-            if (fname)
-              my_free(fname);
+            my_free(fname);
             goto err;
           }
         }
@@ -1189,9 +1282,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
           warning("Ignoring Execute_load_query since there is no "
                   "Begin_load_query event for file_id: %u", exlq->file_id);
       }
-
-      if (fname)
-	my_free(fname);
+      my_free(fname);
       break;
     }
     case ANNOTATE_ROWS_EVENT:
@@ -1210,18 +1301,135 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
     case TABLE_MAP_EVENT:
     {
       Table_map_log_event *map= ((Table_map_log_event *)ev);
-      if (shall_skip_database(map->get_db_name()))
+      if (shall_skip_database(map->get_db_name()) ||
+          shall_skip_table(map->get_table_name()))
       {
         print_event_info->m_table_map_ignored.set_table(map->get_table_id(), map);
         destroy_evt= FALSE;
         goto end;
       }
+#ifdef WHEN_FLASHBACK_REVIEW_READY
+      /* Create review table for Flashback */
+      if (opt_flashback_review)
+      {
+        // Check if the table was already created?
+        Table_map_log_event *exist_table;
+        exist_table= print_event_info->m_table_map.get_table(map->get_table_id());
+
+        if (!exist_table)
+        {
+
+          MYSQL *conn;
+          MYSQL_RES *res;
+          MYSQL_ROW row;
+          char tmp_sql[8096];
+          int  tmp_sql_offset;
+
+          conn = mysql_init(NULL);
+          if (!mysql_real_connect(conn, host, user, pass,
+                map->get_db_name(), port, sock, 0))
+          {
+            fprintf(stderr, "%s\n", mysql_error(conn));
+            exit(1);
+          }
+
+          if (mysql_query(conn, "SET group_concat_max_len=10000;"))
+          {
+            fprintf(stderr, "%s\n", mysql_error(conn));
+            exit(1);
+          }
+
+          memset(tmp_sql, 0, sizeof(tmp_sql));
+          sprintf(tmp_sql, " "
+                  "SELECT Group_concat(cols) "
+                  "FROM   (SELECT 'op_type char(1)' cols "
+                  "  UNION ALL "
+                  "  SELECT Concat('`', column_name, '_old` ', column_type, ' ', "
+                  "    IF(character_set_name IS NOT NULL, "
+                  "      Concat('character set ', character_set_name, ' '), ' '), "
+                  "    IF(collation_name IS NOT NULL, "
+                  "      Concat('collate ', collation_name, ' '), ' ')) cols "
+                  "  FROM   information_schema.columns "
+                  "  WHERE  table_schema = '%s' "
+                  "  AND table_name = '%s' "
+                  "  UNION ALL "
+                  "  SELECT Concat('`', column_name, '_new` ', column_type, ' ', "
+                  "    IF(character_set_name IS NOT NULL, "
+                  "      Concat('character set ', character_set_name, ' '), ' '), "
+                  "    IF(collation_name IS NOT NULL, "
+                  "      Concat('collate ', collation_name, ' '), ' ')) cols "
+                  "  FROM   information_schema.columns "
+                  "  WHERE  table_schema = '%s' "
+                  "  AND table_name = '%s') tmp;",
+            map->get_db_name(), map->get_table_name(),
+            map->get_db_name(), map->get_table_name());
+
+          if (mysql_query(conn, tmp_sql))
+          {
+            fprintf(stderr, "%s\n", mysql_error(conn));
+            exit(1);
+          }
+          res = mysql_use_result(conn);
+          if ((row = mysql_fetch_row(res)) != NULL)  // only one row
+          {
+            if (flashback_review_dbname)
+            {
+              ev->set_flashback_review_dbname(flashback_review_dbname);
+            }
+            else
+            {
+              ev->set_flashback_review_dbname(map->get_db_name());
+            }
+            if (flashback_review_tablename)
+            {
+              ev->set_flashback_review_tablename(flashback_review_tablename);
+            }
+            else
+            {
+              memset(tmp_sql, 0, sizeof(tmp_sql));
+              sprintf(tmp_sql, "__%s", map->get_table_name());
+              ev->set_flashback_review_tablename(tmp_sql);
+            }
+            memset(tmp_sql, 0, sizeof(tmp_sql));
+            tmp_sql_offset= sprintf(tmp_sql, "CREATE TABLE IF NOT EXISTS");
+            tmp_sql_offset+= sprintf(tmp_sql + tmp_sql_offset, " `%s`.`%s` (%s) %s",
+                                     ev->get_flashback_review_dbname(),
+                                     ev->get_flashback_review_tablename(),
+                                     row[0],
+                                     print_event_info->delimiter);
+          }
+          fprintf(result_file, "%s\n", tmp_sql);
+          mysql_free_result(res);
+          mysql_close(conn);
+        }
+        else
+        {
+          char tmp_str[128];
+
+          if (flashback_review_dbname)
+            ev->set_flashback_review_dbname(flashback_review_dbname);
+          else
+            ev->set_flashback_review_dbname(map->get_db_name());
+
+          if (flashback_review_tablename)
+            ev->set_flashback_review_tablename(flashback_review_tablename);
+          else
+          {
+            memset(tmp_str, 0, sizeof(tmp_str));
+            sprintf(tmp_str, "__%s", map->get_table_name());
+            ev->set_flashback_review_tablename(tmp_str);
+          }
+        }
+      }
+#endif
+
       /*
         The Table map is to be printed, so it's just the time when we may
         print the kept Annotate event (if there is any).
         print_annotate_event() also deletes the kept Annotate event.
       */
-      print_annotate_event(print_event_info);
+      if (print_annotate_event(print_event_info))
+        goto err;
 
       size_t len_to= 0;
       const char* db_to= binlog_filter->get_rewrite_db(map->get_db_name(), &len_to);
@@ -1232,6 +1440,8 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       }
       if (print_base64(print_event_info, ev))
         goto err;
+      if (opt_flashback)
+        reset_dynamic(&events_in_stmt);
       break;
     }
     case WRITE_ROWS_EVENT:
@@ -1240,11 +1450,28 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
     case WRITE_ROWS_EVENT_V1:
     case UPDATE_ROWS_EVENT_V1:
     case DELETE_ROWS_EVENT_V1:
+    case WRITE_ROWS_COMPRESSED_EVENT:
+    case DELETE_ROWS_COMPRESSED_EVENT:
+    case UPDATE_ROWS_COMPRESSED_EVENT:
+    case WRITE_ROWS_COMPRESSED_EVENT_V1:
+    case UPDATE_ROWS_COMPRESSED_EVENT_V1:
+    case DELETE_ROWS_COMPRESSED_EVENT_V1:
     {
       Rows_log_event *e= (Rows_log_event*) ev;
+      bool is_stmt_end= e->get_flags(Rows_log_event::STMT_END_F);
+      if (!print_event_info->found_row_event)
+      {
+        print_event_info->found_row_event= 1;
+        print_event_info->row_events= 0;
+      }
       if (print_row_event(print_event_info, ev, e->get_table_id(),
                           e->get_flags(Rows_log_event::STMT_END_F)))
         goto err;
+      DBUG_PRINT("info", ("is_stmt_end: %d", (int) is_stmt_end));
+      if (is_stmt_end)
+        print_event_info->found_row_event= 0;
+      else if (opt_flashback)
+        destroy_evt= FALSE;
       break;
     }
     case PRE_GA_WRITE_ROWS_EVENT:
@@ -1252,9 +1479,13 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
     case PRE_GA_UPDATE_ROWS_EVENT:
     {
       Old_rows_log_event *e= (Old_rows_log_event*) ev;
+      bool is_stmt_end= e->get_flags(Rows_log_event::STMT_END_F);
       if (print_row_event(print_event_info, ev, e->get_table_id(),
                           e->get_flags(Old_rows_log_event::STMT_END_F)))
         goto err;
+      DBUG_PRINT("info", ("is_stmt_end: %d", (int) is_stmt_end));
+      if (!is_stmt_end && opt_flashback)
+        destroy_evt= FALSE;
       break;
     }
     case START_ENCRYPTION_EVENT:
@@ -1262,8 +1493,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       /* fall through */
     default:
       print_skip_replication_statement(print_event_info, ev);
-      ev->print(result_file, print_event_info);
-      if (head->error == -1)
+      if (ev->print(result_file, print_event_info))
         goto err;
     }
   }
@@ -1274,7 +1504,8 @@ err:
   retval= ERROR_STOP;
 end:
   rec_count++;
-  
+
+  DBUG_PRINT("info", ("end event processing"));
   /*
     Destroy the log_event object. 
     MariaDB MWL#36: mainline does this:
@@ -1284,9 +1515,42 @@ end:
   */
   if (ev)
   {
+    /* Holding event output if needed */
+    if (!ev->output_buf.is_empty())
+    {
+      LEX_STRING tmp_str;
+
+      tmp_str.length= ev->output_buf.length();
+      tmp_str.str=    ev->output_buf.release();
+
+      if (opt_flashback)
+      {
+        if (ev_type == STOP_EVENT)
+          stop_event_string.reset(tmp_str.str, tmp_str.length, tmp_str.length,
+                                  &my_charset_bin);
+        else
+        {
+          if (insert_dynamic(&binlog_events, (uchar *) &tmp_str))
+          {
+            error("Out of memory: can't allocate memory to store the flashback events.");
+            exit(1);
+          }
+        }
+      }
+      else
+      {
+        my_fwrite(result_file, (const uchar *) tmp_str.str, tmp_str.length,
+                  MYF(MY_NABP));
+        my_free(tmp_str.str);
+      }
+    }
+
+    if (remote_opt)
+      ev->temp_buf= 0;
     if (destroy_evt) /* destroy it later if not set (ignored table map) */
       delete ev;
   }
+  DBUG_PRINT("exit",("return: %d", retval));
   DBUG_RETURN(retval);
 }
 
@@ -1298,14 +1562,15 @@ static struct my_option my_options[] =
   {"base64-output", OPT_BASE64_OUTPUT_MODE,
     /* 'unspec' is not mentioned because it is just a placeholder. */
    "Determine when the output statements should be base64-encoded BINLOG "
-   "statements: 'never' disables it and works only for binlogs without "
-   "row-based events; 'decode-rows' decodes row events into commented SQL "
-   "statements if the --verbose option is also given; 'auto' prints base64 "
-   "only when necessary (i.e., for row-based events and format description "
-   "events); 'always' prints base64 whenever possible. 'always' is "
-   "deprecated, will be removed in a future version, and should not be used "
-   "in a production system.  --base64-output with no 'name' argument is "
-   "equivalent to --base64-output=always and is also deprecated.  If no "
+   "statements: 'never' doesn't print binlog row events and should not be "
+   "used when directing output to a MariaDB master; "
+   "'decode-rows' decodes row events into commented SQL statements if the "
+   "--verbose option is also given; "
+   "'auto' prints base64 only when necessary (i.e., for row-based events and "
+   "format description events); "
+   "'always' prints base64 whenever possible. "
+   "--base64-output with no 'name' argument is equivalent to "
+   "--base64-output=always and is also deprecated.  If no "
    "--base64-output[=name] option is given at all, the default is 'auto'.",
    &opt_base64_output_mode_str, &opt_base64_output_mode_str,
    0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
@@ -1322,8 +1587,8 @@ static struct my_option my_options[] =
    &database, &database, 0, GET_STR_ALLOC, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},
 #ifndef DBUG_OFF
-  {"debug", '#', "Output debug log.", &default_dbug_option,
-   &default_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
+  {"debug", '#', "Output debug log.", &current_dbug_option,
+   &current_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
 #endif
   {"debug-check", OPT_DEBUG_CHECK, "Check memory and open file usage at exit .",
    &debug_check_flag, &debug_check_flag, 0,
@@ -1342,6 +1607,13 @@ static struct my_option my_options[] =
     "already have. NOTE: you will need a SUPER privilege to use this option.",
    &disable_log_bin, &disable_log_bin, 0, GET_BOOL,
    NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"flashback", 'B', "Flashback feature can rollback you committed data to a special time point.",
+#ifdef WHEN_FLASHBACK_REVIEW_READY
+   "before Flashback feature writing a row, original row can insert to review-dbname.review-tablename,"
+   "and mysqlbinlog will login mysql by user(-u) and password(-p) and host(-h).",
+#endif
+   &opt_flashback, &opt_flashback, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0,
+   0, 0},
   {"force-if-open", 'F', "Force if binlog was not closed properly.",
    &force_if_open_opt, &force_if_open_opt, 0, GET_BOOL, NO_ARG,
    1, 0, 0, 0, 0, 0},
@@ -1385,6 +1657,27 @@ static struct my_option my_options[] =
    "prefix for the file names.",
    &result_file_name, &result_file_name, 0, GET_STR, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},
+#ifdef WHEN_FLASHBACK_REVIEW_READY
+  {"review", opt_flashback_review, "Print review sql in output file.",
+   &opt_flashback_review, &opt_flashback_review, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0,
+   0, 0},
+  {"review-dbname", opt_flashback_flashback_review_dbname,
+   "Writing flashback original row data into this db",
+   &flashback_review_dbname, &flashback_review_dbname,
+   0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"review-tablename", opt_flashback_flashback_review_tablename,
+   "Writing flashback original row data into this table",
+   &flashback_review_tablename, &flashback_review_tablename,
+   0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+#endif
+  {"print-row-count", OPT_PRINT_ROW_COUNT,
+   "Print row counts for each row events",
+   &print_row_count, &print_row_count, 0, GET_BOOL, NO_ARG, 1, 0, 0, 0,
+   0, 0},
+  {"print-row-event-positions", OPT_PRINT_ROW_EVENT_POSITIONS,
+   "Print row event positions",
+   &print_row_event_positions, &print_row_event_positions, 0, GET_BOOL,
+   NO_ARG, 1, 0, 0, 0, 0, 0},
   {"server-id", 0,
    "Extract only binlog entries created by the server having the given id.",
    &server_id, &server_id, 0, GET_ULONG,
@@ -1398,10 +1691,11 @@ static struct my_option my_options[] =
    &shared_memory_base_name,
    0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
 #endif
-  {"short-form", 's', "Just show regular queries: no extra info and no "
-   "row-based events. This is for testing only, and should not be used in "
-   "production systems. If you want to suppress base64-output, consider "
-   "using --base64-output=never instead.",
+  {"short-form", 's', "Just show regular queries: no extra info, no "
+   "row-based events and no row counts. This is mainly for testing only, "
+   "and should not be used to feed to the MariaDB server. "
+   "If you want to just suppress base64-output, you can instead "
+   "use --base64-output=never",
    &short_form, &short_form, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0,
    0, 0},
   {"socket", 'S', "The socket file to use for connection.",
@@ -1448,6 +1742,9 @@ static struct my_option my_options[] =
    &stop_position, &stop_position, 0, GET_ULL,
    REQUIRED_ARG, (longlong)(~(my_off_t)0), BIN_LOG_HEADER_SIZE,
    (ulonglong)(~(my_off_t)0), 0, 0, 0},
+  {"table", 'T', "List entries for just this table (local log only).",
+   &table, &table, 0, GET_STR_ALLOC, REQUIRED_ARG,
+   0, 0, 0, 0, 0, 0},
   {"to-last-log", 't', "Requires -R. Will not stop at the end of the \
 requested binlog but rather continue printing until the end of the last \
 binlog of the MySQL server. If you send the output to the same MySQL server, \
@@ -1500,9 +1797,12 @@ Example: rewrite-db='from->to'.",
 */
 static void error_or_warning(const char *format, va_list args, const char *msg)
 {
+  if (result_file)
+    fflush(result_file);
   fprintf(stderr, "%s: ", msg);
   vfprintf(stderr, format, args);
   fprintf(stderr, "\n");
+  fflush(stderr);
 }
 
 /**
@@ -1555,8 +1855,10 @@ static void warning(const char *format,...)
 */
 static void cleanup()
 {
+  DBUG_ENTER("cleanup");
   my_free(pass);
   my_free(database);
+  my_free(table);
   my_free(host);
   my_free(user);
   my_free(const_cast<char*>(dirname_for_local_load));
@@ -1567,12 +1869,13 @@ static void cleanup()
   delete glob_description_event;
   if (mysql)
     mysql_close(mysql);
+  DBUG_VOID_RETURN;
 }
 
 
 static void print_version()
 {
-  printf("%s Ver 3.3 for %s at %s\n", my_progname, SYSTEM_TYPE, MACHINE_TYPE);
+  printf("%s Ver 3.4 for %s at %s\n", my_progname, SYSTEM_TYPE, MACHINE_TYPE);
 }
 
 
@@ -1623,10 +1926,16 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
   switch (optid) {
 #ifndef DBUG_OFF
   case '#':
-    DBUG_PUSH(argument ? argument : default_dbug_option);
+    if (!argument)
+      argument= (char*) default_dbug_option;
+    current_dbug_option= argument;
+    DBUG_PUSH(argument);
     break;
 #endif
 #include <sslopt-case.h>
+  case 'B':
+    opt_flashback= 1;
+    break;
   case 'd':
     one_database = 1;
     break;
@@ -1648,6 +1957,9 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
   case 'R':
     remote_opt= 1;
     break;
+  case 'T':
+    one_table= 1;
+    break;
   case OPT_MYSQL_PROTOCOL:
     if ((opt_protocol= find_type_with_warning(argument, &sql_protocol_typelib,
                                               opt->name)) <= 0)
@@ -1656,6 +1968,11 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
       exit(1);
     }
     break;
+#ifdef WHEN_FLASHBACK_REVIEW_READY
+  case opt_flashback_review:
+    opt_flashback_review= 1;
+    break;
+#endif
   case OPT_START_DATETIME:
     start_datetime= convert_str_to_timestamp(start_datetime_str);
     break;
@@ -1725,6 +2042,12 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
     binlog_filter->add_db_rewrite(key, val);
     break;
   }
+  case OPT_PRINT_ROW_COUNT:
+    print_row_count_used= 1;
+    break;
+  case OPT_PRINT_ROW_EVENT_POSITIONS:
+    print_row_event_positions_used= 1;
+    break;
   case 'v':
     if (argument == disabled_my_option)
       verbose= 0;
@@ -1778,6 +2101,7 @@ static int parse_args(int *argc, char*** argv)
 */
 static Exit_status safe_connect()
 {
+  my_bool reconnect= 1;
   /* Close any old connections to MySQL */
   if (mysql)
     mysql_close(mysql);
@@ -1823,7 +2147,7 @@ static Exit_status safe_connect()
     error("Failed on connect: %s", mysql_error(mysql));
     return ERROR_STOP;
   }
-  mysql->reconnect= 1;
+  mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
   return OK_CONTINUE;
 }
 
@@ -1856,13 +2180,32 @@ static Exit_status dump_log_entries(const char* logname)
     fprintf(result_file, "DELIMITER /*!*/;\n");
   strmov(print_event_info.delimiter, "/*!*/;");
   
-  print_event_info.verbose= short_form ? 0 : verbose;
+  if (short_form)
+  {
+    if (!print_row_event_positions_used)
+      print_row_event_positions= 0;
+    if (!print_row_count_used)
+      print_row_count = 0;
+  }
+  if (opt_flashback)
+  {
+    if (!print_row_event_positions_used)
+      print_row_event_positions= 0;
+  }
 
+  print_event_info.verbose= short_form ? 0 : verbose;
+  print_event_info.short_form= short_form;
+  print_event_info.print_row_count= print_row_count;
+  print_event_info.file= result_file;
+  fflush(result_file);
   rc= (remote_opt ? dump_remote_log_entries(&print_event_info, logname) :
        dump_local_log_entries(&print_event_info, logname));
 
+  if (rc == ERROR_STOP)
+    return rc;
+
   /* Set delimiter back to semicolon */
-  if (!opt_raw_mode)
+  if (!opt_raw_mode && !opt_flashback)
     fprintf(result_file, "DELIMITER ;\n");
   strmov(print_event_info.delimiter, ";");
   return rc;
@@ -1931,6 +2274,8 @@ static Exit_status check_master_version()
   }
 
   delete glob_description_event;
+  glob_description_event= NULL;
+
   switch (version) {
   case 3:
     glob_description_event= new Format_description_log_event(1);
@@ -1949,7 +2294,6 @@ static Exit_status check_master_version()
     glob_description_event= new Format_description_log_event(3);
     break;
   default:
-    glob_description_event= NULL;
     error("Could not find server version: "
           "Master reported unrecognized MySQL version '%s'.", row[0]);
     goto err;
@@ -2190,6 +2534,7 @@ static Exit_status handle_event_raw_mode(PRINT_EVENT_INFO *print_event_info,
         error("Could not write into log file '%s'", out_file_name);
         DBUG_RETURN(ERROR_STOP);
       }
+      print_event_info->file= result_file;
 
       delete glob_description_event;
       glob_description_event= (Format_description_log_event*) ev;
@@ -2459,7 +2804,7 @@ static Exit_status check_header(IO_CACHE* file,
         Format_description_log_event *new_description_event;
         my_b_seek(file, tmp_pos); /* seek back to event's start */
         if (!(new_description_event= (Format_description_log_event*) 
-              Log_event::read_log_event(file, 0, glob_description_event,
+              Log_event::read_log_event(file, glob_description_event,
                                         opt_verify_binlog_checksum)))
           /* EOF can't be hit here normally, so it's a real error */
         {
@@ -2493,7 +2838,7 @@ static Exit_status check_header(IO_CACHE* file,
       {
         Log_event *ev;
         my_b_seek(file, tmp_pos); /* seek back to event's start */
-        if (!(ev= Log_event::read_log_event(file, 0, glob_description_event,
+        if (!(ev= Log_event::read_log_event(file, glob_description_event,
                                             opt_verify_binlog_checksum)))
         {
           /* EOF can't be hit here normally, so it's a real error */
@@ -2559,7 +2904,7 @@ static Exit_status dump_local_log_entries(PRINT_EVENT_INFO *print_event_info,
       stdin in binary mode. Errors on setting this mode result in 
       halting the function and printing an error message to stderr.
     */
-#if defined (__WIN__) || (_WIN64)
+#if defined (__WIN__) || defined(_WIN64)
     if (_setmode(fileno(stdin), O_BINARY) == -1)
     {
       error("Could not set binary mode on stdin.");
@@ -2607,7 +2952,7 @@ static Exit_status dump_local_log_entries(PRINT_EVENT_INFO *print_event_info,
     char llbuff[21];
     my_off_t old_off = my_b_tell(file);
 
-    Log_event* ev = Log_event::read_log_event(file, 0, glob_description_event,
+    Log_event* ev = Log_event::read_log_event(file, glob_description_event,
                                               opt_verify_binlog_checksum);
     if (!ev)
     {
@@ -2650,8 +2995,6 @@ end:
   return retval;
 }
 
-/* Used in sql_alloc(). Inited and freed in main() */
-MEM_ROOT s_mem_root;
 
 int main(int argc, char** argv)
 {
@@ -2665,7 +3008,6 @@ int main(int argc, char** argv)
   my_init_time(); // for time functions
   tzset(); // set tzname
 
-  init_alloc_root(&s_mem_root, 16384, 0, MYF(0));
   load_defaults_or_exit("my", load_groups, &argc, &argv);
   defaults_argv= argv;
 
@@ -2689,16 +3031,16 @@ int main(int argc, char** argv)
 
   if (opt_base64_output_mode == BASE64_OUTPUT_UNSPEC)
     opt_base64_output_mode= BASE64_OUTPUT_AUTO;
-  if (opt_base64_output_mode == BASE64_OUTPUT_ALWAYS)
-    warning("The --base64-output=always flag and the --base64-output flag "
-            "(with '=MODE' omitted), are deprecated. "
-            "The output generated when these flags are used cannot be "
-            "parsed by mysql 5.6.0 and later. "
-            "The flags will be removed in a future version. "
-            "Please use --base64-output=auto instead.");
 
   my_set_max_open_files(open_files_limit);
 
+  if (opt_flashback)
+  {
+    my_init_dynamic_array(&binlog_events, sizeof(LEX_STRING), 1024, 1024,
+                          MYF(0));
+    my_init_dynamic_array(&events_in_stmt, sizeof(Rows_log_event*), 1024, 1024,
+                          MYF(0));
+  }
   if (opt_stop_never)
     to_last_remote_log= TRUE;
 
@@ -2797,7 +3139,34 @@ int main(int argc, char** argv)
     start_position= BIN_LOG_HEADER_SIZE;
   }
 
-  if (!opt_raw_mode)
+  /*
+    If enable flashback, need to print the events from the end to the
+    beginning
+  */
+  if (opt_flashback && retval != ERROR_STOP)
+  {
+    for (uint i= binlog_events.elements; i > 0; --i)
+    {
+      LEX_STRING *event_str= dynamic_element(&binlog_events, i - 1,
+                                             LEX_STRING*);
+      fprintf(result_file, "%s", event_str->str);
+      my_free(event_str->str);
+    }
+    fprintf(result_file, "COMMIT\n/*!*/;\n");
+    delete_dynamic(&binlog_events);
+    delete_dynamic(&events_in_stmt);
+  }
+
+  /* Set delimiter back to semicolon */
+  if (retval != ERROR_STOP)
+  {
+    if (!stop_event_string.is_empty())
+      fprintf(result_file, "%s", stop_event_string.ptr());
+    if (!opt_raw_mode && opt_flashback)
+      fprintf(result_file, "DELIMITER ;\n");
+  }
+
+  if (retval != ERROR_STOP && !opt_raw_mode)
   {
     /*
       Issue a ROLLBACK in case the last printed binlog was crashed and had half
@@ -2824,7 +3193,6 @@ int main(int argc, char** argv)
     my_fclose(result_file, MYF(0));
   cleanup();
   free_annotate_event();
-  free_root(&s_mem_root, MYF(0));
   free_defaults(defaults_argv);
   my_free_open_file_info();
   load_processor.destroy();
@@ -2844,11 +3212,6 @@ err:
   DBUG_RETURN(retval == ERROR_STOP ? 1 : 0);
 }
 
-
-void *sql_alloc(size_t size)
-{
-  return alloc_root(&s_mem_root, size);
-}
 
 uint dummy1() { return 1; }
 struct encryption_service_st encryption_handler=
@@ -2872,6 +3235,8 @@ struct encryption_service_st encryption_handler=
 #include "my_decimal.h"
 #include "decimal.c"
 #include "my_decimal.cc"
+#include "../sql-common/my_time.c"
+#include "password.c"
 #include "log_event.cc"
 #include "log_event_old.cc"
 #include "rpl_utility.cc"

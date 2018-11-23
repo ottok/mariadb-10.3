@@ -11,9 +11,6 @@ SET(LIBS "")
 IF(POLICY CMP0011)
   CMAKE_POLICY(SET CMP0011 NEW)
 ENDIF()
-IF(POLICY CMP0007)
-  CMAKE_POLICY(SET CMP0007 OLD)
-ENDIF()
 
 # Extract dependencies using CMake's internal ${target}_LIB_DEPENDS variable
 # returned string in ${var} is can be passed to linker's command line
@@ -45,10 +42,10 @@ MACRO(EXTRACT_LINK_LIBRARIES target var)
   ENDIF()
 ENDMACRO()
 
-EXTRACT_LINK_LIBRARIES(mysqlclient LIBS)
+EXTRACT_LINK_LIBRARIES(libmariadb LIBS)
 EXTRACT_LINK_LIBRARIES(mysqlserver EMB_LIBS)
 
-SET(LIBS     "-lmysqlclient ${ZLIB_DEPS} ${LIBS} ${openssl_libs}")
+SET(LIBS     "-lmariadb ${ZLIB_DEPS} ${LIBS} ${openssl_libs}")
 SET(EMB_LIBS "-lmysqld ${ZLIB_DEPS} ${EMB_LIBS} ${openssl_libs}")
 
 MACRO(REPLACE_FOR_CLIENTS VAR)
@@ -66,12 +63,12 @@ ENDMACRO()
 # FIXME until we have a --cxxflags, we need to remove -AC99
 #       to make --cflags usable for HP C++ (aCC)
 REPLACE_FOR_CLIENTS(CFLAGS "[DU]DBUG_OFF" "[DU]SAFE_MUTEX" "[DU]NDEBUG"
-  "[DU]UNIV_MUST_NOT_INLINE" "[DU]FORCE_INIT_OF_VARS" "[DU]EXTRA_DEBUG" "[DU]HAVE_valgrind"
+  "[DU]FORCE_INIT_OF_VARS" "[DU]EXTRA_DEBUG" "[DU]HAVE_valgrind"
   "O" "O[0-9]" "xO[0-9]" "W[-A-Za-z]*" "mtune=[-A-Za-z0-9]*" "g" "fPIC"
   "mcpu=[-A-Za-z0-9]*" "unroll2" "ip" "mp" "march=[-A-Za-z0-9]*" "Xa"
   "xstrconst" "xc99=none" "AC99" "restrict" "W[-A-Za-z]*=[-A-Za-z0-9]*")
 
 # Same for --libs
-REPLACE_FOR_CLIENTS(LIBS lmtmalloc static-libcxa i-static static-intel)
+REPLACE_FOR_CLIENTS(LIBS "Wl,[^ ]*" lmtmalloc static-libcxa i-static static-intel)
 REPLACE_FOR_CLIENTS(EMB_LIBS lmtmalloc static-libcxa i-static static-intel)
 

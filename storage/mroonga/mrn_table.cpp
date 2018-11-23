@@ -480,7 +480,7 @@ int mrn_parse_table_param(MRN_SHARE *share, TABLE *table)
 
   if (share->engine)
   {
-    LEX_STRING engine_name;
+    LEX_CSTRING engine_name;
     if (
       (
         share->engine_length == MRN_DEFAULT_LEN &&
@@ -1038,10 +1038,7 @@ TABLE_SHARE *mrn_get_table_share(TABLE_LIST *table_list, int *error)
   share = get_table_share(thd, table_list, key, key_length, 0, error,
                           hash_value);
 #  elif defined(MRN_HAVE_TDC_ACQUIRE_SHARE)
-  share = tdc_acquire_share(thd, table_list->db, table_list->table_name, key,
-                            key_length,
-                            table_list->mdl_request.key.tc_hash_value(),
-                            GTS_TABLE, NULL);
+  share = tdc_acquire_share(thd, table_list, GTS_TABLE);
 #  else
   share = get_table_share(thd, table_list, key, key_length, 0, error);
 #  endif
@@ -1065,7 +1062,7 @@ TABLE_SHARE *mrn_create_tmp_table_share(TABLE_LIST *table_list, const char *path
   key_length = create_table_def_key(thd, key, table_list, FALSE);
 #endif
 #if MYSQL_VERSION_ID >= 100002 && defined(MRN_MARIADB_P)
-  share = alloc_table_share(table_list->db, table_list->table_name, key,
+  share = alloc_table_share(table_list->db.str, table_list->table_name.str, key,
                             key_length);
 #else
   share = alloc_table_share(table_list, key, key_length);
@@ -1091,9 +1088,9 @@ TABLE_SHARE *mrn_create_tmp_table_share(TABLE_LIST *table_list, const char *path
 void mrn_free_tmp_table_share(TABLE_SHARE *tmp_table_share)
 {
   MRN_DBUG_ENTER_FUNCTION();
-  char *normalized_path = tmp_table_share->normalized_path.str;
+  const char *normalized_path = tmp_table_share->normalized_path.str;
   free_table_share(tmp_table_share);
-  my_free(normalized_path);
+  my_free((char*) normalized_path);
   DBUG_VOID_RETURN;
 }
 

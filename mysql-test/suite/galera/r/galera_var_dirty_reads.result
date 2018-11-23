@@ -1,3 +1,8 @@
+connection node_1;
+connection node_2;
+connection node_1;
+connection node_2;
+connection node_2;
 CREATE TABLE t1(i INT) ENGINE=INNODB;
 INSERT INTO t1 VALUES(1);
 SELECT * FROM t1;
@@ -39,9 +44,12 @@ WSREP_DIRTY_READS	OFF
 SELECT COUNT(*) >= 10 FROM performance_schema.events_statements_history;
 COUNT(*) >= 10
 1
+connection node_1;
 USE test;
 SELECT * FROM t1;
 i
 1
 DROP TABLE t1;
+disconnect node_2;
+disconnect node_1;
 # End of test

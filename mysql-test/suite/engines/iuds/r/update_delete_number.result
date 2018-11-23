@@ -26,7 +26,7 @@ SELECT c1,c2 FROM t1 WHERE c1=120;
 c1	c2
 120	NULL
 120	NULL
-UPDATE t1 SET c1=-120 WHERE c2=-102;
+UPDATE IGNORE t1 SET c1=-120 WHERE c2=-102;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 SELECT c1,c2 FROM t1 WHERE c2=-102;
@@ -45,7 +45,7 @@ c1	c2	c3
 1	0	1
 2	0	2
 INSERT INTO t1 VALUES(106,-106,9),(107,-107,10),(108,-108,11),(109,-109,12),(255,127,13);
-UPDATE t1 SET c1=4294967296,c2=2147483648 WHERE c2 BETWEEN -108 AND -106;
+UPDATE IGNORE t1 SET c1=4294967296,c2=2147483648 WHERE c2 BETWEEN -108 AND -106;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 Warning	1264	Out of range value for column 'c2' at row 1
@@ -61,7 +61,7 @@ c1	c2	c3
 4294967295	2147483647	10
 4294967295	2147483647	11
 4294967295	2147483647	9
-UPDATE t1 SET c2=-2147483649 WHERE c1=109 ORDER BY c1;
+UPDATE IGNORE t1 SET c2=-2147483649 WHERE c1=109 ORDER BY c1;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 13
 SELECT c1,c2 FROM t1 WHERE c1=109;
@@ -78,7 +78,7 @@ SELECT c1,c2 FROM t1 WHERE c2=-110;
 c1	c2
 0	-110
 SET SQL_MODE=DEFAULT;
-UPDATE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
+UPDATE IGNORE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
 Warnings:
 Warning	1048	Column 'c1' cannot be null
 SELECT * FROM t1 WHERE c1=0;
@@ -144,7 +144,7 @@ c1	c2
 7	8
 10	11
 4294967295	2147483647
-UPDATE t2 SET c1=0,c2=-2147483648 WHERE c2=2;
+UPDATE IGNORE t2 SET c1=0,c2=-2147483648 WHERE c2=2;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 1
 SELECT c1,c2 FROM t1 ORDER BY c1;
@@ -980,7 +980,6 @@ drop table mt1, mt2, mt3;
 create table mt1 (col1 int);
 create table mt2 (col1 int);
 update mt1,mt2 set mt1.col1 = (select max(col1) from mt1) where mt1.col1 = mt2.col1;
-ERROR HY000: Table 'mt1' is specified twice, both as a target for 'UPDATE' and as a separate source for data
 delete mt1 from mt1,mt2 where mt1.col1 < (select max(col1) from mt1) and mt1.col1 = mt2.col1;
 ERROR HY000: Table 'mt1' is specified twice, both as a target for 'DELETE' and as a separate source for data
 drop table mt1,mt2;
@@ -1119,7 +1118,7 @@ SELECT c1,c2 FROM t1 WHERE c1=120;
 c1	c2
 120	NULL
 120	NULL
-UPDATE t1 SET c1=-120 WHERE c2=-102;
+UPDATE IGNORE t1 SET c1=-120 WHERE c2=-102;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 SELECT c1,c2 FROM t1 WHERE c2=-102;
@@ -1139,7 +1138,7 @@ c1	c2	c3
 1	0	1
 2	0	2
 INSERT INTO t1 VALUES(106,-106,9),(107,-107,10),(108,-108,11),(109,-109,12),(255,127,13);
-UPDATE t1 SET c1=256,c2=128 WHERE c2 BETWEEN -108 AND -106;
+UPDATE IGNORE t1 SET c1=256,c2=128 WHERE c2 BETWEEN -108 AND -106;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 Warning	1264	Out of range value for column 'c2' at row 1
@@ -1156,7 +1155,7 @@ c1	c2	c3
 255	127	11
 255	127	13
 255	127	9
-UPDATE t1 SET c2=-129 WHERE c1=109 ORDER BY c1;
+UPDATE IGNORE t1 SET c2=-129 WHERE c1=109 ORDER BY c1;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 13
 SELECT c1,c2 FROM t1 WHERE c1=109;
@@ -1173,7 +1172,7 @@ SELECT c1,c2 FROM t1 WHERE c2=-110;
 c1	c2
 0	-110
 SET SQL_MODE=DEFAULT;
-UPDATE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
+UPDATE IGNORE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
 Warnings:
 Warning	1048	Column 'c1' cannot be null
 SELECT * FROM t1 WHERE c1=0;
@@ -1239,7 +1238,7 @@ c1	c2
 7	8
 10	11
 255	127
-UPDATE t2 SET c1=0,c2=-128 WHERE c2=2;
+UPDATE IGNORE t2 SET c1=0,c2=-128 WHERE c2=2;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 1
 SELECT c1,c2 FROM t1 ORDER BY c1;
@@ -1644,7 +1643,7 @@ a	b
 107	7
 108	8
 109	9
-update mt1,mt2 set mt1.a=mt1.a+100 where mt1.a=101;
+update ignore mt1,mt2 set mt1.a=mt1.a+100 where mt1.a=101;
 Warnings:
 Warning	1264	Out of range value for column 'a' at row 1
 select * from mt1;
@@ -1892,7 +1891,7 @@ SELECT c1,c2 FROM t1 WHERE c1=120;
 c1	c2
 120	NULL
 120	NULL
-UPDATE t1 SET c1=-120 WHERE c2=-102;
+UPDATE IGNORE t1 SET c1=-120 WHERE c2=-102;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 SELECT c1,c2 FROM t1 WHERE c2=-102;
@@ -1911,7 +1910,7 @@ c1	c2	c3
 1	0	1
 2	0	2
 INSERT INTO t1 VALUES(106,-106,9),(107,-107,10),(108,-108,11),(109,-109,12),(255,127,13);
-UPDATE t1 SET c1=65536,c2=32768 WHERE c2 BETWEEN -108 AND -106;
+UPDATE IGNORE t1 SET c1=65536,c2=32768 WHERE c2 BETWEEN -108 AND -106;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 Warning	1264	Out of range value for column 'c2' at row 1
@@ -1927,7 +1926,7 @@ c1	c2	c3
 65535	32767	10
 65535	32767	11
 65535	32767	9
-UPDATE t1 SET c2=-32769 WHERE c1=109 ORDER BY c1;
+UPDATE IGNORE t1 SET c2=-32769 WHERE c1=109 ORDER BY c1;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 13
 SELECT c1,c2 FROM t1 WHERE c1=109;
@@ -1944,7 +1943,7 @@ SELECT c1,c2 FROM t1 WHERE c2=-110;
 c1	c2
 0	-110
 SET SQL_MODE=DEFAULT;
-UPDATE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
+UPDATE IGNORE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
 Warnings:
 Warning	1048	Column 'c1' cannot be null
 SELECT * FROM t1 WHERE c1=0;
@@ -2010,7 +2009,7 @@ c1	c2
 7	8
 10	11
 65535	32767
-UPDATE t2 SET c1=0,c2=-32768 WHERE c2=2;
+UPDATE IGNORE t2 SET c1=0,c2=-32768 WHERE c2=2;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 1
 SELECT c1,c2 FROM t1 ORDER BY c1;
@@ -2639,7 +2638,7 @@ SELECT c1,c2 FROM t1 WHERE c1=120;
 c1	c2
 120	NULL
 120	NULL
-UPDATE t1 SET c1=-120 WHERE c2=-102;
+UPDATE IGNORE t1 SET c1=-120 WHERE c2=-102;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 SELECT c1,c2 FROM t1 WHERE c2=-102;
@@ -2658,7 +2657,7 @@ c1	c2	c3
 1	0	1
 2	0	2
 INSERT INTO t1 VALUES(106,-106,9),(107,-107,10),(108,-108,11),(109,-109,12),(255,127,13);
-UPDATE t1 SET c1=16777216,c2=8388608 WHERE c2 BETWEEN -108 AND -106;
+UPDATE IGNORE t1 SET c1=16777216,c2=8388608 WHERE c2 BETWEEN -108 AND -106;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 Warning	1264	Out of range value for column 'c2' at row 1
@@ -2674,7 +2673,7 @@ c1	c2	c3
 16777215	8388607	10
 16777215	8388607	11
 16777215	8388607	9
-UPDATE t1 SET c2=-8388609 WHERE c1=109 ORDER BY c1;
+UPDATE IGNORE t1 SET c2=-8388609 WHERE c1=109 ORDER BY c1;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 13
 SELECT c1,c2 FROM t1 WHERE c1=109;
@@ -2691,7 +2690,7 @@ SELECT c1,c2 FROM t1 WHERE c2=-110;
 c1	c2
 0	-110
 SET SQL_MODE=DEFAULT;
-UPDATE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
+UPDATE IGNORE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
 Warnings:
 Warning	1048	Column 'c1' cannot be null
 SELECT * FROM t1 WHERE c1=0;
@@ -2757,7 +2756,7 @@ c1	c2
 7	8
 10	11
 16777215	8388607
-UPDATE t2 SET c1=0,c2=-8388608 WHERE c2=2;
+UPDATE IGNORE t2 SET c1=0,c2=-8388608 WHERE c2=2;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 1
 SELECT c1,c2 FROM t1 ORDER BY c1;
@@ -3386,7 +3385,7 @@ SELECT c1,c2 FROM t1 WHERE c1=120;
 c1	c2
 120	NULL
 120	NULL
-UPDATE t1 SET c1=-120 WHERE c2=-102;
+UPDATE IGNORE t1 SET c1=-120 WHERE c2=-102;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 SELECT c1,c2 FROM t1 WHERE c2=-102;
@@ -3405,7 +3404,7 @@ c1	c2	c3
 1	0	1
 2	0	2
 INSERT INTO t1 VALUES(106,-106,9),(107,-107,10),(108,-108,11),(109,-109,12),(255,127,13);
-UPDATE t1 SET c1=18446744073709551616,c2=9223372036854775808 WHERE c2 BETWEEN -108 AND -106;
+UPDATE IGNORE t1 SET c1=18446744073709551616,c2=9223372036854775808 WHERE c2 BETWEEN -108 AND -106;
 Warnings:
 Warning	1264	Out of range value for column 'c1' at row 1
 Warning	1264	Out of range value for column 'c2' at row 1
@@ -3421,7 +3420,7 @@ c1	c2	c3
 18446744073709551615	9223372036854775807	10
 18446744073709551615	9223372036854775807	11
 18446744073709551615	9223372036854775807	9
-UPDATE t1 SET c2=-9223372036854775809 WHERE c1=109 ORDER BY c1;
+UPDATE IGNORE t1 SET c2=-9223372036854775809 WHERE c1=109 ORDER BY c1;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 13
 SELECT c1,c2 FROM t1 WHERE c1=109;
@@ -3438,7 +3437,7 @@ SELECT c1,c2 FROM t1 WHERE c2=-110;
 c1	c2
 0	-110
 SET SQL_MODE=DEFAULT;
-UPDATE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
+UPDATE IGNORE t1 SET c1=NULL WHERE c2=-111 /* updates to default value 0 */;
 Warnings:
 Warning	1048	Column 'c1' cannot be null
 SELECT * FROM t1 WHERE c1=0;
@@ -3504,7 +3503,7 @@ c1	c2
 7	8
 10	11
 18446744073709551615	9223372036854775807
-UPDATE t2 SET c1=0,c2=-9223372036854775808 WHERE c2=2;
+UPDATE IGNORE t2 SET c1=0,c2=-9223372036854775808 WHERE c2=2;
 Warnings:
 Warning	1264	Out of range value for column 'c2' at row 1
 SELECT c1,c2 FROM t1 ORDER BY c1;
@@ -3768,8 +3767,25 @@ c1	c2	c3
 -12	18446744073709551615	12
 SELECT * FROM t2 WHERE c2 BETWEEN 0 AND 18446744073709551615 ORDER BY c2,c1;
 c1	c2	c3
+-4	4	4
+-9	9	9
+0	255	13
+-9223372036854775808	18446744073709551615	12
+-12	18446744073709551615	12
+-11	18446744073709551615	11
+-8	18446744073709551615	8
+-7	18446744073709551615	7
+-6	18446744073709551615	6
+-5	18446744073709551615	5
+-3	18446744073709551615	3
+-2	18446744073709551615	2
+-1	18446744073709551615	1
+50	18446744073709551615	10
+9223372036854775807	18446744073709551615	14
 SELECT * FROM t2 WHERE c2 BETWEEN 0 AND 18446744073709551615 ORDER BY c2,c1 DESC LIMIT 2;
 c1	c2	c3
+-4	4	4
+-9	9	9
 SELECT * FROM t2 WHERE c2 IN(0,18446744073709551615) ORDER BY c2,c1 DESC;
 c1	c2	c3
 9223372036854775807	18446744073709551615	14

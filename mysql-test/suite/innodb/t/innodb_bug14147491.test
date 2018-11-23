@@ -1,23 +1,26 @@
 #
 # Test opening a corrupted table.
 #
-
+# Restarting is not supported under embedded
+-- source include/not_embedded.inc
+# Require InnoDB
+-- source include/have_innodb.inc
 -- source include/not_encrypted.inc
 
-call mtr.add_suppression("InnoDB: Table \"test\".\"t1\" is corrupted. Please drop the table and recreate.");
-call mtr.add_suppression("InnoDB: Cannot open table test/t1 from the internal data dictionary of InnoDB though the .frm file for the table exists. See http://dev.mysql.com/doc/refman/5.6/en/innodb-troubleshooting.html for how you can resolve the problem.");
-call mtr.add_suppression("InnoDB: Database page corruption on disk or a failed file read of tablespace test/t1 page  \[page id: space=[0-9]+, page number=[0-9]+\]. You may have to recover from a backup.");
+--disable_query_log
+call mtr.add_suppression("InnoDB: Table `test`\\.`t1` is corrupted\\. Please drop the table and recreate\\.");
+call mtr.add_suppression("InnoDB: Database page corruption on disk or a failed file read of tablespace test/t1 page");
+call mtr.add_suppression("InnoDB: We detected index corruption in an InnoDB type table");
+call mtr.add_suppression("Index for table 't1' is corrupt; try to repair it");
+--enable_query_log
 
-# Don't test under embedded
-source include/not_embedded.inc;
-# Require InnoDB
-source include/have_innodb.inc;
+--echo # Ensure that purge will not crash on the table after we corrupt it.
+SET GLOBAL innodb_purge_rseg_truncate_frequency = 1;
+SET GLOBAL innodb_fast_shutdown=0;
 
 --echo # Create and populate the table to be corrupted
 
---disable_warnings
 set global innodb_file_per_table=ON;
---enable_warnings
 
 CREATE TABLE t1 (a INT AUTO_INCREMENT PRIMARY KEY, b TEXT) ENGINE=InnoDB;
 INSERT INTO t1 (b) VALUES ('corrupt me');
@@ -67,13 +70,13 @@ EOF
 
 --echo # Now t1 is corrupted but we should not crash
 
---error 1712,1932
+--error 1030,1712,1932
 SELECT * FROM t1;
 
---error 1034,1712,1932
+--error 126,1030,1034,1712,1932
 INSERT INTO t1(b) VALUES('abcdef');
 
---error 1712,1932
+--error 1030,1712,1932
 UPDATE t1 set b = 'deadbeef' where a = 1;
 
 --echo # Cleanup, this must be possible

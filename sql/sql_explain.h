@@ -176,9 +176,7 @@ public:
                           bool is_analyze);
 
   void print_explain_json_interns(Explain_query *query, Json_writer *writer,
-                                  bool is_analyze, 
-                                  Filesort_tracker *first_table_sort,
-                                  bool first_table_sort_used);
+                                  bool is_analyze);
 
   /* A flat array of Explain structs for tables. */
   Explain_table_access** join_tabs;
@@ -186,6 +184,7 @@ public:
 };
 
 
+class Explain_aggr_node;
 /*
   EXPLAIN structure for a SELECT.
   
@@ -211,24 +210,22 @@ public:
 #ifndef DBUG_OFF
     select_lex(NULL),
 #endif
+    linkage(UNSPECIFIED_TYPE),
     message(NULL),
     having(NULL), having_value(Item::COND_UNDEF),
     using_temporary(false), using_filesort(false),
     time_tracker(is_analyze),
-    ops_tracker(is_analyze)
+    aggr_tree(NULL)
   {}
 
-  /*
-    This is used to save the results of "late" test_if_skip_sort_order() calls
-    that are made from JOIN::exec
-  */
-  void replace_table(uint idx, Explain_table_access *new_tab);
+  void add_linkage(Json_writer *writer);
 
 public:
 #ifndef DBUG_OFF
   SELECT_LEX *select_lex;
 #endif
   const char *select_type;
+  enum sub_select_type linkage;
 
   /*
     If message != NULL, this is a degenerate join plan, and all subsequent
@@ -238,9 +235,10 @@ public:
 
   /* Expensive constant condition */
   Item *exec_const_cond;
+  Item *outer_ref_cond;
 
   /* HAVING condition */
-  COND *having;
+  Item *having;
   Item::cond_result having_value;
 
   /* Global join attributes. In tabular form, they are printed on the first row */
@@ -249,9 +247,13 @@ public:
 
   /* ANALYZE members */
   Time_and_counter_tracker time_tracker;
-
-  Sort_and_group_tracker  ops_tracker;
   
+  /* 
+    Part of query plan describing sorting, temp.table usage, and duplicate 
+    removal
+  */
+  Explain_aggr_node* aggr_tree;
+
   int print_explain(Explain_query *query, select_result_sink *output, 
                     uint8 explain_flags, bool is_analyze);
   void print_explain_json(Explain_query *query, Json_writer *writer, 
@@ -265,8 +267,69 @@ private:
   Table_access_tracker using_temporary_read_tracker;
 };
 
+/////////////////////////////////////////////////////////////////////////////
+// EXPLAIN structures for ORDER/GROUP operations.
+/////////////////////////////////////////////////////////////////////////////
+typedef enum 
+{
+  AGGR_OP_TEMP_TABLE,
+  AGGR_OP_FILESORT,
+  //AGGR_OP_READ_SORTED_FILE, // need this?
+  AGGR_OP_REMOVE_DUPLICATES,
+  AGGR_OP_WINDOW_FUNCS
+  //AGGR_OP_JOIN // Need this?
+} enum_explain_aggr_node_type;
 
-/* 
+
+class Explain_aggr_node : public Sql_alloc
+{
+public:
+  virtual enum_explain_aggr_node_type get_type()= 0;
+  virtual ~Explain_aggr_node() {}
+  Explain_aggr_node *child;
+};
+
+class Explain_aggr_filesort : public Explain_aggr_node
+{
+  List<Item> sort_items;
+  List<ORDER::enum_order> sort_directions;
+public:
+  enum_explain_aggr_node_type get_type() { return AGGR_OP_FILESORT; }
+  Filesort_tracker tracker;
+
+  Explain_aggr_filesort(MEM_ROOT *mem_root, bool is_analyze, 
+                        Filesort *filesort);
+
+  void print_json_members(Json_writer *writer, bool is_analyze);
+};
+
+class Explain_aggr_tmp_table : public Explain_aggr_node
+{
+public:
+  enum_explain_aggr_node_type get_type() { return AGGR_OP_TEMP_TABLE; }
+};
+
+class Explain_aggr_remove_dups : public Explain_aggr_node
+{
+public:
+  enum_explain_aggr_node_type get_type() { return AGGR_OP_REMOVE_DUPLICATES; }
+};
+
+class Explain_aggr_window_funcs : public Explain_aggr_node
+{
+  List<Explain_aggr_filesort> sorts;
+public:
+  enum_explain_aggr_node_type get_type() { return AGGR_OP_WINDOW_FUNCS; }
+
+  void print_json_members(Json_writer *writer, bool is_analyze);
+  friend class Window_funcs_computation;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+extern const char *unit_operation_text[4];
+
+/*
   Explain structure for a UNION.
 
   A UNION may or may not have "Using filesort".
@@ -277,10 +340,12 @@ class Explain_union : public Explain_node
 public:
   Explain_union(MEM_ROOT *root, bool is_analyze) : 
     Explain_node(root),
+    is_recursive_cte(false),
     fake_select_lex_explain(root, is_analyze)
   {}
 
   enum explain_node_type get_type() { return EXPLAIN_UNION; }
+  unit_common_op operation;
 
   int get_select_id()
   {
@@ -312,6 +377,7 @@ public:
   const char *fake_select_type;
   bool using_filesort;
   bool using_tmp;
+  bool is_recursive_cte;
   
   /*
     Explain data structure for "fake_select_lex" (i.e. for the degenerate
@@ -530,8 +596,8 @@ public:
     key_name= NULL;
     key_len= (uint)-1;
   }
-  void set(MEM_ROOT *root, KEY *key_name, uint key_len_arg);
-  void set_pseudo_key(MEM_ROOT *root, const char *key_name);
+  bool set(MEM_ROOT *root, KEY *key_name, uint key_len_arg);
+  bool set_pseudo_key(MEM_ROOT *root, const char *key_name);
 
   inline const char *get_key_name() const { return key_name; }
   inline uint get_key_len() const { return key_len; }
@@ -622,7 +688,8 @@ public:
     where_cond(NULL),
     cache_cond(NULL),
     pushed_index_cond(NULL),
-    sjm_nest(NULL)
+    sjm_nest(NULL),
+    pre_join_sort(NULL)
   {}
   ~Explain_table_access() { delete sjm_nest; }
 
@@ -715,6 +782,12 @@ public:
   Item *pushed_index_cond;
 
   Explain_basic_join *sjm_nest;
+  
+  /*
+    This describes a possible filesort() call that is done before doing the
+    join operation.
+  */
+  Explain_aggr_filesort *pre_join_sort;
 
   /* ANALYZE members */
 
@@ -728,9 +801,7 @@ public:
                     uint select_id, const char *select_type,
                     bool using_temporary, bool using_filesort);
   void print_explain_json(Explain_query *query, Json_writer *writer,
-                          bool is_analyze, 
-                          Filesort_tracker *fs_tracker,
-                          bool first_table_sort_used);
+                          bool is_analyze);
 
 private:
   void append_tag_name(String *str, enum explain_extra_tag tag);

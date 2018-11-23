@@ -1,3 +1,4 @@
+connection node_1;
 SAVEPOINT in a stored function should be forbidden
 CREATE FUNCTION f1 () RETURNS INT BEGIN
 SAVEPOINT s;
@@ -26,7 +27,9 @@ CREATE TABLE t1 (a INT PRIMARY KEY) ENGINE=InnoDB;
 CREATE TABLE t2 (a INT PRIMARY KEY AUTO_INCREMENT) ENGINE=InnoDB;
 INSERT INTO t1 values (110), (111), (112), (113), (114);
 Direct SAVEPOINT in a trigger should be forbidden
+connection node_2;
 CREATE TRIGGER i1_t1 BEFORE INSERT ON t1 FOR EACH ROW SAVEPOINT s;
+connection node_1;
 INSERT INTO t1 VALUES (1);
 DROP TRIGGER i1_t1;
 CREATE TRIGGER i2_t1 AFTER INSERT ON t1 FOR EACH ROW SAVEPOINT s;
@@ -58,10 +61,12 @@ EXECUTE set_savepoint;
 DEALLOCATE PREPARE set_savepoint;
 END|
 ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+connection node_2;
 SAVEPOINT in SP called from a trigger should be forbidden
 CREATE PROCEDURE p1() BEGIN
 SAVEPOINT s;
 END|
+connection node_1;
 CREATE TRIGGER i5_t1 BEFORE INSERT ON t1 FOR EACH ROW CALL p1;
 INSERT INTO t1 VALUES (6);
 DROP TRIGGER i5_t1;
@@ -121,11 +126,14 @@ BEGIN;
 CALL p5();
 COMMIT;
 DROP TRIGGER i6_t1;
+connection node_2;
 create trigger t1 before insert on t1 for each row
 begin
 insert into t2 values (NULL);
 end|
+connection node_1;
 INSERT INTO t1 VALUES (201), (202), (203);
+connection node_1;
 SELECT * FROM t1;
 a
 5
@@ -139,6 +147,7 @@ a
 SELECT COUNT(*) FROM t2;
 COUNT(*)
 3
+connection node_2;
 SELECT * FROM t1;
 a
 5
@@ -152,7 +161,9 @@ a
 SELECT COUNT(*) FROM t2;
 COUNT(*)
 3
+connection node_1;
 DEALLOCATE PREPARE call_p1;
+connection node_2;
 DROP TABLE t1, t2;
 DROP PROCEDURE p1;
 DROP PROCEDURE p2;

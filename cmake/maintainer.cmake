@@ -13,6 +13,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
+IF(MSVC)
+  RETURN()
+ENDIF()
+
 # Common warning flags for GCC, G++, Clang and Clang++
 SET(MY_WARNING_FLAGS
   -Wall
@@ -26,6 +30,7 @@ SET(MY_WARNING_FLAGS
   -Wno-unused-parameter
   -Wno-unused-private-field
   -Woverloaded-virtual
+  -Wnon-virtual-dtor
   -Wvla
   -Wwrite-strings
   )

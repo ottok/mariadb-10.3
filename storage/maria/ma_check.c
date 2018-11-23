@@ -149,7 +149,7 @@ void maria_chk_init_for_check(HA_CHECK *param, MARIA_HA *info)
     */
     param->max_trid= ~(TrID) 0;
   }
-  else if (param->max_trid == 0)
+  else if (param->max_trid == 0 || param->max_trid == ~(TrID) 0)
   {
     if (!ma_control_file_inited())
       param->max_trid= 0;      /* Give warning for first trid found */
@@ -179,7 +179,7 @@ int maria_chk_status(HA_CHECK *param, MARIA_HA *info)
   if (share->state.open_count != (uint) (share->global_changed ? 1 : 0))
   {
     /* Don't count this as a real warning, as check can correct this ! */
-    uint save=param->warning_printed;
+    my_bool save=param->warning_printed;
     _ma_check_print_warning(param,
 			   share->state.open_count==1 ?
 			   "%d client is using or hasn't closed the table properly" :
@@ -191,6 +191,7 @@ int maria_chk_status(HA_CHECK *param, MARIA_HA *info)
   }
   if (share->state.create_trid > param->max_trid)
   {
+    param->wrong_trd_printed= 1;       /* Force should run zerofill */
     _ma_check_print_warning(param,
                             "Table create_trd (%llu) > current max_transaction id (%llu).  Table needs to be repaired or zerofilled to be usable",
                             share->state.create_trid, param->max_trid);
@@ -643,7 +644,7 @@ int maria_chk_key(HA_CHECK *param, register MARIA_HA *info)
                       (key_part_map) 1, HA_READ_KEY_EXACT))
       {
 	/* Don't count this as a real warning, as maria_chk can't correct it */
-	uint save=param->warning_printed;
+	my_bool save=param->warning_printed;
 	_ma_check_print_warning(param, "Found row where the auto_increment "
                                 "column has the value 0");
 	param->warning_printed=save;
@@ -772,7 +773,7 @@ static
 void maria_collect_stats_nonulls_first(HA_KEYSEG *keyseg, ulonglong *notnull,
                                        const uchar *key)
 {
-  uint first_null, kp;
+  size_t first_null, kp;
   first_null= ha_find_null(keyseg, key) - keyseg;
   /*
     All prefix tuples that don't include keypart_{first_null} are not-null
@@ -814,7 +815,7 @@ int maria_collect_stats_nonulls_next(HA_KEYSEG *keyseg, ulonglong *notnull,
                                      const uchar *last_key)
 {
   uint diffs[2];
-  uint first_null_seg, kp;
+  size_t first_null_seg, kp;
   HA_KEYSEG *seg;
 
   /*
@@ -894,7 +895,7 @@ static int chk_index(HA_CHECK *param, MARIA_HA *info, MARIA_KEYDEF *keyinfo,
   if (_ma_get_keynr(share, anc_page->buff) != keyinfo->key_nr)
     _ma_check_print_error(param, "Page at %s is not marked for index %u",
                           llstr(anc_page->pos, llbuff),
-                          (uint) (keyinfo - share->keyinfo));
+                          (uint) keyinfo->key_nr);
   if ((page_flag & KEYPAGE_FLAG_HAS_TRANSID) &&
       !share->base.born_transactional)
   {
@@ -1009,6 +1010,7 @@ static int chk_index(HA_CHECK *param, MARIA_HA *info, MARIA_KEYDEF *keyinfo,
       if (subkeys < 0)
       {
         ha_rows tmp_keys=0;
+        share->ft2_keyinfo.key_nr= keyinfo->key_nr;
         if (chk_index_down(param,info,&share->ft2_keyinfo,record,
                            temp_buff,&tmp_keys,key_checksum,1))
           goto err;
@@ -1362,6 +1364,7 @@ static int check_dynamic_record(HA_CHECK *param, MARIA_HA *info, int extend,
         pos=block_info.filepos+block_info.block_len;
         if (block_info.rec_len > (uint) share->base.max_pack_length)
         {
+          my_errno= HA_ERR_WRONG_IN_RECORD;
           _ma_check_print_error(param,"Found too long record (%lu) at %s",
                                 (ulong) block_info.rec_len,
                                 llstr(start_recpos,llbuff));
@@ -2378,6 +2381,7 @@ static int initialize_variables_for_repair(HA_CHECK *param,
   param->retry_repair= 0;
   param->warning_printed= 0;
   param->error_printed= 0;
+  param->wrong_trd_printed= 0;
 
   sort_param->sort_info= sort_info;
   sort_param->fix_datafile= ! rep_quick;
@@ -2516,8 +2520,8 @@ static int maria_drop_all_indexes(HA_CHECK *param, MARIA_HA *info,
     DBUG_PRINT("repair", ("creating missing indexes"));
     for (i= 0; i < share->base.keys; i++)
     {
-      DBUG_PRINT("repair", ("index #: %u  key_root: 0x%lx  active: %d",
-                            i, (long) state->key_root[i],
+      DBUG_PRINT("repair", ("index #: %u  key_root:%lld  active: %d",
+                            i, state->key_root[i],
                             maria_is_key_active(state->key_map, i)));
       if ((state->key_root[i] != HA_OFFSET_ERROR) &&
           !maria_is_key_active(state->key_map, i))
@@ -3172,7 +3176,7 @@ int maria_sort_index(HA_CHECK *param, register MARIA_HA *info, char *name)
   DBUG_EXECUTE_IF("maria_crash_sort_index",
                   {
                     DBUG_PRINT("maria_crash_sort_index", ("now"));
-                    DBUG_ABORT();
+                    DBUG_SUICIDE();
                   });
   DBUG_RETURN(0);
 
@@ -3199,7 +3203,7 @@ static int write_page(MARIA_SHARE *share, File file,
   args.pageno= (pgcache_page_no_t) (pos / share->block_size);
   args.data= (uchar*) share;
   (* share->kfile.pre_write_hook)(&args);
-  res= my_pwrite(file, args.page, block_size, pos, myf_rw);
+  res= (int)my_pwrite(file, args.page, block_size, pos, myf_rw);
   (* share->kfile.post_write_hook)(res, &args);
   return res;
 }
@@ -3780,7 +3784,7 @@ int maria_repair_by_sort(HA_CHECK *param, register MARIA_HA *info,
 
   param->read_cache.end_of_file= sort_info.filelength;
   sort_param.wordlist=NULL;
-  init_alloc_root(&sort_param.wordroot, FTPARSER_MEMROOT_ALLOC_SIZE, 0,
+  init_alloc_root(&sort_param.wordroot, "sort", FTPARSER_MEMROOT_ALLOC_SIZE, 0,
                   MYF(param->malloc_flags));
 
   sort_param.key_cmp=sort_key_cmp;
@@ -3910,7 +3914,7 @@ int maria_repair_by_sort(HA_CHECK *param, register MARIA_HA *info,
     DBUG_EXECUTE_IF("maria_crash_create_index_by_sort",
                     {
                       DBUG_PRINT("maria_crash_create_index_by_sort", ("now"));
-                      DBUG_ABORT();
+                      DBUG_SUICIDE();
                     });
     if (scan_inited)
     {
@@ -4121,7 +4125,7 @@ err:
     DBUG_EXECUTE_IF("maria_crash_repair",
                     {
                       DBUG_PRINT("maria_crash_repair", ("now"));
-                      DBUG_ABORT();
+                      DBUG_SUICIDE();
                     });
   }
   share->state.changed|= STATE_NOT_SORTED_PAGES;
@@ -4428,7 +4432,8 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
         (FT_MAX_WORD_LEN_FOR_SORT *
          sort_param[i].keyinfo->seg->charset->mbmaxlen);
       sort_param[i].key_length+=ft_max_word_len_for_sort-HA_FT_MAXBYTELEN;
-      init_alloc_root(&sort_param[i].wordroot, FTPARSER_MEMROOT_ALLOC_SIZE, 0,
+      init_alloc_root(&sort_param[i].wordroot, "sort",
+                      FTPARSER_MEMROOT_ALLOC_SIZE, 0,
                       MYF(param->malloc_flags));
     }
   }
@@ -4474,8 +4479,8 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
     */
     sort_param[i].read_cache= ((rep_quick || !i) ? param->read_cache :
                                new_data_cache);
-    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: 0x%lx",
-                                  i, (long) &sort_param[i].read_cache));
+    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: %p",
+                                  i, &sort_param[i].read_cache));
 
     /*
       two approaches: the same amount of memory for each thread
@@ -4996,6 +5001,7 @@ static int sort_get_next_record(MARIA_SORT_PARAM *sort_param)
 	  param->error_printed=1;
           param->retry_repair=1;
           param->testflag|=T_RETRY_WITHOUT_QUICK;
+          my_errno= HA_ERR_WRONG_IN_RECORD;
 	  DBUG_RETURN(1);	/* Something wrong with data */
 	}
 	b_type= _ma_get_block_info(info, &block_info,-1,pos);
@@ -5269,6 +5275,7 @@ static int sort_get_next_record(MARIA_SORT_PARAM *sort_param)
 	param->error_printed=1;
         param->retry_repair=1;
         param->testflag|=T_RETRY_WITHOUT_QUICK;
+        my_errno= HA_ERR_WRONG_IN_RECORD;
 	DBUG_RETURN(1);		/* Something wrong with data */
       }
       sort_param->start_recpos=sort_param->pos;
@@ -5643,7 +5650,7 @@ static int sort_maria_ft_key_write(MARIA_SORT_PARAM *sort_param,
 
   if (ha_compare_text(sort_param->seg->charset,
                       a+1,a_len-1,
-                      ft_buf->lastkey+1,val_off-1, 0, 0)==0)
+                      ft_buf->lastkey+1,val_off-1, 0)==0)
   {
     uchar *p;
     if (!ft_buf->buf)                   /* store in second-level tree */
@@ -5666,7 +5673,7 @@ static int sort_maria_ft_key_write(MARIA_SORT_PARAM *sort_param,
       key_block++;
     sort_info->key_block=key_block;
     sort_param->keyinfo= &share->ft2_keyinfo;
-    ft_buf->count=(ft_buf->buf - p)/val_len;
+    ft_buf->count=(uint)(ft_buf->buf - p)/val_len;
 
     /* flushing buffer to second-level tree */
     for (error=0; !error && p < ft_buf->buf; p+= val_len)

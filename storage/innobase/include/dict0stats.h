@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2009, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2009, 2018, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -28,9 +29,11 @@ Created Jan 06, 2010 Vasil Dimov
 
 #include "univ.i"
 
-#include "db0err.h"
 #include "dict0types.h"
 #include "trx0types.h"
+
+#define TABLE_STATS_NAME        "mysql/innodb_table_stats"
+#define INDEX_STATS_NAME        "mysql/innodb_index_stats"
 
 enum dict_stats_upd_option_t {
 	DICT_STATS_RECALC_PERSISTENT,/* (re) calculate the
@@ -55,18 +58,6 @@ enum dict_stats_upd_option_t {
 };
 
 /*********************************************************************//**
-Calculates new estimates for table and index statistics. This function
-is relatively quick and is used to calculate transient statistics that
-are not saved on disk.
-This was the only way to calculate statistics before the
-Persistent Statistics feature was introduced. */
-UNIV_INTERN
-void
-dict_stats_update_transient(
-/*========================*/
-	dict_table_t*	table);	/*!< in/out: table */
-
-/*********************************************************************//**
 Set the persistent statistics flag for a given table. This is set only
 in the in-memory table object and is not saved on disk. It will be read
 from the .frm file upon first open from MySQL after a server restart. */
@@ -79,14 +70,10 @@ dict_stats_set_persistent(
 	ibool		ps_off)	/*!< in: persistent stats explicitly disabled */
 	MY_ATTRIBUTE((nonnull));
 
-/*********************************************************************//**
-Check whether persistent statistics is enabled for a given table.
-@return TRUE if enabled, FALSE otherwise */
+/** @return whether persistent statistics is enabled for a given table */
 UNIV_INLINE
-ibool
-dict_stats_is_persistent_enabled(
-/*=============================*/
-	const dict_table_t*	table)	/*!< in: table */
+bool
+dict_stats_is_persistent_enabled(const dict_table_t* table)
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /*********************************************************************//**
@@ -102,14 +89,11 @@ dict_stats_auto_recalc_set(
 	ibool		auto_recalc_on,		/*!< in: explicitly enabled */
 	ibool		auto_recalc_off);	/*!< in: explicitly disabled */
 
-/*********************************************************************//**
-Check whether auto recalc is enabled for a given table.
-@return TRUE if enabled, FALSE otherwise */
+/** @return whether auto recalc is enabled for a given table*/
 UNIV_INLINE
-ibool
-dict_stats_auto_recalc_is_enabled(
-/*==============================*/
-	const dict_table_t*	table);	/*!< in: table */
+bool
+dict_stats_auto_recalc_is_enabled(const dict_table_t* table)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /*********************************************************************//**
 Initialize table's stats for the first time when opening a table. */
@@ -129,11 +113,26 @@ dict_stats_deinit(
 	dict_table_t*	table)	/*!< in/out: table */
 	MY_ATTRIBUTE((nonnull));
 
+#ifdef WITH_WSREP
+/** Update the table modification counter and if necessary,
+schedule new estimates for table and index statistics to be calculated.
+@param[in,out]	table	persistent or temporary table
+@param[in]	thd	current session */
+void dict_stats_update_if_needed(dict_table_t* table, THD* thd)
+	MY_ATTRIBUTE((nonnull(1)));
+#else
+/** Update the table modification counter and if necessary,
+schedule new estimates for table and index statistics to be calculated.
+@param[in,out]	table	persistent or temporary table */
+void dict_stats_update_if_needed_func(dict_table_t* table)
+	MY_ATTRIBUTE((nonnull));
+# define dict_stats_update_if_needed(t,thd) dict_stats_update_if_needed_func(t)
+#endif
+
 /*********************************************************************//**
 Calculates new estimates for table and index statistics. The statistics
 are used in query optimization.
 @return DB_* error code or DB_SUCCESS */
-UNIV_INTERN
 dberr_t
 dict_stats_update(
 /*==============*/
@@ -148,7 +147,6 @@ Removes the information for a particular index's stats from the persistent
 storage if it exists and if there is data stored for this index.
 This function creates its own trx and commits it.
 @return DB_SUCCESS or error code */
-UNIV_INTERN
 dberr_t
 dict_stats_drop_index(
 /*==================*/
@@ -163,7 +161,6 @@ Removes the statistics for a table and all of its indexes from the
 persistent storage if it exists and if there is data stored for the table.
 This function creates its own transaction and commits it.
 @return DB_SUCCESS or error code */
-UNIV_INTERN
 dberr_t
 dict_stats_drop_table(
 /*==================*/
@@ -174,7 +171,6 @@ dict_stats_drop_table(
 
 /*********************************************************************//**
 Fetches or calculates new estimates for index statistics. */
-UNIV_INTERN
 void
 dict_stats_update_for_index(
 /*========================*/
@@ -185,7 +181,6 @@ dict_stats_update_for_index(
 Renames a table in InnoDB persistent stats storage.
 This function creates its own transaction and commits it.
 @return DB_SUCCESS or error code */
-UNIV_INTERN
 dberr_t
 dict_stats_rename_table(
 /*====================*/
@@ -194,42 +189,59 @@ dict_stats_rename_table(
 	char*		errstr,		/*!< out: error string if != DB_SUCCESS
 					is returned */
 	size_t		errstr_sz);	/*!< in: errstr size */
-
+#ifdef MYSQL_RENAME_INDEX
 /*********************************************************************//**
-Save defragmentation result.
-@return DB_SUCCESS or error code */
-UNIV_INTERN
+Renames an index in InnoDB persistent stats storage.
+This function creates its own transaction and commits it.
+@return DB_SUCCESS or error code. DB_STATS_DO_NOT_EXIST will be returned
+if the persistent stats do not exist. */
 dberr_t
-dict_stats_save_defrag_summary(
-	dict_index_t*	index);	/*!< in: index */
+dict_stats_rename_index(
+/*====================*/
+	const dict_table_t*	table,		/*!< in: table whose index
+						is renamed */
+	const char*		old_index_name,	/*!< in: old index name */
+	const char*		new_index_name)	/*!< in: new index name */
+	__attribute__((warn_unused_result));
+#endif /* MYSQL_RENAME_INDEX */
 
-/*********************************************************************//**
-Save defragmentation stats for a given index.
+/** Save an individual index's statistic into the persistent statistics
+storage.
+@param[in]	index			index to be updated
+@param[in]	last_update		timestamp of the stat
+@param[in]	stat_name		name of the stat
+@param[in]	stat_value		value of the stat
+@param[in]	sample_size		n pages sampled or NULL
+@param[in]	stat_description	description of the stat
+@param[in,out]	trx			in case of NULL the function will
+allocate and free the trx object. If it is not NULL then it will be
+rolled back only in the case of error, but not freed.
 @return DB_SUCCESS or error code */
-UNIV_INTERN
 dberr_t
-dict_stats_save_defrag_stats(
-	dict_index_t*	index);	/*!< in: index */
+dict_stats_save_index_stat(
+	dict_index_t*	index,
+	ib_time_t	last_update,
+	const char*	stat_name,
+	ib_uint64_t	stat_value,
+	ib_uint64_t*	sample_size,
+	const char*	stat_description,
+	trx_t*		trx);
 
-/**********************************************************************//**
-Clear defragmentation summary. */
-UNIV_INTERN
-void
-dict_stats_empty_defrag_summary(
-/*==================*/
-	dict_index_t* index);	/*!< in: index to clear defragmentation stats */
+/** Report an error if updating table statistics failed because
+.ibd file is missing, table decryption failed or table is corrupted.
+@param[in,out]	table	Table
+@param[in]	defragment	true if statistics is for defragment
+@retval DB_DECRYPTION_FAILED if decryption of the table failed
+@retval DB_TABLESPACE_DELETED if .ibd file is missing
+@retval DB_CORRUPTION if table is marked as corrupted */
+dberr_t
+dict_stats_report_error(dict_table_t* table, bool defragment = false)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
-/**********************************************************************//**
-Clear defragmentation related index stats. */
-UNIV_INTERN
-void
-dict_stats_empty_defrag_stats(
-/*==================*/
-	dict_index_t* index);	/*!< in: index to clear defragmentation stats */
-
-
-#ifndef UNIV_NONINL
 #include "dict0stats.ic"
-#endif
+
+#ifdef UNIV_ENABLE_UNIT_TEST_DICT_STATS
+void test_dict_stats_all();
+#endif /* UNIV_ENABLE_UNIT_TEST_DICT_STATS */
 
 #endif /* dict0stats_h */

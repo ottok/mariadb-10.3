@@ -68,7 +68,7 @@ int hp_rb_delete_key(HP_INFO *info, register HP_KEYDEF *keyinfo,
 		   const uchar *record, uchar *recpos, int flag)
 {
   heap_rb_param custom_arg;
-  ulong old_allocated;
+  size_t old_allocated;
   int res;
 
   if (flag) 
@@ -123,7 +123,7 @@ int hp_delete_key(HP_INFO *info, register HP_KEYDEF *keyinfo,
 
   while (pos->ptr_to_rec != recpos)
   {
-    if (flag && !hp_rec_key_cmp(keyinfo, record, pos->ptr_to_rec, 0))
+    if (flag && !hp_rec_key_cmp(keyinfo, record, pos->ptr_to_rec))
       last_ptr=pos;				/* Previous same key */
     gpos=pos;
     if (!(pos=pos->next_key))

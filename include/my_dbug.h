@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2010, Oracle and/or its affiliates. 
-   Copyright (C) 2000-2011 Monty Program Ab
+   Copyright (C) 2000, 2017, MariaDB Corporation Ab
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -50,7 +50,7 @@ extern  void _db_set_init_(const char *control);
 extern void _db_enter_(const char *_func_, const char *_file_, uint _line_,
                        struct _db_stack_frame_ *_stack_frame_);
 extern  void _db_return_(struct _db_stack_frame_ *_stack_frame_);
-extern  void _db_pargs_(uint _line_,const char *keyword);
+extern  int _db_pargs_(uint _line_,const char *keyword);
 extern  void _db_doprnt_(const char *format,...)
   ATTRIBUTE_FORMAT(printf, 1, 2);
 extern  void _db_dump_(uint _line_,const char *keyword,
@@ -63,6 +63,7 @@ extern void _db_flush_(void);
 extern void dbug_swap_code_state(void **code_state_store);
 extern void dbug_free_code_state(void **code_state_store);
 extern  const char* _db_get_func_(void);
+extern int (*dbug_sanity)(void);
 
 #define DBUG_LEAVE do { \
     _db_stack_frame_.line= __LINE__; \
@@ -91,7 +92,7 @@ extern  const char* _db_get_func_(void);
 #define DBUG_EVALUATE_IF(keyword,a1,a2) \
         (_db_keyword_(0,(keyword), 1) ? (a1) : (a2))
 #define DBUG_PRINT(keyword,arglist) \
-        do {_db_pargs_(__LINE__,keyword); _db_doprnt_ arglist;} while(0)
+        do if (_db_pargs_(__LINE__,keyword)) _db_doprnt_ arglist; while(0)
 #define DBUG_PUSH(a1) _db_push_ (a1)
 #define DBUG_POP() _db_pop_ ()
 #define DBUG_SET(a1) _db_set_ (a1)
@@ -102,14 +103,18 @@ extern  const char* _db_get_func_(void);
 #define DBUG_END()  _db_end_ ()
 #define DBUG_LOCK_FILE _db_lock_file_()
 #define DBUG_UNLOCK_FILE _db_unlock_file_()
-#define DBUG_ASSERT(A) assert(A)
+#define DBUG_ASSERT(A) do { if (!(A)) { _db_flush_(); assert(A); }} while (0)
+#define DBUG_SLOW_ASSERT(A) DBUG_ASSERT(A)
+#define DBUG_ASSERT_EXISTS
 #define DBUG_EXPLAIN(buf,len) _db_explain_(0, (buf),(len))
 #define DBUG_EXPLAIN_INITIAL(buf,len) _db_explain_init_((buf),(len))
 #define DEBUGGER_OFF                    do { _dbug_on_= 0; } while(0)
 #define DEBUGGER_ON                     do { _dbug_on_= 1; } while(0)
 #define IF_DBUG(A,B)                    A
+#define IF_DBUG_ASSERT(A,B)             A
 #define DBUG_SWAP_CODE_STATE(arg) dbug_swap_code_state(arg)
 #define DBUG_FREE_CODE_STATE(arg) dbug_free_code_state(arg)
+#undef DBUG_ASSERT_AS_PRINTF
 
 #ifndef __WIN__
 #define DBUG_ABORT()                    (_db_flush_(), abort())
@@ -138,7 +143,7 @@ extern  const char* _db_get_func_(void);
 #else
 extern void _db_suicide_(void);
 #define DBUG_SUICIDE() (_db_flush_(), _db_suicide_())
-#endif
+#endif /* __WIN__ */
 
 #else                                           /* No debugger */
 
@@ -159,7 +164,7 @@ extern void _db_suicide_(void);
 #define DBUG_PROCESS(a1)                do { } while(0)
 #define DBUG_DUMP(keyword,a1,a2)        do { } while(0)
 #define DBUG_END()                      do { } while(0)
-#define DBUG_ASSERT(A)                  do { } while(0)
+#define DBUG_SLOW_ASSERT(A)             do { } while(0)
 #define DBUG_LOCK_FILE                  do { } while(0)
 #define DBUG_FILE (stderr)
 #define DBUG_UNLOCK_FILE                do { } while(0)
@@ -176,7 +181,16 @@ extern void _db_suicide_(void);
 #define DBUG_CRASH_VOID_RETURN          do { return; } while(0)
 #define DBUG_SUICIDE()                  do { } while(0)
 
-#endif
+#ifdef DBUG_ASSERT_AS_PRINTF
+extern void (*my_dbug_assert_failed)(const char *assert_expr, const char* file, unsigned long line);
+#define DBUG_ASSERT(assert_expr) do { if (!(assert_expr)) { my_dbug_assert_failed(#assert_expr, __FILE__, __LINE__); }} while (0)
+#define DBUG_ASSERT_EXISTS
+#define IF_DBUG_ASSERT(A,B)             A
+#else
+#define DBUG_ASSERT(A)                  do { } while(0)
+#define IF_DBUG_ASSERT(A,B)             B
+#endif /* DBUG_ASSERT_AS_PRINTF */
+#endif /* !defined(DBUG_OFF) && !defined(_lint) */
 
 #ifdef EXTRA_DEBUG
 /**
@@ -193,8 +207,22 @@ void debug_sync_point(const char* lock_name, uint lock_timeout);
 #define DBUG_SYNC_POINT(lock_name,lock_timeout)
 #endif /* EXTRA_DEBUG */
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 }
+/*
+  DBUG_LOG() was initially intended for InnoDB. To be able to use it elsewhere
+  one should #include <sstream>. We intentionally avoid including it here to save
+  compilation time.
+*/
+# ifdef DBUG_OFF
+#  define DBUG_LOG(keyword, v) do {} while (0)
+# else
+#  define DBUG_LOG(keyword, v) do { \
+  if (_db_pargs_(__LINE__, keyword)) { \
+    std::ostringstream _db_s; _db_s << v; \
+    _db_doprnt_("%s", _db_s.str().c_str()); \
+  }} while (0)
+# endif
 #endif
 
 #endif /* _my_dbug_h */

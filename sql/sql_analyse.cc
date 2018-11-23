@@ -29,7 +29,7 @@
 
 #define MYSQL_LEX 1
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "procedure.h"
 #include "sql_analyse.h"
@@ -72,7 +72,7 @@ Procedure *
 proc_analyse_init(THD *thd, ORDER *param, select_result *result,
 		  List<Item> &field_list)
 {
-  char *proc_name = (*param->item)->name;
+  const char *proc_name = (*param->item)->name.str;
   analyse *pc = new analyse(result);
   field_info **f_info;
   DBUG_ENTER("proc_analyse_init");
@@ -88,7 +88,7 @@ proc_analyse_init(THD *thd, ORDER *param, select_result *result,
   else if (param->next)
   {
     // first parameter
-    if (!(*param->item)->fixed && (*param->item)->fix_fields(thd, param->item))
+    if ((*param->item)->fix_fields_if_needed(thd, param->item))
     {
       DBUG_PRINT("info", ("fix_fields() for the first parameter failed"));
       goto err;
@@ -107,7 +107,7 @@ proc_analyse_init(THD *thd, ORDER *param, select_result *result,
       goto err;
     }
     // second parameter
-    if (!(*param->item)->fixed && (*param->item)->fix_fields(thd, param->item))
+    if ((*param->item)->fix_fields_if_needed(thd, param->item))
     {
       DBUG_PRINT("info", ("fix_fields() for the second parameter failed"));
       goto err;
@@ -134,7 +134,7 @@ proc_analyse_init(THD *thd, ORDER *param, select_result *result,
   }
 
   if (!(pc->f_info=
-        (field_info**)sql_alloc(sizeof(field_info*)*field_list.elements)))
+        (field_info**) thd->alloc(sizeof(field_info*) * field_list.elements)))
     goto err;
   pc->f_end = pc->f_info + field_list.elements;
   pc->fields = field_list;
@@ -298,9 +298,10 @@ bool get_ev_num_info(EV_NUM_INFO *ev_info, NUM_INFO *info, const char *num)
 } // get_ev_num_info
 
 
-void free_string(String *s)
+int free_string(String *s)
 {
   s->free();
+  return 0;
 }
 
 
@@ -374,7 +375,7 @@ void field_str::add()
       if (!tree_insert(&tree, (void*) &s, 0, tree.custom_arg))
       {
 	room_in_tree = 0;      // Remove tree, out of RAM ?
-	delete_tree(&tree);
+	delete_tree(&tree, 0);
       }
       else
       {
@@ -382,7 +383,7 @@ void field_str::add()
 	if ((treemem += length) > pc->max_treemem)
 	{
 	  room_in_tree = 0;	 // Remove tree, too big tree
-	  delete_tree(&tree);
+	  delete_tree(&tree, 0);
 	}
       }
     }
@@ -409,7 +410,7 @@ void field_real::add()
   if (num == 0.0)
     empty++;
 
-  if ((decs = decimals()) == NOT_FIXED_DEC)
+  if ((decs = decimals()) >= FLOATING_POINT_DECIMALS)
   {
     length= sprintf(buff, "%g", num);
     if (rint(num) != num)
@@ -441,7 +442,7 @@ void field_real::add()
     if (!(element = tree_insert(&tree, (void*) &num, 0, tree.custom_arg)))
     {
       room_in_tree = 0;    // Remove tree, out of RAM ?
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
     /*
       if element->count == 1, this element can be found only once from tree
@@ -450,7 +451,7 @@ void field_real::add()
     else if (element->count == 1 && (tree_elements++) >= pc->max_tree_elements)
     {
       room_in_tree = 0;  // Remove tree, too many elements
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
   }
 
@@ -507,7 +508,7 @@ void field_decimal::add()
     if (!(element = tree_insert(&tree, (void*)buf, 0, tree.custom_arg)))
     {
       room_in_tree = 0;    // Remove tree, out of RAM ?
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
     /*
       if element->count == 1, this element can be found only once from tree
@@ -516,7 +517,7 @@ void field_decimal::add()
     else if (element->count == 1 && (tree_elements++) >= pc->max_tree_elements)
     {
       room_in_tree = 0;  // Remove tree, too many elements
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
   }
 
@@ -574,7 +575,7 @@ void field_longlong::add()
     if (!(element = tree_insert(&tree, (void*) &num, 0, tree.custom_arg)))
     {
       room_in_tree = 0;    // Remove tree, out of RAM ?
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
     /*
       if element->count == 1, this element can be found only once from tree
@@ -583,7 +584,7 @@ void field_longlong::add()
     else if (element->count == 1 && (tree_elements++) >= pc->max_tree_elements)
     {
       room_in_tree = 0;  // Remove tree, too many elements
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
   }
 
@@ -630,7 +631,7 @@ void field_ulonglong::add()
     if (!(element = tree_insert(&tree, (void*) &num, 0, tree.custom_arg)))
     {
       room_in_tree = 0;    // Remove tree, out of RAM ?
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
     /*
       if element->count == 1, this element can be found only once from tree
@@ -639,7 +640,7 @@ void field_ulonglong::add()
     else if (element->count == 1 && (tree_elements++) >= pc->max_tree_elements)
     {
       room_in_tree = 0;  // Remove tree, too many elements
-      delete_tree(&tree);
+      delete_tree(&tree, 0);
     }
   }
 
@@ -892,7 +893,7 @@ void field_real::get_opt_type(String *answer,
 
   if (!max_notzero_dec_len)
   {
-    int len= (int) max_length - ((item->decimals == NOT_FIXED_DEC) ?
+    int len= (int) max_length - ((item->decimals >= FLOATING_POINT_DECIMALS) ?
 				 0 : (item->decimals + 1));
 
     if (min_arg >= -128 && max_arg <= (min_arg >= 0 ? 255 : 127))
@@ -912,7 +913,7 @@ void field_real::get_opt_type(String *answer,
     if (min_arg >= 0)
       answer->append(STRING_WITH_LEN(" UNSIGNED"));
   }
-  else if (item->decimals == NOT_FIXED_DEC)
+  else if (item->decimals >= FLOATING_POINT_DECIMALS)
   {
     if (min_arg >= -FLT_MAX && max_arg <= FLT_MAX)
       answer->append(STRING_WITH_LEN("FLOAT"));

@@ -28,22 +28,25 @@ BEGIN
   -- Dump all global variables except those
   -- that are supposed to change
   SELECT * FROM INFORMATION_SCHEMA.GLOBAL_VARIABLES
-    WHERE variable_name NOT IN ('timestamp', 'innodb_file_format_max')
+    WHERE variable_name NOT IN ('timestamp')
      AND variable_name not like "Last_IO_Err*"
      AND variable_name != 'INNODB_IBUF_MAX_SIZE'
      AND variable_name != 'INNODB_USE_NATIVE_AIO'
+     AND variable_name != 'INNODB_BUFFER_POOL_LOAD_AT_STARTUP'
      AND variable_name not like 'GTID%POS'
      AND variable_name != 'GTID_BINLOG_STATE'
    ORDER BY variable_name;
 
   -- Dump all databases, there should be none
   -- except those that was created during bootstrap
-  SELECT * FROM INFORMATION_SCHEMA.SCHEMATA;
+  SELECT * FROM INFORMATION_SCHEMA.SCHEMATA ORDER BY BINARY SCHEMA_NAME;
 
   -- and the mtr_wsrep_notify schema which is populated by the std_data/wsrep_notify.sh script
   -- and the suite/galera/t/galera_var_notify_cmd.test
   -- and the wsrep_schema schema that may be created by Galera
-  SELECT * FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mtr_wsrep_notify', 'wsrep_schema');
+  SELECT * FROM INFORMATION_SCHEMA.SCHEMATA
+    WHERE SCHEMA_NAME NOT IN ('mtr_wsrep_notify', 'wsrep_schema')
+    ORDER BY BINARY SCHEMA_NAME;
 
   -- The test database should not contain any tables
   SELECT table_name AS tables_in_test FROM INFORMATION_SCHEMA.TABLES

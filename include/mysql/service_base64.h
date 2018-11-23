@@ -44,32 +44,32 @@ extern struct base64_service_st {
 
 #ifdef MYSQL_DYNAMIC_PLUGIN
 
-#define base64_needed_encoded_length(A) base64_service->base64_needed_encoded_length_ptr(A)
-#define base64_encode_max_arg_length() base64_service->base64_encode_max_arg_length_ptr()
-#define base64_needed_decoded_length(A) base64_service->base64_needed_decoded_length_ptr(A)
-#define base64_decode_max_arg_length() base64_service->base64_decode_max_arg_length_ptr()
-#define base64_encode(A,B,C) base64_service->base64_encode_ptr(A,B,C)
-#define base64_decode(A,B,C,D,E) base64_service->base64_decode_ptr(A,B,C,D,E)
+#define my_base64_needed_encoded_length(A) base64_service->base64_needed_encoded_length_ptr(A)
+#define my_base64_encode_max_arg_length() base64_service->base64_encode_max_arg_length_ptr()
+#define my_base64_needed_decoded_length(A) base64_service->base64_needed_decoded_length_ptr(A)
+#define my_base64_decode_max_arg_length() base64_service->base64_decode_max_arg_length_ptr()
+#define my_base64_encode(A,B,C) base64_service->base64_encode_ptr(A,B,C)
+#define my_base64_decode(A,B,C,D,E) base64_service->base64_decode_ptr(A,B,C,D,E)
 
 #else
 
-/* Calculate how much memory needed for dst of base64_encode() */
-int base64_needed_encoded_length(int length_of_data);
+/* Calculate how much memory needed for dst of my_base64_encode() */
+int my_base64_needed_encoded_length(int length_of_data);
 
-/* Maximum length base64_encode_needed_length() can accept with no overflow.  */
-int base64_encode_max_arg_length(void);
+/* Maximum length my_base64_encode_needed_length() can accept with no overflow.  */
+int my_base64_encode_max_arg_length(void);
 
-/* Calculate how much memory needed for dst of base64_decode() */
-int base64_needed_decoded_length(int length_of_encoded_data);
+/* Calculate how much memory needed for dst of my_base64_decode() */
+int my_base64_needed_decoded_length(int length_of_encoded_data);
 
-/* Maximum length base64_decode_needed_length() can accept with no overflow.  */
-int base64_decode_max_arg_length();
+/* Maximum length my_base64_decode_needed_length() can accept with no overflow.  */
+int my_base64_decode_max_arg_length();
 
-/* Encode data as a base64 string */
-int base64_encode(const void *src, size_t src_len, char *dst);
+/* Encode data as a my_base64 string */
+int my_base64_encode(const void *src, size_t src_len, char *dst);
 
-/* Decode a base64 string into data */
-int base64_decode(const char *src, size_t src_len,
+/* Decode a my_base64 string into data */
+int my_base64_decode(const char *src, size_t src_len,
                   void *dst, const char **end_ptr, int flags);
 
 #endif

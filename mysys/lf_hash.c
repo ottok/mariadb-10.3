@@ -86,12 +86,12 @@ typedef struct {
              1 - error (callbck returned 1)
 */
 static int l_find(LF_SLIST * volatile *head, CHARSET_INFO *cs, uint32 hashnr,
-                 const uchar *key, uint keylen, CURSOR *cursor, LF_PINS *pins,
+                 const uchar *key, size_t keylen, CURSOR *cursor, LF_PINS *pins,
                  my_hash_walk_action callback)
 {
   uint32       cur_hashnr;
   const uchar  *cur_key;
-  uint         cur_keylen;
+  size_t       cur_keylen;
   intptr       link;
 
   DBUG_ASSERT(!cs || !callback);        /* should not be set both */
@@ -103,7 +103,7 @@ retry:
     cursor->curr= (LF_SLIST *)(*cursor->prev);
     lf_pin(pins, 1, cursor->curr);
   } while (my_atomic_loadptr((void**)cursor->prev) != cursor->curr &&
-                              LF_BACKOFF);
+           LF_BACKOFF());
   for (;;)
   {
     if (unlikely(!cursor->curr))
@@ -117,7 +117,7 @@ retry:
       link= cursor->curr->link;
       cursor->next= PTR(link);
       lf_pin(pins, 0, cursor->next);
-    } while (link != cursor->curr->link && LF_BACKOFF);
+    } while (link != cursor->curr->link && LF_BACKOFF());
 
     if (!DELETED(link))
     {
@@ -145,7 +145,7 @@ retry:
         and remove this deleted node
       */
       if (my_atomic_casptr((void **) cursor->prev,
-                           (void **) &cursor->curr, cursor->next) && LF_BACKOFF)
+                           (void **) &cursor->curr, cursor->next) && LF_BACKOFF())
         lf_alloc_free(pins, cursor->curr);
       else
         goto retry;
@@ -308,7 +308,7 @@ static inline const uchar* hash_key(const LF_HASH *hash,
   @note, that the hash value is limited to 2^31, because we need one
   bit to distinguish between normal and dummy nodes.
 */
-static inline my_hash_value_type calc_hash(const CHARSET_INFO *cs,
+static inline my_hash_value_type calc_hash(CHARSET_INFO *cs,
                                            const uchar *key,
                                            size_t keylen)
 {

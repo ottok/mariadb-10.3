@@ -36,8 +36,8 @@ int maria_rkey(MARIA_HA *info, uchar *buf, int inx, const uchar *key_data,
   MARIA_KEY key;
   ICP_RESULT icp_res= ICP_MATCH;
   DBUG_ENTER("maria_rkey");
-  DBUG_PRINT("enter", ("base: 0x%lx  buf: 0x%lx  inx: %d  search_flag: %d",
-                       (long) info, (long) buf, inx, search_flag));
+  DBUG_PRINT("enter", ("base:%p  buf:%p  inx: %d  search_flag: %d",
+                       info, buf, inx, search_flag));
 
   if ((inx = _ma_check_index(info,inx)) < 0)
     DBUG_RETURN(my_errno);
@@ -46,7 +46,7 @@ int maria_rkey(MARIA_HA *info, uchar *buf, int inx, const uchar *key_data,
   info->last_key_func= search_flag;
   keyinfo= info->last_key.keyinfo;
 
-  key_buff= info->lastkey_buff+info->s->base.max_key_length;
+  key_buff= info->lastkey_buff2;
 
   if (info->once_flags & USE_PACKED_KEYS)
   {
@@ -55,7 +55,8 @@ int maria_rkey(MARIA_HA *info, uchar *buf, int inx, const uchar *key_data,
       key is already packed!;  This happens when we are using a MERGE TABLE
       In this key 'key_part_map' is the length of the key !
     */
-    bmove(key_buff, key_data, keypart_map);
+    if (key_buff != key_data)
+      bmove(key_buff, key_data, keypart_map);
     key.data=    key_buff;
     key.keyinfo= keyinfo;
     key.data_length= keypart_map;

@@ -19,7 +19,6 @@
 #ifndef _hash_h
 #define _hash_h
 
-#include "my_global.h"                          /* uchar */
 #include "my_sys.h"                             /* DYNAMIC_ARRAY */
 
 /*
@@ -42,7 +41,7 @@ extern "C" {
 #define HASH_UNIQUE     1       /* hash_insert fails on duplicate key */
 #define HASH_THREAD_SPECIFIC 2  /* Mark allocated memory THREAD_SPECIFIC */
 
-typedef uint my_hash_value_type;
+typedef uint32 my_hash_value_type;
 typedef uchar *(*my_hash_get_key)(const uchar *,size_t*,my_bool);
 typedef my_hash_value_type (*my_hash_function)(CHARSET_INFO *,
                                                const uchar *, size_t);
@@ -73,7 +72,7 @@ my_bool my_hash_init2(HASH *hash, uint growth_size, CHARSET_INFO *charset,
                       uint flags);
 void my_hash_free(HASH *tree);
 void my_hash_reset(HASH *hash);
-uchar *my_hash_element(HASH *hash, ulong idx);
+uchar *my_hash_element(HASH *hash, size_t idx);
 uchar *my_hash_search(const HASH *info, const uchar *key, size_t length);
 uchar *my_hash_search_using_hash_value(const HASH *info,
                                        my_hash_value_type hash_value,

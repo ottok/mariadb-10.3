@@ -35,12 +35,15 @@ fil_get_page_type_name(
 	ulint	page_type)	/*!< in: FIL_PAGE_TYPE */
 {
 	switch(page_type) {
+	case FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED:
+		return "PAGE_COMPRESSED_ENRYPTED";
 	case FIL_PAGE_PAGE_COMPRESSED:
 		return "PAGE_COMPRESSED";
-	case FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED:
-		return "PAGE_COMPRESSED_ENCRYPTED";
+	case FIL_PAGE_TYPE_INSTANT:
 	case FIL_PAGE_INDEX:
 		return "INDEX";
+	case FIL_PAGE_RTREE:
+		return "RTREE";
 	case FIL_PAGE_UNDO_LOG:
 		return "UNDO LOG";
 	case FIL_PAGE_INODE:
@@ -65,22 +68,11 @@ fil_get_page_type_name(
 		return "ZBLOB";
 	case FIL_PAGE_TYPE_ZBLOB2:
 		return "ZBLOB2";
+	case FIL_PAGE_TYPE_UNKNOWN:
+		return "OLD UNKOWN PAGE TYPE";
+	default:
+		return "PAGE TYPE CORRUPTED";
 	}
-
-	return "PAGE TYPE CORRUPTED";
-}
-
-/****************************************************************//**
-Get block size from fil node
-@return block size*/
-UNIV_INLINE
-ulint
-fil_node_get_block_size(
-/*====================*/
-	fil_node_t*     node)		/*!< in: Node where to get block
-					size */
-{
-	return (node->file_block_size);
 }
 
 /****************************************************************//**
@@ -98,6 +90,8 @@ fil_page_type_validate(
 	if (!((page_type == FIL_PAGE_PAGE_COMPRESSED ||
 		page_type == FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED ||
 		page_type == FIL_PAGE_INDEX ||
+		page_type == FIL_PAGE_TYPE_INSTANT ||
+		page_type == FIL_PAGE_RTREE ||
 		page_type == FIL_PAGE_UNDO_LOG ||
 		page_type == FIL_PAGE_INODE ||
 		page_type == FIL_PAGE_IBUF_FREE_LIST ||
@@ -109,31 +103,23 @@ fil_page_type_validate(
 		page_type == FIL_PAGE_TYPE_XDES ||
 		page_type == FIL_PAGE_TYPE_BLOB ||
 		page_type == FIL_PAGE_TYPE_ZBLOB ||
-		page_type == FIL_PAGE_TYPE_ZBLOB2))) {
+		page_type == FIL_PAGE_TYPE_ZBLOB2 ||
+		page_type == FIL_PAGE_TYPE_UNKNOWN))) {
 
-		ulint key_version = mach_read_from_4(page + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION);
-		bool page_compressed = (page_type == FIL_PAGE_PAGE_COMPRESSED);
-		bool page_compressed_encrypted = (page_type == FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED);
 		ulint space = mach_read_from_4(page + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
 		ulint offset = mach_read_from_4(page + FIL_PAGE_OFFSET);
-		ib_uint64_t lsn = mach_read_from_8(page + FIL_PAGE_LSN);
-		ulint compressed_len = mach_read_from_2(page + FIL_PAGE_DATA);
 		fil_system_enter();
 		fil_space_t* rspace = fil_space_get_by_id(space);
 		fil_system_exit();
 
 		/* Dump out the page info */
-		fprintf(stderr, "InnoDB: Page " ULINTPF ":" ULINTPF
-			" name %s page_type " ULINTPF " page_type_name %s\n"
-			"InnoDB: key_version " ULINTPF
-			" page_compressed %d page_compressed_encrypted %d lsn "
-			LSN_PF " compressed_len " ULINTPF "\n",
-			space, offset, rspace->name, page_type,
-			fil_get_page_type_name(page_type),
-			key_version,
-			page_compressed, page_compressed_encrypted,
-			lsn, compressed_len);
-		ut_error;
+		ib::fatal() << "Page " << space << ":" << offset
+			<< " name " << (rspace ? rspace->name : "???")
+			<< " page_type " << page_type
+			<< " key_version "
+			<< mach_read_from_4(page + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION)
+			<< " lsn " << mach_read_from_8(page + FIL_PAGE_LSN)
+			<< " compressed_len " << mach_read_from_2(page + FIL_PAGE_DATA);
 		return false;
 	}
 

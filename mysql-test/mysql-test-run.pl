@@ -25,7 +25,7 @@
 #  Tool used for executing a suite of .test files
 #
 #  See the "MySQL Test framework manual" for more information
-#  http://dev.mysql.com/doc/mysqltest/en/index.html
+#  https://mariadb.com/kb/en/library/mysqltest/
 #
 #
 ##############################################################################
@@ -105,7 +105,6 @@ use IO::Select;
 
 require "mtr_process.pl";
 require "mtr_io.pl";
-require "mtr_gcov.pl";
 require "mtr_gprof.pl";
 require "mtr_misc.pl";
 
@@ -173,28 +172,33 @@ my @DEFAULT_SUITES= qw(
     binlog-
     binlog_encryption-
     csv-
+    compat/oracle-
     encryption-
     federated-
     funcs_1-
     funcs_2-
+    gcol-
     handler-
     heap-
     innodb-
     innodb_fts-
+    innodb_gis-
     innodb_zip-
+    json-
     maria-
     mariabackup-
     multi_source-
     optimizer_unfixed_bugs-
     parts-
-    percona-
     perfschema-
     plugins-
     roles-
     rpl-
     sys_vars-
+    sql_sequence-
     unit-
     vcol-
+    versioning-
     wsrep-
     galera-
   );
@@ -218,6 +222,7 @@ our @opt_extra_mysqld_opt;
 our @opt_mysqld_envs;
 
 my $opt_stress;
+my $opt_tail_lines= 20;
 
 my $opt_dry_run;
 
@@ -249,11 +254,6 @@ our $opt_mem= $ENV{'MTR_MEM'};
 our $opt_clean_vardir= $ENV{'MTR_CLEAN_VARDIR'};
 
 our $opt_gcov;
-our $opt_gcov_src_dir;
-our $opt_gcov_exe= "gcov";
-our $opt_gcov_err= "mysql-test-gcov.err";
-our $opt_gcov_msg= "mysql-test-gcov.msg";
-
 our $opt_gprof;
 our %gprof_dirs;
 
@@ -281,7 +281,7 @@ my $current_config_name; # The currently running config file template
 our @opt_experimentals;
 our $experimental_test_cases= [];
 
-my $baseport;
+our $baseport;
 # $opt_build_thread may later be set from $opt_port_base
 my $opt_build_thread= $ENV{'MTR_BUILD_THREAD'} || "auto";
 my $opt_port_base= $ENV{'MTR_PORT_BASE'} || "auto";
@@ -330,6 +330,8 @@ my $opt_callgrind;
 my %mysqld_logs;
 my $opt_debug_sync_timeout= 300; # Default timeout for WAIT_FOR actions.
 my $warn_seconds = 60;
+
+my $rebootstrap_re= '--innodb[-_](?:page[-_]size|checksum[-_]algorithm|undo[-_]tablespaces|log[-_]group[-_]home[-_]dir|data[-_]home[-_]dir)|data[-_]file[-_]path|force_rebootstrap';
 
 sub testcase_timeout ($) {
   my ($tinfo)= @_;
@@ -384,11 +386,6 @@ sub main {
   # --help will not reach here, so now it's safe to assume we have binaries
   My::SafeProcess::find_bin();
 
-  if ( $opt_gcov ) {
-    gcov_prepare($basedir . "/" . $opt_gcov_src_dir);
-  }
-
-  
   print "vardir: $opt_vardir\n";
   initialize_servers();
   init_timers();
@@ -437,20 +434,29 @@ sub main {
     exit 0;
   }
 
+  if ($opt_gcov) {
+    system './dgcov.pl --purge';
+  }
+  
   #######################################################################
   my $num_tests= @$tests;
   if ( $opt_parallel eq "auto" ) {
     # Try to find a suitable value for number of workers
-    my $sys_info= My::SysInfo->new();
-
-    $opt_parallel= $sys_info->num_cpus();
-    for my $limit (2000, 1500, 1000, 500){
-      $opt_parallel-- if ($sys_info->min_bogomips() < $limit);
+    if (IS_WINDOWS)
+    {
+      $opt_parallel= $ENV{NUMBER_OF_PROCESSORS} || 1;
+    }
+    else
+    {
+      my $sys_info= My::SysInfo->new();
+      $opt_parallel= $sys_info->num_cpus();
+      for my $limit (2000, 1500, 1000, 500){
+        $opt_parallel-- if ($sys_info->min_bogomips() < $limit);
+      }
     }
     my $max_par= $ENV{MTR_MAX_PARALLEL} || 8;
     $opt_parallel= $max_par if ($opt_parallel > $max_par);
     $opt_parallel= $num_tests if ($opt_parallel > $num_tests);
-    $opt_parallel= 1 if (IS_WINDOWS and $sys_info->isvm());
     $opt_parallel= 1 if ($opt_parallel < 1);
     mtr_report("Using parallel: $opt_parallel");
   }
@@ -561,14 +567,14 @@ sub main {
 
   mtr_print_line();
 
-  if ( $opt_gcov ) {
-    gcov_collect($basedir . "/" . $opt_gcov_src_dir, $opt_gcov_exe,
-		 $opt_gcov_msg, $opt_gcov_err);
-  }
-
   print_total_times($opt_parallel) if $opt_report_times;
 
   mtr_report_stats($prefix, $fail, $completed, $extra_warnings);
+
+  if ($opt_gcov) {
+    mtr_report("Running dgcov");
+    system "./dgcov.pl --generate > $opt_vardir/last_changes.dgcov";
+  }
 
   if ( @$completed != $num_tests)
   {
@@ -1162,7 +1168,6 @@ sub command_line_setup {
 
              # Coverage, profiling etc
              'gcov'                     => \$opt_gcov,
-             'gcov-src-dir=s'           => \$opt_gcov_src_dir,
              'gprof'                    => \$opt_gprof,
              'valgrind|valgrind-all'    => \$opt_valgrind,
              'valgrind-mysqltest'       => \$opt_valgrind_mysqltest,
@@ -1223,6 +1228,7 @@ sub command_line_setup {
 	     'report-times'             => \$opt_report_times,
 	     'result-file'              => \$opt_resfile,
 	     'stress=s'                 => \$opt_stress,
+	     'tail-lines=i'             => \$opt_tail_lines,
              'dry-run'                  => \$opt_dry_run,
 
              'help|h'                   => \$opt_usage,
@@ -1385,7 +1391,7 @@ sub command_line_setup {
 
   if ( @opt_cases )
   {
-    # Run big tests if explicitely specified on command line
+    # Run big tests if explicitly specified on command line
     $opt_big_test= 1;
   }
 
@@ -1755,18 +1761,6 @@ sub command_line_setup {
     $opt_strace=1;
   }
 
-  # InnoDB does not bother to do individual de-allocations at exit. Instead it
-  # relies on a custom allocator to track every allocation, and frees all at
-  # once during exit.
-  # In XtraDB, an option use-sys-malloc is introduced (and on by default) to
-  # disable this (for performance). But this exposes Valgrind to all the
-  # missing de-allocations, so we need to disable it to at least get
-  # meaningful leak checking for the rest of the server.
-  if ($opt_valgrind_mysqld)
-  {
-    push(@opt_extra_mysqld_opt, "--loose-skip-innodb-use-sys-malloc");
-  }
-
   if ($opt_debug_common)
   {
     $opt_debug= 1;
@@ -1856,6 +1850,9 @@ sub collect_mysqld_features {
   mtr_add_arg($args, "--lc-messages-dir=%s", $path_language);
   mtr_add_arg($args, "--skip-grant-tables");
   mtr_add_arg($args, "--log-warnings=0");
+  mtr_add_arg($args, "--log-slow-admin-statements=0");
+  mtr_add_arg($args, "--log-queries-not-using-indexes=0");
+  mtr_add_arg($args, "--log-slow-slave-statements=0");
   mtr_add_arg($args, "--verbose");
   mtr_add_arg($args, "--help");
 
@@ -1870,11 +1867,17 @@ sub collect_mysqld_features {
   $list =~ s/\n {22}(\S)/ $1/g;
 
   my @list= split '\n', $list;
+
+  $mysql_version_id= 0;
+  while (defined(my $line = shift @list)){
+     if ($line =~ /^\Q$exe_mysqld\E\s+Ver\s(\d+)\.(\d+)\.(\d+)(\S*)/ ) {
+      $mysql_version_id= $1*10000 + $2*100 + $3;
+      mtr_report("MariaDB Version $1.$2.$3$4");
+      last;
+    }
+  }
   mtr_error("Could not find version of MariaDB")
-     unless shift(@list) =~ /^\Q$exe_mysqld\E\s+Ver\s(\d+)\.(\d+)\.(\d+)(\S*)/;
-  $mysql_version_id= $1*10000 + $2*100 + $3;
-  $mysql_version_extra= $4;
-  mtr_report("MariaDB Version $1.$2.$3$4");
+     unless $mysql_version_id > 0;
 
   for (@list)
   {
@@ -1940,10 +1943,10 @@ sub collect_mysqld_features_from_running_server ()
     #print "Major: $1 Minor: $2 Build: $3\n";
     $mysql_version_id= $1*10000 + $2*100 + $3;
     #print "mysql_version_id: $mysql_version_id\n";
-    mtr_report("MySQL Version $1.$2.$3");
+    mtr_report("MariaDB Version $1.$2.$3");
     $mysql_version_extra= $4;
   }
-  mtr_error("Could not find version of MySQL") unless $mysql_version_id;
+  mtr_error("Could not find version of MariaDBL") unless $mysql_version_id;
 }
 
 sub find_mysqld {
@@ -2147,39 +2150,10 @@ sub mysqld_client_arguments () {
 
 
 sub have_maria_support () {
-  my $maria_var= $mysqld_variables{'aria-recover'};
+  my $maria_var= $mysqld_variables{'aria-recover-options'};
   return defined $maria_var;
 }
 
-#
-# Set environment to be used by childs of this process for
-# things that are constant during the whole lifetime of mysql-test-run
-#
-
-sub find_plugin($$)
-{
-  my ($plugin, $location)  = @_;
-  my $plugin_filename;
-
-  if (IS_WINDOWS)
-  {
-     $plugin_filename = $plugin.".dll"; 
-  }
-  else 
-  {
-     $plugin_filename = $plugin.".so";
-  }
-
-  my $lib_plugin=
-    mtr_file_exists(vs_config_dirs($location,$plugin_filename),
-                    "$basedir/lib/plugin/".$plugin_filename,
-                    "$basedir/lib64/plugin/".$plugin_filename,
-                    "$basedir/$location/.libs/".$plugin_filename,
-                    "$basedir/lib/mysql/plugin/".$plugin_filename,
-                    "$basedir/lib64/mysql/plugin/".$plugin_filename,
-                    );
-  return $lib_plugin;
-}
 
 sub environment_setup {
 
@@ -2262,7 +2236,7 @@ sub environment_setup {
   $ENV{'UMASK_DIR'}=          "0770"; # The octal *string*
 
   #
-  # MySQL tests can produce output in various character sets
+  # MariaDB tests can produce output in various character sets
   # (especially, ctype_xxx.test). To avoid confusing Perl
   # with output which is incompatible with the current locale
   # settings, we reset the current values of LC_ALL and LC_CTYPE to "C".
@@ -2319,6 +2293,16 @@ sub environment_setup {
   $ENV{'MYSQL_PLUGIN'}=             $exe_mysql_plugin;
   $ENV{'MYSQL_EMBEDDED'}=           $exe_mysql_embedded;
 
+  my $client_config_exe=
+    mtr_exe_maybe_exists(
+        "$bindir/libmariadb/mariadb_config$opt_vs_config/mariadb_config",
+               "$bindir/bin/mariadb_config");
+  if ($client_config_exe)
+  {
+    my $tls_info= `$client_config_exe --tlsinfo`;
+    ($ENV{CLIENT_TLS_LIBRARY},$ENV{CLIENT_TLS_LIBRARY_VERSION})=
+      split(/ /, $tls_info, 2);
+  }
   my $exe_mysqld= find_mysqld($basedir);
   $ENV{'MYSQLD'}= $exe_mysqld;
   my $extra_opts= join (" ", @opt_extra_mysqld_opt);
@@ -2583,7 +2567,7 @@ sub setup_vardir() {
   if (check_socket_path_length("$opt_tmpdir/testsocket.sock")){
     mtr_error("Socket path '$opt_tmpdir' too long, it would be ",
 	      "truncated and thus not possible to use for connection to ",
-	      "MySQL Server. Set a shorter with --tmpdir=<path> option");
+	      "MariaDB Server. Set a shorter with --tmpdir=<path> option");
   }
 
   # copy all files from std_data into var/std_data
@@ -2601,6 +2585,7 @@ sub setup_vardir() {
       {
         for (<$bindir/storage/*$opt_vs_config/*.dll>,
              <$bindir/plugin/*$opt_vs_config/*.dll>,
+             <$bindir/libmariadb$opt_vs_config/*.dll>,
              <$bindir/sql$opt_vs_config/*.dll>)
         {
           my $pname=basename($_);
@@ -2618,12 +2603,10 @@ sub setup_vardir() {
         unlink "$plugindir/symlink_test";
       }
 
-      for (<../storage/*/.libs/*.so>,
-           <../plugin/*/.libs/*.so>,
-           <../plugin/*/*/.libs/*.so>,
-           <../sql/.libs/*.so>,
-           <$bindir/storage/*/*.so>,
+      for (<$bindir/storage/*/*.so>,
            <$bindir/plugin/*/*.so>,
+           <$bindir/libmariadb/plugins/*/*.so>,
+           <$bindir/libmariadb/*.so>,
            <$bindir/sql/*.so>)
       {
         my $pname=basename($_);
@@ -2645,6 +2628,8 @@ sub setup_vardir() {
     # hm, what paths work for debs and for rpms ?
     for (<$bindir/lib64/mysql/plugin/*.so>,
          <$bindir/lib/mysql/plugin/*.so>,
+         <$bindir/lib64/mariadb/plugin/*.so>,
+         <$bindir/lib/mariadb/plugin/*.so>,
          <$bindir/lib/plugin/*.so>,             # bintar
          <$bindir/lib/plugin/*.dll>)
     {
@@ -2798,7 +2783,7 @@ sub mysql_server_start($) {
     # Already started
 
     # Write start of testcase to log file
-    mark_log($mysqld->value('#log-error'), $tinfo);
+    mark_log($mysqld->value('log-error'), $tinfo);
 
     return;
   }
@@ -2835,10 +2820,12 @@ sub mysql_server_start($) {
     {
       # Some InnoDB options are incompatible with the default bootstrap.
       # If they are used, re-bootstrap
-      if ( $extra_opts and
-           "@$extra_opts" =~ /--innodb[-_](?:page[-_]size|checksum[-_]algorithm|undo[-_]tablespaces|log[-_]group[-_]home[-_]dir|data[-_]home[-_]dir)|data[-_]file[-_]path/ )
+      my @rebootstrap_opts;
+      @rebootstrap_opts = grep {/$rebootstrap_re/o} @$extra_opts if $extra_opts;
+      if (@rebootstrap_opts)
       {
-        mysql_install_db($mysqld, undef, $extra_opts);
+        mtr_verbose("Re-bootstrap with @rebootstrap_opts");
+        mysql_install_db($mysqld, undef, \@rebootstrap_opts);
       }
       else {
         # Copy datadir from installed system db
@@ -2863,7 +2850,7 @@ sub mysql_server_start($) {
   mkpath($tmpdir) unless -d $tmpdir;
 
   # Write start of testcase to log file
-  mark_log($mysqld->value('#log-error'), $tinfo);
+  mark_log($mysqld->value('log-error'), $tinfo);
 
   # Run <tname>-master.sh
   if ($mysqld->option('#!run-master-sh') and
@@ -3217,9 +3204,6 @@ sub mysql_install_db {
       mtr_appendfile_to_file("$sql_dir/mysql_performance_tables.sql",
                             $bootstrap_sql_file);
 
-      # Don't install anonymous users
-      mtr_tofile($bootstrap_sql_file, "set \@skip_auth_anonymous=1;\n");
-
       # Add the mysql system tables initial data
       # for a production system
       mtr_appendfile_to_file("$sql_dir/mysql_system_tables_data.sql",
@@ -3237,6 +3221,10 @@ sub mysql_install_db {
       mtr_appendfile_to_file("$sql_dir/fill_help_tables.sql",
            $bootstrap_sql_file);
 
+      # Create test database
+      mtr_appendfile_to_file("$sql_dir/mysql_test_db.sql",
+                            $bootstrap_sql_file);
+
       # mysql.gtid_slave_pos was created in InnoDB, but many tests
       # run without InnoDB. Alter it to MyISAM now
       mtr_tofile($bootstrap_sql_file, "ALTER TABLE gtid_slave_pos ENGINE=MyISAM;\n");
@@ -3253,6 +3241,10 @@ sub mysql_install_db {
       mtr_tofile($bootstrap_sql_file,
            sql_to_bootstrap($text));
     }
+
+    # Remove anonymous users
+    mtr_tofile($bootstrap_sql_file,
+         "DELETE FROM mysql.user where user= '';\n");
 
     # Create mtr database
     mtr_tofile($bootstrap_sql_file,
@@ -3274,7 +3266,6 @@ sub mysql_install_db {
 
   # Create directories mysql and test
   mkpath("$install_datadir/mysql");
-  mkpath("$install_datadir/test");
 
   if ( My::SafeProcess->run
        (
@@ -3799,14 +3790,32 @@ sub run_testcase ($$) {
   $ENV{'MTR_TEST_NAME'} = $tinfo->{name};
   resfile_report_test($tinfo) if $opt_resfile;
 
-  # Allow only alpanumerics pluss _ - + . in combination names,
-  # or anything beginning with -- (the latter comes from --combination)
-  my $combination= $tinfo->{combination};
-  if ($combination && $combination !~ /^\w[-\w\.\+]*$/
-                   && $combination !~ /^--/)
+  for my $key (grep { /^MTR_COMBINATION/ } keys %ENV)
   {
-    mtr_error("Combination '$combination' contains illegal characters");
+    delete $ENV{$key};
   }
+
+  if (ref $tinfo->{combinations} eq 'ARRAY')
+  {
+    for (my $i = 0; $i < @{$tinfo->{combinations}}; ++$i )
+    {
+      my $combination = $tinfo->{combinations}->[$i];
+      # Allow only alphanumerics plus _ - + . in combination names,
+      # or anything beginning with -- (the latter comes from --combination)
+      if ($combination && $combination !~ /^\w[-\w\.\+]*$/
+                      && $combination !~ /^--/)
+      {
+        mtr_error("Combination '$combination' contains illegal characters");
+      }
+      $ENV{"MTR_COMBINATION_". uc(${combination})} = 1;
+    }
+    $ENV{"MTR_COMBINATIONS"} = join(',', @{$tinfo->{combinations}});
+  }
+  elsif (exists $tinfo->{combinations})
+  {
+    die 'Unexpected type of $tinfo->{combinations}';
+  }
+
   # -------------------------------------------------------
   # Init variables that can change between each test case
   # -------------------------------------------------------
@@ -4297,7 +4306,7 @@ sub extract_server_log ($$) {
 	push(@lines, $line);
 	if (scalar(@lines) > 1000000) {
 	  $Ferr = undef;
-	  mtr_warning("Too much log from test, bailing out from extracting");
+	  mtr_warning("Too much log in $error_log, bailing out from extracting");
 	  return ();
 	}
       }
@@ -4323,7 +4332,7 @@ sub get_log_from_proc ($$) {
 
   foreach my $mysqld (all_servers()) {
     if ($mysqld->{proc} eq $proc) {
-      my @srv_lines= extract_server_log($mysqld->if_exist('#log-error'), $name);
+      my @srv_lines= extract_server_log($mysqld->if_exist('log-error'), $name);
       $srv_log= "\nServer log from this test:\n" .
 	"----------SERVER LOG START-----------\n". join ("", @srv_lines) .
 	"----------SERVER LOG END-------------\n";
@@ -4411,7 +4420,6 @@ sub extract_warning_lines ($$) {
      qr/error .*connecting to master/,
      qr/InnoDB: Error: in ALTER TABLE `test`.`t[12]`/,
      qr/InnoDB: Error: table `test`.`t[12]` .*does not exist in the InnoDB internal/,
-     qr/InnoDB: Warning: Setting innodb_use_sys_malloc/,
      qr/InnoDB: Warning: a long semaphore wait:/,
      qr/InnoDB: Dumping buffer pool.*/,
      qr/InnoDB: Buffer pool.*/,
@@ -4429,7 +4437,6 @@ sub extract_warning_lines ($$) {
      qr/Slave SQL thread retried transaction/,
      qr/Slave \(additional info\)/,
      qr/Incorrect information in file/,
-     qr/Incorrect key file for table .*crashed.*/,
      qr/Slave I\/O: Get master SERVER_ID failed with error:.*/,
      qr/Slave I\/O: Get master clock failed with error:.*/,
      qr/Slave I\/O: Get master COLLATION_SERVER failed with error:.*/,
@@ -4443,13 +4450,14 @@ sub extract_warning_lines ($$) {
      qr/Slave I\/O: error reconnecting to master '.*' - retry-time: [1-3]  retries/,
      qr/Slave I\/0: Master command COM_BINLOG_DUMP failed/,
      qr/Error reading packet/,
-     qr/Lost connection to MySQL server at 'reading initial communication packet'/,
+     qr/Lost connection to MariaDB server at 'reading initial communication packet'/,
      qr/Failed on request_dump/,
      qr/Slave: Can't drop database.* database doesn't exist/,
      qr/Slave: Operation DROP USER failed for 'create_rout_db'/,
      qr|Checking table:   '\..mtr.test_suppressions'|,
-     qr|Table \./test/bug53592 has a primary key in InnoDB data dictionary, but not in MySQL|,
+     qr|Table \./test/bug53592 has a primary key in InnoDB data dictionary, but not in|,
      qr|Table '\..mtr.test_suppressions' is marked as crashed and should be repaired|,
+     qr|Table 'test_suppressions' is marked as crashed and should be repaired|,
      qr|Can't open shared library|,
      qr|Couldn't load plugin named .*EXAMPLE.*|,
      qr|InnoDB: Error: table 'test/bug39438'|,
@@ -4460,14 +4468,13 @@ sub extract_warning_lines ($$) {
      qr|Aborted connection|,
      qr|table.*is full|,
      qr|Linux Native AIO|, # warning that aio does not work on /dev/shm
-     qr|Error: io_setup\(\) failed|,
-     qr|Warning: io_setup\(\) failed|,
-     qr|Warning: io_setup\(\) attempt|,
+     qr|InnoDB: io_setup\(\) attempt|,
+     qr|InnoDB: io_setup\(\) failed with EAGAIN|,
      qr|setrlimit could not change the size of core files to 'infinity';|,
      qr|feedback plugin: failed to retrieve the MAC address|,
      qr|Plugin 'FEEDBACK' init function returned error|,
      qr|Plugin 'FEEDBACK' registration as a INFORMATION SCHEMA failed|,
-     qr|'log-bin-use-v1-row-events' is MySQL 5.6 compatible option|,
+     qr|'log-bin-use-v1-row-events' is MySQL .* compatible option|,
      qr|InnoDB: Setting thread \d+ nice to \d+ failed, current nice \d+, errno 13|, # setpriority() fails under valgrind
      qr|Failed to setup SSL|,
      qr|SSL error: Failed to set ciphers to use|,
@@ -4486,7 +4493,10 @@ sub extract_warning_lines ($$) {
      qr|nnoDB: fix the corruption by dumping, dropping, and reimporting|,
      qr|InnoDB: the corrupt table. You can use CHECK|,
      qr|InnoDB: TABLE to scan your table for corruption|,
-     qr/InnoDB: See also */
+     qr/InnoDB: See also */,
+     qr/InnoDB: Cannot open .*ib_buffer_pool.* for reading: No such file or directory*/,
+     qr/InnoDB: Table .*mysql.*innodb_table_stats.* not found./,
+     qr/InnoDB: User stopword table .* does not exist./
 
     );
 
@@ -4530,7 +4540,7 @@ sub start_check_warnings ($$) {
 
   my $name= "warnings-".$mysqld->name();
 
-  my $log_error= $mysqld->value('#log-error');
+  my $log_error= $mysqld->value('log-error');
   # To be communicated to the test
   $ENV{MTR_LOG_ERROR}= $log_error;
   extract_warning_lines($log_error, 0);
@@ -4605,8 +4615,8 @@ sub check_warnings ($) {
 
   my $timeout= start_timer(check_timeout($tinfo));
 
+  my $result= 0;
   while (1){
-    my $result= 0;
     my $proc= My::SafeProcess->wait_any_timeout($timeout);
     mtr_report("Got $proc");
 
@@ -4688,7 +4698,7 @@ sub check_warnings_post_shutdown {
   foreach my $mysqld ( mysqlds())
   {
     my ($testlist, $match_lines)=
-        extract_warning_lines($mysqld->value('#log-error'), 1);
+        extract_warning_lines($mysqld->value('log-error'), 1);
     $testname_hash->{$_}= 1 for @$testlist;
     $report.= join('', @$match_lines);
   }
@@ -4917,7 +4927,7 @@ sub report_failure_and_restart ($) {
 	    $tinfo->{comment}.=
 	      "The result from queries just before the failure was:".
 	      "\n< snip >\n".
-	      mtr_lastlinesfromfile($log_file_name, 20)."\n";
+	      mtr_lastlinesfromfile($log_file_name, $opt_tail_lines)."\n";
 	  }
 	}
       }
@@ -5090,17 +5100,10 @@ sub mysqld_start ($$) {
 		$path_vardir_trace, $mysqld->name());
   }
 
-  if (IS_WINDOWS)
-  {
-    # Trick the server to send output to stderr, with --console
-    if (!(grep(/^--log-error/, @$args))) {
-      mtr_add_arg($args, "--console");
-    }
-  }
 
-  # "Dynamic" version of MYSQLD_CMD is reevaluated with each mysqld_start.
-  # Use it to restart the server at testing a failing server start (e.g
-  # due to incompatible options).
+  # Command line for mysqld started for *this particular test*.
+  # Differs from "generic" MYSQLD_CMD by including all command line
+  # options from *.opt and *.combination files.
   $ENV{'MYSQLD_LAST_CMD'}= "$exe  @$args";
 
   if ( $opt_gdb || $opt_manual_gdb )
@@ -5142,7 +5145,7 @@ sub mysqld_start ($$) {
   # Remove the old pidfile if any
   unlink($mysqld->value('pid-file'));
 
-  my $output= $mysqld->value('#log-error');
+  my $output= $mysqld->value('log-error');
 
   if ( $opt_valgrind and $opt_debug )
   {
@@ -5284,6 +5287,7 @@ sub server_need_restart {
     if (!My::Options::same($started_opts, $extra_opts) ||
         exists $server->{'restart_opts'})
     {
+      delete $server->{'restart_opts'};
       my $use_dynamic_option_switch= 0;
       if (!$use_dynamic_option_switch)
       {
@@ -5559,14 +5563,6 @@ sub start_mysqltest ($) {
     my $extra_opts= get_extra_opts($mysqld, $tinfo);
     mysqld_arguments($mysqld_args, $mysqld, $extra_opts);
     mtr_add_arg($args, "--server-arg=%s", $_) for @$mysqld_args;
-
-    if (IS_WINDOWS)
-    {
-      # Trick the server to send output to stderr, with --console
-      if (!(grep(/^--server-arg=--log-error/, @$args))) {
-        mtr_add_arg($args, "--server-arg=--console");
-      }
-    }
   }
 
   # ----------------------------------------------------------------------
@@ -5604,7 +5600,7 @@ sub start_mysqltest ($) {
   mtr_add_arg($args, "--test-file=%s", $tinfo->{'path'});
 
   # Number of lines of resut to include in failure report
-  mtr_add_arg($args, "--tail-lines=20");
+  mtr_add_arg($args, "--tail-lines=%d", $opt_tail_lines);
 
   if ( defined $tinfo->{'result_file'} ) {
     mtr_add_arg($args, "--result-file=%s", $tinfo->{'result_file'});
@@ -5889,7 +5885,7 @@ sub valgrind_arguments {
     mtr_add_arg($args, '--soname-synonyms=somalloc=%s', $syn) if $syn;
   }
 
-  # Add valgrind options, can be overriden by user
+  # Add valgrind options, can be overridden by user
   mtr_add_arg($args, '%s', $_) for (@valgrind_args);
 
   mtr_add_arg($args, $$exe);
@@ -5916,7 +5912,7 @@ sub strace_arguments {
   mtr_add_arg($args, "-f");
   mtr_add_arg($args, "-o%s/var/log/%s.strace", $glob_mysql_test_dir, $mysqld_name);
 
-  # Add strace options, can be overriden by user
+  # Add strace options, can be overridden by user
   mtr_add_arg($args, '%s', $_) for (@strace_args);
 
   mtr_add_arg($args, $$exe);
@@ -6026,8 +6022,8 @@ path-to-testcase
 Examples:
 
 alias
-main.alias              'main' is the name of the suite for the 't' directory.
-rpl.rpl_invoked_features,mix,xtradb_plugin
+main.alias              'main' is the name of the main test suite
+rpl.rpl_invoked_features,mix,innodb
 suite/rpl/t/rpl.rpl_invoked_features
 
 Options to control what engine/variation to run:
@@ -6256,9 +6252,6 @@ Misc options
                         actions. Disable facility with NUM=0.
   gcov                  Collect coverage information after the test.
                         The result is a gcov file per source and header file.
-  gcov-src-dir=subdir   Collect coverage only within the given subdirectory.
-                        For example, if you're only developing the SQL layer, 
-                        it makes sense to use --gcov-src-dir=sql
   gprof                 Collect profiling information using gprof.
   experimental=<file>   Refer to list of tests considered experimental;
                         failures will be marked exp-fail instead of fail.
@@ -6270,6 +6263,8 @@ Misc options
                         phases of test execution.
   stress=ARGS           Run stress test, providing options to
                         mysql-stress-test.pl. Options are separated by comma.
+  tail-lines=N          Number of lines of the result to include in a failure
+                        report.
 
 Some options that control enabling a feature for normal test runs,
 can be turned off by prepending 'no' to the option, e.g. --notimer.

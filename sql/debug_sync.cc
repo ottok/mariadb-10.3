@@ -15,7 +15,7 @@
 
 /* see include/mysql/service_debug_sync.h for debug sync documentation */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "debug_sync.h"
 
 #if defined(ENABLED_DEBUG_SYNC)
@@ -465,13 +465,13 @@ static int debug_sync_qsort_cmp(const void* arg1, const void* arg2)
 static st_debug_sync_action *debug_sync_find(st_debug_sync_action *actionarr,
                                              int quantity,
                                              const char *dsp_name,
-                                             uint name_len)
+                                             size_t name_len)
 {
   st_debug_sync_action  *action;
   int                   low ;
   int                   high ;
   int                   mid ;
-  int                   diff ;
+  ssize_t               diff ;
   DBUG_ASSERT(actionarr);
   DBUG_ASSERT(dsp_name);
   DBUG_ASSERT(name_len);
@@ -549,7 +549,7 @@ static void debug_sync_reset(THD *thd)
 static void debug_sync_remove_action(st_debug_sync_control *ds_control,
                                      st_debug_sync_action *action)
 {
-  uint dsp_idx= action - ds_control->ds_action;
+  uint dsp_idx= (uint)(action - ds_control->ds_action);
   DBUG_ENTER("debug_sync_remove_action");
   DBUG_ASSERT(ds_control);
   DBUG_ASSERT(ds_control == current_thd->debug_sync_control);
@@ -681,8 +681,8 @@ static st_debug_sync_action *debug_sync_get_action(THD *thd,
   }
   DBUG_ASSERT(action >= ds_control->ds_action);
   DBUG_ASSERT(action < ds_control->ds_action + ds_control->ds_active);
-  DBUG_PRINT("debug_sync", ("action: 0x%lx  array: 0x%lx  count: %u",
-                            (long) action, (long) ds_control->ds_action,
+  DBUG_PRINT("debug_sync", ("action: %p  array: %p  count: %u",
+                            action, ds_control->ds_action,
                             ds_control->ds_active));
 
   DBUG_RETURN(action);
@@ -790,7 +790,7 @@ static bool debug_sync_set_action(THD *thd, st_debug_sync_action *action)
       and shall not be reported as a result of SET DEBUG_SYNC.
       Hence, we check for the first condition above.
     */
-    if (thd->is_error())
+    if (unlikely(thd->is_error()))
       DBUG_RETURN(TRUE);
   }
 
@@ -847,16 +847,16 @@ static bool debug_sync_set_action(THD *thd, st_debug_sync_action *action)
     to the string terminator ASCII NUL ('\0').
 */
 
-static char *debug_sync_token(char **token_p, uint *token_length_p, char *ptr)
+static char *debug_sync_token(char **token_p, uint *token_length_p,
+                              char *ptr, char *ptrend)
 {
   DBUG_ASSERT(token_p);
   DBUG_ASSERT(token_length_p);
   DBUG_ASSERT(ptr);
 
   /* Skip leading space */
-  while (my_isspace(system_charset_info, *ptr))
-    ptr+= my_mbcharlen(system_charset_info, (uchar) *ptr);
-
+  ptr+= system_charset_info->cset->scan(system_charset_info,
+                                        ptr, ptrend, MY_SEQ_SPACES);
   if (!*ptr)
   {
     ptr= NULL;
@@ -867,17 +867,18 @@ static char *debug_sync_token(char **token_p, uint *token_length_p, char *ptr)
   *token_p= ptr;
 
   /* Find token end. */
-  while (*ptr && !my_isspace(system_charset_info, *ptr))
-    ptr+= my_mbcharlen(system_charset_info, (uchar) *ptr);
+  ptr+= system_charset_info->cset->scan(system_charset_info,
+                                        ptr, ptrend, MY_SEQ_NONSPACES);
 
   /* Get token length. */
-  *token_length_p= ptr - *token_p;
+  *token_length_p= (uint)(ptr - *token_p);
 
   /* If necessary, terminate token. */
   if (*ptr)
   {
+    DBUG_ASSERT(ptr < ptrend);
     /* Get terminator character length. */
-    uint mbspacelen= my_mbcharlen(system_charset_info, (uchar) *ptr);
+    uint mbspacelen= my_charlen_fix(system_charset_info, ptr, ptrend);
 
     /* Terminate token. */
     *ptr= '\0';
@@ -886,8 +887,8 @@ static char *debug_sync_token(char **token_p, uint *token_length_p, char *ptr)
     ptr+= mbspacelen;
 
     /* Skip trailing space */
-    while (my_isspace(system_charset_info, *ptr))
-      ptr+= my_mbcharlen(system_charset_info, (uchar) *ptr);
+    ptr+= system_charset_info->cset->scan(system_charset_info,
+                                          ptr, ptrend, MY_SEQ_SPACES);
   }
 
  end:
@@ -917,7 +918,8 @@ static char *debug_sync_token(char **token_p, uint *token_length_p, char *ptr)
     undefined in this case.
 */
 
-static char *debug_sync_number(ulong *number_p, char *actstrptr)
+static char *debug_sync_number(ulong *number_p, char *actstrptr,
+                                                char *actstrend)
 {
   char                  *ptr;
   char                  *ept;
@@ -927,7 +929,7 @@ static char *debug_sync_number(ulong *number_p, char *actstrptr)
   DBUG_ASSERT(actstrptr);
 
   /* Get token from string. */
-  if (!(ptr= debug_sync_token(&token, &token_length, actstrptr)))
+  if (!(ptr= debug_sync_token(&token, &token_length, actstrptr, actstrend)))
     goto end;
 
   *number_p= strtoul(token, &ept, 10);
@@ -971,7 +973,7 @@ static char *debug_sync_number(ulong *number_p, char *actstrptr)
     for the string.
 */
 
-static bool debug_sync_eval_action(THD *thd, char *action_str)
+static bool debug_sync_eval_action(THD *thd, char *action_str, char *action_end)
 {
   st_debug_sync_action  *action= NULL;
   const char            *errmsg;
@@ -986,7 +988,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
   /*
     Get debug sync point name. Or a special command.
   */
-  if (!(ptr= debug_sync_token(&token, &token_length, action_str)))
+  if (!(ptr= debug_sync_token(&token, &token_length, action_str, action_end)))
   {
     errmsg= "Missing synchronization point name";
     goto err;
@@ -1009,7 +1011,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
   /*
     Get kind of action to be taken at sync point.
   */
-  if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+  if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
   {
     /* No action present. Try special commands. Token unchanged. */
 
@@ -1090,7 +1092,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
   if (!my_strcasecmp(system_charset_info, token, "SIGNAL"))
   {
     /* It is SIGNAL. Signal name must follow. */
-    if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+    if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
     {
       errmsg= "Missing signal name after action SIGNAL";
       goto err;
@@ -1108,7 +1110,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
     action->execute= 1;
 
     /* Get next token. If none follows, set action. */
-    if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+    if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
       goto set_action;
   }
 
@@ -1118,7 +1120,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
   if (!my_strcasecmp(system_charset_info, token, "WAIT_FOR"))
   {
     /* It is WAIT_FOR. Wait_for signal name must follow. */
-    if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+    if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
     {
       errmsg= "Missing signal name after action WAIT_FOR";
       goto err;
@@ -1137,7 +1139,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
     action->timeout= opt_debug_sync_timeout;
 
     /* Get next token. If none follows, set action. */
-    if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+    if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
       goto set_action;
 
     /*
@@ -1146,14 +1148,14 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
     if (!my_strcasecmp(system_charset_info, token, "TIMEOUT"))
     {
       /* It is TIMEOUT. Number must follow. */
-      if (!(ptr= debug_sync_number(&action->timeout, ptr)))
+      if (!(ptr= debug_sync_number(&action->timeout, ptr, action_end)))
       {
         errmsg= "Missing valid number after TIMEOUT";
         goto err;
       }
 
       /* Get next token. If none follows, set action. */
-      if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+      if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
         goto set_action;
     }
   }
@@ -1174,14 +1176,14 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
     }
 
     /* Number must follow. */
-    if (!(ptr= debug_sync_number(&action->execute, ptr)))
+    if (!(ptr= debug_sync_number(&action->execute, ptr, action_end)))
     {
       errmsg= "Missing valid number after EXECUTE";
       goto err;
     }
 
     /* Get next token. If none follows, set action. */
-    if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+    if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
       goto set_action;
   }
 
@@ -1191,14 +1193,14 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
   if (!my_strcasecmp(system_charset_info, token, "HIT_LIMIT"))
   {
     /* Number must follow. */
-    if (!(ptr= debug_sync_number(&action->hit_limit, ptr)))
+    if (!(ptr= debug_sync_number(&action->hit_limit, ptr, action_end)))
     {
       errmsg= "Missing valid number after HIT_LIMIT";
       goto err;
     }
 
     /* Get next token. If none follows, set action. */
-    if (!(ptr= debug_sync_token(&token, &token_length, ptr)))
+    if (!(ptr= debug_sync_token(&token, &token_length, ptr, action_end)))
       goto set_action;
   }
 
@@ -1246,7 +1248,7 @@ static bool debug_sync_eval_action(THD *thd, char *action_str)
     terminators in the string. So we need to take a copy here.
 */
 
-bool debug_sync_update(THD *thd, char *val_str)
+bool debug_sync_update(THD *thd, char *val_str, size_t len)
 {
   DBUG_ENTER("debug_sync_update");
   DBUG_PRINT("debug_sync", ("set action: '%s'", val_str));
@@ -1255,8 +1257,9 @@ bool debug_sync_update(THD *thd, char *val_str)
     debug_sync_eval_action() places '\0' in the string, which itself
     must be '\0' terminated.
   */
+  DBUG_ASSERT(val_str[len] == '\0');
   DBUG_RETURN(opt_debug_sync_timeout ?
-              debug_sync_eval_action(thd, val_str) :
+              debug_sync_eval_action(thd, val_str, val_str + len) :
               FALSE);
 }
 
@@ -1445,7 +1448,7 @@ static void debug_sync_execute(THD *thd, st_debug_sync_action *action)
             DBUG_PRINT("debug_sync",
                        ("awoke from %s  global: %s  error: %d",
                         sig_wait, sig_glob, error));});
-        if (error == ETIMEDOUT || error == ETIME)
+        if (unlikely(error == ETIMEDOUT || error == ETIME))
         {
           // We should not make the statement fail, even if in strict mode.
           const bool save_abort_on_warning= thd->abort_on_warning;
@@ -1454,7 +1457,7 @@ static void debug_sync_execute(THD *thd, st_debug_sync_action *action)
                        ER_DEBUG_SYNC_TIMEOUT,
                        ER_THD(thd, ER_DEBUG_SYNC_TIMEOUT));
           thd->abort_on_warning= save_abort_on_warning;
-          DBUG_EXECUTE_IF("debug_sync_abort_on_timeout", DBUG_ABORT(););
+          DBUG_EXECUTE_IF("debug_sync_abort_on_timeout", DBUG_ASSERT(0););
           break;
         }
         error= 0;
@@ -1592,7 +1595,7 @@ bool debug_sync_set_action(THD *thd, const char *action_str, size_t len)
   DBUG_ASSERT(action_str);
   
   value= strmake_root(thd->mem_root, action_str, len);
-  rc= debug_sync_eval_action(thd, value);
+  rc= debug_sync_eval_action(thd, value, value + len);
   DBUG_RETURN(rc);
 }
 

@@ -171,12 +171,13 @@ SET(INSTALL_SYSTEMD_TMPFILESDIR_RPM     "/usr/lib/tmpfiles.d")
 SET(INSTALL_BINDIR_DEB                  "bin")
 SET(INSTALL_SBINDIR_DEB                 "sbin")
 SET(INSTALL_SCRIPTDIR_DEB               "bin")
+SET(INSTALL_SYSCONFDIR_DEB              "/etc")
 SET(INSTALL_SYSCONF2DIR_DEB             "/etc/mysql/conf.d")
 #
 SET(INSTALL_LIBDIR_DEB                  "lib")
 SET(INSTALL_PLUGINDIR_DEB               "lib/mysql/plugin")
 #
-SET(INSTALL_INCLUDEDIR_DEB              "include/mysql")
+SET(INSTALL_INCLUDEDIR_DEB              "include/mariadb")
 #
 SET(INSTALL_DOCDIR_DEB                  "share/doc")
 SET(INSTALL_DOCREADMEDIR_DEB            "share/doc")

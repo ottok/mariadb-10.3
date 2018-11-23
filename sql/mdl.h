@@ -15,22 +15,11 @@
    along with this program; if not, write to the Free Software Foundation,
    51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
 
-#if defined(__IBMC__) || defined(__IBMCPP__)
-/* Further down, "next_in_lock" and "next_in_context" have the same type,
-   and in "sql_plist.h" this leads to an identical signature, which causes
-   problems in function overloading.
-*/
-#pragma namemangling(v5)
-#endif
-
-
 #include "sql_plist.h"
 #include <my_sys.h>
 #include <m_string.h>
 #include <mysql_com.h>
 #include <lf.h>
-
-#include <algorithm>
 
 class THD;
 
@@ -205,6 +194,12 @@ enum enum_mdl_type {
   */
   MDL_SHARED_UPGRADABLE,
   /*
+    A shared metadata lock for cases when we need to read data from table
+    and block all concurrent modifications to it (for both data and metadata).
+    Used by LOCK TABLES READ statement.
+  */
+  MDL_SHARED_READ_ONLY,
+  /*
     An upgradable shared metadata lock which blocks all attempts to update
     table data, allowing reads.
     A connection holding this kind of lock can read table metadata and read
@@ -304,6 +299,7 @@ public:
                             TABLE,
                             FUNCTION,
                             PROCEDURE,
+                            PACKAGE_BODY,
                             TRIGGER,
                             EVENT,
                             COMMIT,
@@ -352,7 +348,7 @@ public:
                                           NAME_LEN) - m_ptr + 1);
     m_hash_value= my_hash_sort(&my_charset_bin, (uchar*) m_ptr + 1,
                                m_length - 1);
-    DBUG_ASSERT(mdl_namespace_arg == USER_LOCK || ok_for_lower_case_names(db));
+    DBUG_SLOW_ASSERT(mdl_namespace_arg == USER_LOCK || ok_for_lower_case_names(db));
   }
   void mdl_key_init(const MDL_key *rhs)
   {
@@ -376,8 +372,7 @@ public:
       character set is utf-8, we can safely assume that no
       character starts with a zero byte.
     */
-    using std::min;
-    return memcmp(m_ptr, rhs->m_ptr, min(m_length, rhs->m_length));
+    return memcmp(m_ptr, rhs->m_ptr, MY_MIN(m_length, rhs->m_length));
   }
 
   MDL_key(const MDL_key *rhs)
@@ -461,7 +456,7 @@ public:
 
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
   { return alloc_root(mem_root, size); }
-  static void operator delete(void *ptr, MEM_ROOT *mem_root) {}
+  static void operator delete(void *, MEM_ROOT *) {}
 
   void init(MDL_key::enum_mdl_namespace namespace_arg,
             const char *db_arg, const char *name_arg,
@@ -474,6 +469,19 @@ public:
   {
     DBUG_ASSERT(ticket == NULL);
     type= type_arg;
+  }
+
+  /**
+    Is this a request for a lock which allow data to be updated?
+
+    @note This method returns true for MDL_SHARED_UPGRADABLE type of
+          lock. Even though this type of lock doesn't allow updates
+          it will always be upgraded to one that does.
+  */
+  bool is_write_lock_request() const
+  {
+    return (type >= MDL_SHARED_WRITE &&
+            type != MDL_SHARED_READ_ONLY);
   }
 
   /*
@@ -489,7 +497,7 @@ public:
     is mandatory. Can only be used before the request has been
     granted.
   */
-  MDL_request& operator=(const MDL_request &rhs)
+  MDL_request& operator=(const MDL_request &)
   {
     ticket= NULL;
     /* Do nothing, in particular, don't try to copy the key. */

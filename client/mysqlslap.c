@@ -144,7 +144,7 @@ static unsigned long connect_flags= CLIENT_MULTI_RESULTS |
                                     CLIENT_MULTI_STATEMENTS |
                                     CLIENT_REMEMBER_OPTIONS;
 
-static int verbose, delimiter_length;
+static int verbose;
 static uint commit_rate;
 static uint detach_rate;
 const char *num_int_cols_opt;
@@ -263,7 +263,7 @@ void option_cleanup(option_string *stmt);
 void concurrency_loop(MYSQL *mysql, uint current, option_string *eptr);
 static int run_statements(MYSQL *mysql, statement *stmt);
 int slap_connect(MYSQL *mysql);
-static int run_query(MYSQL *mysql, const char *query, int len);
+static int run_query(MYSQL *mysql, const char *query, size_t len);
 
 static const char ALPHANUMERICS[]=
   "0123456789ABCDEFGHIJKLMNOPQRSTWXYZabcdefghijklmnopqrstuvwxyz";
@@ -338,9 +338,6 @@ int main(int argc, char **argv)
   /* Seed the random number generator if we will be using it. */
   if (auto_generate_sql)
     srandom((uint)time(NULL));
-
-  /* globals? Yes, so we only have to run strlen once */
-  delimiter_length= strlen(delimiter);
 
   if (argc > 2)
   {
@@ -583,8 +580,8 @@ static struct my_option my_long_options[] =
     &auto_generate_sql_number, &auto_generate_sql_number,
     0, GET_ULL, REQUIRED_ARG, 100, 0, 0, 0, 0, 0},
   {"character-sets-dir", OPT_CHARSETS_DIR,
-   "Directory for character set files.", &charsets_dir,
-   &charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+   "Directory for character set files.", (char **)&charsets_dir,
+   (char **)&charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"commit", OPT_SLAP_COMMIT, "Commit records every X number of statements.",
     &commit_rate, &commit_rate, 0, GET_UINT, REQUIRED_ARG,
     0, 0, 0, 0, 0, 0},
@@ -817,7 +814,7 @@ get_random_string(char *buf)
   DBUG_ENTER("get_random_string");
   for (x= RAND_STRING_SIZE; x > 0; x--)
     *buf_ptr++= ALPHANUMERICS[random() % ALPHANUMERICS_SIZE];
-  DBUG_RETURN(buf_ptr - buf);
+  DBUG_RETURN((uint)(buf_ptr - buf));
 }
 
 
@@ -1548,18 +1545,18 @@ get_options(int *argc,char ***argv)
 }
 
 
-static int run_query(MYSQL *mysql, const char *query, int len)
+static int run_query(MYSQL *mysql, const char *query, size_t len)
 {
   if (opt_only_print)
   {
-    printf("%.*s;\n", len, query);
+    printf("%.*s;\n", (int)len, query);
     return 0;
   }
 
   if (verbose >= 3)
-    printf("%.*s;\n", len, query);
+    printf("%.*s;\n", (int)len, query);
 
-  return mysql_real_query(mysql, query, len);
+  return mysql_real_query(mysql, query, (ulong)len);
 }
 
 
@@ -2127,7 +2124,7 @@ parse_delimiter(const char *script, statement **stmt, char delm)
   char *ptr= (char *)script;
   statement **sptr= stmt;
   statement *tmp;
-  uint length= strlen(script);
+  size_t length= strlen(script);
   uint count= 0; /* We know that there is always one */
 
   for (tmp= *sptr= (statement *)my_malloc(sizeof(statement),

@@ -26,7 +26,7 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 /*
   It is necessary to include set_var.h instead of item.h because there
@@ -40,21 +40,13 @@
 #include "opt_range.h"
 
 
-Field *Item_geometry_func::create_field_for_create_select(TABLE *t_arg)
-{
-  Field *result;
-  if ((result= new Field_geom(max_length, maybe_null, name, t_arg->s,
-                              get_geometry_type())))
-    result->init(t_arg);
-  return result;
-}
-
-void Item_geometry_func::fix_length_and_dec()
+bool Item_geometry_func::fix_length_and_dec()
 {
   collation.set(&my_charset_bin);
   decimals=0;
-  max_length= (uint32) 4294967295U;
+  max_length= (uint32) UINT_MAX32;
   maybe_null= 1;
+  return FALSE;
 }
 
 
@@ -75,9 +67,9 @@ String *Item_func_geometry_from_text::val_str(String *str)
     srid= (uint32)args[1]->val_int();
 
   str->set_charset(&my_charset_bin);
+  str->length(0);
   if (str->reserve(SRID_SIZE, 512))
     return 0;
-  str->length(0);
   str->q_append(srid);
   if ((null_value= !Geometry::create_from_wkt(&buffer, &trs, str, 0)))
     return 0;
@@ -121,6 +113,85 @@ String *Item_func_geometry_from_wkb::val_str(String *str)
 }
 
 
+void report_json_error_ex(String *js, json_engine_t *je,
+                          const char *fname, int n_param,
+                          Sql_condition::enum_warning_level lv);
+
+String *Item_func_geometry_from_json::val_str(String *str)
+{
+  DBUG_ASSERT(fixed == 1);
+  Geometry_buffer buffer;
+  String *js= args[0]->val_str_ascii(&tmp_js);
+  uint32 srid= 0;
+  longlong options= 0;
+  json_engine_t je;
+
+  if ((null_value= args[0]->null_value))
+    return 0;
+
+  if (arg_count > 1 && !args[1]->null_value)
+  {
+    options= args[1]->val_int();
+    if (options > 4 || options < 1)
+    {
+      String *sv= args[1]->val_str(&tmp_js);
+      my_error(ER_WRONG_VALUE_FOR_TYPE, MYF(0),
+               "option", sv->c_ptr_safe(), "ST_GeometryFromJSON");
+      null_value= 1;
+      return 0;
+    }
+  }
+
+  if ((arg_count == 3) && !args[2]->null_value)
+    srid= (uint32)args[2]->val_int();
+
+  str->set_charset(&my_charset_bin);
+  if (str->reserve(SRID_SIZE, 512))
+    return 0;
+  str->length(0);
+  str->q_append(srid);
+
+  json_scan_start(&je, js->charset(), (const uchar *) js->ptr(),
+                  (const uchar *) js->end());
+
+  if ((null_value= !Geometry::create_from_json(&buffer, &je, options==1,  str)))
+  {
+    int code= 0;
+
+    switch (je.s.error)
+    {
+    case Geometry::GEOJ_INCORRECT_GEOJSON:
+      code= ER_GEOJSON_INCORRECT;
+      break;
+    case Geometry::GEOJ_TOO_FEW_POINTS:
+      code= ER_GEOJSON_TOO_FEW_POINTS;
+      break;
+    case Geometry::GEOJ_EMPTY_COORDINATES:
+      code= ER_GEOJSON_EMPTY_COORDINATES;
+      break;
+    case Geometry::GEOJ_POLYGON_NOT_CLOSED:
+      code= ER_GEOJSON_NOT_CLOSED;
+      break;
+    case Geometry::GEOJ_DIMENSION_NOT_SUPPORTED:
+      my_error(ER_GIS_INVALID_DATA, MYF(0), "ST_GeometryFromJSON");
+      break;
+    default:
+      report_json_error_ex(js, &je, func_name(), 0, Sql_condition::WARN_LEVEL_WARN);
+      return NULL;
+    }
+
+    if (code)
+    {
+      THD *thd= current_thd;
+      push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN, code,
+                          ER_THD(thd, code));
+    }
+    return 0;
+  }
+  return str;
+}
+
+
 String *Item_func_as_wkt::val_str_ascii(String *str)
 {
   DBUG_ASSERT(fixed == 1);
@@ -144,11 +215,12 @@ String *Item_func_as_wkt::val_str_ascii(String *str)
 }
 
 
-void Item_func_as_wkt::fix_length_and_dec()
+bool Item_func_as_wkt::fix_length_and_dec()
 {
   collation.set(default_charset(), DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII);
-  max_length=MAX_BLOB_WIDTH;
+  max_length= (uint32) UINT_MAX32;
   maybe_null= 1;
+  return FALSE;
 }
 
 
@@ -167,6 +239,69 @@ String *Item_func_as_wkb::val_str(String *str)
   str->copy(swkb->ptr() + SRID_SIZE, swkb->length() - SRID_SIZE,
 	    &my_charset_bin);
   return str;
+}
+
+
+bool Item_func_as_geojson::fix_length_and_dec()
+{
+  collation.set(default_charset(), DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII);
+  max_length=MAX_BLOB_WIDTH;
+  maybe_null= 1;
+  return FALSE;
+}
+
+
+String *Item_func_as_geojson::val_str_ascii(String *str)
+{
+  DBUG_ASSERT(fixed == 1);
+  String arg_val;
+  String *swkb= args[0]->val_str(&arg_val);
+  uint max_dec= FLOATING_POINT_DECIMALS;
+  longlong options= 0;
+  Geometry_buffer buffer;
+  Geometry *geom= NULL;
+  const char *dummy;
+
+  if ((null_value=
+       (args[0]->null_value ||
+	!(geom= Geometry::construct(&buffer, swkb->ptr(), swkb->length())))))
+    return 0;
+
+  if (arg_count > 1)
+  {
+    max_dec= (uint) args[1]->val_int();
+    if (args[1]->null_value)
+      max_dec= FLOATING_POINT_DECIMALS;
+    if (arg_count > 2)
+    {
+      options= args[2]->val_int();
+      if (args[2]->null_value)
+        options= 0;
+    }
+  }
+
+  str->length(0);
+  str->set_charset(&my_charset_latin1);
+
+  if (str->reserve(1, 512))
+    return 0;
+
+  str->qs_append('{');
+
+  if (options & 1)
+  {
+    if (geom->bbox_as_json(str) || str->append(", ", 2))
+      goto error;
+  }
+
+  if ((geom->as_json(str, max_dec, &dummy) || str->append("}", 1)))
+      goto error;
+
+  return str;
+
+error:
+  null_value= 1;
+  return 0;
 }
 
 
@@ -982,11 +1117,11 @@ Item_func_spatial_rel::get_mm_leaf(RANGE_OPT_PARAM *param,
     tree->max_flag= NO_MAX_RANGE;
     break;
   case SP_WITHIN_FUNC:
-    tree->min_flag= GEOM_FLAG | HA_READ_MBR_WITHIN;// NEAR_MIN;//512;
+    tree->min_flag= GEOM_FLAG | HA_READ_MBR_CONTAIN;// NEAR_MIN;//512;
     tree->max_flag= NO_MAX_RANGE;
     break;
   case SP_CONTAINS_FUNC:
-    tree->min_flag= GEOM_FLAG | HA_READ_MBR_CONTAIN;// NEAR_MIN;//512;
+    tree->min_flag= GEOM_FLAG | HA_READ_MBR_WITHIN;// NEAR_MIN;//512;
     tree->max_flag= NO_MAX_RANGE;
     break;
   case SP_OVERLAPS_FUNC:

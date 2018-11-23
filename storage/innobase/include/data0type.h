@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2012, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2018, MariaDB Corporation.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -29,20 +29,22 @@ Created 1/16/1996 Heikki Tuuri
 
 #include "univ.i"
 
+/** Special length indicating a missing instantly added column */
+#define UNIV_SQL_DEFAULT (UNIV_SQL_NULL - 1)
+
+/** @return whether a length is actually stored in a field */
+#define len_is_stored(len) (len != UNIV_SQL_NULL && len != UNIV_SQL_DEFAULT)
+
 extern ulint	data_mysql_default_charset_coll;
-#define DATA_MYSQL_LATIN1_SWEDISH_CHARSET_COLL 8
 #define DATA_MYSQL_BINARY_CHARSET_COLL 63
 
 /* SQL data type struct */
 struct dtype_t;
 
-/* SQL Like operator comparison types */
+/** SQL Like operator comparison types */
 enum ib_like_t {
-	IB_LIKE_EXACT,                  /* e.g.  STRING */
-	IB_LIKE_PREFIX,                 /* e.g., STRING% */
-	IB_LIKE_SUFFIX,                 /* e.g., %STRING */
-	IB_LIKE_SUBSTR,                 /* e.g., %STRING% */
-	IB_LIKE_REGEXP                  /* Future */
+	IB_LIKE_EXACT,	/**< e.g.  STRING */
+	IB_LIKE_PREFIX	/**< e.g., STRING% */
 };
 
 /*-------------------------------------------*/
@@ -80,8 +82,19 @@ binary strings */
 				DATA_VARMYSQL for all character sets, and the
 				charset-collation for tables created with it
 				can also be latin1_swedish_ci */
+
+/* DATA_GEOMETRY includes all standard geometry datatypes as described in
+OGC standard(point, line_string, polygon, multi_point, multi_polygon,
+multi_line_string, geometry_collection, geometry).
+Currently, geometry data is stored in the standard Well-Known Binary(WKB)
+format (http://www.opengeospatial.org/standards/sfa).
+We use BLOB as the underlying datatype. */
+#define DATA_GEOMETRY	14	/* geometry datatype of variable length */
 #define DATA_MTYPE_MAX	63	/* dtype_store_for_order_and_null_size()
 				requires the values are <= 63 */
+
+#define DATA_MTYPE_CURRENT_MIN	DATA_VARCHAR	/* minimum value of mtype */
+#define DATA_MTYPE_CURRENT_MAX	DATA_GEOMETRY	/* maximum value of mtype */
 /*-------------------------------------------*/
 /* The 'PRECISE TYPE' of a column */
 /*
@@ -131,7 +144,7 @@ columns, and for them the precise type is usually not used at all.
 				for InnoDB's own system tables */
 #define DATA_ERROR	111	/* another relic from pre-MySQL time */
 
-#define DATA_MYSQL_TYPE_MASK 255 /* AND with this mask to extract the MySQL
+#define DATA_MYSQL_TYPE_MASK 255U/* AND with this mask to extract the MySQL
 				 type from the precise type */
 #define DATA_MYSQL_TRUE_VARCHAR 15 /* MySQL type code for the >= 5.0.3
 				   format true VARCHAR */
@@ -152,14 +165,14 @@ be less than 256 */
 
 #define DATA_FTS_DOC_ID	3	/* Used as FTS DOC ID column */
 
-#define DATA_SYS_PRTYPE_MASK 0xF /* mask to extract the above from prtype */
+#define DATA_SYS_PRTYPE_MASK 0xFU /* mask to extract the above from prtype */
 
 /* Flags ORed to the precise data type */
-#define DATA_NOT_NULL	256	/* this is ORed to the precise type when
+#define DATA_NOT_NULL	256U	/* this is ORed to the precise type when
 				the column is declared as NOT NULL */
-#define DATA_UNSIGNED	512	/* this id ORed to the precise type when
+#define DATA_UNSIGNED	512U	/* this id ORed to the precise type when
 				we have an unsigned integer type */
-#define	DATA_BINARY_TYPE 1024	/* if the data type is a binary character
+#define	DATA_BINARY_TYPE 1024U	/* if the data type is a binary character
 				string, this is ORed to the precise type:
 				this only holds for tables created with
 				>= MySQL-4.0.14 */
@@ -167,10 +180,24 @@ be less than 256 */
 				In earlier versions this was set for some
 				BLOB columns.
 */
-#define	DATA_LONG_TRUE_VARCHAR 4096	/* this is ORed to the precise data
+#define DATA_GIS_MBR	2048U	/* Used as GIS MBR column */
+#define DATA_MBR_LEN	SPDIMS * 2 * sizeof(double) /* GIS MBR length*/
+
+#define	DATA_LONG_TRUE_VARCHAR 4096U	/* this is ORed to the precise data
 				type when the column is true VARCHAR where
 				MySQL uses 2 bytes to store the data len;
 				for shorter VARCHARs MySQL uses only 1 byte */
+#define	DATA_VIRTUAL	8192U	/* Virtual column */
+
+/** System Versioning */
+#define DATA_VERS_START	16384U	/* start system field */
+#define DATA_VERS_END	32768U	/* end system field */
+/** system-versioned user data column */
+#define DATA_VERSIONED (DATA_VERS_START|DATA_VERS_END)
+
+/** Check whether locking is disabled (never). */
+#define dict_table_is_locking_disabled(table) false
+
 /*-------------------------------------------*/
 
 /* This many bytes we need to store the type information affecting the
@@ -184,16 +211,33 @@ store the charset-collation number; one byte is left unused, though */
 /* Maximum multi-byte character length in bytes, plus 1 */
 #define DATA_MBMAX	8
 
+/* For checking if mtype is GEOMETRY datatype */
+#define DATA_GEOMETRY_MTYPE(mtype)	((mtype) == DATA_GEOMETRY)
+
+/* For checking if mtype is BLOB or GEOMETRY, since we use BLOB as
+the underlying datatype of GEOMETRY data. */
+#define DATA_LARGE_MTYPE(mtype) ((mtype) == DATA_BLOB			\
+				 || (mtype) == DATA_GEOMETRY)
+
+/* For checking if data type is big length data type. */
+#define DATA_BIG_LEN_MTYPE(len, mtype) ((len) > 255 || DATA_LARGE_MTYPE(mtype))
+
+/* For checking if the column is a big length column. */
+#define DATA_BIG_COL(col) DATA_BIG_LEN_MTYPE((col)->len, (col)->mtype)
+
+/* For checking if data type is large binary data type. */
+#define DATA_LARGE_BINARY(mtype,prtype) ((mtype) == DATA_GEOMETRY || \
+	((mtype) == DATA_BLOB && !((prtype) & DATA_BINARY_TYPE)))
+
 /* We now support 15 bits (up to 32767) collation number */
 #define MAX_CHAR_COLL_NUM	32767
 
 /* Mask to get the Charset Collation number (0x7fff) */
 #define CHAR_COLL_MASK		MAX_CHAR_COLL_NUM
 
-#ifndef UNIV_HOTBACKUP
 /*********************************************************************//**
 Gets the MySQL type code from a dtype.
-@return	MySQL type code; this is NOT an InnoDB type code! */
+@return MySQL type code; this is NOT an InnoDB type code! */
 UNIV_INLINE
 ulint
 dtype_get_mysql_type(
@@ -203,8 +247,7 @@ dtype_get_mysql_type(
 Determine how many bytes the first n characters of the given string occupy.
 If the string is shorter than n characters, returns the number of bytes
 the characters in the string occupy.
-@return	length of the prefix, in bytes */
-UNIV_INTERN
+@return length of the prefix, in bytes */
 ulint
 dtype_get_at_most_n_mbchars(
 /*========================*/
@@ -219,12 +262,10 @@ dtype_get_at_most_n_mbchars(
 	ulint		data_len,	/*!< in: length of str (in bytes) */
 	const char*	str);		/*!< in: the string whose prefix
 					length is being determined */
-#endif /* !UNIV_HOTBACKUP */
 /*********************************************************************//**
 Checks if a data main type is a string type. Also a BLOB is considered a
 string type.
-@return	TRUE if string type */
-UNIV_INTERN
+@return TRUE if string type */
 ibool
 dtype_is_string_type(
 /*=================*/
@@ -233,8 +274,7 @@ dtype_is_string_type(
 Checks if a type is a binary string type. Note that for tables created with
 < 4.0.14, we do not know if a DATA_BLOB column is a BLOB or a TEXT column. For
 those DATA_BLOB columns this function currently returns FALSE.
-@return	TRUE if binary string type */
-UNIV_INTERN
+@return TRUE if binary string type */
 ibool
 dtype_is_binary_string_type(
 /*========================*/
@@ -245,8 +285,7 @@ Checks if a type is a non-binary string type. That is, dtype_is_string_type is
 TRUE and dtype_is_binary_string_type is FALSE. Note that for tables created
 with < 4.0.14, we do not know if a DATA_BLOB column is a BLOB or a TEXT column.
 For those DATA_BLOB columns this function currently returns TRUE.
-@return	TRUE if non-binary string type */
-UNIV_INTERN
+@return TRUE if non-binary string type */
 ibool
 dtype_is_non_binary_string_type(
 /*============================*/
@@ -272,7 +311,7 @@ dtype_copy(
 	const dtype_t*	type2);	/*!< in: type struct to copy from */
 /*********************************************************************//**
 Gets the SQL main data type.
-@return	SQL main data type */
+@return SQL main data type */
 UNIV_INLINE
 ulint
 dtype_get_mtype(
@@ -280,13 +319,13 @@ dtype_get_mtype(
 	const dtype_t*	type);	/*!< in: data type */
 /*********************************************************************//**
 Gets the precise data type.
-@return	precise data type */
+@return precise data type */
 UNIV_INLINE
 ulint
 dtype_get_prtype(
 /*=============*/
 	const dtype_t*	type);	/*!< in: data type */
-#ifndef UNIV_HOTBACKUP
+
 /*********************************************************************//**
 Compute the mbminlen and mbmaxlen members of a data type structure. */
 UNIV_INLINE
@@ -301,43 +340,46 @@ dtype_get_mblen(
 				multi-byte character */
 /*********************************************************************//**
 Gets the MySQL charset-collation code for MySQL string types.
-@return	MySQL charset-collation code */
+@return MySQL charset-collation code */
 UNIV_INLINE
 ulint
 dtype_get_charset_coll(
 /*===================*/
 	ulint	prtype);/*!< in: precise data type */
-/*********************************************************************//**
-Forms a precise type from the < 4.1.2 format precise type plus the
+/** Form a precise type from the < 4.1.2 format precise type plus the
 charset-collation code.
+@param[in]	old_prtype	MySQL type code and the flags
+				DATA_BINARY_TYPE etc.
+@param[in]	charset_coll	character-set collation code
 @return precise type, including the charset-collation code */
-UNIV_INTERN
-ulint
-dtype_form_prtype(
-/*==============*/
-	ulint	old_prtype,	/*!< in: the MySQL type code and the flags
-				DATA_BINARY_TYPE etc. */
-	ulint	charset_coll);	/*!< in: MySQL charset-collation code */
+UNIV_INLINE
+uint32_t
+dtype_form_prtype(ulint old_prtype, ulint charset_coll)
+{
+	ut_ad(old_prtype < 256 * 256);
+	ut_ad(charset_coll <= MAX_CHAR_COLL_NUM);
+	return(uint32_t(old_prtype + (charset_coll << 16)));
+}
+
 /*********************************************************************//**
 Determines if a MySQL string type is a subset of UTF-8.  This function
 may return false negatives, in case further character-set collation
 codes are introduced in MySQL later.
-@return	TRUE if a subset of UTF-8 */
+@return whether a subset of UTF-8 */
 UNIV_INLINE
-ibool
+bool
 dtype_is_utf8(
 /*==========*/
 	ulint	prtype);/*!< in: precise data type */
-#endif /* !UNIV_HOTBACKUP */
 /*********************************************************************//**
 Gets the type length.
-@return	fixed length of the type, in bytes, or 0 if variable-length */
+@return fixed length of the type, in bytes, or 0 if variable-length */
 UNIV_INLINE
 ulint
 dtype_get_len(
 /*==========*/
 	const dtype_t*	type);	/*!< in: data type */
-#ifndef UNIV_HOTBACKUP
+
 /*********************************************************************//**
 Gets the minimum length of a character, in bytes.
 @return minimum length of a char, in bytes, or 0 if this is not a
@@ -356,19 +398,9 @@ ulint
 dtype_get_mbmaxlen(
 /*===============*/
 	const dtype_t*	type);	/*!< in: type */
-/*********************************************************************//**
-Gets the padding character code for the type.
-@return	padding character code, or ULINT_UNDEFINED if no padding specified */
-UNIV_INLINE
-ulint
-dtype_get_pad_char(
-/*===============*/
-	ulint	mtype,		/*!< in: main type */
-	ulint	prtype);	/*!< in: precise type */
-#endif /* !UNIV_HOTBACKUP */
 /***********************************************************************//**
 Returns the size of a fixed size data type, 0 if not a fixed size type.
-@return	fixed size, or 0 */
+@return fixed size, or 0 */
 UNIV_INLINE
 ulint
 dtype_get_fixed_size_low(
@@ -381,10 +413,10 @@ dtype_get_fixed_size_low(
 	ulint	mbmaxlen,	/*!< in: maximum length of a
 				multibyte character, in bytes */
 	ulint	comp);		/*!< in: nonzero=ROW_FORMAT=COMPACT  */
-#ifndef UNIV_HOTBACKUP
+
 /***********************************************************************//**
 Returns the minimum size of a data type.
-@return	minimum size */
+@return minimum size */
 UNIV_INLINE
 ulint
 dtype_get_min_size_low(
@@ -397,25 +429,24 @@ dtype_get_min_size_low(
 /***********************************************************************//**
 Returns the maximum size of a data type. Note: types in system tables may be
 incomplete and return incorrect information.
-@return	maximum size */
+@return maximum size */
 UNIV_INLINE
 ulint
 dtype_get_max_size_low(
 /*===================*/
 	ulint	mtype,		/*!< in: main type */
 	ulint	len);		/*!< in: length */
-#endif /* !UNIV_HOTBACKUP */
 /***********************************************************************//**
 Returns the ROW_FORMAT=REDUNDANT stored SQL NULL size of a type.
 For fixed length types it is the fixed length of the type, otherwise 0.
-@return	SQL null storage size in ROW_FORMAT=REDUNDANT */
+@return SQL null storage size in ROW_FORMAT=REDUNDANT */
 UNIV_INLINE
 ulint
 dtype_get_sql_null_size(
 /*====================*/
 	const dtype_t*	type,	/*!< in: type */
 	ulint		comp);	/*!< in: nonzero=ROW_FORMAT=COMPACT  */
-#ifndef UNIV_HOTBACKUP
+
 /**********************************************************************//**
 Reads to a type the stored information which determines its alphabetical
 ordering and the storage size of an SQL NULL value. */
@@ -463,23 +494,20 @@ dtype_sql_name(
 	char*		name,	/*!< out: SQL name */
 	unsigned	name_sz);/*!< in: size of the name buffer */
 
-#endif /* !UNIV_HOTBACKUP */
-
 /*********************************************************************//**
 Validates a data type structure.
-@return	TRUE if ok */
-UNIV_INTERN
+@return TRUE if ok */
 ibool
 dtype_validate(
 /*===========*/
 	const dtype_t*	type);	/*!< in: type struct to validate */
-/*********************************************************************//**
-Prints a data type structure. */
-UNIV_INTERN
+#ifdef UNIV_DEBUG
+/** Print a data type structure.
+@param[in]	type	data type */
 void
 dtype_print(
-/*========*/
-	const dtype_t*	type);	/*!< in: type */
+	const dtype_t*	type);
+#endif /* UNIV_DEBUG */
 
 /* Structure for an SQL data type.
 If you add fields to this structure, be sure to initialize them everywhere.
@@ -509,16 +537,28 @@ struct dtype_t{
 					string data (in addition to
 					the string, MySQL uses 1 or 2
 					bytes to store the string length) */
-#ifndef UNIV_HOTBACKUP
 	unsigned	mbminlen:3;	/*!< minimum length of a character,
 					in bytes */
 	unsigned	mbmaxlen:3;	/*!< maximum length of a character,
 					in bytes */
-#endif /* !UNIV_HOTBACKUP */
+
+	/** @return whether this is system versioned user field */
+	bool is_versioned() const { return !(~prtype & DATA_VERSIONED); }
+	/** @return whether this is the system field start */
+	bool vers_sys_start() const
+	{
+		return (prtype & DATA_VERSIONED) == DATA_VERS_START;
+	}
+	/** @return whether this is the system field end */
+	bool vers_sys_end() const
+	{
+		return (prtype & DATA_VERSIONED) == DATA_VERS_END;
+	}
 };
 
-#ifndef UNIV_NONINL
+/** The DB_TRX_ID,DB_ROLL_PTR values for "no history is available" */
+extern const byte reset_trx_id[DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN];
+
 #include "data0type.ic"
-#endif
 
 #endif

@@ -31,6 +31,7 @@ grant all on t.* to admin;
 #
 create user foo;
 grant admin to foo;
+connect  foo,localhost,foo,,,,,;
 create database t;
 ERROR 42000: Access denied for user 'foo'@'%' to database 't'
 set role admin;
@@ -45,6 +46,7 @@ GRANT USAGE ON *.* TO 'simple'
 GRANT SELECT, INSERT, UPDATE, DELETE, LOCK TABLES, EXECUTE ON `t`.* TO 'simple'
 create database t;
 drop database t;
+connection default;
 drop role simple;
 drop role admin;
 drop user foo;

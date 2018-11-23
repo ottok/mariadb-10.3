@@ -13,8 +13,7 @@
 // did not, you can find it at http://www.gnu.org/
 //
 
-#include <my_config.h>
-#include <stdio.h>
+#include <my_global.h>
 #include <string.h>
 #include <assert.h>
 
@@ -46,7 +45,7 @@ typedef uchar byte;
 
 /// partially copy-pasted stuff that should be moved elsewhere
 
-#if UNALIGNED_RAM_ACCESS
+#ifdef UNALIGNED_RAM_ACCESS
 
 /// pass-through wrapper
 template < typename T > inline T sphUnalignedRead ( const T & tRef )
@@ -84,7 +83,7 @@ void sphUnalignedWrite ( void * pPtr, const T & tVal )
 		*pDst++ = *pSrc++;
 }
 
-#endif
+#endif /* UNALIGNED_RAM_ACCESS */
 
 #define SPHINXSE_MAX_ALLOC			(16*1024*1024)
 
@@ -450,7 +449,7 @@ int CSphUrl::Connect()
 	const char * pError = NULL;
 	do
 	{
-		iSocket = socket ( iDomain, SOCK_STREAM, 0 );
+		iSocket = (int)socket ( iDomain, SOCK_STREAM, 0 );
 		if ( iSocket==-1 )
 		{
 			pError = "Failed to create client socket";
@@ -642,7 +641,7 @@ struct CSphSnippets
 	}
 
 #define STRING CHECK_TYPE(STRING_RESULT)
-#define INT CHECK_TYPE(INT_RESULT); int iValue = *(long long *)pArgs->args[i]
+#define INT CHECK_TYPE(INT_RESULT); int iValue =(int)*(long long *)pArgs->args[i]
 
 my_bool sphinx_snippets_init ( UDF_INIT * pUDF, UDF_ARGS * pArgs, char * sMessage )
 {

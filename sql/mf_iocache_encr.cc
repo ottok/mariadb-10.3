@@ -57,7 +57,7 @@ static int my_b_encr_read(IO_CACHE *info, uchar *Buffer, size_t Count)
 
   if (info->seek_not_done)
   {
-    size_t wpos;
+    my_off_t wpos;
 
     pos_offset= pos_in_file % info->buffer_length;
     pos_in_file-= pos_offset;
@@ -92,7 +92,7 @@ static int my_b_encr_read(IO_CACHE *info, uchar *Buffer, size_t Count)
       DBUG_RETURN(1);
     }
 
-    elength= wlength - (ebuffer - wbuffer);
+    elength= wlength - (uint)(ebuffer - wbuffer);
     set_iv(iv, pos_in_file, crypt_data->inbuf_counter);
 
     if (encryption_crypt(ebuffer, elength, info->buffer, &length,
@@ -106,7 +106,7 @@ static int my_b_encr_read(IO_CACHE *info, uchar *Buffer, size_t Count)
 
     DBUG_ASSERT(length <= info->buffer_length);
 
-    copied= MY_MIN(Count, length - pos_offset);
+    copied= MY_MIN(Count, (size_t)(length - pos_offset));
 
     memcpy(Buffer, info->buffer + pos_offset, copied);
     Count-= copied;
@@ -120,7 +120,7 @@ static int my_b_encr_read(IO_CACHE *info, uchar *Buffer, size_t Count)
 
     if (wlength < crypt_data->block_length && pos_in_file < info->end_of_file)
     {
-      info->error= pos_in_file - old_pos_in_file;
+      info->error= (int)(pos_in_file - old_pos_in_file);
       DBUG_RETURN(1);
     }
   } while (Count);
@@ -146,7 +146,7 @@ static int my_b_encr_write(IO_CACHE *info, const uchar *Buffer, size_t Count)
   if (info->seek_not_done)
   {
     DBUG_ASSERT(info->pos_in_file % info->buffer_length == 0);
-    size_t wpos= info->pos_in_file / info->buffer_length * crypt_data->block_length;
+    my_off_t wpos= info->pos_in_file / info->buffer_length * crypt_data->block_length;
 
     if ((mysql_file_seek(info->file, wpos, MY_SEEK_SET, MYF(0)) == MY_FILEPOS_ERROR))
     {
@@ -177,15 +177,15 @@ static int my_b_encr_write(IO_CACHE *info, const uchar *Buffer, size_t Count)
     crypt_data->inbuf_counter= crypt_data->counter;
     set_iv(iv, info->pos_in_file, crypt_data->inbuf_counter);
 
-    if (encryption_crypt(Buffer, length, ebuffer, &elength,
-                         crypt_data->key, sizeof(crypt_data->key),
-                         iv, sizeof(iv), ENCRYPTION_FLAG_ENCRYPT,
+    if (encryption_crypt(Buffer, (uint)length, ebuffer, &elength,
+                         crypt_data->key, (uint) sizeof(crypt_data->key),
+                         iv, (uint) sizeof(iv), ENCRYPTION_FLAG_ENCRYPT,
                          keyid, keyver))
     {
       my_errno= 1;
       DBUG_RETURN(info->error= -1);
     }
-    wlength= elength + ebuffer - wbuffer;
+    wlength= elength + (uint)(ebuffer - wbuffer);
 
     if (length == info->buffer_length)
     {
@@ -194,7 +194,7 @@ static int my_b_encr_write(IO_CACHE *info, const uchar *Buffer, size_t Count)
         buffer_length bytes should *always* produce block_length bytes
       */
       DBUG_ASSERT(crypt_data->block_length == 0 || crypt_data->block_length == wlength);
-      DBUG_ASSERT(elength <= encryption_encrypted_length(length, keyid, keyver));
+      DBUG_ASSERT(elength <= encryption_encrypted_length((uint)length, keyid, keyver));
       crypt_data->block_length= wlength;
     }
     else

@@ -117,3 +117,25 @@ LOCK TABLE t1 WRITE;
 ALTER TABLE t1 ADD UNIQUE KEY (f1);
 ALTER TABLE t1 ADD KEY (f2);
 DROP TABLE t1;
+
+--echo # End of 10.2 tests
+
+--echo #
+--echo # MDEV-14669 Assertion `file->trn == trn' failed in ha_maria::start_stmt
+--echo #
+
+CREATE TABLE t1 (i INT) ENGINE=Aria;
+INSERT INTO t1 VALUES (1),(2);
+CREATE TABLE t2 (c CHAR(1)) ENGINE=Aria;
+INSERT INTO t2 VALUES ('a'),('b');
+--connect (con1,localhost,root,,test)
+LOCK TABLE t1 WRITE;
+OPTIMIZE TABLE t1;
+--connection default
+DELETE FROM t2 WHERE c < 1;
+--connection con1
+OPTIMIZE TABLE t1;
+# Cleanup
+--disconnect con1
+--connection default
+DROP TABLE t1, t2;

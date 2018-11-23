@@ -39,10 +39,14 @@ show grants for test1@localhost;
 Grants for test1@localhost
 GRANT USAGE ON *.* TO 'test1'@'localhost' IDENTIFIED VIA ed25519 USING 'ZIgUREUg5PVgQ6LskhXmO+eZLS0nC8be6HPjYWR4YJY'
 connect(localhost,test1,public,test,PORT,SOCKET);
+connect con1, localhost, test1, public;
 ERROR 28000: Access denied for user 'test1'@'localhost' (using password: YES)
+connect con1, localhost, test1, secret;
 select current_user();
 current_user()
 test1@localhost
+disconnect con1;
+connection default;
 drop user test1@localhost;
 uninstall plugin ed25519;
 select ed25519_password("foo");

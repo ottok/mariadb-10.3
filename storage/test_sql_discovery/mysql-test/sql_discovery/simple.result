@@ -4,7 +4,7 @@ test_sql_discovery_statement
 test_sql_discovery_write_frm	ON
 set sql_quote_show_create=0;
 create table t1 (a int) engine=test_sql_discovery;
-ERROR HY000: Can't create table `test`.`t1` (errno: 131 "Command not supported by database")
+ERROR HY000: Can't create table `test`.`t1` (errno: 131 "Command not supported by the engine")
 select * from t1;
 ERROR 42S02: Table 'test.t1' doesn't exist
 set @@test_sql_discovery_statement='t1:foobar bwa-ha-ha';
@@ -122,9 +122,9 @@ Handler_discover	15
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE t1 (
-  a int(11) NOT NULL DEFAULT '5',
-  b timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  c tinyblob,
+  a int(11) NOT NULL DEFAULT 5,
+  b timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  c tinyblob DEFAULT NULL,
   d decimal(5,2) DEFAULT NULL,
   e varchar(30) CHARACTER SET ascii DEFAULT NULL,
   f geometry NOT NULL,

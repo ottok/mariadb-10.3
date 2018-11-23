@@ -128,14 +128,14 @@ my_connect_async(struct mysql_async_context *b, my_socket fd,
 #endif
 
 ssize_t
-my_recv_async(struct mysql_async_context *b, int fd,
+my_recv_async(struct mysql_async_context *b, my_socket fd,
               unsigned char *buf, size_t size, int timeout)
 {
   ssize_t res;
 
   for (;;)
   {
-    res= recv(fd, buf, size, IF_WIN(0, MSG_DONTWAIT));
+    res= recv(fd, buf, (int)size, IF_WIN(0, MSG_DONTWAIT));
     if (res >= 0 || IS_BLOCKING_ERROR())
       return res;
     b->events_to_wait_for= MYSQL_WAIT_READ;
@@ -156,14 +156,14 @@ my_recv_async(struct mysql_async_context *b, int fd,
 
 
 ssize_t
-my_send_async(struct mysql_async_context *b, int fd,
+my_send_async(struct mysql_async_context *b, my_socket fd,
               const unsigned char *buf, size_t size, int timeout)
 {
   ssize_t res;
 
   for (;;)
   {
-    res= send(fd, buf, size, IF_WIN(0, MSG_DONTWAIT));
+    res= send(fd, buf, (int)size, IF_WIN(0, MSG_DONTWAIT));
     if (res >= 0 || IS_BLOCKING_ERROR())
       return res;
     b->events_to_wait_for= MYSQL_WAIT_WRITE;

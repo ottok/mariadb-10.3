@@ -36,6 +36,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #ident "Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved."
 
+#include <my_global.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
@@ -139,7 +140,7 @@ static ssize_t dbf_read_some_compressed(struct dbufio_file *dbf, char *buf, size
         ret = 0;
         goto exit;
     }
-    if (readcode < header_size) {
+    if (readcode < (ssize_t) header_size) {
         errno = TOKUDB_NO_DATA;
         ret = -1;
         goto exit;
@@ -167,7 +168,7 @@ static ssize_t dbf_read_some_compressed(struct dbufio_file *dbf, char *buf, size
         ret = -1;
         goto exit;
     }
-    if (readcode < total_size) {
+    if (readcode < (ssize_t) total_size) {
         errno = TOKUDB_NO_DATA;
         ret = -1;
         goto exit;
@@ -586,7 +587,7 @@ dbufio_print(DBUFIO_FILESET bfs) {
     fprintf(stderr, "%s:%d bfs=%p", __FILE__, __LINE__, bfs);
     if (bfs->panic)
         fprintf(stderr, " panic=%d", bfs->panic_errno);
-    fprintf(stderr, " N=%d %d %" PRIuMAX, bfs->N, bfs->n_not_done, bfs->bufsize);
+    fprintf(stderr, " N=%d %d %" PRIuMAX, bfs->N, bfs->n_not_done, (uintmax_t) bfs->bufsize);
     for (int i = 0; i < bfs->N; i++) {
         struct dbufio_file *dbf = &bfs->files[i];
         if (dbf->error_code[0] || dbf->error_code[1])

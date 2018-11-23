@@ -996,8 +996,10 @@ st_mysql_sys_var* system_variables[] = {
     MYSQL_SYSVAR(rpl_unique_checks),
     MYSQL_SYSVAR(rpl_unique_checks_delay),
 #endif // defined(TOKU_INCLUDE_RFR) && TOKU_INCLUDE_RFR
+#if defined(TOKU_INCLUDE_UPSERT)
     MYSQL_SYSVAR(enable_fast_update),
     MYSQL_SYSVAR(enable_fast_upsert),
+#endif
 #if TOKU_INCLUDE_XA
     MYSQL_SYSVAR(support_xa),
 #endif

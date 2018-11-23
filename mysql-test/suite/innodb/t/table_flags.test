@@ -4,12 +4,18 @@
 --source include/maybe_debug.inc
 
 --disable_query_log
-call mtr.add_suppression("InnoDB: New log files created, LSN=");
-call mtr.add_suppression("InnoDB: Creating foreign key constraint system tables");
-call mtr.add_suppression("InnoDB: Error: .*innodb_table_stats. not found");
-call mtr.add_suppression("InnoDB: Table '.test.\\..t[cdzp].' in InnoDB data dictionary has unknown type (81|f21|121|302[13])\\r?$");
-call mtr.add_suppression("InnoDB: Cannot open table test/t[cdzp] from the internal data dictionary of InnoDB");
-call mtr.add_suppression("InnoDB: Error: table 'test/t[cdzp]'");
+call mtr.add_suppression("InnoDB: Table `mysql`\\.`innodb_table_stats` not found");
+call mtr.add_suppression("InnoDB: incorrect flags in SYS_TABLES");
+call mtr.add_suppression("InnoDB: Table `test`.`t[cp]` in InnoDB data dictionary contains invalid flags\\. SYS_TABLES\\.TYPE=(129|289|3873|1232[31]) SYS_TABLES\\.N_COLS=2147483649\\r?$");
+call mtr.add_suppression("InnoDB: Table `test`\\.`tr` in InnoDB data dictionary contains invalid flags\\. SYS_TABLES\\.TYPE=65 SYS_TABLES\\.MIX_LEN=4294967295\\r?$");
+call mtr.add_suppression("InnoDB: Refusing to load '\\..test.td\\.ibd' \\(id=3, flags=0x([2e]1)\\); dictionary contains id=3, flags=0x100\\1\\r?$");
+call mtr.add_suppression("InnoDB: Refusing to load '\\..test.td\\.ibd' \\(id=3, flags=0x(1[2ae]1)\\); dictionary contains id=3, flags=0x10\\1\\r?$");
+call mtr.add_suppression("InnoDB: Ignoring tablespace for `test`.`td` because it could not be opened\\.");
+# FIXME: Remove the following spam due to invalid flags for test.td
+call mtr.add_suppression("InnoDB: Operating system error number .* in a file operation");
+call mtr.add_suppression("InnoDB: The error means the system cannot find the path specified");
+call mtr.add_suppression("InnoDB: If you are installing InnoDB, remember that you must create directories yourself");
+call mtr.add_suppression("InnoDB: adjusting FSP_SPACE_FLAGS of file ");
 FLUSH TABLES;
 --enable_query_log
 
@@ -21,20 +27,24 @@ let bugdir= $MYSQLTEST_VARDIR/tmp/table_flags;
 --let SEARCH_FILE = $MYSQLTEST_VARDIR/log/mysqld.1.err
 
 --let $d=--innodb-data-home-dir=$bugdir --innodb-log-group-home-dir=$bugdir
---let $d=$d --innodb-data-file-path=ibdata1:10M:autoextend
+--let $d=$d --innodb-data-file-path=ibdata1:1M:autoextend
 --let $d=$d --innodb-undo-tablespaces=0
+--let $d=$d --innodb-purge-rseg-truncate-frequency=1
+--let $d=$d --skip-innodb-fast-shutdown
 if ($have_debug) {
 --let $d=$d --debug=d,create_and_drop_garbage
 }
---let $restart_parameters=$d --innodb-stats-persistent=0 --innodb-file-format=1
+--let $restart_parameters=$d --innodb-stats-persistent=0
 --source include/restart_mysqld.inc
 
 SET GLOBAL innodb_file_per_table=1;
 CREATE TABLE tr(a INT PRIMARY KEY)ENGINE=InnoDB ROW_FORMAT=REDUNDANT;
 CREATE TABLE tc(a INT PRIMARY KEY)ENGINE=InnoDB ROW_FORMAT=COMPACT;
 CREATE TABLE td(a INT PRIMARY KEY)ENGINE=InnoDB ROW_FORMAT=DYNAMIC;
+SET innodb_strict_mode=OFF;
 CREATE TABLE tz(a INT PRIMARY KEY)ENGINE=InnoDB ROW_FORMAT=COMPRESSED
 KEY_BLOCK_SIZE=1;
+SET innodb_strict_mode=ON;
 # PAGE_COMPRESSED is supported starting with MariaDB 10.1.0
 CREATE TABLE tp(a INT PRIMARY KEY)ENGINE=InnoDB ROW_FORMAT=DYNAMIC
 PAGE_COMPRESSED=1 PAGE_COMPRESSION_LEVEL=9;
@@ -89,13 +99,18 @@ for (my $offset= 0x65; $offset;
 	    } elsif ($name eq 'test/tc') {
 		$flags= 0x80 # 10.1 PAGE_COMPRESSED
 	    } elsif ($name eq 'test/td') {
-		$flags= 0xf00 # 10.1 PAGE_COMPRESSION_LEVEL=15 (0..9 is valid)
+		$flags= 0xf00 # PAGE_COMPRESSION_LEVEL=15 (0..9 is valid)
+		    # As part of the MDEV-12873 fix, because the
+		    # PAGE_COMPRESSED=YES flag was not set, we will assume that
+		    # this table was actually created with 10.2.2..10.2.6
+		    # using PAGE_COMPRESSED=YES PAGE_COMPRESSION_LEVEL=7.
 	    } elsif ($name eq 'test/tz') {
 		$flags= 0x3000 # 10.1 ATOMIC_WRITES=3 (0..2 is valid)
 	    } elsif ($name eq 'test/tp') {
 		$flags= 0x880 # 10.1 PAGE_COMPRESSED, PAGE_COMPRESSION_LEVEL=8
-		    # (in 10.1, this leaves PAGE_COMPRESSION_LEVEL=1
-		    # without PAGE_COMPRESSED, which should be invalid)
+		    # (in 10.2.2 through 10.2.6, this is interpreted as
+		    # PAGE_COMPRESSION_LEVEL=4 without PAGE_COMPRESSED
+		    # but with SHARED_SPACE, which should be invalid)
 	    }
 
 	    substr($page,$offset+$start,$end-$start)= pack(
@@ -120,24 +135,29 @@ close(FILE) || die "Unable to close $file\n";
 EOF
 --source include/start_mysqld.inc
 
+--error ER_NO_SUCH_TABLE_IN_ENGINE
 SHOW CREATE TABLE tr;
-INSERT INTO tr VALUES(42);
 --error ER_NO_SUCH_TABLE_IN_ENGINE
 SHOW CREATE TABLE tc;
 --error ER_NO_SUCH_TABLE_IN_ENGINE
+SELECT * FROM tc;
 SHOW CREATE TABLE td;
---error ER_NO_SUCH_TABLE_IN_ENGINE
+SELECT * FROM td;
+# This table was converted to NO_ROLLBACK due to the SYS_TABLES.TYPE change.
 SHOW CREATE TABLE tz;
+BEGIN;
+INSERT INTO tz VALUES(42);
+ROLLBACK;
+SELECT * FROM tz;
 --error ER_NO_SUCH_TABLE_IN_ENGINE
 SHOW CREATE TABLE tp;
 
 --source include/shutdown_mysqld.inc
 
-let SEARCH_RANGE= -50000;
 let SEARCH_FILE= $MYSQLTEST_VARDIR/log/mysqld.1.err;
---let SEARCH_PATTERN= InnoDB: Table '.test.\..t[cdzp].' in InnoDB data dictionary has unknown type (81|f21|121|302[13])\b
+--let SEARCH_PATTERN= InnoDB: Table `test`.`t[cp]` in InnoDB data dictionary contains invalid flags\. SYS_TABLES\.TYPE=(129|289|3873|1232[13]) SYS_TABLES\.N_COLS=2147483649
 --source include/search_pattern_in_file.inc
---let SEARCH_PATTERN= InnoDB: Cannot open table test/t[cdzp] from the internal data dictionary of InnoDB
+--let SEARCH_PATTERN= InnoDB: Table `test`\.`tr` in InnoDB data dictionary contains invalid flags\. SYS_TABLES\.TYPE=65 SYS_TABLES\.MIX_LEN=4294967295\b
 --source include/search_pattern_in_file.inc
 
 # Restore the backup of the corrupted SYS_TABLES clustered index root page
@@ -170,22 +190,28 @@ BEGIN;
 INSERT INTO tr VALUES(1);
 INSERT INTO tc VALUES(1);
 INSERT INTO td VALUES(1);
-INSERT INTO tz VALUES(1);
+# We cannot access tz, because due to our fiddling of the NO_ROLLBACK flag,
+# it now has a record with DB_TRX_ID=0, which is invalid for
+# transactional tables until MDEV-12288 is implemented.
+# INSERT INTO tz VALUES(1);
 INSERT INTO tp VALUES(1);
 ROLLBACK;
 
 SELECT * FROM tr;
 SELECT * FROM tc;
 SELECT * FROM td;
-SELECT * FROM tz;
+# SELECT * FROM tz;
 SELECT * FROM tp;
 
 DROP TABLE tr,tc,td,tz,tp;
 
---source include/shutdown_mysqld.inc
-
 --let $restart_parameters=
---source include/start_mysqld.inc
+--source include/restart_mysqld.inc
+
+--error 0,1
+--remove_file $bugdir/ibtmp1
+--error 0,1
+--remove_file $bugdir/ib_buffer_pool
 
 --list_files $bugdir
 --remove_files_wildcard $bugdir

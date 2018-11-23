@@ -38,8 +38,8 @@ Created 11/12/2013 Jan Lindström jan.lindstrom@skysql.com
 @param[in]	encrypted	whether the page will be subsequently encrypted
 @return actual length of compressed page
 @retval	0	if the page was not compressed */
-UNIV_INTERN ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
-				    ulint block_size, bool encrypted)
+ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
+			ulint block_size, bool encrypted)
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /** Decompress a page that may be subject to page_compressed compression.
@@ -48,32 +48,6 @@ UNIV_INTERN ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
 @return size of the compressed data
 @retval	0		if decompression failed
 @retval	srv_page_size	if the page was not compressed */
-UNIV_INTERN ulint fil_page_decompress(byte* tmp_buf, byte* buf)
+ulint fil_page_decompress(byte* tmp_buf, byte* buf)
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
-
-/****************************************************************//**
-Get block size from fil node
-@return block size*/
-UNIV_INLINE
-ulint
-fil_node_get_block_size(
-	fil_node_t*	node);	/*!< in: Node where to get block
-				size */
-/*******************************************************************//**
-Find out wheather the page is page compressed
-@return	true if page is page compressed*/
-UNIV_INLINE
-ibool
-fil_page_is_compressed(
-/*===================*/
-	byte*	buf);	/*!< in: page */
-
-/*******************************************************************//**
-Find out wheather the page is page compressed
-@return	true if page is page compressed*/
-UNIV_INLINE
-ibool
-fil_page_is_compressed_encrypted(
-/*=============================*/
-	byte*	buf);	/*!< in: page */
 #endif

@@ -21,7 +21,6 @@
 #define _m_ctype_h
 
 #include <my_attribute.h>
-#include "my_global.h"                          /* uint16, uchar */
 
 enum loglevel {
    ERROR_LEVEL=       0,
@@ -49,7 +48,7 @@ extern "C" {
 /*
   On i386 we store Unicode->CS conversion tables for
   some character sets using Big-endian order,
-  to copy two bytes at onces.
+  to copy two bytes at once.
   This gives some performance improvement.
 */
 #ifdef __i386__
@@ -181,11 +180,12 @@ extern MY_UNI_CTYPE my_uni_ctype[256];
 /* A helper macros for "need at least n bytes" */
 #define MY_CS_TOOSMALLN(n)    (-100-(n))
 
+#define MY_CS_MBMAXLEN  6     /* Maximum supported mbmaxlen */
 #define MY_CS_IS_TOOSMALL(rc) ((rc) >= MY_CS_TOOSMALL6 && (rc) <= MY_CS_TOOSMALL)
-
 
 #define MY_SEQ_INTTAIL	1
 #define MY_SEQ_SPACES	2
+#define MY_SEQ_NONSPACES 3 /* Skip non-space characters, including bad bytes */
 
         /* My charsets_list flags */
 #define MY_CS_COMPILED  1      /* compiled-in sets               */
@@ -329,8 +329,7 @@ struct my_collation_handler_st
   int     (*strnncoll)(CHARSET_INFO *,
 		       const uchar *, size_t, const uchar *, size_t, my_bool);
   int     (*strnncollsp)(CHARSET_INFO *,
-                         const uchar *, size_t, const uchar *, size_t,
-                         my_bool diff_if_only_endspace_difference);
+                         const uchar *, size_t, const uchar *, size_t);
   size_t     (*strnxfrm)(CHARSET_INFO *,
                          uchar *dst, size_t dstlen, uint nweights,
                          const uchar *src, size_t srclen, uint flags);
@@ -361,6 +360,8 @@ struct my_collation_handler_st
 
 extern MY_COLLATION_HANDLER my_collation_8bit_bin_handler;
 extern MY_COLLATION_HANDLER my_collation_8bit_simple_ci_handler;
+extern MY_COLLATION_HANDLER my_collation_8bit_nopad_bin_handler;
+extern MY_COLLATION_HANDLER my_collation_8bit_simple_nopad_ci_handler;
 extern MY_COLLATION_HANDLER my_collation_ucs2_uca_handler;
 
 /* Some typedef to make it easy for C++ to make function pointers */
@@ -375,7 +376,7 @@ typedef size_t (*my_charset_conv_case)(CHARSET_INFO *,
   A structure to return the statistics of a native string copying,
   when no Unicode conversion is involved.
 
-  The stucture is OK to be unitialized before calling a copying routine.
+  The structure is OK to be uninitialized before calling a copying routine.
   A copying routine must populate the structure as follows:
     - m_source_end_pos must be set by to a non-NULL value
       in the range of the input string.
@@ -394,7 +395,6 @@ typedef struct
 */
 typedef struct
 {
-  MY_STRCOPY_STATUS m_native_copy_status;
   const char *m_cannot_convert_error_pos;
 } MY_STRCONV_STATUS;
 
@@ -404,14 +404,9 @@ struct my_charset_handler_st
 {
   my_bool (*init)(struct charset_info_st *, MY_CHARSET_LOADER *loader);
   /* Multibyte routines */
-  uint    (*ismbchar)(CHARSET_INFO *, const char *, const char *);
-  uint    (*mbcharlen)(CHARSET_INFO *, uint c);
   size_t  (*numchars)(CHARSET_INFO *, const char *b, const char *e);
   size_t  (*charpos)(CHARSET_INFO *, const char *b, const char *e,
                      size_t pos);
-  size_t  (*well_formed_len)(CHARSET_INFO *,
-                             const char *b,const char *e,
-                             size_t nchars, int *error);
   size_t  (*lengthsp)(CHARSET_INFO *, const char *ptr, size_t length);
   size_t  (*numcells)(CHARSET_INFO *, const char *b, const char *e);
   
@@ -430,7 +425,7 @@ struct my_charset_handler_st
   my_charset_conv_case caseup;
   my_charset_conv_case casedn;
 
-  /* Charset dependant snprintf() */
+  /* Charset dependent snprintf() */
   size_t (*snprintf)(CHARSET_INFO *, char *to, size_t n,
                      const char *fmt,
                      ...) ATTRIBUTE_FORMAT_FPTR(printf, 4, 5);
@@ -522,7 +517,7 @@ struct my_charset_handler_st
   /**
     Write a character to the target string, using its native code.
     For Unicode character sets (utf8, ucs2, utf16, utf16le, utf32, filename)
-    native codes are equvalent to Unicode code points.
+    native codes are equivalent to Unicode code points.
     For 8bit character sets the native code is just the byte value.
     For Asian characters sets:
     - MB1 native code is just the byte value (e.g. on the ASCII range)
@@ -586,50 +581,87 @@ struct charset_info_st
 
 extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_bin;
 extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_latin1;
+extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_latin1_nopad;
 extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_filename;
 extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_utf8_general_ci;
 
 extern struct charset_info_st my_charset_big5_bin;
 extern struct charset_info_st my_charset_big5_chinese_ci;
+extern struct charset_info_st my_charset_big5_nopad_bin;
+extern struct charset_info_st my_charset_big5_chinese_nopad_ci;
 extern struct charset_info_st my_charset_cp1250_czech_ci;
 extern struct charset_info_st my_charset_cp932_bin;
 extern struct charset_info_st my_charset_cp932_japanese_ci;
+extern struct charset_info_st my_charset_cp932_nopad_bin;
+extern struct charset_info_st my_charset_cp932_japanese_nopad_ci;
 extern struct charset_info_st my_charset_eucjpms_bin;
 extern struct charset_info_st my_charset_eucjpms_japanese_ci;
+extern struct charset_info_st my_charset_eucjpms_nopad_bin;
+extern struct charset_info_st my_charset_eucjpms_japanese_nopad_ci;
 extern struct charset_info_st my_charset_euckr_bin;
 extern struct charset_info_st my_charset_euckr_korean_ci;
+extern struct charset_info_st my_charset_euckr_nopad_bin;
+extern struct charset_info_st my_charset_euckr_korean_nopad_ci;
 extern struct charset_info_st my_charset_gb2312_bin;
 extern struct charset_info_st my_charset_gb2312_chinese_ci;
+extern struct charset_info_st my_charset_gb2312_nopad_bin;
+extern struct charset_info_st my_charset_gb2312_chinese_nopad_ci;
 extern struct charset_info_st my_charset_gbk_bin;
 extern struct charset_info_st my_charset_gbk_chinese_ci;
+extern struct charset_info_st my_charset_gbk_nopad_bin;
+extern struct charset_info_st my_charset_gbk_chinese_nopad_ci;
 extern struct charset_info_st my_charset_latin1_bin;
+extern struct charset_info_st my_charset_latin1_nopad_bin;
 extern struct charset_info_st my_charset_latin1_german2_ci;
 extern struct charset_info_st my_charset_latin2_czech_ci;
 extern struct charset_info_st my_charset_sjis_bin;
 extern struct charset_info_st my_charset_sjis_japanese_ci;
+extern struct charset_info_st my_charset_sjis_nopad_bin;
+extern struct charset_info_st my_charset_sjis_japanese_nopad_ci;
 extern struct charset_info_st my_charset_tis620_bin;
 extern struct charset_info_st my_charset_tis620_thai_ci;
+extern struct charset_info_st my_charset_tis620_nopad_bin;
+extern struct charset_info_st my_charset_tis620_thai_nopad_ci;
 extern struct charset_info_st my_charset_ucs2_bin;
 extern struct charset_info_st my_charset_ucs2_general_ci;
+extern struct charset_info_st my_charset_ucs2_nopad_bin;
+extern struct charset_info_st my_charset_ucs2_general_nopad_ci;
 extern struct charset_info_st my_charset_ucs2_general_mysql500_ci;
 extern struct charset_info_st my_charset_ucs2_unicode_ci;
+extern struct charset_info_st my_charset_ucs2_unicode_nopad_ci;
 extern struct charset_info_st my_charset_ucs2_general_mysql500_ci;
 extern struct charset_info_st my_charset_ujis_bin;
 extern struct charset_info_st my_charset_ujis_japanese_ci;
+extern struct charset_info_st my_charset_ujis_nopad_bin;
+extern struct charset_info_st my_charset_ujis_japanese_nopad_ci;
 extern struct charset_info_st my_charset_utf16_bin;
 extern struct charset_info_st my_charset_utf16_general_ci;
 extern struct charset_info_st my_charset_utf16_unicode_ci;
+extern struct charset_info_st my_charset_utf16_unicode_nopad_ci;
 extern struct charset_info_st my_charset_utf16le_bin;
 extern struct charset_info_st my_charset_utf16le_general_ci;
+extern struct charset_info_st my_charset_utf16_general_nopad_ci;
+extern struct charset_info_st my_charset_utf16_nopad_bin;
+extern struct charset_info_st my_charset_utf16le_nopad_bin;
+extern struct charset_info_st my_charset_utf16le_general_nopad_ci;
 extern struct charset_info_st my_charset_utf32_bin;
 extern struct charset_info_st my_charset_utf32_general_ci;
 extern struct charset_info_st my_charset_utf32_unicode_ci;
+extern struct charset_info_st my_charset_utf32_unicode_nopad_ci;
+extern struct charset_info_st my_charset_utf32_nopad_bin;
+extern struct charset_info_st my_charset_utf32_general_nopad_ci;
 extern struct charset_info_st my_charset_utf8_bin;
+extern struct charset_info_st my_charset_utf8_nopad_bin;
+extern struct charset_info_st my_charset_utf8_general_nopad_ci;
 extern struct charset_info_st my_charset_utf8_general_mysql500_ci;
 extern struct charset_info_st my_charset_utf8_unicode_ci;
+extern struct charset_info_st my_charset_utf8_unicode_nopad_ci;
 extern struct charset_info_st my_charset_utf8mb4_bin;
 extern struct charset_info_st my_charset_utf8mb4_general_ci;
+extern struct charset_info_st my_charset_utf8mb4_nopad_bin;
+extern struct charset_info_st my_charset_utf8mb4_general_nopad_ci;
 extern struct charset_info_st my_charset_utf8mb4_unicode_ci;
+extern struct charset_info_st my_charset_utf8mb4_unicode_nopad_ci;
 
 #define MY_UTF8MB3                 "utf8"
 #define MY_UTF8MB4                 "utf8mb4"
@@ -649,15 +681,30 @@ extern int  my_strnncoll_simple(CHARSET_INFO *, const uchar *, size_t,
 				const uchar *, size_t, my_bool);
 
 extern int  my_strnncollsp_simple(CHARSET_INFO *, const uchar *, size_t,
-                                  const uchar *, size_t,
-                                  my_bool diff_if_only_endspace_difference);
+                                  const uchar *, size_t);
 
 extern void my_hash_sort_simple(CHARSET_INFO *cs,
 				const uchar *key, size_t len,
 				ulong *nr1, ulong *nr2); 
+
+extern void my_hash_sort_simple_nopad(CHARSET_INFO *cs,
+				      const uchar *key, size_t len,
+				      ulong *nr1, ulong *nr2);
+
 extern void my_hash_sort_bin(CHARSET_INFO *cs,
                              const uchar *key, size_t len, ulong *nr1,
                              ulong *nr2);
+
+/**
+  Compare a string to an array of spaces, for PAD SPACE comparison.
+  The function iterates through the string and compares every byte to 0x20.
+  @param       - the string
+  @param       - its length
+  @return <0   - if a byte less than 0x20 was found in the string.
+  @return  0   - if all bytes in the string were 0x20, or if length was 0.
+  @return >0   - if a byte greater than 0x20 was found in the string.
+*/
+extern int my_strnncollsp_padspace_bin(const uchar *str, size_t length);
 
 extern size_t my_lengthsp_8bit(CHARSET_INFO *cs, const char *ptr, size_t length);
 
@@ -766,14 +813,11 @@ int my_wildcmp_bin(CHARSET_INFO *,
 size_t my_numchars_8bit(CHARSET_INFO *, const char *b, const char *e);
 size_t my_numcells_8bit(CHARSET_INFO *, const char *b, const char *e);
 size_t my_charpos_8bit(CHARSET_INFO *, const char *b, const char *e, size_t pos);
-size_t my_well_formed_len_8bit(CHARSET_INFO *, const char *b, const char *e,
-                             size_t pos, int *error);
 size_t my_well_formed_char_length_8bit(CHARSET_INFO *cs,
                                        const char *b, const char *e,
                                        size_t nchars,
                                        MY_STRCOPY_STATUS *status);
 int my_charlen_8bit(CHARSET_INFO *, const uchar *str, const uchar *end);
-uint my_mbcharlen_8bit(CHARSET_INFO *, uint c);
 
 
 /* Functions for multibyte charsets */
@@ -800,22 +844,10 @@ int my_wildcmp_mb(CHARSET_INFO *,
 size_t my_numchars_mb(CHARSET_INFO *, const char *b, const char *e);
 size_t my_numcells_mb(CHARSET_INFO *, const char *b, const char *e);
 size_t my_charpos_mb(CHARSET_INFO *, const char *b, const char *e, size_t pos);
-size_t my_well_formed_len_mb(CHARSET_INFO *, const char *b, const char *e,
-                             size_t pos, int *error);
 uint my_instr_mb(CHARSET_INFO *,
                  const char *b, size_t b_length,
                  const char *s, size_t s_length,
                  my_match_t *match, uint nmatch);
-
-int my_strnncoll_mb_bin(CHARSET_INFO * cs,
-                        const uchar *s, size_t slen,
-                        const uchar *t, size_t tlen,
-                        my_bool t_is_prefix);
-
-int my_strnncollsp_mb_bin(CHARSET_INFO *cs,
-                          const uchar *a, size_t a_length,
-                          const uchar *b, size_t b_length,
-                          my_bool diff_if_only_endspace_difference);
 
 int my_wildcmp_mb_bin(CHARSET_INFO *cs,
                       const char *str,const char *str_end,
@@ -828,18 +860,38 @@ int my_strcasecmp_mb_bin(CHARSET_INFO * cs __attribute__((unused)),
 void my_hash_sort_mb_bin(CHARSET_INFO *cs __attribute__((unused)),
                          const uchar *key, size_t len,ulong *nr1, ulong *nr2);
 
+void my_hash_sort_mb_nopad_bin(CHARSET_INFO *cs __attribute__((unused)),
+                               const uchar *key, size_t len,
+                               ulong *nr1, ulong *nr2);
+
 size_t my_strnxfrm_mb(CHARSET_INFO *,
                       uchar *dst, size_t dstlen, uint nweights,
                       const uchar *src, size_t srclen, uint flags);
 
+size_t my_strnxfrm_mb_nopad(CHARSET_INFO *,
+			    uchar *dst, size_t dstlen, uint nweights,
+			    const uchar *src, size_t srclen, uint flags);
+
 size_t my_strnxfrm_unicode(CHARSET_INFO *,
                            uchar *dst, size_t dstlen, uint nweights,
                            const uchar *src, size_t srclen, uint flags);
+
+size_t my_strnxfrm_unicode_nopad(CHARSET_INFO *,
+				 uchar *dst, size_t dstlen, uint nweights,
+				 const uchar *src, size_t srclen, uint flags);
+
 size_t  my_strnxfrmlen_unicode(CHARSET_INFO *, size_t); 
 
 size_t my_strnxfrm_unicode_full_bin(CHARSET_INFO *,
-                                    uchar *dst, size_t dstlen, uint nweights,
-                                    const uchar *src, size_t srclen, uint flags);
+                                    uchar *dst, size_t dstlen,
+                                    uint nweights, const uchar *src,
+                                    size_t srclen, uint flags);
+
+size_t my_strnxfrm_unicode_full_nopad_bin(CHARSET_INFO *,
+					  uchar *dst, size_t dstlen,
+					  uint nweights, const uchar *src,
+					  size_t srclen, uint flags);
+
 size_t  my_strnxfrmlen_unicode_full_bin(CHARSET_INFO *, size_t); 
 
 int my_wildcmp_unicode(CHARSET_INFO *cs,
@@ -867,9 +919,8 @@ typedef struct
 
 void my_string_metadata_get(MY_STRING_METADATA *metadata,
                             CHARSET_INFO *cs, const char *str, size_t len);
-uint my_string_repertoire(CHARSET_INFO *cs, const char *str, ulong len);
+uint my_string_repertoire(CHARSET_INFO *cs, const char *str, size_t len);
 my_bool my_charset_is_ascii_based(CHARSET_INFO *cs);
-my_bool my_charset_is_8bit_pure_ascii(CHARSET_INFO *cs);
 uint my_charset_repertoire(CHARSET_INFO *cs);
 
 uint my_strxfrm_flag_normalize(uint flags, uint nlevels);
@@ -878,8 +929,10 @@ void my_strxfrm_desc_and_reverse(uchar *str, uchar *strend,
 size_t my_strxfrm_pad_desc_and_reverse(CHARSET_INFO *cs,
                                        uchar *str, uchar *frmend, uchar *strend,
                                        uint nweights, uint flags, uint level);
-
-my_bool my_charset_is_ascii_compatible(CHARSET_INFO *cs);
+size_t my_strxfrm_pad_desc_and_reverse_nopad(CHARSET_INFO *cs,
+					     uchar *str, uchar *frmend,
+					     uchar *strend, uint nweights,
+					     uint flags, uint level);
 
 const MY_CONTRACTIONS *my_charset_get_contractions(CHARSET_INFO *cs,
                                                    int level);
@@ -902,9 +955,9 @@ uint32 my_convert(char *to, uint32 to_length, CHARSET_INFO *to_cs,
   Protocol::store_warning() uses this to escape control
   and non-convertable characters.
 */
-uint32 my_convert_using_func(char *to, uint32 to_length, CHARSET_INFO *to_cs,
+uint32 my_convert_using_func(char *to, size_t to_length, CHARSET_INFO *to_cs,
                              my_charset_conv_wc_mb mb_wc,
-                             const char *from, uint32 from_length,
+                             const char *from, size_t from_length,
                              CHARSET_INFO *from_cs,
                              my_charset_conv_mb_wc wc_mb,
                              uint *errors);
@@ -913,7 +966,7 @@ uint32 my_convert_using_func(char *to, uint32 to_length, CHARSET_INFO *to_cs,
   Bad byte sequences as well as characters that cannot be
   encoded in the destination character set are replaced to '?'.
   Not more than "nchars" characters are copied.
-  Conversion statistics is returnd in "status" and is set as follows:
+  Conversion statistics is returned in "status" and is set as follows:
   - status->m_native_copy_status.m_source_end_pos - to the position
     between (src) and (src+src_length), where the function stopped reading
     the source string.
@@ -933,7 +986,9 @@ uint32 my_convert_using_func(char *to, uint32 to_length, CHARSET_INFO *to_cs,
 */
 size_t my_convert_fix(CHARSET_INFO *dstcs, char *dst, size_t dst_length,
                       CHARSET_INFO *srccs, const char *src, size_t src_length,
-                      size_t nchars, MY_STRCONV_STATUS *status);
+                      size_t nchars,
+                      MY_STRCOPY_STATUS *copy_status,
+                      MY_STRCONV_STATUS *conv_status);
 
 #define	_MY_U	01	/* Upper case */
 #define	_MY_L	02	/* Lower case */
@@ -978,13 +1033,71 @@ size_t my_convert_fix(CHARSET_INFO *dstcs, char *dst, size_t dst_length,
 #define my_strcasecmp(s, a, b)        ((s)->coll->strcasecmp((s), (a), (b)))
 #define my_charpos(cs, b, e, num)     (cs)->cset->charpos((cs), (const char*) (b), (const char *)(e), (num))
 
-#define use_mb(s)                     ((s)->cset->ismbchar != NULL)
-#define my_ismbchar(s, a, b)          ((s)->cset->ismbchar((s), (a), (b)))
-#ifdef USE_MB
-#define my_mbcharlen(s, a)            ((s)->cset->mbcharlen((s),(a)))
-#else
-#define my_mbcharlen(s, a)            1
-#endif
+#define use_mb(s)                     ((s)->mbmaxlen > 1)
+/**
+  Detect if the leftmost character in a string is a valid multi-byte character
+  and return its length, or return 0 otherwise.
+  @param cs  - character set
+  @param str - the beginning of the string
+  @param end - the string end (the next byte after the string)
+  @return    >0, for a multi-byte character
+  @rerurn    0,  for a single byte character, broken sequence, empty string.
+*/
+static inline
+uint my_ismbchar(CHARSET_INFO *cs, const char *str, const char *end)
+{
+  int char_length= (cs->cset->charlen)(cs, (const uchar *) str,
+                                           (const uchar *) end);
+  return char_length > 1 ? (uint) char_length : 0U;
+}
+
+
+/**
+  Return length of the leftmost character in a string.
+  @param cs  - character set
+  @param str - the beginning of the string
+  @param end - the string end (the next byte after the string)
+  @return  <=0 on errors (EOL, wrong byte sequence)
+  @return    1 on a single byte character
+  @return   >1 on a multi-byte character
+
+  Note, inlike my_ismbchar(), 1 is returned for a single byte character.
+*/
+static inline
+int my_charlen(CHARSET_INFO *cs, const char *str, const char *end)
+{
+  return (cs->cset->charlen)(cs, (const uchar *) str,
+                                 (const uchar *) end);
+}
+
+
+/**
+  Convert broken and incomplete byte sequences to 1 byte.
+*/
+static inline
+uint my_charlen_fix(CHARSET_INFO *cs, const char *str, const char *end)
+{
+  int char_length= my_charlen(cs, str, end);
+  DBUG_ASSERT(str < end);
+  return char_length > 0 ? (uint) char_length : (uint) 1U;
+}
+
+
+/*
+  A compatibility replacement pure C function for the former
+    cs->cset->well_formed_len().
+  In C++ code please use Well_formed_prefix::length() instead.
+*/
+static inline size_t
+my_well_formed_length(CHARSET_INFO *cs, const char *b, const char *e,
+                      size_t nchars, int *error)
+{
+  MY_STRCOPY_STATUS status;
+  (void) cs->cset->well_formed_char_length(cs, b, e, nchars, &status);
+  *error= status.m_well_formed_error_pos == NULL ? 0 : 1;
+  return (size_t) (status.m_source_end_pos - b);
+}
+
 
 #define my_caseup_str(s, a)           ((s)->cset->caseup_str((s), (a)))
 #define my_casedn_str(s, a)           ((s)->cset->casedn_str((s), (a)))

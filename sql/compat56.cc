@@ -15,7 +15,7 @@
  along with this program; if not, write to the Free Software
  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include "my_global.h"
+#include "mariadb.h"
 #include "compat56.h"
 #include "myisampack.h"
 #include "my_time.h"
@@ -45,8 +45,10 @@
 */
 longlong TIME_to_longlong_time_packed(const MYSQL_TIME *ltime)
 {
-  /* If month is 0, we mix day with hours: "1 00:10:10" -> "24:00:10" */
-  long hms= (((ltime->month ? 0 : ltime->day * 24) + ltime->hour) << 12) |
+  DBUG_ASSERT(ltime->year == 0);
+  DBUG_ASSERT(ltime->month == 0);
+  // Mix days with hours: "1 00:10:10" -> "24:10:10"
+  long hms= ((ltime->day * 24 + ltime->hour) << 12) |
             (ltime->minute << 6) | ltime->second;
   longlong tmp= MY_PACKED_TIME_MAKE(hms, ltime->second_part);
   return ltime->neg ? -tmp : tmp;
@@ -65,7 +67,7 @@ void TIME_from_longlong_time_packed(MYSQL_TIME *ltime, longlong tmp)
   long hms;
   if ((ltime->neg= (tmp < 0)))
     tmp= -tmp;
-  hms= MY_PACKED_TIME_GET_INT_PART(tmp);
+  hms= (long) MY_PACKED_TIME_GET_INT_PART(tmp);
   ltime->year=   (uint) 0;
   ltime->month=  (uint) 0;
   ltime->day=    (uint) 0;
@@ -267,11 +269,11 @@ void TIME_from_longlong_datetime_packed(MYSQL_TIME *ltime, longlong tmp)
 
   ltime->day= ymd % (1 << 5);
   ltime->month= ym % 13;
-  ltime->year= ym / 13;
+  ltime->year= (uint) (ym / 13);
 
   ltime->second= hms % (1 << 6);
   ltime->minute= (hms >> 6) % (1 << 6);
-  ltime->hour= (hms >> 12);
+  ltime->hour= (uint) (hms >> 12);
   
   ltime->time_type= MYSQL_TIMESTAMP_DATETIME;
 }

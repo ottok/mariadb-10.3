@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2004, 2012, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab.
+   Copyright (c) 2010, 2017, MariaDB Corporation.
 
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -15,12 +15,13 @@
  along with this program; if not, write to the Free Software
  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
+#include <my_global.h>
 #include <my_time.h>
 #include <m_string.h>
 #include <m_ctype.h>
 /* Windows version of localtime_r() is declared in my_ptrhead.h */
 #include <my_pthread.h>
-#include <mysqld_error.h>
+
 
 ulonglong log_10_int[20]=
 {
@@ -202,7 +203,7 @@ static uint skip_digits(const char **str, const char *end)
   while (s < end && my_isdigit(&my_charset_latin1, *s))
     s++;
   *str= s;
-  return s - start;
+  return (uint)(s - start);
 }
 
 
@@ -236,7 +237,7 @@ static void get_microseconds(ulong *val, MYSQL_TIME_STATUS *status,
   uint tmp= 0; /* For the case '10:10:10.' */
   if (get_digits(&tmp, number_of_fields, str, end, 6))
     status->warnings|= MYSQL_TIME_WARN_TRUNCATED;
-  if ((status->precision= (*str - start)) < 6)
+  if ((status->precision= (uint)(*str - start)) < 6)
     *val= (ulong) (tmp * log_10_int[6 - (*str - start)]);
   else
     *val= tmp;
@@ -292,7 +293,7 @@ static void get_microseconds(ulong *val, MYSQL_TIME_STATUS *status,
 #define MAX_DATE_PARTS 8
 
 my_bool
-str_to_datetime(const char *str, uint length, MYSQL_TIME *l_time,
+str_to_datetime(const char *str, size_t length, MYSQL_TIME *l_time,
                 ulonglong flags, MYSQL_TIME_STATUS *status)
 {
   const char *end=str+length, *pos;
@@ -358,7 +359,7 @@ str_to_datetime(const char *str, uint length, MYSQL_TIME *l_time,
     const char *start= str;
     if (get_number(&l_time->year, &number_of_fields, &str, end))
       status->warnings|= MYSQL_TIME_WARN_TRUNCATED;
-    year_length= str - start;
+    year_length= (uint)(str - start);
 
     if (!status->warnings &&
         (get_punct(&str, end)
@@ -456,7 +457,7 @@ err:
      TRUE  on error
 */
 
-my_bool str_to_time(const char *str, uint length, MYSQL_TIME *l_time,
+my_bool str_to_time(const char *str, size_t length, MYSQL_TIME *l_time,
                     ulonglong fuzzydate, MYSQL_TIME_STATUS *status)
 {
   ulong date[5];
@@ -776,7 +777,6 @@ long calc_daynr(uint year,uint month,uint day)
   DBUG_ASSERT(delsum+(int) y/4-temp >= 0);
   DBUG_RETURN(delsum+(int) y/4-temp);
 } /* calc_daynr */
-
 
 /*
   Convert time in MYSQL_TIME representation in system time zone to its
@@ -1425,32 +1425,4 @@ double TIME_to_double(const MYSQL_TIME *my_time)
 
   d+= my_time->second_part/(double)TIME_SECOND_PART_FACTOR;
   return my_time->neg ? -d : d;
-}
-
-longlong pack_time(const MYSQL_TIME *my_time)
-{
-  return  ((((((my_time->year     * 13ULL +
-               my_time->month)    * 32ULL +
-               my_time->day)      * 24ULL +
-               my_time->hour)     * 60ULL +
-               my_time->minute)   * 60ULL +
-               my_time->second)   * 1000000ULL +
-               my_time->second_part) * (my_time->neg ? -1 : 1);
-}
-
-#define get_one(WHERE, FACTOR) WHERE= (ulong)(packed % FACTOR); packed/= FACTOR
-
-MYSQL_TIME *unpack_time(longlong packed, MYSQL_TIME *my_time)
-{
-  if ((my_time->neg= packed < 0))
-    packed= -packed;
-  get_one(my_time->second_part, 1000000ULL);
-  get_one(my_time->second,           60ULL);
-  get_one(my_time->minute,           60ULL);
-  get_one(my_time->hour,             24ULL);
-  get_one(my_time->day,              32ULL);
-  get_one(my_time->month,            13ULL);
-  my_time->year= (uint)packed;
-  my_time->time_type= MYSQL_TIMESTAMP_DATETIME;
-  return my_time;
 }

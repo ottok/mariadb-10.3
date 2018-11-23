@@ -27,6 +27,7 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "mariadb.h"
 #include "key.h"
 #include "sql_base.h"
 #include "sql_select.h"
@@ -281,8 +282,7 @@ void JOIN_CACHE::collect_info_on_key_args()
         Item *ref_item= ref->items[i]; 
         if (!(tab->table->map & ref_item->used_tables()))
 	  continue;
-	 ref_item->walk(&Item::add_field_to_set_processor, 1,
-                        (uchar *) tab->table);
+	 ref_item->walk(&Item::add_field_to_set_processor, 1, tab->table);
       }
       if ((key_args= bitmap_bits_set(&tab->table->tmp_set)))
       {
@@ -407,7 +407,7 @@ void JOIN_CACHE::create_flag_fields()
   }
 
   /* Theoretically the new value of flag_fields can be less than the old one */   
-  flag_fields= copy-field_descr;
+  flag_fields= (uint)(copy-field_descr);
 }
 
 
@@ -589,11 +589,6 @@ void JOIN_CACHE::create_remaining_fields()
   {
     MY_BITMAP *rem_field_set;
     TABLE *table= tab->table;
-#if MYSQL_VERSION_ID < 100204
-    empty_record(table);
-#else
-#error remove
-#endif
 
     if (all_read_fields)
       rem_field_set= table->read_set;
@@ -701,7 +696,7 @@ void JOIN_CACHE::set_constants()
   pack_length_with_blob_ptrs= pack_length + blobs*sizeof(uchar *);
   min_buff_size= 0;
   min_records= 1;
-  buff_size= MY_MAX(join->thd->variables.join_buff_size,
+  buff_size= (size_t)MY_MAX(join->thd->variables.join_buff_size,
                  get_min_join_buffer_size());
   size_of_rec_ofs= offset_size(buff_size);
   size_of_rec_len= blobs ? size_of_rec_ofs : offset_size(len); 
@@ -770,7 +765,7 @@ uint JOIN_CACHE::get_record_max_affix_length()
     The minimal possible size of the join buffer of this cache 
 */
 
-ulong JOIN_CACHE::get_min_join_buffer_size()
+size_t JOIN_CACHE::get_min_join_buffer_size()
 {
   if (!min_buff_size)
   {
@@ -829,7 +824,7 @@ ulong JOIN_CACHE::get_min_join_buffer_size()
     The maximum possible size of the join buffer of this cache 
 */
 
-ulong JOIN_CACHE::get_max_join_buffer_size(bool optimize_buff_size)
+size_t JOIN_CACHE::get_max_join_buffer_size(bool optimize_buff_size)
 {
   if (!max_buff_size)
   {
@@ -846,7 +841,7 @@ ulong JOIN_CACHE::get_max_join_buffer_size(bool optimize_buff_size)
     len+= get_max_key_addon_space_per_record() + avg_aux_buffer_incr;
     space_per_record= len;
     
-    size_t limit_sz= join->thd->variables.join_buff_size;
+    size_t limit_sz= (size_t)join->thd->variables.join_buff_size;
     if (join_tab->join_buffer_size_limit)
       set_if_smaller(limit_sz, join_tab->join_buffer_size_limit);
     if (!optimize_buff_size)
@@ -938,9 +933,9 @@ int JOIN_CACHE::alloc_buffer()
   if (for_explain_only)
     return 0;
                                
-  for (ulong buff_size_decr= (buff_size-min_buff_size)/4 + 1; ; )
+  for (size_t buff_size_decr= (buff_size-min_buff_size)/4 + 1; ; )
   {
-    ulong next_buff_size;
+    size_t next_buff_size;
 
     if ((buff= (uchar*) my_malloc(buff_size, MYF(MY_THREAD_SPECIFIC))))
       break;
@@ -1310,7 +1305,7 @@ uint JOIN_CACHE::write_record_data(uchar * link, bool *is_full)
         uint blob_len= blob_field->get_length();
         (*copy_ptr)->blob_length= blob_len;
         len+= blob_len;
-        blob_field->get_ptr(&(*copy_ptr)->str);
+        (*copy_ptr)->str= blob_field->get_ptr();
       }
     }
   }
@@ -1380,9 +1375,10 @@ uint JOIN_CACHE::write_record_data(uchar * link, bool *is_full)
     }
     /* Save the offset of the field to put it later at the end of the record */ 
     if (copy->referenced_field_no)
-      copy->offset= cp-curr_rec_pos;
+      copy->offset= (uint)(cp-curr_rec_pos);
 
-    if (copy->type == CACHE_BLOB)
+    switch (copy->type) {
+    case CACHE_BLOB:
     {
       Field_blob *blob_field= (Field_blob *) copy->field;
       if (last_record)
@@ -1403,69 +1399,66 @@ uint JOIN_CACHE::write_record_data(uchar * link, bool *is_full)
 	memcpy(cp+copy->length, copy->str, copy->blob_length);               
 	cp+= copy->length+copy->blob_length;
       }
+      break;
     }
-    else
+    case CACHE_VARSTR1:
+      /* Copy the significant part of the short varstring field */
+      len= (uint) copy->str[0] + 1;
+      DBUG_ASSERT(cp + len <= buff + buff_size);
+      memcpy(cp, copy->str, len);
+      cp+= len;
+      break;
+    case CACHE_VARSTR2:
+      /* Copy the significant part of the long varstring field */
+      len= uint2korr(copy->str) + 2;
+      DBUG_ASSERT(cp + len <= buff + buff_size);
+      memcpy(cp, copy->str, len);
+      cp+= len;
+      break;
+    case CACHE_STRIPPED:
     {
-      switch (copy->type) {
-      case CACHE_VARSTR1:
-        /* Copy the significant part of the short varstring field */ 
-        len= (uint) copy->str[0] + 1;
-        DBUG_ASSERT(cp + len <= buff + buff_size);
-        memcpy(cp, copy->str, len);
-        cp+= len;
-        break;
-      case CACHE_VARSTR2:
-        /* Copy the significant part of the long varstring field */
-        len= uint2korr(copy->str) + 2;
-        DBUG_ASSERT(cp + len <= buff + buff_size);
-        memcpy(cp, copy->str, len);
-        cp+= len;
-        break;
-      case CACHE_STRIPPED:
+      /*
+        Put down the field value stripping all trailing spaces off.
+        After this insert the length of the written sequence of bytes.
+      */
+      uchar *str, *end;
+      for (str= copy->str, end= str+copy->length;
+           end > str && end[-1] == ' ';
+           end--) ;
+      len=(uint) (end-str);
+      DBUG_ASSERT(cp + len + 2 <= buff + buff_size);
+      int2store(cp, len);
+      memcpy(cp+2, str, len);
+      cp+= len+2;
+      break;
+    }
+    case CACHE_ROWID:
+      if (!copy->length)
       {
-        /* 
-          Put down the field value stripping all trailing spaces off.
-          After this insert the length of the written sequence of bytes.
-        */ 
-	uchar *str, *end;
-	for (str= copy->str, end= str+copy->length;
-	     end > str && end[-1] == ' ';
-	     end--) ;
-	len=(uint) (end-str);
-        DBUG_ASSERT(cp + len + 2 <= buff + buff_size);
-        int2store(cp, len);
-	memcpy(cp+2, str, len);
-	cp+= len+2;
-        break;
-      }
-      case CACHE_ROWID:
-        if (!copy->length)
-	{
+        /*
+          This may happen only for ROWID fields of materialized
+          derived tables and views.
+        */
+        TABLE *table= (TABLE *) copy->str;
+        copy->str= table->file->ref;
+        copy->length= table->file->ref_length;
+        if (!copy->str)
+        {
           /*
-            This may happen only for ROWID fields of materialized
-            derived tables and views.
-	  */
-	  TABLE *table= (TABLE *) copy->str;
-          copy->str= table->file->ref;
-          copy->length= table->file->ref_length;
-          if (!copy->str)
-	  {
-            /* 
-              If table is an empty inner table of an outer join and it is
-              a materialized derived table then table->file->ref == NULL.
-	    */
-	    cp+= copy->length;
-            break;
-          }
+            If table is an empty inner table of an outer join and it is
+            a materialized derived table then table->file->ref == NULL.
+          */
+          cp+= copy->length;
+          break;
         }
-        /* fall through */
-      default:      
-        /* Copy the entire image of the field from the record buffer */
-        DBUG_ASSERT(cp + copy->length <= buff + buff_size);
-        if (copy->str)
-	  memcpy(cp, copy->str, copy->length);
-	cp+= copy->length;
       }
+      /* fall through */
+    default:
+      /* Copy the entire image of the field from the record buffer */
+      DBUG_ASSERT(cp + copy->length <= buff + buff_size);
+      if (copy->str)
+        memcpy(cp, copy->str, copy->length);
+      cp+= copy->length;
     }
   }
   
@@ -1708,7 +1701,7 @@ enum JOIN_CACHE::Match_flag JOIN_CACHE::get_match_flag_by_pos(uchar *rec_ptr)
     the number of bytes in the increment 
 */
 
-uint JOIN_CACHE::aux_buffer_incr(ulong recno)
+uint JOIN_CACHE::aux_buffer_incr(size_t recno)
 { 
   return join_tab_scan->aux_buffer_incr(recno);
 }
@@ -1723,7 +1716,7 @@ uint JOIN_CACHE::aux_buffer_incr(ulong recno)
     The function reads all flag and data fields of a record from the join
     buffer into the corresponding record buffers.
     The fields are read starting from the position 'pos' which is
-    supposed to point to the beginning og the first record field.
+    supposed to point to the beginning of the first record field.
     The function increments the value of 'pos' by the length of the
     read data. 
 
@@ -1786,7 +1779,7 @@ uint JOIN_CACHE::read_flag_fields()
     memcpy(copy->str, pos, copy->length);
     pos+= copy->length;
   }
-  return (pos-init_pos);
+  return (uint)(pos-init_pos);
 }
 
 
@@ -1814,60 +1807,58 @@ uint JOIN_CACHE::read_flag_fields()
 uint JOIN_CACHE::read_record_field(CACHE_FIELD *copy, bool blob_in_rec_buff)
 {
   uint len;
-  /* Do not copy the field if its value is null */ 
+  /* Do not copy the field if its value is null */
   if (copy->field && copy->field->maybe_null() && copy->field->is_null())
-    return 0;           
-  if (copy->type == CACHE_BLOB)
-  {
-    Field_blob *blob_field= (Field_blob *) copy->field;
-    /* 
-      Copy the length and the pointer to data but not the blob data 
-      itself to the record buffer
-    */ 
-    if (blob_in_rec_buff)
+    return 0;
+  switch (copy->type) {
+  case CACHE_BLOB:
     {
-      blob_field->set_image(pos, copy->length+sizeof(char*),
-			    blob_field->charset());
-      len= copy->length+sizeof(char*);
-    }
-    else
-    {
-      blob_field->set_ptr(pos, pos+copy->length);
-      len= copy->length+blob_field->get_length();
-    }
-  }
-  else
-  {
-    switch (copy->type) {
-    case CACHE_VARSTR1:
-      /* Copy the significant part of the short varstring field */
-      len= (uint) pos[0] + 1;
-      memcpy(copy->str, pos, len);
-      break;
-    case CACHE_VARSTR2:
-      /* Copy the significant part of the long varstring field */
-      len= uint2korr(pos) + 2;
-      memcpy(copy->str, pos, len);
-      break;
-    case CACHE_STRIPPED:
-      /* Pad the value by spaces that has been stripped off */
-      len= uint2korr(pos);
-      memcpy(copy->str, pos+2, len);
-      memset(copy->str+len, ' ', copy->length-len);
-      len+= 2;
-      break;
-    case CACHE_ROWID:
-      if (!copy->str)
+      Field_blob *blob_field= (Field_blob *) copy->field;
+      /*
+        Copy the length and the pointer to data but not the blob data
+        itself to the record buffer
+      */
+      if (blob_in_rec_buff)
       {
-        len= copy->length;
-        break;
+        blob_field->set_image(pos, copy->length + sizeof(char*),
+                              blob_field->charset());
+        len= copy->length + sizeof(char*);
       }
-      /* fall through */ 
-    default:
-      /* Copy the entire image of the field from the record buffer */
-      len= copy->length;
-      memcpy(copy->str, pos, len);
+      else
+      {
+        blob_field->set_ptr(pos, pos+copy->length);
+        len= copy->length + blob_field->get_length();
+      }
     }
+    break;
+  case CACHE_VARSTR1:
+    /* Copy the significant part of the short varstring field */
+    len= (uint) pos[0] + 1;
+    memcpy(copy->str, pos, len);
+    break;
+  case CACHE_VARSTR2:
+    /* Copy the significant part of the long varstring field */
+    len= uint2korr(pos) + 2;
+    memcpy(copy->str, pos, len);
+    break;
+  case CACHE_STRIPPED:
+    /* Pad the value by spaces that has been stripped off */
+    len= uint2korr(pos);
+    memcpy(copy->str, pos+2, len);
+    memset(copy->str+len, ' ', copy->length-len);
+    len+= 2;
+    break;
+  case CACHE_ROWID:
+    if (!copy->str)
+    {
+      len= copy->length;
+      break;
+    }
+    /* fall through */
+  default:
+    /* Copy the entire image of the field from the record buffer */
+    len= copy->length;
+    memcpy(copy->str, pos, len);
   }
   pos+= len;
   return len;
@@ -2257,7 +2248,7 @@ enum_nested_loop_state JOIN_CACHE::join_matching_records(bool skip_last)
     goto finish2;
 
   /* Prepare to retrieve all records of the joined table */
-  if ((error= join_tab_scan->open()))
+  if (unlikely((error= join_tab_scan->open())))
   { 
     /* 
       TODO: if we get here, we will assert in net_send_statement(). Add test
@@ -2268,10 +2259,9 @@ enum_nested_loop_state JOIN_CACHE::join_matching_records(bool skip_last)
 
   while (!(error= join_tab_scan->next()))   
   {
-    if (join->thd->check_killed())
+    if (unlikely(join->thd->check_killed()))
     {
       /* The user has aborted the execution of the query */
-      join->thd->send_kill_message();
       rc= NESTED_LOOP_KILLED;
       goto finish; 
     }
@@ -2420,7 +2410,7 @@ enum_nested_loop_state JOIN_CACHE::generate_full_extensions(uchar *rec_ptr)
       DBUG_RETURN(rc);
     }
   }
-  else if (join->thd->is_error())
+  else if (unlikely(join->thd->is_error()))
     rc= NESTED_LOOP_ERROR;
   DBUG_RETURN(rc);
 }
@@ -2542,10 +2532,9 @@ enum_nested_loop_state JOIN_CACHE::join_null_complements(bool skip_last)
 
   for ( ; cnt; cnt--)
   {
-    if (join->thd->check_killed())
+    if (unlikely(join->thd->check_killed()))
     {
       /* The user has aborted the execution of the query */
-      join->thd->send_kill_message();
       rc= NESTED_LOOP_KILLED;
       goto finish;
     }
@@ -2580,10 +2569,11 @@ finish:
     BNLH, BKA or BKAH) to the data structure
 
   RETURN VALUE
-    none
+   0 ok
+   1 error
 */ 
 
-void JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
+bool JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
 {
   explain->incremental= MY_TEST(prev_cache);
 
@@ -2605,6 +2595,7 @@ void JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
   default:
     DBUG_ASSERT(0);
   }
+  return 0;
 }
 
 /**
@@ -2617,7 +2608,7 @@ THD *JOIN_CACHE::thd()
 }
 
 
-static void add_mrr_explain_info(String *str, uint mrr_mode, handler *file)
+static bool add_mrr_explain_info(String *str, uint mrr_mode, handler *file)
 {
   char mrr_str_buf[128]={0};
   int len;
@@ -2626,22 +2617,30 @@ static void add_mrr_explain_info(String *str, uint mrr_mode, handler *file)
   if (len > 0)
   {
     if (str->length())
-      str->append(STRING_WITH_LEN("; "));
-    str->append(mrr_str_buf, len);
+    {
+      if (str->append(STRING_WITH_LEN("; ")))
+        return 1;
+    }
+    if (str->append(mrr_str_buf, len))
+      return 1;
   }
-}
-
-void JOIN_CACHE_BKA::save_explain_data(EXPLAIN_BKA_TYPE *explain)
-{
-  JOIN_CACHE::save_explain_data(explain); 
-  add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
+  return 0;
 }
 
 
-void JOIN_CACHE_BKAH::save_explain_data(EXPLAIN_BKA_TYPE *explain)
+bool JOIN_CACHE_BKA::save_explain_data(EXPLAIN_BKA_TYPE *explain)
 {
-  JOIN_CACHE::save_explain_data(explain); 
-  add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
+  if (JOIN_CACHE::save_explain_data(explain))
+    return 1;
+  return add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
+}
+
+
+bool JOIN_CACHE_BKAH::save_explain_data(EXPLAIN_BKA_TYPE *explain)
+{
+  if (JOIN_CACHE::save_explain_data(explain))
+    return 1;
+  return add_mrr_explain_info(&explain->mrr_type, mrr_mode, join_tab->table->file);
 }
 
 
@@ -2724,7 +2723,7 @@ int JOIN_CACHE_HASHED::init(bool for_explain)
       data_fields_offset+= copy->length;
   } 
 
-  DBUG_RETURN(rc);
+  DBUG_RETURN(0);
 }
 
 
@@ -2758,22 +2757,22 @@ int JOIN_CACHE_HASHED::init_hash_table()
                       size_of_key_ofs +          // reference to the next key 
                       (use_emb_key ?  get_size_of_rec_offset() : key_length);
 
-    ulong space_per_rec= avg_record_length +
+    size_t space_per_rec= avg_record_length +
                          avg_aux_buffer_incr +
                          key_entry_length+size_of_key_ofs;
-    uint n= buff_size / space_per_rec;
+    size_t n= buff_size / space_per_rec;
 
     /*
       TODO: Make a better estimate for this upper bound of
             the number of records in in the join buffer.
     */
-    uint max_n= buff_size / (pack_length-length+
+    size_t max_n= buff_size / (pack_length-length+
                              key_entry_length+size_of_key_ofs);
 
     hash_entries= (uint) (n / 0.7);
     set_if_bigger(hash_entries, 1);
     
-    if (offset_size(max_n*key_entry_length) <=
+    if (offset_size((uint)(max_n*key_entry_length)) <=
         size_of_key_ofs)
       break;
   }
@@ -3377,35 +3376,30 @@ int JOIN_TAB_SCAN::next()
   int skip_rc;
   READ_RECORD *info= &join_tab->read_record;
   SQL_SELECT *select= join_tab->cache_select;
-  TABLE *table= join_tab->table;
   THD *thd= join->thd;
 
   if (is_first_record)
     is_first_record= FALSE;
   else
-    err= info->read_record(info);
+    err= info->read_record();
 
   if (!err)
   {
     join_tab->tracker->r_rows++;
-    if (table->vfield)
-      update_virtual_fields(thd, table);
   }
 
   while (!err && select && (skip_rc= select->skip_record(thd)) <= 0)
   {
-    if (thd->check_killed() || skip_rc < 0) 
+    if (unlikely(thd->check_killed()) || skip_rc < 0)
       return 1;
     /* 
       Move to the next record if the last retrieved record does not
       meet the condition pushed to the table join_tab.
     */
-    err= info->read_record(info);
+    err= info->read_record();
     if (!err)
     {
       join_tab->tracker->r_rows++;
-      if (table->vfield)
-        update_virtual_fields(thd, table);
     }
   }
 
@@ -3505,7 +3499,7 @@ bool JOIN_CACHE_BNL::prepare_look_for_matches(bool skip_last)
   if (!records)
     return TRUE;
   reset(FALSE);
-  rem_records= records - MY_TEST(skip_last);
+  rem_records= (uint)records - MY_TEST(skip_last);
   return rem_records == 0;
 }
 
@@ -3833,7 +3827,7 @@ int JOIN_CACHE_BNLH::init(bool for_explain)
     the increment of the size of the MRR buffer for the next record
 */
 
-uint JOIN_TAB_SCAN_MRR::aux_buffer_incr(ulong recno)
+uint JOIN_TAB_SCAN_MRR::aux_buffer_incr(size_t recno)
 {
   uint incr= 0;
   TABLE_REF *ref= &join_tab->ref;
@@ -3843,7 +3837,7 @@ uint JOIN_TAB_SCAN_MRR::aux_buffer_incr(ulong recno)
   set_if_bigger(rec_per_key, 1);
   if (recno == 1)
     incr=  ref->key_length + tab->file->ref_length;
-  incr+= tab->file->stats.mrr_length_per_rec * rec_per_key;
+  incr+= (uint)(tab->file->stats.mrr_length_per_rec * rec_per_key);
   return incr; 
 }
 
@@ -3932,8 +3926,6 @@ int JOIN_TAB_SCAN_MRR::next()
     DBUG_ASSERT(cache->buff <= (uchar *) (*ptr) &&
                 (uchar *) (*ptr) <= cache->end_pos);
     */
-    if (join_tab->table->vfield)
-      update_virtual_fields(join->thd, join_tab->table);
   }
   return rc;
 }
@@ -3943,9 +3935,9 @@ static
 void bka_range_seq_key_info(void *init_params, uint *length, 
                           key_part_map *map)
 {
-TABLE_REF *ref= &(((JOIN_CACHE*)init_params)->join_tab->ref);
-*length= ref->key_length;
-*map= (key_part_map(1) << ref->key_parts) - 1;
+  TABLE_REF *ref= &(((JOIN_CACHE*)init_params)->join_tab->ref);
+  *length= ref->key_length;
+  *map= (key_part_map(1) << ref->key_parts) - 1;
 }
 
 
@@ -3973,10 +3965,10 @@ RETURN VALUE
 static 
 range_seq_t bka_range_seq_init(void *init_param, uint n_ranges, uint flags)
 {
-DBUG_ENTER("bka_range_seq_init");
-JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) init_param;
-cache->reset(0);
-DBUG_RETURN((range_seq_t) init_param);
+  DBUG_ENTER("bka_range_seq_init");
+  JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) init_param;
+  cache->reset(0);
+  DBUG_RETURN((range_seq_t) init_param);
 }
 
 
@@ -4004,21 +3996,21 @@ RETURN VALUE
 static 
 bool bka_range_seq_next(range_seq_t rseq, KEY_MULTI_RANGE *range)
 {
-DBUG_ENTER("bka_range_seq_next");
-JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) rseq;
-TABLE_REF *ref= &cache->join_tab->ref;
-key_range *start_key= &range->start_key;
-if ((start_key->length= cache->get_next_key((uchar **) &start_key->key)))
-{
-  start_key->keypart_map= (1 << ref->key_parts) - 1;
-  start_key->flag= HA_READ_KEY_EXACT;
-  range->end_key= *start_key;
-  range->end_key.flag= HA_READ_AFTER_KEY;
-  range->ptr= (char *) cache->get_curr_rec();
-  range->range_flag= EQ_RANGE;
-  DBUG_RETURN(0);
-} 
-DBUG_RETURN(1);
+  DBUG_ENTER("bka_range_seq_next");
+  JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) rseq;
+  TABLE_REF *ref= &cache->join_tab->ref;
+  key_range *start_key= &range->start_key;
+  if ((start_key->length= cache->get_next_key((uchar **) &start_key->key)))
+  {
+    start_key->keypart_map= (1 << ref->key_parts) - 1;
+    start_key->flag= HA_READ_KEY_EXACT;
+    range->end_key= *start_key;
+    range->end_key.flag= HA_READ_AFTER_KEY;
+    range->ptr= (char *) cache->get_curr_rec();
+    range->range_flag= EQ_RANGE;
+    DBUG_RETURN(0);
+  }
+  DBUG_RETURN(1);
 }
 
 
@@ -4050,11 +4042,11 @@ RETURN VALUE
 static 
 bool bka_range_seq_skip_record(range_seq_t rseq, range_id_t range_info, uchar *rowid)
 {
-DBUG_ENTER("bka_range_seq_skip_record");
-JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) rseq;
-bool res= cache->get_match_flag_by_pos((uchar *) range_info) ==
-          JOIN_CACHE::MATCH_FOUND;
-DBUG_RETURN(res);
+  DBUG_ENTER("bka_range_seq_skip_record");
+  JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) rseq;
+  bool res= cache->get_match_flag_by_pos((uchar *) range_info) ==
+    JOIN_CACHE::MATCH_FOUND;
+  DBUG_RETURN(res);
 }
 
 
@@ -4081,14 +4073,14 @@ RETURN VALUE
 static 
 bool bka_skip_index_tuple(range_seq_t rseq, range_id_t range_info)
 {
-DBUG_ENTER("bka_skip_index_tuple");
-JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) rseq;
-THD *thd= cache->thd();
-bool res;
-status_var_increment(thd->status_var.ha_icp_attempts);
-if (!(res= cache->skip_index_tuple(range_info)))
-  status_var_increment(thd->status_var.ha_icp_match);
-DBUG_RETURN(res);
+  DBUG_ENTER("bka_skip_index_tuple");
+  JOIN_CACHE_BKA *cache= (JOIN_CACHE_BKA *) rseq;
+  THD *thd= cache->thd();
+  bool res;
+  status_var_increment(thd->status_var.ha_icp_attempts);
+  if (!(res= cache->skip_index_tuple(range_info)))
+    status_var_increment(thd->status_var.ha_icp_match);
+  DBUG_RETURN(res);
 }
 
 
@@ -4117,10 +4109,10 @@ RETURN VALUE
   
 bool JOIN_CACHE_BKA::prepare_look_for_matches(bool skip_last)
 {
-if (!records)
-  return TRUE;
-rem_records= 1;
-return FALSE;
+  if (!records)
+    return TRUE;
+  rem_records= 1;
+  return FALSE;
 }
 
 
@@ -4149,11 +4141,11 @@ RETURN VALUE
 
 uchar *JOIN_CACHE_BKA::get_next_candidate_for_match()
 {
-if (!rem_records)
-  return 0;
-rem_records--;
-return curr_association;
-} 
+  if (!rem_records)
+    return 0;
+  rem_records--;
+  return curr_association;
+}
 
 
 /*
@@ -4177,8 +4169,8 @@ RETURN VALUE
 
 bool JOIN_CACHE_BKA::skip_next_candidate_for_match(uchar *rec_ptr)
 {
-return join_tab->check_only_first_match() && 
-       (get_match_flag_by_pos(rec_ptr) == MATCH_FOUND);
+  return join_tab->check_only_first_match() &&
+    (get_match_flag_by_pos(rec_ptr) == MATCH_FOUND);
 }
 
 
@@ -4205,8 +4197,8 @@ RETURN VALUE
 
 void JOIN_CACHE_BKA::read_next_candidate_for_match(uchar *rec_ptr)
 {
-get_record_by_pos(rec_ptr);
-} 
+  get_record_by_pos(rec_ptr);
+}
 
 
 /*
@@ -4232,30 +4224,29 @@ RETURN VALUE
 
 int JOIN_CACHE_BKA::init(bool for_explain)
 {
-int res;
-bool check_only_first_match= join_tab->check_only_first_match();
+  int res;
+  bool check_only_first_match= join_tab->check_only_first_match();
 
-RANGE_SEQ_IF rs_funcs= { bka_range_seq_key_info,
-                         bka_range_seq_init, 
-                         bka_range_seq_next,
-                         check_only_first_match ?
-                           bka_range_seq_skip_record : 0,
-                         bka_skip_index_tuple };
+  RANGE_SEQ_IF rs_funcs= { bka_range_seq_key_info,
+    bka_range_seq_init,
+    bka_range_seq_next,
+    check_only_first_match ?  bka_range_seq_skip_record : 0,
+    bka_skip_index_tuple };
 
-DBUG_ENTER("JOIN_CACHE_BKA::init");
+  DBUG_ENTER("JOIN_CACHE_BKA::init");
 
-JOIN_TAB_SCAN_MRR *jsm;
-if (!(join_tab_scan= jsm= new JOIN_TAB_SCAN_MRR(join, join_tab, 
-                                                mrr_mode, rs_funcs)))
-  DBUG_RETURN(1);
+  JOIN_TAB_SCAN_MRR *jsm;
+  if (!(join_tab_scan= jsm= new JOIN_TAB_SCAN_MRR(join, join_tab,
+                                                  mrr_mode, rs_funcs)))
+    DBUG_RETURN(1);
 
-if ((res= JOIN_CACHE::init(for_explain)))
-  DBUG_RETURN(res);
+  if ((res= JOIN_CACHE::init(for_explain)))
+    DBUG_RETURN(res);
 
-if (use_emb_key)
-  jsm->mrr_mode |= HA_MRR_MATERIALIZED_KEYS;
+  if (use_emb_key)
+    jsm->mrr_mode |= HA_MRR_MATERIALIZED_KEYS;
 
-DBUG_RETURN(0);
+  DBUG_RETURN(0);
 }
 
 
@@ -4294,95 +4285,95 @@ RETURN VALUE
 
 uint JOIN_CACHE_BKA::get_next_key(uchar ** key)
 {
-uint len;
-uint32 rec_len;
-uchar *init_pos;
-JOIN_CACHE *cache;
+  uint len;
+  uint32 rec_len;
+  uchar *init_pos;
+  JOIN_CACHE *cache;
 
 start:
 
-/* Any record in a BKA cache is prepended with its length */
-DBUG_ASSERT(with_length);
- 
-if ((pos+size_of_rec_len) > last_rec_pos || !records)
-  return 0;
+  /* Any record in a BKA cache is prepended with its length */
+  DBUG_ASSERT(with_length);
 
-/* Read the length of the record */
-rec_len= get_rec_length(pos);
-pos+= size_of_rec_len; 
-init_pos= pos;
+  if ((pos+size_of_rec_len) > last_rec_pos || !records)
+    return 0;
 
-/* Read a reference to the previous cache if any */
-if (prev_cache)
-  pos+= prev_cache->get_size_of_rec_offset();
+  /* Read the length of the record */
+  rec_len= get_rec_length(pos);
+  pos+= size_of_rec_len;
+  init_pos= pos;
 
-curr_rec_pos= pos;
+  /* Read a reference to the previous cache if any */
+  if (prev_cache)
+    pos+= prev_cache->get_size_of_rec_offset();
 
-/* Read all flag fields of the record */
-read_flag_fields();
+  curr_rec_pos= pos;
 
-if (with_match_flag && 
-    (Match_flag) curr_rec_pos[0] == MATCH_IMPOSSIBLE )
-{
-  pos= init_pos+rec_len;
-  goto start;
-}
+  /* Read all flag fields of the record */
+  read_flag_fields();
 
-if (use_emb_key)
-{
-  /* An embedded key is taken directly from the join buffer */
-  *key= pos;
-  len= emb_key_length;
-}
-else
-{
-  /* Read key arguments from previous caches if there are any such fields */
-  if (external_key_arg_fields)
+  if (with_match_flag &&
+      (Match_flag) curr_rec_pos[0] == MATCH_IMPOSSIBLE )
   {
-    uchar *rec_ptr= curr_rec_pos;
-    uint key_arg_count= external_key_arg_fields;
-    CACHE_FIELD **copy_ptr= blob_ptr-key_arg_count;
-    for (cache= prev_cache; key_arg_count; cache= cache->prev_cache)
-    { 
-      uint len= 0;
-      DBUG_ASSERT(cache);
-      rec_ptr= cache->get_rec_ref(rec_ptr);
-      while (!cache->referenced_fields)
+    pos= init_pos+rec_len;
+    goto start;
+  }
+
+  if (use_emb_key)
+  {
+    /* An embedded key is taken directly from the join buffer */
+    *key= pos;
+    len= emb_key_length;
+  }
+  else
+  {
+    /* Read key arguments from previous caches if there are any such fields */
+    if (external_key_arg_fields)
+    {
+      uchar *rec_ptr= curr_rec_pos;
+      uint key_arg_count= external_key_arg_fields;
+      CACHE_FIELD **copy_ptr= blob_ptr-key_arg_count;
+      for (cache= prev_cache; key_arg_count; cache= cache->prev_cache)
       {
-        cache= cache->prev_cache;
+        uint len= 0;
         DBUG_ASSERT(cache);
         rec_ptr= cache->get_rec_ref(rec_ptr);
-      }
-      while (key_arg_count && 
-             cache->read_referenced_field(*copy_ptr, rec_ptr, &len))
-      {
-        copy_ptr++;
-        --key_arg_count;
+        while (!cache->referenced_fields)
+        {
+          cache= cache->prev_cache;
+          DBUG_ASSERT(cache);
+          rec_ptr= cache->get_rec_ref(rec_ptr);
+        }
+        while (key_arg_count &&
+               cache->read_referenced_field(*copy_ptr, rec_ptr, &len))
+        {
+          copy_ptr++;
+          --key_arg_count;
+        }
       }
     }
+
+    /*
+      Read the other key arguments from the current record. The fields for
+      these arguments are always first in the sequence of the record's fields.
+    */
+    CACHE_FIELD *copy= field_descr+flag_fields;
+    CACHE_FIELD *copy_end= copy+local_key_arg_fields;
+    bool blob_in_rec_buff= blob_data_is_in_rec_buff(curr_rec_pos);
+    for ( ; copy < copy_end; copy++)
+      read_record_field(copy, blob_in_rec_buff);
+
+    /* Build the key over the fields read into the record buffers */
+    TABLE_REF *ref= &join_tab->ref;
+    cp_buffer_from_ref(join->thd, join_tab->table, ref);
+    *key= ref->key_buff;
+    len= ref->key_length;
   }
-  
-  /* 
-    Read the other key arguments from the current record. The fields for
-    these arguments are always first in the sequence of the record's fields.
-  */     
-  CACHE_FIELD *copy= field_descr+flag_fields;
-  CACHE_FIELD *copy_end= copy+local_key_arg_fields;
-  bool blob_in_rec_buff= blob_data_is_in_rec_buff(curr_rec_pos);
-  for ( ; copy < copy_end; copy++)
-    read_record_field(copy, blob_in_rec_buff);
-  
-  /* Build the key over the fields read into the record buffers */ 
-  TABLE_REF *ref= &join_tab->ref;
-  cp_buffer_from_ref(join->thd, join_tab->table, ref);
-  *key= ref->key_buff;
-  len= ref->key_length;
+
+  pos= init_pos+rec_len;
+
+  return len;
 }
-
-pos= init_pos+rec_len;
-
-return len;
-} 
 
 
 /*
@@ -4423,9 +4414,9 @@ RETURN VALUE
 
 bool JOIN_CACHE_BKA::skip_index_tuple(range_id_t range_info)
 {
-DBUG_ENTER("JOIN_CACHE_BKA::skip_index_tuple");
-get_record_by_pos((uchar*)range_info);
-DBUG_RETURN(!join_tab->cache_idx_cond->val_int());
+  DBUG_ENTER("JOIN_CACHE_BKA::skip_index_tuple");
+  get_record_by_pos((uchar*)range_info);
+  DBUG_RETURN(!join_tab->cache_idx_cond->val_int());
 }
 
 
@@ -4455,10 +4446,10 @@ RETURN VALUE
 static 
 range_seq_t bkah_range_seq_init(void *init_param, uint n_ranges, uint flags)
 {
-DBUG_ENTER("bkah_range_seq_init");
-JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) init_param;
-cache->reset(0);
-DBUG_RETURN((range_seq_t) init_param);
+  DBUG_ENTER("bkah_range_seq_init");
+  JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) init_param;
+  cache->reset(0);
+  DBUG_RETURN((range_seq_t) init_param);
 }
 
 
@@ -4483,24 +4474,24 @@ RETURN VALUE
   TRUE   no more ranges
 */    
 
-static 
+static
 bool bkah_range_seq_next(range_seq_t rseq, KEY_MULTI_RANGE *range)
 {
-DBUG_ENTER("bkah_range_seq_next");
-JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) rseq;
-TABLE_REF *ref= &cache->join_tab->ref;
-key_range *start_key= &range->start_key;
-if ((start_key->length= cache->get_next_key((uchar **) &start_key->key)))
-{
-  start_key->keypart_map= (1 << ref->key_parts) - 1;
-  start_key->flag= HA_READ_KEY_EXACT;
-  range->end_key= *start_key;
-  range->end_key.flag= HA_READ_AFTER_KEY;
-  range->ptr= (char *) cache->get_curr_key_chain();
-  range->range_flag= EQ_RANGE;
-  DBUG_RETURN(0);
-} 
-DBUG_RETURN(1);
+  DBUG_ENTER("bkah_range_seq_next");
+  JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) rseq;
+  TABLE_REF *ref= &cache->join_tab->ref;
+  key_range *start_key= &range->start_key;
+  if ((start_key->length= cache->get_next_key((uchar **) &start_key->key)))
+  {
+    start_key->keypart_map= (1 << ref->key_parts) - 1;
+    start_key->flag= HA_READ_KEY_EXACT;
+    range->end_key= *start_key;
+    range->end_key.flag= HA_READ_AFTER_KEY;
+    range->ptr= (char *) cache->get_curr_key_chain();
+    range->range_flag= EQ_RANGE;
+    DBUG_RETURN(0);
+  }
+  DBUG_RETURN(1);
 }
 
 
@@ -4528,14 +4519,13 @@ RETURN VALUE
   0    the record is to be left in the stream
 */ 
 
-static 
-bool bkah_range_seq_skip_record(range_seq_t rseq, range_id_t range_info,
-                              uchar *rowid)
+static
+bool bkah_range_seq_skip_record(range_seq_t rseq, range_id_t range_info, uchar *rowid)
 {
-DBUG_ENTER("bkah_range_seq_skip_record");
-JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) rseq;
-bool res= cache->check_all_match_flags_for_key((uchar *) range_info);
-DBUG_RETURN(res);
+  DBUG_ENTER("bkah_range_seq_skip_record");
+  JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) rseq;
+  bool res= cache->check_all_match_flags_for_key((uchar *) range_info);
+  DBUG_RETURN(res);
 }
 
 
@@ -4562,14 +4552,14 @@ RETURN VALUE
 static 
 bool bkah_skip_index_tuple(range_seq_t rseq, range_id_t range_info)
 {
-DBUG_ENTER("bka_unique_skip_index_tuple");
-JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) rseq;
-THD *thd= cache->thd();
-bool res;
-status_var_increment(thd->status_var.ha_icp_attempts);
-if (!(res= cache->skip_index_tuple(range_info)))
-  status_var_increment(thd->status_var.ha_icp_match);
-DBUG_RETURN(res);
+  DBUG_ENTER("bka_unique_skip_index_tuple");
+  JOIN_CACHE_BKAH *cache= (JOIN_CACHE_BKAH *) rseq;
+  THD *thd= cache->thd();
+  bool res;
+  status_var_increment(thd->status_var.ha_icp_attempts);
+  if (!(res= cache->skip_index_tuple(range_info)))
+    status_var_increment(thd->status_var.ha_icp_match);
+  DBUG_RETURN(res);
 }
 
 
@@ -4597,8 +4587,8 @@ RETURN VALUE
   
 bool JOIN_CACHE_BKAH::prepare_look_for_matches(bool skip_last)
 {
-last_matching_rec_ref_ptr= next_matching_rec_ref_ptr= 0;
-if (no_association &&
+  last_matching_rec_ref_ptr= next_matching_rec_ref_ptr= 0;
+  if (no_association &&
       !(curr_matching_chain= get_matching_chain_by_join_key())) //psergey: added '!'
     return 1;
   last_matching_rec_ref_ptr= get_next_rec_ref(curr_matching_chain);

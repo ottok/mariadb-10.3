@@ -93,6 +93,21 @@ enum enum_sql_command {
   SQLCOM_CREATE_ROLE, SQLCOM_DROP_ROLE, SQLCOM_GRANT_ROLE, SQLCOM_REVOKE_ROLE,
   SQLCOM_COMPOUND,
   SQLCOM_SHOW_GENERIC,
+  SQLCOM_ALTER_USER,
+  SQLCOM_SHOW_CREATE_USER,
+  SQLCOM_EXECUTE_IMMEDIATE,
+  SQLCOM_CREATE_SEQUENCE,
+  SQLCOM_DROP_SEQUENCE,
+  SQLCOM_ALTER_SEQUENCE,
+  SQLCOM_CREATE_PACKAGE,
+  SQLCOM_DROP_PACKAGE,
+  SQLCOM_CREATE_PACKAGE_BODY,
+  SQLCOM_DROP_PACKAGE_BODY,
+  SQLCOM_SHOW_CREATE_PACKAGE,
+  SQLCOM_SHOW_CREATE_PACKAGE_BODY,
+  SQLCOM_SHOW_STATUS_PACKAGE,
+  SQLCOM_SHOW_STATUS_PACKAGE_BODY,
+  SQLCOM_SHOW_PACKAGE_BODY_CODE,
 
   /*
     When a command is added here, be sure it's also added in mysqld.cc
@@ -160,5 +175,36 @@ protected:
     DBUG_ASSERT(FALSE);
   }
 };
+
+
+/**
+  Sql_cmd_call represents the CALL statement.
+*/
+class Sql_cmd_call : public Sql_cmd
+{
+public:
+  class sp_name *m_name;
+  const class Sp_handler *m_handler;
+  Sql_cmd_call(class sp_name *name, const class Sp_handler *handler)
+   :m_name(name),
+    m_handler(handler)
+  {}
+
+  virtual ~Sql_cmd_call()
+  {}
+
+  /**
+    Execute a CALL statement at runtime.
+    @param thd the current thread.
+    @return false on success.
+  */
+  bool execute(THD *thd);
+
+  virtual enum_sql_command sql_command_code() const
+  {
+    return SQLCOM_CALL;
+  }
+};
+
 
 #endif // SQL_CMD_INCLUDED

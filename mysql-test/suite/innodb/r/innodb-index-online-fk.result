@@ -7,7 +7,7 @@ CREATE INDEX tb ON child(a2);
 INSERT INTO child VALUES(10,20);
 ALTER TABLE child ADD FOREIGN KEY(a2) REFERENCES parent(b),
 ALGORITHM = INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Adding foreign keys needs foreign_key_checks=OFF. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Adding foreign keys needs foreign_key_checks=OFF. Try ALGORITHM=COPY
 SET foreign_key_checks = 0;
 ALTER TABLE child ADD CONSTRAINT fk_1 FOREIGN KEY (a2)
 REFERENCES parent(b) ON DELETE SET NULL ON UPDATE CASCADE,
@@ -21,7 +21,7 @@ test/fk_1	a2	b	0
 ALTER TABLE child ADD CONSTRAINT fk_1 FOREIGN KEY (a2)
 REFERENCES parent(b) ON DELETE SET NULL ON UPDATE CASCADE,
 ALGORITHM = INPLACE;
-ERROR HY000: Duplicate foreign key constraint name 'test/fk_1'
+ERROR HY000: Duplicate FOREIGN KEY constraint name 'test/fk_1'
 SET foreign_key_checks = 1;
 INSERT INTO child VALUES(1,2),(2,3);
 INSERT INTO child VALUES(4,4);
@@ -124,8 +124,10 @@ SYS_DATAFILES
 SYS_FOREIGN
 SYS_FOREIGN_COLS
 SYS_TABLESPACES
+SYS_VIRTUAL
 mysql/innodb_index_stats
 mysql/innodb_table_stats
+mysql/transaction_registry
 test/child
 test/parent
 INSERT INTO child VALUES(5,4);
@@ -314,8 +316,10 @@ SYS_DATAFILES
 SYS_FOREIGN
 SYS_FOREIGN_COLS
 SYS_TABLESPACES
+SYS_VIRTUAL
 mysql/innodb_index_stats
 mysql/innodb_table_stats
+mysql/transaction_registry
 test/child
 test/parent
 ALTER TABLE child ADD PRIMARY KEY idx (a3), CHANGE a1 a3 INT,
@@ -338,8 +342,10 @@ SYS_DATAFILES
 SYS_FOREIGN
 SYS_FOREIGN_COLS
 SYS_TABLESPACES
+SYS_VIRTUAL
 mysql/innodb_index_stats
 mysql/innodb_table_stats
+mysql/transaction_registry
 test/child
 test/parent
 SHOW CREATE TABLE child;
@@ -373,8 +379,10 @@ SYS_DATAFILES
 SYS_FOREIGN
 SYS_FOREIGN_COLS
 SYS_TABLESPACES
+SYS_VIRTUAL
 mysql/innodb_index_stats
 mysql/innodb_table_stats
+mysql/transaction_registry
 test/child
 test/parent
 SHOW CREATE TABLE child;
@@ -408,8 +416,10 @@ SYS_DATAFILES
 SYS_FOREIGN
 SYS_FOREIGN_COLS
 SYS_TABLESPACES
+SYS_VIRTUAL
 mysql/innodb_index_stats
 mysql/innodb_table_stats
+mysql/transaction_registry
 test/child
 test/parent
 SHOW CREATE TABLE child;

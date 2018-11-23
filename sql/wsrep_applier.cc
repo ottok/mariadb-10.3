@@ -13,6 +13,7 @@
    with this program; if not, write to the Free Software Foundation, Inc.,
    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA. */
 
+#include "mariadb.h"
 #include "wsrep_priv.h"
 #include "wsrep_binlog.h" // wsrep_dump_rbr_buf()
 #include "wsrep_xid.h"
@@ -56,7 +57,6 @@ static Log_event* wsrep_read_log_event(
 
 #include "transaction.h" // trans_commit(), trans_rollback()
 #include "rpl_rli.h"     // class Relay_log_info;
-#include "sql_base.h"    // close_temporary_table()
 
 void wsrep_set_apply_format(THD* thd, Format_description_log_event* ev)
 {
@@ -146,6 +146,7 @@ static wsrep_cb_status_t wsrep_apply_events(THD*        thd,
     /* Use the original server id for logging. */
     thd->set_server_id(ev->server_id);
     thd->set_time();                            // time the query
+    thd->transaction.start_time.reset(thd);
     wsrep_xid_init(&thd->transaction.xid_state.xid,
                    thd->wsrep_trx_meta.gtid.uuid,
                    thd->wsrep_trx_meta.gtid.seqno);
@@ -235,11 +236,11 @@ wsrep_cb_status_t wsrep_apply_cb(void* const             ctx,
 
 #ifdef WSREP_PROC_INFO
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info) - 1,
-           "applying write set %lld: %p, %zu",
+           "Applying write set %lld: %p, %zu",
            (long long)wsrep_thd_trx_seqno(thd), buf, buf_len);
   thd_proc_info(thd, thd->wsrep_info);
 #else
-  thd_proc_info(thd, "applying write set");
+  thd_proc_info(thd, "Applying write set");
 #endif /* WSREP_PROC_INFO */
 
   /* tune FK and UK checking policy */
@@ -252,6 +253,9 @@ wsrep_cb_status_t wsrep_apply_cb(void* const             ctx,
     thd->variables.option_bits|= OPTION_NO_FOREIGN_KEY_CHECKS;
   else
     thd->variables.option_bits&= ~OPTION_NO_FOREIGN_KEY_CHECKS;
+
+  /* With galera we assume that the master has done the constraint checks */
+  thd->variables.option_bits|= OPTION_NO_CHECK_CONSTRAINT_CHECKS;
 
   if (flags & WSREP_FLAG_ISOLATION)
   {
@@ -266,10 +270,10 @@ wsrep_cb_status_t wsrep_apply_cb(void* const             ctx,
 
 #ifdef WSREP_PROC_INFO
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info) - 1,
-           "applied write set %lld", (long long)wsrep_thd_trx_seqno(thd));
+           "Applied write set %lld", (long long)wsrep_thd_trx_seqno(thd));
   thd_proc_info(thd, thd->wsrep_info);
 #else
-  thd_proc_info(thd, "applied write set");
+  thd_proc_info(thd, "Applied write set");
 #endif /* WSREP_PROC_INFO */
 
   if (WSREP_CB_SUCCESS != rcode)
@@ -277,14 +281,11 @@ wsrep_cb_status_t wsrep_apply_cb(void* const             ctx,
     wsrep_dump_rbr_buf_with_header(thd, buf, buf_len);
   }
 
-  TABLE *tmp;
-  while ((tmp = thd->temporary_tables))
+  if (thd->has_thd_temporary_tables())
   {
-    WSREP_DEBUG("Applier %lu, has temporary tables: %s.%s",
-		thd->thread_id,
-		(tmp->s) ? tmp->s->db.str : "void",
-		(tmp->s) ? tmp->s->table_name.str : "void");
-    close_temporary_table(thd, tmp, 1, 1);
+    WSREP_DEBUG("Applier %lld has temporary tables. Closing them now..",
+                thd->thread_id);
+    thd->close_temporary_tables();
   }
 
   return rcode;
@@ -294,10 +295,10 @@ static wsrep_cb_status_t wsrep_commit(THD* const thd)
 {
 #ifdef WSREP_PROC_INFO
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info) - 1,
-           "committing %lld", (long long)wsrep_thd_trx_seqno(thd));
+           "Committing %lld", (long long)wsrep_thd_trx_seqno(thd));
   thd_proc_info(thd, thd->wsrep_info);
 #else
-  thd_proc_info(thd, "committing");
+  thd_proc_info(thd, "Committing");
 #endif /* WSREP_PROC_INFO */
 
   wsrep_cb_status_t const rcode(trans_commit(thd) ?
@@ -318,10 +319,10 @@ static wsrep_cb_status_t wsrep_commit(THD* const thd)
 
 #ifdef WSREP_PROC_INFO
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info) - 1,
-           "committed %lld", (long long) wsrep_thd_trx_seqno(thd));
+           "Committed %lld", (long long) wsrep_thd_trx_seqno(thd));
   thd_proc_info(thd, thd->wsrep_info);
 #else
-  thd_proc_info(thd, "committed");
+  thd_proc_info(thd, "Committed");
 #endif /* WSREP_PROC_INFO */
 
   return rcode;
@@ -331,10 +332,10 @@ static wsrep_cb_status_t wsrep_rollback(THD* const thd)
 {
 #ifdef WSREP_PROC_INFO
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info) - 1,
-           "rolling back %lld", (long long)wsrep_thd_trx_seqno(thd));
+           "Rolling back %lld", (long long)wsrep_thd_trx_seqno(thd));
   thd_proc_info(thd, thd->wsrep_info);
 #else
-  thd_proc_info(thd, "rolling back");
+  thd_proc_info(thd, "Rolling back");
 #endif /* WSREP_PROC_INFO */
 
   wsrep_cb_status_t const rcode(trans_rollback(thd) ?
@@ -342,10 +343,10 @@ static wsrep_cb_status_t wsrep_rollback(THD* const thd)
 
 #ifdef WSREP_PROC_INFO
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info) - 1,
-           "rolled back %lld", (long long)wsrep_thd_trx_seqno(thd));
+           "Rolled back %lld", (long long)wsrep_thd_trx_seqno(thd));
   thd_proc_info(thd, thd->wsrep_info);
 #else
-  thd_proc_info(thd, "rolled back");
+  thd_proc_info(thd, "Rolled back");
 #endif /* WSREP_PROC_INFO */
 
   return rcode;

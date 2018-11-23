@@ -18,8 +18,8 @@
 #ifndef SQL_BASE_INCLUDED
 #define SQL_BASE_INCLUDED
 
+#include "sql_class.h"                          /* enum_column_usage */
 #include "sql_trigger.h"                        /* trg_event_type */
-#include "sql_class.h"                          /* enum_mark_columns */
 #include "mysqld.h"                             /* key_map */
 #include "table_cache.h"
 
@@ -64,9 +64,8 @@ enum find_item_error_report_type {REPORT_ALL_ERRORS, REPORT_EXCEPT_NOT_FOUND,
 /* Flag bits for unique_table() */
 #define CHECK_DUP_ALLOW_DIFFERENT_ALIAS 1
 #define CHECK_DUP_FOR_CREATE 2
+#define CHECK_DUP_SKIP_TEMP_TABLE 4
 
-uint create_tmp_table_def_key(THD *thd, char *key, const char *db,
-                              const char *table_name);
 uint get_table_def_key(const TABLE_LIST *table_list, const char **key);
 TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
                    uint lock_flags);
@@ -108,6 +107,7 @@ TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
 */
 #define MYSQL_OPEN_SKIP_SCOPED_MDL_LOCK         0x1000
 #define MYSQL_LOCK_NOT_TEMPORARY		0x2000
+#define MYSQL_LOCK_USE_MALLOC                   0x4000
 /**
   Only check THD::killed if waits happen (e.g. wait on MDL, wait on
   table flush, wait on thr_lock.c locks) while opening and locking table.
@@ -131,11 +131,6 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx);
 
 bool get_key_map_from_key_list(key_map *map, TABLE *table,
                                List<String> *index_list);
-TABLE *open_table_uncached(THD *thd, handlerton *hton,
-                           LEX_CUSTRING *frm, const char *path,
-                           const char *db, const char *table_name,
-                           bool add_to_temporary_tables_list,
-                           bool open_in_engine);
 TABLE *find_locked_table(TABLE *list, const char *db, const char *table_name);
 TABLE *find_write_locked_table(TABLE *list, const char *db,
                                const char *table_name);
@@ -145,25 +140,17 @@ thr_lock_type read_lock_type_for_table(THD *thd,
                                        bool routine_modifies_data);
 
 my_bool mysql_rm_tmp_tables(void);
-bool rm_temporary_table(handlerton *base, const char *path);
 void close_tables_for_reopen(THD *thd, TABLE_LIST **tables,
                              const MDL_savepoint &start_of_statement_svp);
-bool table_already_fk_prelocked(TABLE_LIST *tl, LEX_STRING *db,
-                                LEX_STRING *table, thr_lock_type lock_type);
+bool table_already_fk_prelocked(TABLE_LIST *tl, LEX_CSTRING *db,
+                                LEX_CSTRING *table, thr_lock_type lock_type);
 TABLE_LIST *find_table_in_list(TABLE_LIST *table,
                                TABLE_LIST *TABLE_LIST::*link,
-                               const char *db_name,
-                               const char *table_name);
-TABLE *find_temporary_table(THD *thd, const char *db, const char *table_name);
-bool find_and_use_temporary_table(THD *thd, const char *db,
-                                  const char *table_name, TABLE **out_table);
-TABLE *find_temporary_table(THD *thd, const TABLE_LIST *tl);
-bool find_and_use_temporary_table(THD *thd, const TABLE_LIST *tl,
-                                  TABLE **out_table);
-TABLE *find_temporary_table(THD *thd, const char *table_key,
-                            uint table_key_length);
+                               const LEX_CSTRING *db_name,
+                               const LEX_CSTRING *table_name);
 void close_thread_tables(THD *thd);
 void switch_to_nullable_trigger_fields(List<Item> &items, TABLE *);
+void switch_defaults_to_nullable_trigger_fields(TABLE *table);
 bool fill_record_n_invoke_before_triggers(THD *thd, TABLE *table,
                                           List<Item> &fields,
                                           List<Item> &values,
@@ -176,18 +163,19 @@ bool fill_record_n_invoke_before_triggers(THD *thd, TABLE *table,
                                           enum trg_event_type event);
 bool insert_fields(THD *thd, Name_resolution_context *context,
 		   const char *db_name, const char *table_name,
-                   List_iterator<Item> *it, bool any_privileges);
+                   List_iterator<Item> *it, bool any_privileges,
+                   uint *hidden_bit_fields);
 void make_leaves_list(THD *thd, List<TABLE_LIST> &list, TABLE_LIST *tables,
                       bool full_table_list, TABLE_LIST *boundary);
 int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
-	       List<Item> *sum_func_list, uint wild_num);
-bool setup_fields(THD *thd, Item** ref_pointer_array,
-                  List<Item> &item, enum_mark_columns mark_used_columns,
+	       List<Item> *sum_func_list, uint wild_num, uint * hidden_bit_fields);
+bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
+                  List<Item> &item, enum_column_usage column_usage,
                   List<Item> *sum_func_list, List<Item> *pre_fix,
                   bool allow_sum_func);
 void unfix_fields(List<Item> &items);
 bool fill_record(THD * thd, TABLE *table_arg, List<Item> &fields,
-                 List<Item> &values, bool ignore_errors);
+                 List<Item> &values, bool ignore_errors, bool update);
 bool fill_record(THD *thd, TABLE *table, Field **field, List<Item> &values,
                  bool ignore_errors, bool use_value);
 
@@ -198,20 +186,20 @@ find_field_in_tables(THD *thd, Item_ident *item,
                      bool check_privileges, bool register_tree_change);
 Field *
 find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
-                        const char *name, uint length,
+                        const char *name, size_t length,
                         const char *item_name, const char *db_name,
                         const char *table_name, Item **ref,
                         bool check_privileges, bool allow_rowid,
                         uint *cached_field_index_ptr,
                         bool register_tree_change, TABLE_LIST **actual_table);
 Field *
-find_field_in_table(THD *thd, TABLE *table, const char *name, uint length,
+find_field_in_table(THD *thd, TABLE *table, const char *name, size_t length,
                     bool allow_rowid, uint *cached_field_index_ptr);
 Field *
 find_field_in_table_sef(TABLE *table, const char *name);
 Item ** find_item_in_list(Item *item, List<Item> &items, uint *counter,
                           find_item_error_report_type report_error,
-                          enum_resolution_type *resolution);
+                          enum_resolution_type *resolution, uint limit= 0);
 bool setup_tables(THD *thd, Name_resolution_context *context,
                   List<TABLE_LIST> *from_clause, TABLE_LIST *tables,
                   List<TABLE_LIST> &leaves, bool select_insert,
@@ -228,8 +216,8 @@ bool setup_tables_and_check_access(THD *thd,
 bool wait_while_table_is_used(THD *thd, TABLE *table,
                               enum ha_extra_function function);
 
-void drop_open_table(THD *thd, TABLE *table, const char *db_name,
-                     const char *table_name);
+void drop_open_table(THD *thd, TABLE *table, const LEX_CSTRING *db_name,
+                     const LEX_CSTRING *table_name);
 void update_non_unique_table_error(TABLE_LIST *update,
                                    const char *operation,
                                    TABLE_LIST *duplicate);
@@ -237,6 +225,7 @@ int setup_conds(THD *thd, TABLE_LIST *tables, List<TABLE_LIST> &leaves,
 		COND **conds);
 void wrap_ident(THD *thd, Item **conds);
 int setup_ftfuncs(SELECT_LEX* select);
+void cleanup_ftfuncs(SELECT_LEX *select_lex);
 int init_ftfuncs(THD *thd, SELECT_LEX* select, bool no_order);
 bool lock_table_names(THD *thd, const DDL_options_st &options,
                       TABLE_LIST *table_list,
@@ -279,24 +268,15 @@ TABLE *open_n_lock_single_table(THD *thd, TABLE_LIST *table_l,
                                 Prelocking_strategy *prelocking_strategy);
 bool open_normal_and_derived_tables(THD *thd, TABLE_LIST *tables, uint flags,
                                     uint dt_phases);
+bool open_tables_only_view_structure(THD *thd, TABLE_LIST *tables,
+                                     bool can_deadlock);
+bool open_and_lock_internal_tables(TABLE *table, bool lock);
 bool lock_tables(THD *thd, TABLE_LIST *tables, uint counter, uint flags);
 int decide_logging_format(THD *thd, TABLE_LIST *tables);
-void free_io_cache(TABLE *entry);
-void intern_close_table(TABLE *entry);
-void kill_delayed_threads_for_table(TDC_element *element);
 void close_thread_table(THD *thd, TABLE **table_ptr);
-bool close_temporary_tables(THD *thd);
 TABLE_LIST *unique_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,
                          uint check_flag);
-int drop_temporary_table(THD *thd, TABLE *table, bool *is_trans);
-void close_temporary_table(THD *thd, TABLE *table, bool free_share,
-                           bool delete_table);
-void close_temporary(TABLE *table, bool free_share, bool delete_table);
-bool rename_temporary_table(THD* thd, TABLE *table, const char *new_db,
-			    const char *table_name);
-bool open_temporary_tables(THD *thd, TABLE_LIST *tl_list);
-bool open_temporary_table(THD *thd, TABLE_LIST *tl);
-bool is_equal(const LEX_STRING *a, const LEX_STRING *b);
+bool is_equal(const LEX_CSTRING *a, const LEX_CSTRING *b);
 
 class Open_tables_backup;
 /* Functions to work with system tables. */
@@ -314,29 +294,18 @@ void close_performance_schema_table(THD *thd, Open_tables_state *backup);
 
 bool close_cached_tables(THD *thd, TABLE_LIST *tables,
                          bool wait_for_refresh, ulong timeout);
-bool close_cached_connection_tables(THD *thd, LEX_STRING *connect_string);
+bool close_cached_connection_tables(THD *thd, LEX_CSTRING *connect_string);
 void close_all_tables_for_name(THD *thd, TABLE_SHARE *share,
                                ha_extra_function extra,
                                TABLE *skip_table);
 OPEN_TABLE_LIST *list_open_tables(THD *thd, const char *db, const char *wild);
-bool tdc_open_view(THD *thd, TABLE_LIST *table_list, const char *alias,
-                   const char *cache_key, uint cache_key_length, uint flags);
-
-static inline bool tdc_open_view(THD *thd, TABLE_LIST *table_list,
-                                 const char *alias, uint flags)
-{
-  const char *key;
-  uint key_length= get_table_def_key(table_list, &key);
-  return tdc_open_view(thd, table_list, alias, key, key_length, flags);
-}
+bool tdc_open_view(THD *thd, TABLE_LIST *table_list, uint flags);
 
 TABLE *find_table_for_mdl_upgrade(THD *thd, const char *db,
                                   const char *table_name,
                                   int *p_error);
 void mark_tmp_table_for_reuse(TABLE *table);
 
-int update_virtual_fields(THD *thd, TABLE *table,
-      enum enum_vcol_update_mode vcol_update_mode= VCOL_UPDATE_FOR_READ);
 int dynamic_column_error_message(enum_dyncol_func_result rc);
 
 /* open_and_lock_tables with optional derived handling */
@@ -378,43 +347,32 @@ inline void setup_table_map(TABLE *table, TABLE_LIST *table_list, uint tablenr)
   table->force_index= table_list->force_index;
   table->force_index_order= table->force_index_group= 0;
   table->covering_keys= table->s->keys_for_keyread;
-  table->merge_keys.clear_all();
   TABLE_LIST *orig= table_list->select_lex ?
     table_list->select_lex->master_unit()->derived : 0;
   if (!orig || !orig->is_merged_derived())
   {
     /* Tables merged from derived were set up already.*/
     table->covering_keys= table->s->keys_for_keyread;
-    table->merge_keys.clear_all();
   }
 }
 
 inline TABLE_LIST *find_table_in_global_list(TABLE_LIST *table,
-                                             const char *db_name,
-                                             const char *table_name)
+                                             LEX_CSTRING *db_name,
+                                             LEX_CSTRING *table_name)
 {
   return find_table_in_list(table, &TABLE_LIST::next_global,
                             db_name, table_name);
 }
 
-inline TABLE_LIST *find_table_in_local_list(TABLE_LIST *table,
-                                            const char *db_name,
-                                            const char *table_name)
-{
-  return find_table_in_list(table, &TABLE_LIST::next_local,
-                            db_name, table_name);
-}
-
-
-inline bool setup_fields_with_no_wrap(THD *thd, Item **ref_pointer_array,
+inline bool setup_fields_with_no_wrap(THD *thd, Ref_ptr_array ref_pointer_array,
                                       List<Item> &item,
-                                      enum_mark_columns mark_used_columns,
+                                      enum_column_usage column_usage,
                                       List<Item> *sum_func_list,
                                       bool allow_sum_func)
 {
   bool res;
   thd->lex->select_lex.no_wrap_view_item= TRUE;
-  res= setup_fields(thd, ref_pointer_array, item, mark_used_columns,
+  res= setup_fields(thd, ref_pointer_array, item, column_usage,
                     sum_func_list, NULL,  allow_sum_func);
   thd->lex->select_lex.no_wrap_view_item= FALSE;
   return res;
@@ -675,7 +633,7 @@ public:
   bool handle_condition(THD *thd,
                         uint sql_errno,
                         const char* sqlstate,
-                        Sql_condition::enum_warning_level level,
+                        Sql_condition::enum_warning_level *level,
                         const char* msg,
                         Sql_condition ** cond_hdl);
 

@@ -19,7 +19,7 @@
 #include "myisamdef.h"
 #include <m_ctype.h>
 
-my_bool mi_check_unique(MI_INFO *info, MI_UNIQUEDEF *def, uchar *record,
+my_bool mi_check_unique(MI_INFO *info, MI_UNIQUEDEF *def, const uchar *record,
 			ha_checksum unique_hash, my_off_t disk_pos)
 {
   my_off_t lastpos=info->lastpos;
@@ -27,7 +27,8 @@ my_bool mi_check_unique(MI_INFO *info, MI_UNIQUEDEF *def, uchar *record,
   uchar *key_buff=info->lastkey2;
   DBUG_ENTER("mi_check_unique");
 
-  mi_unique_store(record+key->seg->start, unique_hash);
+  /* We need to store the hash value as a key in the record, breaking const */
+  mi_unique_store(((uchar*) record)+key->seg->start, unique_hash);
   _mi_make_key(info,def->key,key_buff,record,0);
 
   /* The above changed info->lastkey2. Inform mi_rnext_same(). */
@@ -112,7 +113,7 @@ ha_checksum mi_unique_hash(MI_UNIQUEDEF *def, const uchar *record)
     else if (keyseg->flag & HA_BLOB_PART)
     {
       uint tmp_length=_mi_calc_blob_length(keyseg->bit_start,pos);
-      memcpy(&pos, pos+keyseg->bit_start, sizeof(char*));
+      memcpy((char**) &pos, pos+keyseg->bit_start, sizeof(char*));
       if (!length || length > tmp_length)
 	length=tmp_length;			/* The whole blob */
     }
@@ -207,14 +208,14 @@ int mi_unique_comp(MI_UNIQUEDEF *def, const uchar *a, const uchar *b,
         set_if_smaller(a_length, keyseg->length);
         set_if_smaller(b_length, keyseg->length);
       }
-      memcpy(&pos_a, pos_a+keyseg->bit_start, sizeof(char*));
-      memcpy(&pos_b, pos_b+keyseg->bit_start, sizeof(char*));
+      memcpy((char**) &pos_a, pos_a+keyseg->bit_start, sizeof(char*));
+      memcpy((char**) &pos_b, pos_b+keyseg->bit_start, sizeof(char*));
     }
     if (type == HA_KEYTYPE_TEXT || type == HA_KEYTYPE_VARTEXT1 ||
         type == HA_KEYTYPE_VARTEXT2)
     {
       if (ha_compare_text(keyseg->charset, (uchar *) pos_a, a_length,
-                                           (uchar *) pos_b, b_length, 0, 1))
+                                           (uchar *) pos_b, b_length, 0))
         return 1;
     }
     else

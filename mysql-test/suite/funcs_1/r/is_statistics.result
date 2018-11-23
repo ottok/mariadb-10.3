@@ -50,10 +50,10 @@ STATISTICS	CREATE TEMPORARY TABLE `STATISTICS` (
   `TABLE_CATALOG` varchar(512) NOT NULL DEFAULT '',
   `TABLE_SCHEMA` varchar(64) NOT NULL DEFAULT '',
   `TABLE_NAME` varchar(64) NOT NULL DEFAULT '',
-  `NON_UNIQUE` bigint(1) NOT NULL DEFAULT '0',
+  `NON_UNIQUE` bigint(1) NOT NULL DEFAULT 0,
   `INDEX_SCHEMA` varchar(64) NOT NULL DEFAULT '',
   `INDEX_NAME` varchar(64) NOT NULL DEFAULT '',
-  `SEQ_IN_INDEX` bigint(2) NOT NULL DEFAULT '0',
+  `SEQ_IN_INDEX` bigint(2) NOT NULL DEFAULT 0,
   `COLUMN_NAME` varchar(64) NOT NULL DEFAULT '',
   `COLLATION` varchar(1) DEFAULT NULL,
   `CARDINALITY` bigint(21) DEFAULT NULL,
@@ -83,16 +83,17 @@ INDEX_TYPE	varchar(16)	NO
 COMMENT	varchar(16)	YES		NULL	
 INDEX_COMMENT	varchar(1024)	NO			
 SELECT table_catalog, table_schema, table_name, index_schema, index_name
-FROM information_schema.statistics WHERE table_catalog IS NOT NULL;
+FROM information_schema.statistics WHERE table_catalog IS NOT NULL
+ORDER BY table_schema, table_name, index_schema, index_name;
 table_catalog	table_schema	table_name	index_schema	index_name
+def	mysql	columns_priv	mysql	PRIMARY
+def	mysql	columns_priv	mysql	PRIMARY
+def	mysql	columns_priv	mysql	PRIMARY
+def	mysql	columns_priv	mysql	PRIMARY
+def	mysql	columns_priv	mysql	PRIMARY
 def	mysql	column_stats	mysql	PRIMARY
 def	mysql	column_stats	mysql	PRIMARY
 def	mysql	column_stats	mysql	PRIMARY
-def	mysql	columns_priv	mysql	PRIMARY
-def	mysql	columns_priv	mysql	PRIMARY
-def	mysql	columns_priv	mysql	PRIMARY
-def	mysql	columns_priv	mysql	PRIMARY
-def	mysql	columns_priv	mysql	PRIMARY
 def	mysql	db	mysql	PRIMARY
 def	mysql	db	mysql	PRIMARY
 def	mysql	db	mysql	PRIMARY
@@ -102,14 +103,14 @@ def	mysql	event	mysql	PRIMARY
 def	mysql	func	mysql	PRIMARY
 def	mysql	gtid_slave_pos	mysql	PRIMARY
 def	mysql	gtid_slave_pos	mysql	PRIMARY
-def	mysql	help_category	mysql	PRIMARY
 def	mysql	help_category	mysql	name
-def	mysql	help_keyword	mysql	PRIMARY
+def	mysql	help_category	mysql	PRIMARY
 def	mysql	help_keyword	mysql	name
+def	mysql	help_keyword	mysql	PRIMARY
 def	mysql	help_relation	mysql	PRIMARY
 def	mysql	help_relation	mysql	PRIMARY
-def	mysql	help_topic	mysql	PRIMARY
 def	mysql	help_topic	mysql	name
+def	mysql	help_topic	mysql	PRIMARY
 def	mysql	host	mysql	PRIMARY
 def	mysql	host	mysql	PRIMARY
 def	mysql	index_stats	mysql	PRIMARY
@@ -120,28 +121,28 @@ def	mysql	plugin	mysql	PRIMARY
 def	mysql	proc	mysql	PRIMARY
 def	mysql	proc	mysql	PRIMARY
 def	mysql	proc	mysql	PRIMARY
-def	mysql	procs_priv	mysql	PRIMARY
-def	mysql	procs_priv	mysql	PRIMARY
-def	mysql	procs_priv	mysql	PRIMARY
-def	mysql	procs_priv	mysql	PRIMARY
-def	mysql	procs_priv	mysql	PRIMARY
 def	mysql	procs_priv	mysql	Grantor
-def	mysql	proxies_priv	mysql	PRIMARY
-def	mysql	proxies_priv	mysql	PRIMARY
-def	mysql	proxies_priv	mysql	PRIMARY
-def	mysql	proxies_priv	mysql	PRIMARY
+def	mysql	procs_priv	mysql	PRIMARY
+def	mysql	procs_priv	mysql	PRIMARY
+def	mysql	procs_priv	mysql	PRIMARY
+def	mysql	procs_priv	mysql	PRIMARY
+def	mysql	procs_priv	mysql	PRIMARY
 def	mysql	proxies_priv	mysql	Grantor
+def	mysql	proxies_priv	mysql	PRIMARY
+def	mysql	proxies_priv	mysql	PRIMARY
+def	mysql	proxies_priv	mysql	PRIMARY
+def	mysql	proxies_priv	mysql	PRIMARY
 def	mysql	roles_mapping	mysql	Host
 def	mysql	roles_mapping	mysql	Host
 def	mysql	roles_mapping	mysql	Host
 def	mysql	servers	mysql	PRIMARY
-def	mysql	table_stats	mysql	PRIMARY
-def	mysql	table_stats	mysql	PRIMARY
-def	mysql	tables_priv	mysql	PRIMARY
-def	mysql	tables_priv	mysql	PRIMARY
-def	mysql	tables_priv	mysql	PRIMARY
-def	mysql	tables_priv	mysql	PRIMARY
 def	mysql	tables_priv	mysql	Grantor
+def	mysql	tables_priv	mysql	PRIMARY
+def	mysql	tables_priv	mysql	PRIMARY
+def	mysql	tables_priv	mysql	PRIMARY
+def	mysql	tables_priv	mysql	PRIMARY
+def	mysql	table_stats	mysql	PRIMARY
+def	mysql	table_stats	mysql	PRIMARY
 def	mysql	time_zone	mysql	PRIMARY
 def	mysql	time_zone_leap_second	mysql	PRIMARY
 def	mysql	time_zone_name	mysql	PRIMARY
@@ -152,6 +153,7 @@ def	mysql	time_zone_transition_type	mysql	PRIMARY
 def	mysql	user	mysql	PRIMARY
 def	mysql	user	mysql	PRIMARY
 Warnings:
+Warning	1286	Unknown storage engine 'InnoDB'
 Warning	1286	Unknown storage engine 'InnoDB'
 Warning	1286	Unknown storage engine 'InnoDB'
 ####################################################################################
@@ -198,7 +200,7 @@ GRANT USAGE ON *.* TO 'testuser1'@'localhost'
 SHOW GRANTS FOR 'testuser2'@'localhost';
 Grants for testuser2@localhost
 GRANT USAGE ON *.* TO 'testuser2'@'localhost'
-# Establish connection testuser1 (user=testuser1)
+connect  testuser1, localhost, testuser1, , test;
 SELECT * FROM information_schema.statistics
 WHERE table_schema LIKE 'db_datadict%'
 ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
@@ -208,7 +210,7 @@ Grants for testuser1@localhost
 GRANT USAGE ON *.* TO 'testuser1'@'localhost'
 SHOW GRANTS FOR 'testuser2'@'localhost';
 ERROR 42000: Access denied for user 'testuser1'@'localhost' to database 'mysql'
-# Establish connection testuser2 (user=testuser2)
+connect  testuser2, localhost, testuser2, , test;
 SELECT * FROM information_schema.statistics
 WHERE table_schema LIKE 'db_datadict%'
 ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
@@ -218,7 +220,7 @@ ERROR 42000: Access denied for user 'testuser2'@'localhost' to database 'mysql'
 SHOW GRANTS FOR 'testuser2'@'localhost';
 Grants for testuser2@localhost
 GRANT USAGE ON *.* TO 'testuser2'@'localhost'
-# Switch to connection default
+connection default;
 GRANT SELECT ON db_datadict.t1 TO 'testuser1'@'localhost' WITH GRANT OPTION;
 GRANT SELECT(f1,f5) ON db_datadict_2.t3 TO 'testuser1'@'localhost';
 SELECT * FROM information_schema.statistics
@@ -243,7 +245,7 @@ GRANT SELECT (f5, f1) ON `db_datadict_2`.`t3` TO 'testuser1'@'localhost'
 SHOW GRANTS FOR 'testuser2'@'localhost';
 Grants for testuser2@localhost
 GRANT USAGE ON *.* TO 'testuser2'@'localhost'
-# Switch to connection testuser1
+connection testuser1;
 SELECT * FROM information_schema.statistics
 WHERE table_schema LIKE 'db_datadict%'
 ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
@@ -261,7 +263,7 @@ GRANT SELECT ON `db_datadict`.`t1` TO 'testuser1'@'localhost' WITH GRANT OPTION
 GRANT SELECT (f5, f1) ON `db_datadict_2`.`t3` TO 'testuser1'@'localhost'
 SHOW GRANTS FOR 'testuser2'@'localhost';
 ERROR 42000: Access denied for user 'testuser1'@'localhost' to database 'mysql'
-# Switch to connection testuser2
+connection testuser2;
 SELECT * FROM information_schema.statistics
 WHERE table_schema LIKE 'db_datadict%'
 ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
@@ -271,13 +273,13 @@ ERROR 42000: Access denied for user 'testuser2'@'localhost' to database 'mysql'
 SHOW GRANTS FOR 'testuser2'@'localhost';
 Grants for testuser2@localhost
 GRANT USAGE ON *.* TO 'testuser2'@'localhost'
-# Switch to connection default
+connection default;
 REVOKE SELECT,GRANT OPTION ON db_datadict.t1 FROM 'testuser1'@'localhost';
 SHOW GRANTS FOR 'testuser1'@'localhost';
 Grants for testuser1@localhost
 GRANT USAGE ON *.* TO 'testuser1'@'localhost'
 GRANT SELECT (f5, f1) ON `db_datadict_2`.`t3` TO 'testuser1'@'localhost'
-# Switch to connection testuser1
+connection testuser1;
 SELECT * FROM information_schema.statistics
 WHERE table_schema LIKE 'db_datadict%'
 ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
@@ -290,7 +292,9 @@ SHOW GRANTS FOR 'testuser1'@'localhost';
 Grants for testuser1@localhost
 GRANT USAGE ON *.* TO 'testuser1'@'localhost'
 GRANT SELECT (f5, f1) ON `db_datadict_2`.`t3` TO 'testuser1'@'localhost'
-# Switch to connection default and close connections testuser1, testuser2
+connection default;
+disconnect testuser1;
+disconnect testuser2;
 DROP USER 'testuser1'@'localhost';
 DROP USER 'testuser2'@'localhost';
 DROP DATABASE db_datadict;

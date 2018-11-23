@@ -30,9 +30,10 @@ execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
@@ -57,7 +58,8 @@ USER	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
 root	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con1 connected =================="
+connect  con1, localhost, user1, , ;
+connection default;
 "================== Step 2 =================="
 call dump_thread();
 username	event_name	count_star
@@ -94,17 +96,19 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
@@ -134,6 +138,7 @@ root	1	1
 user1	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
+connection con1;
 select get_lock("marker", 10);
 get_lock("marker", 10)
 1
@@ -141,7 +146,7 @@ select release_lock("marker");
 release_lock("marker")
 1
 insert into test.t1 values ("marker");
-"================== con1 marker =================="
+connection default;
 "================== Step 3 =================="
 call dump_thread();
 username	event_name	count_star
@@ -179,23 +184,26 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	3
-stage/sql/closing tables	3
-stage/sql/init	6
+stage/sql/Checking permissions	3
+stage/sql/Closing tables	4
+stage/sql/Init	5
+stage/sql/Init for update	1
 stage/sql/Opening tables	3
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	3
-stage/sql/closing tables	3
-stage/sql/init	6
+stage/sql/Checking permissions	3
+stage/sql/Closing tables	4
+stage/sql/Init	5
+stage/sql/Init for update	1
 stage/sql/Opening tables	3
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -225,7 +233,8 @@ root	1	1
 user1	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con2 connected =================="
+connect  con2, localhost, user2, , ;
+connection default;
 "================== Step 4 =================="
 call dump_thread();
 username	event_name	count_star
@@ -270,27 +279,31 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	3
-stage/sql/closing tables	3
-stage/sql/init	6
+stage/sql/Checking permissions	3
+stage/sql/Closing tables	4
+stage/sql/Init	5
+stage/sql/Init for update	1
 stage/sql/Opening tables	3
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	3
-stage/sql/closing tables	3
-stage/sql/init	6
+stage/sql/Checking permissions	3
+stage/sql/Closing tables	4
+stage/sql/Init	5
+stage/sql/Init for update	1
 stage/sql/Opening tables	3
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -325,6 +338,7 @@ user1	1	1
 user2	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
+connection con2;
 select get_lock("marker", 10);
 get_lock("marker", 10)
 1
@@ -332,7 +346,7 @@ select release_lock("marker");
 release_lock("marker")
 1
 insert into test.t1 values ("marker");
-"================== con2 marker =================="
+connection default;
 "================== Step 5 =================="
 call dump_thread();
 username	event_name	count_star
@@ -377,27 +391,31 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	6
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	5
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	6
-stage/sql/closing tables	6
-stage/sql/init	12
+stage/sql/Checking permissions	6
+stage/sql/Closing tables	8
+stage/sql/Init	10
+stage/sql/Init for update	2
 stage/sql/Opening tables	6
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	6
-stage/sql/closing tables	6
-stage/sql/init	12
+stage/sql/Checking permissions	6
+stage/sql/Closing tables	8
+stage/sql/Init	10
+stage/sql/Init for update	2
 stage/sql/Opening tables	6
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -432,7 +450,8 @@ user1	1	1
 user2	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con3 connected =================="
+connect  con3, localhost, user3, , ;
+connection default;
 "================== Step 6 =================="
 call dump_thread();
 username	event_name	count_star
@@ -484,31 +503,36 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	6
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	5
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	6
-stage/sql/closing tables	6
-stage/sql/init	12
+stage/sql/Checking permissions	6
+stage/sql/Closing tables	8
+stage/sql/Init	10
+stage/sql/Init for update	2
 stage/sql/Opening tables	6
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	6
-stage/sql/closing tables	6
-stage/sql/init	12
+stage/sql/Checking permissions	6
+stage/sql/Closing tables	8
+stage/sql/Init	10
+stage/sql/Init for update	2
 stage/sql/Opening tables	6
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -548,6 +572,7 @@ user2	1	1
 user3	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
+connection con3;
 select get_lock("marker", 10);
 get_lock("marker", 10)
 1
@@ -555,7 +580,7 @@ select release_lock("marker");
 release_lock("marker")
 1
 insert into test.t1 values ("marker");
-"================== con3 marker =================="
+connection default;
 "================== Step 7 =================="
 call dump_thread();
 username	event_name	count_star
@@ -607,31 +632,36 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	6
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	5
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	6
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	5
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	9
-stage/sql/closing tables	9
-stage/sql/init	18
+stage/sql/Checking permissions	9
+stage/sql/Closing tables	12
+stage/sql/Init	15
+stage/sql/Init for update	3
 stage/sql/Opening tables	9
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	9
-stage/sql/closing tables	9
-stage/sql/init	18
+stage/sql/Checking permissions	9
+stage/sql/Closing tables	12
+stage/sql/Init	15
+stage/sql/Init for update	3
 stage/sql/Opening tables	9
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -671,7 +701,8 @@ user2	1	1
 user3	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con4 connected =================="
+connect  con4, localhost, user4, , ;
+connection default;
 "================== Step 8 =================="
 call dump_thread();
 username	event_name	count_star
@@ -730,35 +761,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	6
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	5
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	6
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	5
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	9
-stage/sql/closing tables	9
-stage/sql/init	18
+stage/sql/Checking permissions	9
+stage/sql/Closing tables	12
+stage/sql/Init	15
+stage/sql/Init for update	3
 stage/sql/Opening tables	9
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	9
-stage/sql/closing tables	9
-stage/sql/init	18
+stage/sql/Checking permissions	9
+stage/sql/Closing tables	12
+stage/sql/Init	15
+stage/sql/Init for update	3
 stage/sql/Opening tables	9
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -803,6 +840,7 @@ user3	1	1
 user4	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
+connection con4;
 select get_lock("marker", 10);
 get_lock("marker", 10)
 1
@@ -810,7 +848,7 @@ select release_lock("marker");
 release_lock("marker")
 1
 insert into test.t1 values ("marker");
-"================== con4 marker =================="
+connection default;
 "================== Step 9 =================="
 call dump_thread();
 username	event_name	count_star
@@ -869,35 +907,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	6
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	5
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	6
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	5
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	6
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	5
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	6
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	5
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	24
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	20
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	24
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	20
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -942,7 +986,8 @@ user3	1	1
 user4	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con1 disconnected =================="
+disconnect con1;
+connection default;
 "================== Step 10 =================="
 call dump_thread();
 username	status
@@ -999,35 +1044,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	6
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	5
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	6
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	5
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	6
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	5
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	25
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	21
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	25
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	21
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1073,7 +1124,8 @@ user3	1	1
 user4	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con2 disconnected =================="
+disconnect con2;
+connection default;
 "================== Step 11 =================="
 call dump_thread();
 username	status
@@ -1127,35 +1179,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	6
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	5
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	6
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	5
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	26
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	22
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	26
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	22
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1201,7 +1259,8 @@ user3	1	1
 user4	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con3 disconnected =================="
+disconnect con3;
+connection default;
 "================== Step 12 =================="
 call dump_thread();
 username	status
@@ -1252,35 +1311,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	6
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	5
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	27
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	23
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	27
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	23
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1326,7 +1391,8 @@ user3	0	1
 user4	1	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
-"================== con4 disconnected =================="
+disconnect con4;
+connection default;
 "================== Step 13 =================="
 call dump_thread();
 username	status
@@ -1374,35 +1440,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1448,6 +1520,7 @@ user3	0	1
 user4	0	1
 execute dump_hosts;
 HOST	CURRENT_CONNECTIONS	TOTAL_CONNECTIONS
+connection default;
 truncate performance_schema.events_waits_summary_by_thread_by_event_name;
 "================== WAITS_BY_THREAD truncated =================="
 "================== Step 14 =================="
@@ -1497,35 +1570,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1620,35 +1699,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1743,35 +1828,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1866,35 +1957,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -1989,35 +2086,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2112,35 +2215,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2235,35 +2344,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	3
-user1	stage/sql/closing tables	3
-user1	stage/sql/init	7
+user1	stage/sql/Checking permissions	3
+user1	stage/sql/Closing tables	4
+user1	stage/sql/Init	6
+user1	stage/sql/Init for update	1
 user1	stage/sql/Opening tables	3
-user2	stage/sql/checking permissions	3
-user2	stage/sql/closing tables	3
-user2	stage/sql/init	7
+user2	stage/sql/Checking permissions	3
+user2	stage/sql/Closing tables	4
+user2	stage/sql/Init	6
+user2	stage/sql/Init for update	1
 user2	stage/sql/Opening tables	3
-user3	stage/sql/checking permissions	3
-user3	stage/sql/closing tables	3
-user3	stage/sql/init	7
+user3	stage/sql/Checking permissions	3
+user3	stage/sql/Closing tables	4
+user3	stage/sql/Init	6
+user3	stage/sql/Init for update	1
 user3	stage/sql/Opening tables	3
-user4	stage/sql/checking permissions	3
-user4	stage/sql/closing tables	3
-user4	stage/sql/init	7
+user4	stage/sql/Checking permissions	3
+user4	stage/sql/Closing tables	4
+user4	stage/sql/Init	6
+user4	stage/sql/Init for update	1
 user4	stage/sql/Opening tables	3
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2358,35 +2473,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2481,35 +2602,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2604,35 +2731,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2727,35 +2860,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2850,35 +2989,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -2973,35 +3118,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -3096,35 +3247,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -3219,35 +3376,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -3342,35 +3505,41 @@ execute dump_stages_account;
 user	host	event_name	count_star
 execute dump_stages_user;
 user	event_name	count_star
-user1	stage/sql/checking permissions	0
-user1	stage/sql/closing tables	0
-user1	stage/sql/init	0
+user1	stage/sql/Checking permissions	0
+user1	stage/sql/Closing tables	0
+user1	stage/sql/Init	0
+user1	stage/sql/Init for update	0
 user1	stage/sql/Opening tables	0
-user2	stage/sql/checking permissions	0
-user2	stage/sql/closing tables	0
-user2	stage/sql/init	0
+user2	stage/sql/Checking permissions	0
+user2	stage/sql/Closing tables	0
+user2	stage/sql/Init	0
+user2	stage/sql/Init for update	0
 user2	stage/sql/Opening tables	0
-user3	stage/sql/checking permissions	0
-user3	stage/sql/closing tables	0
-user3	stage/sql/init	0
+user3	stage/sql/Checking permissions	0
+user3	stage/sql/Closing tables	0
+user3	stage/sql/Init	0
+user3	stage/sql/Init for update	0
 user3	stage/sql/Opening tables	0
-user4	stage/sql/checking permissions	0
-user4	stage/sql/closing tables	0
-user4	stage/sql/init	0
+user4	stage/sql/Checking permissions	0
+user4	stage/sql/Closing tables	0
+user4	stage/sql/Init	0
+user4	stage/sql/Init for update	0
 user4	stage/sql/Opening tables	0
 execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -3453,15 +3622,17 @@ execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star
@@ -3524,15 +3695,17 @@ execute dump_stages_host;
 host	event_name	count_star
 execute dump_stages_global;
 event_name	count_star
-stage/sql/checking permissions	0
-stage/sql/closing tables	0
-stage/sql/init	0
+stage/sql/Checking permissions	0
+stage/sql/Closing tables	0
+stage/sql/Init	0
+stage/sql/Init for update	0
 stage/sql/Opening tables	0
 execute dump_stages_history;
 event_name	count(event_name)
-stage/sql/checking permissions	12
-stage/sql/closing tables	12
-stage/sql/init	28
+stage/sql/Checking permissions	12
+stage/sql/Closing tables	16
+stage/sql/Init	24
+stage/sql/Init for update	4
 stage/sql/Opening tables	12
 execute dump_statements_account;
 user	host	event_name	count_star

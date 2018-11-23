@@ -9,7 +9,23 @@ enum enum_server_command
   COM_TABLE_DUMP, COM_CONNECT_OUT, COM_REGISTER_SLAVE,
   COM_STMT_PREPARE, COM_STMT_EXECUTE, COM_STMT_SEND_LONG_DATA, COM_STMT_CLOSE,
   COM_STMT_RESET, COM_SET_OPTION, COM_STMT_FETCH, COM_DAEMON,
-  COM_END
+  COM_UNIMPLEMENTED,
+  COM_RESET_CONNECTION,
+  COM_MDB_GAP_BEG,
+  COM_MDB_GAP_END=249,
+  COM_STMT_BULK_EXECUTE=250,
+  COM_SLAVE_WORKER=251,
+  COM_SLAVE_IO=252,
+  COM_SLAVE_SQL=253,
+  COM_MULTI=254,
+  COM_END=255
+};
+enum enum_indicator_type
+{
+  STMT_INDICATOR_NONE= 0,
+  STMT_INDICATOR_NULL,
+  STMT_INDICATOR_DEFAULT,
+  STMT_INDICATOR_IGNORE
 };
 struct st_vio;
 typedef struct st_vio Vio;
@@ -50,6 +66,8 @@ enum enum_field_types { MYSQL_TYPE_DECIMAL, MYSQL_TYPE_TINY,
                         MYSQL_TYPE_TIMESTAMP2,
                         MYSQL_TYPE_DATETIME2,
                         MYSQL_TYPE_TIME2,
+                        MYSQL_TYPE_BLOB_COMPRESSED= 140,
+                        MYSQL_TYPE_VARCHAR_COMPRESSED= 141,
                         MYSQL_TYPE_NEWDECIMAL=246,
    MYSQL_TYPE_ENUM=247,
    MYSQL_TYPE_SET=248,
@@ -81,6 +99,16 @@ enum enum_mysql_set_option
   MYSQL_OPTION_MULTI_STATEMENTS_ON,
   MYSQL_OPTION_MULTI_STATEMENTS_OFF
 };
+enum enum_session_state_type
+{
+  SESSION_TRACK_SYSTEM_VARIABLES,
+  SESSION_TRACK_SCHEMA,
+  SESSION_TRACK_STATE_CHANGE,
+  SESSION_TRACK_GTIDS,
+  SESSION_TRACK_TRANSACTION_CHARACTERISTICS,
+  SESSION_TRACK_TRANSACTION_STATE,
+  SESSION_TRACK_always_at_the_end
+};
 my_bool my_net_init(NET *net, Vio* vio, void *thd, unsigned int my_flags);
 void my_net_local_init(NET *net);
 void net_end(NET *net);
@@ -93,6 +121,8 @@ my_bool net_write_command(NET *net,unsigned char command,
      const unsigned char *packet, size_t len);
 int net_real_write(NET *net,const unsigned char *packet, size_t len);
 unsigned long my_net_read_packet(NET *net, my_bool read_from_server);
+unsigned long my_net_read_packet_reallen(NET *net, my_bool read_from_server,
+                                         unsigned long* reallen);
 struct sockaddr;
 int my_connect(my_socket s, const struct sockaddr *name, unsigned int namelen,
         unsigned int timeout);
@@ -109,7 +139,7 @@ typedef struct st_udf_args
   char **args;
   unsigned long *lengths;
   char *maybe_null;
-  char **attributes;
+  const char **attributes;
   unsigned long *attribute_lengths;
   void *extension;
 } UDF_ARGS;
@@ -135,7 +165,7 @@ void scramble(char *to, const char *message, const char *password);
 my_bool check_scramble(const unsigned char *reply, const char *message,
                        const unsigned char *hash_stage2);
 void get_salt_from_password(unsigned char *res, const char *password);
-char *octet2hex(char *to, const char *str, unsigned int len);
+char *octet2hex(char *to, const char *str, size_t len);
 char *get_tty_password(const char *opt_message);
 void get_tty_password_buff(const char *opt_message, char *to, size_t length);
 const char *mysql_errno_to_sqlstate(unsigned int mysql_errno);
@@ -208,9 +238,11 @@ typedef struct st_mem_root
   USED_MEM *pre_alloc;
   size_t min_malloc;
   size_t block_size;
+  size_t total_alloc;
   unsigned int block_num;
   unsigned int first_block_usage;
   void (*error_handler)(void);
+  const char *name;
 } MEM_ROOT;
 typedef struct st_typelib {
   unsigned int count;

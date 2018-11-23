@@ -1,3 +1,5 @@
+call mtr.add_suppression("\\[Warning\\] InnoDB: A new Doc ID must be supplied while updating FTS indexed columns.");
+call mtr.add_suppression("\\[Warning\\] InnoDB: FTS Doc ID must be larger than [0-9]+ for table `test`.`articles`");
 CREATE TABLE articles (
 id INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,
 title VARCHAR(200),
@@ -11,8 +13,6 @@ INSERT INTO articles (title,body) VALUES
 ('MySQL vs. YourSQL','In the following database comparison ...'),
 ('MySQL Security','When configured properly, MySQL ...');
 CREATE FULLTEXT INDEX idx on articles (title, body);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SELECT * FROM articles WHERE MATCH (title, body)
 AGAINST ('Tutorial' IN NATURAL LANGUAGE MODE);
 id	title	body
@@ -103,8 +103,6 @@ INSERT INTO articles (title,body) VALUES
 ('MySQL vs. YourSQL','In the following database comparison ...'),
 ('MySQL Security','When configured properly, MySQL ...');
 CREATE FULLTEXT INDEX idx on articles (title);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 CREATE FULLTEXT INDEX idx2 on articles (body);
 SELECT * FROM articles WHERE MATCH (title, body)
 AGAINST ('Tutorial' IN NATURAL LANGUAGE MODE);

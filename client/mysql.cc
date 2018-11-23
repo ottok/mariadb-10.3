@@ -40,7 +40,7 @@
 #include "my_readline.h"
 #include <signal.h>
 #include <violite.h>
-
+#include <source_revision.h>
 #if defined(USE_LIBEDIT_INTERFACE) && defined(HAVE_LOCALE_H)
 #include <locale.h>
 #endif
@@ -1065,7 +1065,7 @@ static void fix_history(String *final_command);
 
 static COMMANDS *find_command(char *name);
 static COMMANDS *find_command(char cmd_name);
-static bool add_line(String &, char *, ulong, char *, bool *, bool);
+static bool add_line(String &, char *, size_t line_length, char *, bool *, bool);
 static void remove_cntrl(String &buffer);
 static void print_table_data(MYSQL_RES *result);
 static void print_table_data_html(MYSQL_RES *result);
@@ -1073,9 +1073,7 @@ static void print_table_data_xml(MYSQL_RES *result);
 static void print_tab_data(MYSQL_RES *result);
 static void print_table_data_vertically(MYSQL_RES *result);
 static void print_warnings(void);
-static ulong start_timer(void);
-static void end_timer(ulong start_time,char *buff);
-static void mysql_end_timer(ulong start_time,char *buff);
+static void end_timer(ulonglong start_time, char *buff);
 static void nice_time(double sec,char *buff,bool part_second);
 extern "C" sig_handler mysql_end(int sig) __attribute__ ((noreturn));
 extern "C" sig_handler handle_sigint(int sig);
@@ -1144,6 +1142,7 @@ int main(int argc,char *argv[])
 
   outfile[0]=0;			// no (default) outfile
   strmov(pager, "stdout");	// the default, if --pager wasn't given
+
   {
     char *tmp=getenv("PAGER");
     if (tmp && strlen(tmp))
@@ -1178,7 +1177,11 @@ int main(int argc,char *argv[])
   load_defaults_or_exit("my", load_default_groups, &argc, &argv);
   defaults_argv=argv;
   if ((status.exit_status= get_options(argc, (char **) argv)))
-    mysql_end(-1);
+  {
+    free_defaults(defaults_argv);
+    my_end(0);
+    exit(status.exit_status);
+  }
 
   if (status.batch && !status.line_buff &&
       !(status.line_buff= batch_readline_init(MAX_BATCH_BUFFER_SIZE, stdin)))
@@ -1200,8 +1203,7 @@ int main(int argc,char *argv[])
   sf_leaking_memory= 0;
   glob_buffer.realloc(512);
   completion_hash_init(&ht, 128);
-  init_alloc_root(&hash_mem_root, 16384, 0, MYF(0));
-  bzero((char*) &mysql, sizeof(mysql));
+  init_alloc_root(&hash_mem_root, "hash", 16384, 0, MYF(0));
   if (sql_connect(current_host,current_db,current_user,opt_password,
 		  opt_silent))
   {
@@ -1705,19 +1707,18 @@ static struct my_option my_long_options[] =
 
 static void usage(int version)
 {
+#ifdef HAVE_READLINE
 #if defined(USE_LIBEDIT_INTERFACE)
   const char* readline= "";
 #else
   const char* readline= "readline";
 #endif
-
-#ifdef HAVE_READLINE
   printf("%s  Ver %s Distrib %s, for %s (%s) using %s %s\n",
 	 my_progname, VER, MYSQL_SERVER_VERSION, SYSTEM_TYPE, MACHINE_TYPE,
          readline, rl_library_version);
 #else
-  printf("%s  Ver %s Distrib %s, for %s (%s)\n", my_progname, VER,
-	MYSQL_SERVER_VERSION, SYSTEM_TYPE, MACHINE_TYPE);
+  printf("%s  Ver %s Distrib %s, for %s (%s), source revision %s\n", my_progname, VER,
+	MYSQL_SERVER_VERSION, SYSTEM_TYPE, MACHINE_TYPE,SOURCE_REVISION);
 #endif
 
   if (version)
@@ -1891,6 +1892,7 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
     usage(1);
     status.exit_status= 0;
     mysql_end(-1);
+    break;
   case 'I':
   case '?':
     usage(0);
@@ -1964,7 +1966,7 @@ static int get_options(int argc, char **argv)
     connect_flag|= CLIENT_IGNORE_SPACE;
 
   if (opt_progress_reports)
-    connect_flag|= CLIENT_PROGRESS;
+    connect_flag|= CLIENT_PROGRESS_OBSOLETE;
 
   return(0);
 }
@@ -1981,7 +1983,7 @@ static int read_and_execute(bool interactive)
   ulong line_number=0;
   bool ml_comment= 0;  
   COMMANDS *com;
-  ulong line_length= 0;
+  size_t line_length= 0;
   status.exit_status=1;
   
   real_binary_mode= !interactive && opt_binary_mode;
@@ -2275,7 +2277,7 @@ static COMMANDS *find_command(char *name)
 }
 
 
-static bool add_line(String &buffer, char *line, ulong line_length,
+static bool add_line(String &buffer, char *line, size_t line_length,
                      char *in_string, bool *ml_comment, bool truncated)
 {
   uchar inchar;
@@ -2983,12 +2985,12 @@ static void get_current_db()
  The different commands
 ***************************************************************************/
 
-int mysql_real_query_for_lazy(const char *buf, int length)
+int mysql_real_query_for_lazy(const char *buf, size_t length)
 {
   for (uint retry=0;; retry++)
   {
     int error;
-    if (!mysql_real_query(&mysql,buf,length))
+    if (!mysql_real_query(&mysql,buf,(ulong)length))
       return 0;
     error= put_error(&mysql);
     if (mysql_errno(&mysql) != CR_SERVER_GONE_ERROR || retry > 1 ||
@@ -3128,7 +3130,7 @@ static int
 com_help(String *buffer __attribute__((unused)),
 	 char *line __attribute__((unused)))
 {
-  reg1 int i, j;
+  int i, j;
   char * help_arg= strchr(line,' '), buff[32], *end;
   if (help_arg)
   {
@@ -3207,9 +3209,10 @@ static int
 com_go(String *buffer,char *line __attribute__((unused)))
 {
   char		buff[200]; /* about 110 chars used so far */
-  char		time_buff[52+3+1]; /* time max + space&parens + NUL */
+  char          time_buff[53+3+1]; /* time max + space&parens + NUL */
   MYSQL_RES	*result;
-  ulong		timer, warnings= 0;
+  ulonglong	timer;
+  ulong		warnings= 0;
   uint		error= 0;
   int           err= 0;
 
@@ -3248,7 +3251,7 @@ com_go(String *buffer,char *line __attribute__((unused)))
     return 0;
   }
 
-  timer=start_timer();
+  timer= microsecond_interval_timer();
   executing_query= 1;
   error= mysql_real_query_for_lazy(buffer->ptr(),buffer->length());
   report_progress_end();
@@ -3287,7 +3290,7 @@ com_go(String *buffer,char *line __attribute__((unused)))
     }
 
     if (verbose >= 3 || !opt_silent)
-      mysql_end_timer(timer,time_buff);
+      end_timer(timer, time_buff);
     else
       time_buff[0]= '\0';
 
@@ -3497,7 +3500,6 @@ static char *fieldflags2str(uint f) {
   ff2s_check_flag(NUM);
   ff2s_check_flag(PART_KEY);
   ff2s_check_flag(GROUP);
-  ff2s_check_flag(UNIQUE);
   ff2s_check_flag(BINCMP);
   ff2s_check_flag(ON_UPDATE_NOW);
 #undef ff2s_check_flag
@@ -3559,10 +3561,10 @@ is_binary_field(MYSQL_FIELD *field)
 /* Print binary value as hex literal (0x ...) */
 
 static void
-print_as_hex(FILE *output_file, const char *str, ulong len, ulong total_bytes_to_send)
+print_as_hex(FILE *output_file, const char *str, size_t len, size_t total_bytes_to_send)
 {
   const char *ptr= str, *end= ptr+len;
-  ulong i;
+  size_t i;
   fprintf(output_file, "0x");
   for(; ptr < end; ptr++)
     fprintf(output_file, "%02X", *((uchar*)ptr));
@@ -3612,11 +3614,11 @@ print_table_data(MYSQL_RES *result)
     (void) tee_fputs("|", PAGER);
     for (uint off=0; (field = mysql_fetch_field(result)) ; off++)
     {
-      uint name_length= (uint) strlen(field->name);
-      uint numcells= charset_info->cset->numcells(charset_info,
+      size_t name_length= (uint) strlen(field->name);
+      size_t numcells= charset_info->cset->numcells(charset_info,
                                                   field->name,
                                                   field->name + name_length);
-      uint display_length= field->max_length + name_length - numcells;
+      size_t display_length= field->max_length + name_length - numcells;
       tee_fprintf(PAGER, " %-*s |",(int) MY_MIN(display_length,
                                                 MAX_COLUMN_LENGTH),
                   field->name);
@@ -3637,7 +3639,6 @@ print_table_data(MYSQL_RES *result)
       const char *buffer;
       uint data_length;
       uint field_max_length;
-      uint visible_length;
       uint extra_padding;
 
       if (off)
@@ -3665,7 +3666,7 @@ print_table_data(MYSQL_RES *result)
        We need to find how much screen real-estate we will occupy to know how 
        many extra padding-characters we should send with the printing function.
       */
-      visible_length= charset_info->cset->numcells(charset_info, buffer, buffer + data_length);
+      size_t visible_length= charset_info->cset->numcells(charset_info, buffer, buffer + data_length);
       extra_padding= (uint) (data_length - visible_length);
 
       if (opt_binhex && is_binary_field(field))
@@ -3914,7 +3915,7 @@ print_table_data_vertically(MYSQL_RES *result)
         }
         tee_putc('\n', PAGER);
       }
-       else
+      else
         tee_fprintf(PAGER, "NULL\n");
     }
   }
@@ -4204,8 +4205,7 @@ com_edit(String *buffer,char *line __attribute__((unused)))
   const char *editor;
   MY_STAT stat_arg;
 
-  if ((fd=create_temp_file(filename,NullS,"sql", O_CREAT | O_WRONLY,
-			   MYF(MY_WME))) < 0)
+  if ((fd= create_temp_file(filename,NullS,"sql", 0, MYF(MY_WME))) < 0)
     goto err;
   if (buffer->is_empty() && !old_buffer.is_empty())
     (void) my_write(fd,(uchar*) old_buffer.ptr(),old_buffer.length(),
@@ -4712,21 +4712,25 @@ sql_real_connect(char *host,char *database,char *user,char *password,
     }
     return -1;					// Retryable
   }
-  
-  charset_info= mysql.charset;
+
+  charset_info= get_charset_by_name(mysql.charset->name, MYF(0));
+
   
   connected=1;
 #ifndef EMBEDDED_LIBRARY
-  mysql.reconnect= debug_info_flag; // We want to know if this happens
+  mysql_options(&mysql, MYSQL_OPT_RECONNECT, &debug_info_flag);
 
   /*
-    CLIENT_PROGRESS is set only if we requsted it in mysql_real_connect()
-    and the server also supports it
+    CLIENT_PROGRESS_OBSOLETE is set only if we requested it in
+    mysql_real_connect() and the server also supports it
   */
-  if (mysql.client_flag & CLIENT_PROGRESS)
+  if (mysql.client_flag & CLIENT_PROGRESS_OBSOLETE)
     mysql_options(&mysql, MYSQL_PROGRESS_CALLBACK, (void*) report_progress);
 #else
-  mysql.reconnect= 1;
+  {
+    my_bool reconnect= 1;
+    mysql_options(&mysql, MYSQL_OPT_RECONNECT, &reconnect);
+  }
 #endif
 #ifdef HAVE_READLINE
   build_completion_hash(opt_rehash, 1);
@@ -5083,31 +5087,11 @@ void tee_putc(int c, FILE *file)
     putc(c, OUTFILE);
 }
 
-#if defined(__WIN__)
-#include <time.h>
-#else
-#include <sys/times.h>
-#ifdef _SC_CLK_TCK				// For mit-pthreads
-#undef CLOCKS_PER_SEC
-#define CLOCKS_PER_SEC (sysconf(_SC_CLK_TCK))
-#endif
-#endif
-
-static ulong start_timer(void)
-{
-#if defined(__WIN__)
-  return clock();
-#else
-  struct tms tms_tmp;
-  return times(&tms_tmp);
-#endif
-}
-
 
 /** 
   Write as many as 52+1 bytes to buff, in the form of a legible duration of time.
 
-  len("4294967296 days, 23 hours, 59 minutes, 60.00 seconds")  ->  52
+  len("4294967296 days, 23 hours, 59 minutes, 60.000 seconds")  ->  53
 */
 static void nice_time(double sec,char *buff,bool part_second)
 {
@@ -5134,24 +5118,20 @@ static void nice_time(double sec,char *buff,bool part_second)
     buff=strmov(buff," min ");
   }
   if (part_second)
-    sprintf(buff,"%.2f sec",sec);
+    sprintf(buff,"%.3f sec",sec);
   else
     sprintf(buff,"%d sec",(int) sec);
 }
 
 
-static void end_timer(ulong start_time,char *buff)
+static void end_timer(ulonglong start_time, char *buff)
 {
-  nice_time((double) (start_timer() - start_time) /
-	    CLOCKS_PER_SEC,buff,1);
-}
+  double sec;
 
-
-static void mysql_end_timer(ulong start_time,char *buff)
-{
   buff[0]=' ';
   buff[1]='(';
-  end_timer(start_time,buff+2);
+  sec= (microsecond_interval_timer() - start_time) / (double) (1000 * 1000);
+  nice_time(sec, buff + 2, 1);
   strmov(strend(buff),")");
 }
 
@@ -5191,17 +5171,31 @@ static const char *construct_prompt()
           processed_prompt.append("unknown");
         break;
       case 'h':
+      case 'H':
       {
-	const char *prompt;
-	prompt= connected ? mysql_get_host_info(&mysql) : "not_connected";
-	if (strstr(prompt, "Localhost"))
-	  processed_prompt.append("localhost");
-	else
-	{
-	  const char *end=strcend(prompt,' ');
-	  processed_prompt.append(prompt, (uint) (end-prompt));
-	}
-	break;
+        const char *prompt;
+        prompt= connected ? mysql_get_host_info(&mysql) : "not_connected";
+        if (strstr(prompt, "Localhost") || strstr(prompt, "localhost "))
+        {
+          if (*c == 'h')
+            processed_prompt.append("localhost");
+          else
+          {
+            static char hostname[FN_REFLEN];
+            if (hostname[0])
+              processed_prompt.append(hostname);
+            else if (gethostname(hostname, sizeof(hostname)) == 0)
+              processed_prompt.append(hostname);
+            else
+              processed_prompt.append("gethostname(2) failed");
+          }
+        }
+        else
+        {
+          const char *end=strcend(prompt,' ');
+          processed_prompt.append(prompt, (uint) (end-prompt));
+        }
+        break;
       }
       case 'p':
       {

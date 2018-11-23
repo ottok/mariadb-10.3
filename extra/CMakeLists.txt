@@ -64,7 +64,7 @@ IF(CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 ENDIF()
 ENDIF()
 
-IF(WITH_INNOBASE_STORAGE_ENGINE OR WITH_XTRADB_STORAGE_ENGINE)
+IF(WITH_INNOBASE_STORAGE_ENGINE)
   # Add path to the InnoDB headers
   INCLUDE_DIRECTORIES(
     ${CMAKE_SOURCE_DIR}/storage/innobase/include
@@ -72,6 +72,17 @@ IF(WITH_INNOBASE_STORAGE_ENGINE OR WITH_XTRADB_STORAGE_ENGINE)
 
   # We use the InnoDB code directly in case the code changes.
   ADD_DEFINITIONS("-DUNIV_INNOCHECKSUM")
+
+  # Avoid generating Hardware Capabilities due to crc32 instructions
+  IF(CMAKE_SYSTEM_NAME MATCHES "SunOS" AND CMAKE_SYSTEM_PROCESSOR MATCHES "i386")
+    MY_CHECK_CXX_COMPILER_FLAG("-Wa,-nH")
+    IF(have_CXX__Wa__nH)
+      ADD_COMPILE_FLAGS(
+        ../storage/innobase/ut/ut0crc32.cc
+        COMPILE_FLAGS "-Wa,-nH"
+      )
+    ENDIF()
+  ENDIF()
 
   SET(INNOBASE_SOURCES
       ../storage/innobase/buf/buf0checksum.cc
@@ -82,13 +93,6 @@ IF(WITH_INNOBASE_STORAGE_ENGINE OR WITH_XTRADB_STORAGE_ENGINE)
       ../storage/innobase/fil/fil0crypt.cc
       )
 
-  IF(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64le")
-      enable_language(ASM)
-      LIST(APPEND INNOBASE_SOURCES
-         ../storage/innobase/ut/crc32_power8/crc32.S
-         ../storage/innobase/ut/crc32_power8/crc32_wrapper.c
-         )
-  ENDIF()
 
   MYSQL_ADD_EXECUTABLE(innochecksum innochecksum.cc ${INNOBASE_SOURCES})
   TARGET_LINK_LIBRARIES(innochecksum mysys mysys_ssl)

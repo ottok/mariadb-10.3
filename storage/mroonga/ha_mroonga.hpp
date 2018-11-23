@@ -207,7 +207,7 @@ extern "C" {
 #  define MRN_HAVE_HTON_ALTER_TABLE_FLAGS
 #endif
 
-#if MYSQL_VERSION_ID >= 50706 && !defined(MRN_MARIADB_P)
+#if MYSQL_VERSION_ID >= 50706
 #  define MRN_FOREIGN_KEY_USE_CONST_STRING
 #endif
 
@@ -222,9 +222,9 @@ extern "C" {
 #if (!defined(MRN_MARIADB_P) && MYSQL_VERSION_ID >= 50709) ||   \
   (defined(MRN_MARIADB_P) && MYSQL_VERSION_ID >= 100203)
 #  define MRN_ALTER_INPLACE_INFO_ALTER_STORED_COLUMN_TYPE \
-  Alter_inplace_info::ALTER_STORED_COLUMN_TYPE
+  ALTER_STORED_COLUMN_TYPE
 #  define MRN_ALTER_INPLACE_INFO_ALTER_STORED_COLUMN_ORDER \
-  Alter_inplace_info::ALTER_STORED_COLUMN_ORDER
+  ALTER_STORED_COLUMN_ORDER
 #else
 #  define MRN_ALTER_INPLACE_INFO_ALTER_STORED_COLUMN_TYPE \
   Alter_inplace_info::ALTER_COLUMN_TYPE
@@ -334,7 +334,7 @@ private:
   handler_add_index *hnd_add_index;
 #endif
 #ifdef MRN_HANDLER_HAVE_CHECK_IF_SUPPORTED_INPLACE_ALTER
-  Alter_inplace_info::HA_ALTER_FLAGS alter_handler_flags;
+  alter_table_operations alter_handler_flags;
   KEY         *alter_key_info_buffer;
   uint        alter_key_count;
   uint        alter_index_drop_count;
@@ -452,7 +452,7 @@ public:
 
   int delete_table(const char *name);
   int write_row(uchar *buf);
-  int update_row(const uchar *old_data, uchar *new_data);
+  int update_row(const uchar *old_data, const uchar *new_data);
   int delete_row(const uchar *buf);
 
   uint max_supported_record_length()   const;
@@ -556,7 +556,7 @@ public:
   check_if_supported_inplace_alter(TABLE *altered_table,
                                    Alter_inplace_info *ha_alter_info);
 #else
-  uint alter_table_flags(uint flags);
+  alter_table_operations alter_table_flags(alter_table_operations flags);
 #  ifdef MRN_HANDLER_HAVE_FINAL_ADD_INDEX
   int add_index(TABLE *table_arg, KEY *key_info, uint num_of_keys,
                 handler_add_index **add);
@@ -629,7 +629,7 @@ protected:
   void rebind_psi();
 #endif
   my_bool register_query_cache_table(THD *thd,
-                                     char *table_key,
+                                     const char *table_key,
                                      uint key_length,
                                      qc_engine_callback *engine_callback,
                                      ulonglong *engine_data);
@@ -772,7 +772,7 @@ private:
                                   int nth_column, grn_id record_id);
   void storage_store_fields(uchar *buf, grn_id record_id);
   void storage_store_fields_for_prep_update(const uchar *old_data,
-                                            uchar *new_data,
+                                            const uchar *new_data,
                                             grn_id record_id);
   void storage_store_fields_by_index(uchar *buf);
 
@@ -916,18 +916,21 @@ private:
                                               KEY *key_info,
                                               grn_obj *index_column);
   int storage_write_row_multiple_column_indexes(uchar *buf, grn_id record_id);
-  int storage_write_row_unique_index(uchar *buf,
+  int storage_write_row_unique_index(const uchar *buf,
                                      KEY *key_info,
                                      grn_obj *index_table,
                                      grn_obj *index_column,
                                      grn_id *key_id);
   int storage_write_row_unique_indexes(uchar *buf);
-  int wrapper_get_record_id(uchar *data, grn_id *record_id, const char *context);
-  int wrapper_update_row(const uchar *old_data, uchar *new_data);
-  int wrapper_update_row_index(const uchar *old_data, uchar *new_data);
-  int storage_update_row(const uchar *old_data, uchar *new_data);
-  int storage_update_row_index(const uchar *old_data, uchar *new_data);
-  int storage_update_row_unique_indexes(uchar *new_data);
+  int wrapper_get_record_id(uchar *data, grn_id *record_id,
+                            const char *context);
+  int wrapper_update_row(const uchar *old_data, const uchar *new_data);
+  int wrapper_update_row_index(const uchar *old_data,
+                               const uchar *new_data);
+  int storage_update_row(const uchar *old_data, const uchar *new_data);
+  int storage_update_row_index(const uchar *old_data,
+                               const uchar *new_data);
+  int storage_update_row_unique_indexes(const uchar *new_data);
   int wrapper_delete_row(const uchar *buf);
   int wrapper_delete_row_index(const uchar *buf);
   int storage_delete_row(const uchar *buf);
@@ -1201,8 +1204,8 @@ private:
   void wrapper_notify_table_changed();
   void storage_notify_table_changed();
 #else
-  uint wrapper_alter_table_flags(uint flags);
-  uint storage_alter_table_flags(uint flags);
+  alter_table_operations wrapper_alter_table_flags(alter_table_operations flags);
+  alter_table_operations storage_alter_table_flags(alter_table_operations flags);
 #  ifdef MRN_HANDLER_HAVE_FINAL_ADD_INDEX
   int wrapper_add_index(TABLE *table_arg, KEY *key_info, uint num_of_keys,
                         handler_add_index **add);
@@ -1289,13 +1292,13 @@ private:
   void storage_rebind_psi();
 #endif
   my_bool wrapper_register_query_cache_table(THD *thd,
-                                             char *table_key,
+                                             const char *table_key,
                                              uint key_length,
                                              qc_engine_callback
                                              *engine_callback,
                                              ulonglong *engine_data);
   my_bool storage_register_query_cache_table(THD *thd,
-                                             char *table_key,
+                                             const char *table_key,
                                              uint key_length,
                                              qc_engine_callback
                                              *engine_callback,

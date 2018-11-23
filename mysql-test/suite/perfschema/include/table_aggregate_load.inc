@@ -29,10 +29,12 @@ truncate performance_schema.events_waits_summary_global_by_event_name;
 truncate performance_schema.events_waits_history_long;
 
 # Check the configuration is ok
-show variables where
-    `Variable_name` != "performance_schema_max_statement_classes" and
-    `Variable_name` like "performance_schema%";
-show status like "performance_schema%";
+# We don't print this as it causes too many changes in test cases if
+# one variable changes value
+#show variables where
+#    `Variable_name` != "performance_schema_max_statement_classes" and
+#    `Variable_name` like "performance_schema%";
+#show status like "performance_schema%";
 
 echo "================== Step 1 ==================";
 call dump_thread();
@@ -89,8 +91,6 @@ update test.t3 set d=d+1 where a=101;
 select * from test.t1 where b=5;
 select * from test.t2 where b=5;
 select * from test.t3 where b=5;
-
-echo "================== con1 marker ==================";
 
 --connection default
 
@@ -151,8 +151,6 @@ select * from test.t1 where b=5;
 select * from test.t2 where b=5;
 select * from test.t3 where b=5;
 
-echo "================== con2 marker ==================";
-
 --connection default
 
 echo "================== Step 5 ==================";
@@ -207,8 +205,6 @@ update test.t3 set d=d+1 where a=301;
 select * from test.t1 where b=5;
 select * from test.t2 where b=5;
 select * from test.t3 where b=5;
-
-echo "================== con3 marker ==================";
 
 --connection default
 
@@ -265,8 +261,6 @@ select * from test.t1 where b=5;
 select * from test.t2 where b=5;
 select * from test.t3 where b=5;
 
-echo "================== con4 marker ==================";
-
 --connection default
 
 echo "================== Step 9 ==================";
@@ -287,8 +281,6 @@ lock tables test.t1 read, test.t2 read, test.t3 read;
 unlock tables;
 lock tables test.t1 write, test.t2 write, test.t3 write;
 unlock tables;
-
-echo "================== con1 marker ==================";
 
 --connection default
 
@@ -347,8 +339,6 @@ let $wait_condition=
   where `TYPE`='FOREGROUND' and PROCESSLIST_USER= 'user1';
 --source include/wait_condition.inc
 
-echo "================== con1 disconnected ==================";
-
 echo "================== Step 13 ==================";
 call dump_thread();
 execute dump_waits_account;
@@ -368,8 +358,6 @@ let $wait_condition=
   select count(*) = 0 from performance_schema.threads
   where `TYPE`='FOREGROUND' and PROCESSLIST_USER= 'user2';
 --source include/wait_condition.inc
-
-echo "================== con2 disconnected ==================";
 
 echo "================== Step 14 ==================";
 call dump_thread();
@@ -391,8 +379,6 @@ let $wait_condition=
   where `TYPE`='FOREGROUND' and PROCESSLIST_USER= 'user3';
 --source include/wait_condition.inc
 
-echo "================== con3 disconnected ==================";
-
 echo "================== Step 15 ==================";
 call dump_thread();
 execute dump_waits_account;
@@ -412,8 +398,6 @@ let $wait_condition=
   select count(*) = 0 from performance_schema.threads
   where `TYPE`='FOREGROUND' and PROCESSLIST_USER= 'user4';
 --source include/wait_condition.inc
-
-echo "================== con4 disconnected ==================";
 
 echo "================== Step 16 ==================";
 call dump_thread();
@@ -511,4 +495,3 @@ execute dump_objects_summary;
 
 # On test failures, may help to track the root cause
 show status like "performance_schema%";
-

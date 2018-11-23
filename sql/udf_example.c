@@ -56,7 +56,7 @@
 **
 ** Function 'myfunc_int' returns summary length of all its arguments.
 **
-** Function 'sequence' returns an sequence starting from a certain number.
+** Function 'udf_sequence' returns an sequence starting from a certain number.
 **
 ** Function 'myfunc_argument_name' returns name of argument.
 **
@@ -80,7 +80,7 @@
 ** CREATE FUNCTION metaphon RETURNS STRING SONAME "udf_example.so";
 ** CREATE FUNCTION myfunc_double RETURNS REAL SONAME "udf_example.so";
 ** CREATE FUNCTION myfunc_int RETURNS INTEGER SONAME "udf_example.so";
-** CREATE FUNCTION sequence RETURNS INTEGER SONAME "udf_example.so";
+** CREATE FUNCTION udf_sequence RETURNS INTEGER SONAME "udf_example.so";
 ** CREATE FUNCTION lookup RETURNS STRING SONAME "udf_example.so";
 ** CREATE FUNCTION reverse_lookup RETURNS STRING SONAME "udf_example.so";
 ** CREATE AGGREGATE FUNCTION avgcost RETURNS REAL SONAME "udf_example.so";
@@ -112,6 +112,11 @@
 **
 */
 
+#ifdef _WIN32
+/* Silence warning about deprecated functions , gethostbyname etc*/
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#endif
+
 #ifdef STANDARD
 /* STANDARD is defined, don't use any mysql functions */
 #include <stdlib.h>
@@ -125,7 +130,7 @@ typedef unsigned long long ulonglong;
 typedef long long longlong;
 #endif /*__WIN__*/
 #else
-#include <my_global.h>
+#include "mariadb.h"
 #include <my_sys.h>
 #if defined(MYSQL_SERVER)
 #include <m_string.h>		/* To get strmov() */
@@ -139,10 +144,6 @@ typedef long long longlong;
 #include <mysql.h>
 #include <ctype.h>
 
-#ifdef _WIN32
-/* inet_aton needs winsock library */
-#pragma comment(lib, "ws2_32")
-#endif
 
 #ifdef HAVE_DLOPEN
 
@@ -162,9 +163,9 @@ double myfunc_double(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
 my_bool myfunc_int_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
 longlong myfunc_int(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
 		    char *error);
-my_bool sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
- void sequence_deinit(UDF_INIT *initid);
-longlong sequence(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
+my_bool udf_sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+ void udf_sequence_deinit(UDF_INIT *initid);
+longlong udf_sequence(UDF_INIT *initid, UDF_ARGS *args, char *is_null,
 		   char *error);
 my_bool avgcost_init( UDF_INIT* initid, UDF_ARGS* args, char* message );
 void avgcost_deinit( UDF_INIT* initid );
@@ -642,7 +643,7 @@ my_bool myfunc_int_init(UDF_INIT *initid __attribute__((unused)),
   or 1 if no arguments have been given
 */
 
-my_bool sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+my_bool udf_sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
   if (args->arg_count > 1)
   {
@@ -659,22 +660,22 @@ my_bool sequence_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
   }
   bzero(initid->ptr,sizeof(longlong));
   /* 
-    sequence() is a non-deterministic function : it has different value 
+    udf_sequence() is a non-deterministic function : it has different value 
     even if called with the same arguments.
   */
   initid->const_item=0;
   return 0;
 }
 
-void sequence_deinit(UDF_INIT *initid)
+void udf_sequence_deinit(UDF_INIT *initid)
 {
   if (initid->ptr)
     free(initid->ptr);
 }
 
-longlong sequence(UDF_INIT *initid __attribute__((unused)), UDF_ARGS *args,
-                  char *is_null __attribute__((unused)),
-                  char *error __attribute__((unused)))
+longlong udf_sequence(UDF_INIT *initid __attribute__((unused)), UDF_ARGS *args,
+                      char *is_null __attribute__((unused)),
+                      char *error __attribute__((unused)))
 {
   ulonglong val=0;
   if (args->arg_count)
@@ -1095,7 +1096,7 @@ my_bool is_const_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     strmov(message, "IS_CONST accepts only one argument");
     return 1;
   }
-  initid->ptr= (char*)((args->args[0] != NULL) ? 1UL : 0);
+  initid->ptr= (char*)((args->args[0] != NULL) ? (size_t)1 : (size_t)0);
   return 0;
 }
 

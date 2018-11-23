@@ -13,12 +13,12 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA 
 
-GET_FILENAME_COMPONENT(MYSQL_CMAKE_SCRIPT_DIR ${CMAKE_CURRENT_LIST_FILE} PATH)
-INCLUDE(${MYSQL_CMAKE_SCRIPT_DIR}/cmake_parse_arguments.cmake)
+INCLUDE(CMakeParseArguments)
 
 FUNCTION (INSTALL_DEBUG_SYMBOLS)
  IF(MSVC)
- MYSQL_PARSE_ARGUMENTS(ARG
+   CMAKE_PARSE_ARGUMENTS(ARG
+  ""
   "COMPONENT;INSTALL_LOCATION"
   ""
   ${ARGN}
@@ -30,29 +30,20 @@ FUNCTION (INSTALL_DEBUG_SYMBOLS)
   IF(NOT ARG_INSTALL_LOCATION)
     SET(ARG_INSTALL_LOCATION lib)
   ENDIF()
-  SET(targets ${ARG_DEFAULT_ARGS})
+  SET(targets ${ARG_UNPARSED_ARGUMENTS})
   FOREACH(target ${targets})
     GET_TARGET_PROPERTY(target_type ${target} TYPE)
-
+    IF(target_type MATCHES "STATIC")
+      RETURN()
+    ENDIF()
     set(comp "")
-   
-    IF(target MATCHES "mysqld" OR type MATCHES "MODULE")
-      #MESSAGE("PDB: ${targets}")
+
+    IF((target STREQUAL "mysqld"))
       SET(comp Server)
     ENDIF()
- 
-    IF(NOT comp MATCHES Server)
-      IF(ARG_COMPONENT MATCHES Development
-        OR ARG_COMPONENT MATCHES SharedLibraries
-        OR ARG_COMPONENT MATCHES Embedded)
-        SET(comp Debuginfo)
-      ENDIF()
-    ENDIF()
 
-    IF(NOT comp)
-      SET(comp Debuginfo_archive_only) # not in MSI
-    ENDIF()
-    IF(NOT target_type MATCHES "STATIC")
+    INSTALL(FILES $<TARGET_PDB_FILE:${target}> DESTINATION symbols COMPONENT Debuginfo)
+    IF(comp)
       INSTALL(FILES $<TARGET_PDB_FILE:${target}> DESTINATION ${ARG_INSTALL_LOCATION} COMPONENT ${comp})
     ENDIF()
   ENDFOREACH()
@@ -98,13 +89,14 @@ FUNCTION(INSTALL_MANPAGE file)
 ENDFUNCTION()
 
 FUNCTION(INSTALL_SCRIPT)
- MYSQL_PARSE_ARGUMENTS(ARG
+  CMAKE_PARSE_ARGUMENTS(ARG
+  ""
   "DESTINATION;COMPONENT"
   ""
   ${ARGN}
   )
   
-  SET(script ${ARG_DEFAULT_ARGS})
+  SET(script ${ARG_UNPARSED_ARGUMENTS})
   IF(NOT ARG_DESTINATION)
     SET(ARG_DESTINATION ${INSTALL_BINDIR})
   ENDIF()
@@ -125,8 +117,8 @@ ENDFUNCTION()
 
 
 FUNCTION(INSTALL_DOCUMENTATION)
-  MYSQL_PARSE_ARGUMENTS(ARG "COMPONENT" "" ${ARGN})
-  SET(files ${ARG_DEFAULT_ARGS})
+  CMAKE_PARSE_ARGUMENTS(ARG "" "COMPONENT" "" ${ARGN})
+  SET(files ${ARG_UNPARSED_ARGUMENTS})
   IF(NOT ARG_COMPONENT)
     SET(ARG_COMPONENT Server)
   ENDIF()
@@ -158,21 +150,17 @@ ENDFUNCTION()
 
 
 # Install symbolic link to CMake target. 
-# the link is created in the same directory as target
+# the link is created in the current build directory
 # and extension will be the same as for target file.
 MACRO(INSTALL_SYMLINK linkname target destination component)
 IF(UNIX)
-  GET_TARGET_PROPERTY(location ${target} LOCATION)
-  GET_FILENAME_COMPONENT(path ${location} PATH)
-  GET_FILENAME_COMPONENT(name ${location} NAME)
-  SET(output ${path}/${linkname})
+  SET(output ${CMAKE_CURRENT_BINARY_DIR}/${linkname})
   ADD_CUSTOM_COMMAND(
     OUTPUT ${output}
-    COMMAND ${CMAKE_COMMAND} ARGS -E remove -f ${output}
+    COMMAND ${CMAKE_COMMAND} ARGS -E remove -f ${linkname}
     COMMAND ${CMAKE_COMMAND} ARGS -E create_symlink 
-      ${name} 
+      $<TARGET_FILE_NAME:${target}>
       ${linkname}
-    WORKING_DIRECTORY ${path}
     DEPENDS ${target}
     )
   
@@ -231,8 +219,9 @@ ENDFUNCTION()
 #
 
 FUNCTION(MYSQL_INSTALL_TARGETS)
-  MYSQL_PARSE_ARGUMENTS(ARG
-    "DESTINATION;COMPONENT"
+  CMAKE_PARSE_ARGUMENTS(ARG
+  ""
+  "DESTINATION;COMPONENT"
   ""
   ${ARGN}
   )
@@ -242,7 +231,7 @@ FUNCTION(MYSQL_INSTALL_TARGETS)
     MESSAGE(FATAL_ERROR "COMPONENT argument required")
   ENDIF()
   
-  SET(TARGETS ${ARG_DEFAULT_ARGS})
+  SET(TARGETS ${ARG_UNPARSED_ARGUMENTS})
   IF(NOT TARGETS)
     MESSAGE(FATAL_ERROR "Need target list for MYSQL_INSTALL_TARGETS")
   ENDIF()
@@ -250,16 +239,14 @@ FUNCTION(MYSQL_INSTALL_TARGETS)
      MESSAGE(FATAL_ERROR "Need DESTINATION parameter for MYSQL_INSTALL_TARGETS")
   ENDIF()
 
- 
   FOREACH(target ${TARGETS})
     # If signing is required, sign executables before installing
-     IF(SIGNCODE)
+    IF(SIGNCODE)
       SIGN_TARGET(${target} ${COMP})
     ENDIF()
     # Install man pages on Unix
     IF(UNIX)
-      GET_TARGET_PROPERTY(target_location ${target} LOCATION)
-      INSTALL_MANPAGE(${target_location})
+      INSTALL_MANPAGE($<TARGET_FILE:${target}>)
     ENDIF()
   ENDFOREACH()
 
@@ -276,7 +263,9 @@ SET(DEBUGBUILDDIR "${BINARY_PARENTDIR}/debug" CACHE INTERNAL "Directory of debug
 
 
 FUNCTION(INSTALL_DEBUG_TARGET target)
- MYSQL_PARSE_ARGUMENTS(ARG
+  RETURN() # XXX unused?
+  CMAKE_PARSE_ARGUMENTS(ARG
+  ""
   "DESTINATION;RENAME;PDB_DESTINATION;COMPONENT"
   ""
   ${ARGN}

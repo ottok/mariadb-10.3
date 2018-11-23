@@ -96,6 +96,7 @@ my_bool	net_flush(NET *net);
 #ifndef _WIN32
 #include <errno.h>
 #define SOCKET_ERROR -1
+#define INVALID_SOCKET -1
 #endif
 
 #ifdef __WIN__
@@ -105,6 +106,7 @@ my_bool	net_flush(NET *net);
 #endif
 
 #include "client_settings.h"
+#include <ssl_compat.h>
 #include <sql_common.h>
 #include <mysql/client_plugin.h>
 #include <my_context.h>
@@ -257,7 +259,6 @@ HANDLE create_named_pipe(MYSQL *mysql, uint connect_timeout, char **arg_host,
   char pipe_name[1024];
   DWORD dwMode;
   int i;
-  my_bool testing_named_pipes=0;
   char *host= *arg_host, *unix_socket= *arg_unix_socket;
 
   if ( ! unix_socket || (unix_socket)[0] == 0x00)
@@ -368,7 +369,7 @@ HANDLE create_shared_memory(MYSQL *mysql,NET *net, uint connect_timeout)
   char *shared_memory_base_name = mysql->options.shared_memory_base_name;
   static const char *name_prefixes[] = {"","Global\\"};
   const char *prefix;
-  int i;
+  uint i;
 
   /*
     If this is NULL, somebody freed the MYSQL* options.  mysql_close()
@@ -569,16 +570,22 @@ err:
                            Error message is set.
   @retval  
 */
-
 ulong
 cli_safe_read(MYSQL *mysql)
+{
+  ulong reallen = 0;
+  return cli_safe_read_reallen(mysql, &reallen);
+}
+
+ulong
+cli_safe_read_reallen(MYSQL *mysql, ulong* reallen)
 {
   NET *net= &mysql->net;
   ulong len=0;
 
 restart:
   if (net->vio != 0)
-    len= my_net_read_packet(net, 0);
+    len= my_net_read_packet_reallen(net, 0, reallen);
 
   if (len == packet_error || len == 0)
   {
@@ -601,7 +608,7 @@ restart:
       uint last_errno=uint2korr(pos);
 
       if (last_errno == 65535 &&
-          (mysql->server_capabilities & CLIENT_PROGRESS))
+          (mysql->server_capabilities & CLIENT_PROGRESS_OBSOLETE))
       {
         if (cli_report_progress(mysql, pos+2, (uint) (len-3)))
         {
@@ -733,7 +740,7 @@ void free_old_query(MYSQL *mysql)
   if (mysql->fields)
     free_root(&mysql->field_alloc,MYF(0));
  /* Assume rowlength < 8192 */
-  init_alloc_root(&mysql->field_alloc, 8192, 0,
+  init_alloc_root(&mysql->field_alloc, "fields", 8192, 0,
                   MYF(mysql->options.use_thread_specific_memory ?
                       MY_THREAD_SPECIFIC : 0));
   mysql->fields= 0;
@@ -908,13 +915,6 @@ static int cli_report_progress(MYSQL *mysql, char *pkt, uint length)
   return 0;
 }
 
-#ifdef __WIN__
-static my_bool is_NT(void)
-{
-  char *os=getenv("OS");
-  return (os && !strcmp(os, "Windows_NT")) ? 1 : 0;
-}
-#endif
 
 /**************************************************************************
   Shut down connection
@@ -945,7 +945,7 @@ void STDCALL
 mysql_free_result(MYSQL_RES *result)
 {
   DBUG_ENTER("mysql_free_result");
-  DBUG_PRINT("enter",("mysql_res: 0x%lx", (long) result));
+  DBUG_PRINT("enter",("mysql_res: %p", result));
   if (result)
   {
     MYSQL *mysql= result->handle;
@@ -1004,11 +1004,6 @@ enum option_id {
 
 static TYPELIB option_types={array_elements(default_options)-1,
 			     "options",default_options, NULL};
-
-const char *sql_protocol_names_lib[] =
-{ "TCP", "SOCKET", "PIPE", "MEMORY", NullS };
-TYPELIB sql_protocol_typelib = {array_elements(sql_protocol_names_lib)-1,"",
-				sql_protocol_names_lib, NULL};
 
 static int add_init_command(struct st_mysql_options *options, const char *cmd)
 {
@@ -1348,7 +1343,7 @@ unpack_fields(MYSQL *mysql, MYSQL_DATA *data,MEM_ROOT *alloc,uint fields,
     {
       uchar *pos;
       /* fields count may be wrong */
-      if (field - result >= fields)
+      if (field >= result + fields)
         goto err;
 
       cli_fetch_lengths(&lengths[0], row->data, default_value ? 8 : 7);
@@ -1395,7 +1390,7 @@ unpack_fields(MYSQL *mysql, MYSQL_DATA *data,MEM_ROOT *alloc,uint fields,
     /* old protocol, for backward compatibility */
     for (row=data->data; row ; row = row->next,field++)
     {
-      if (field - result >= fields)
+      if (field >= result + fields)
         goto err;
       cli_fetch_lengths(&lengths[0], row->data, default_value ? 6 : 5);
       field->org_table= field->table=  strdup_root(alloc,(char*) row->data[0]);
@@ -1433,7 +1428,7 @@ unpack_fields(MYSQL *mysql, MYSQL_DATA *data,MEM_ROOT *alloc,uint fields,
     }
   }
 #endif /* DELETE_SUPPORT_OF_4_0_PROTOCOL */
-  if (field - result < fields)
+  if (field < result + fields)
     goto err;
   free_rows(data);				/* Free old data */
   DBUG_RETURN(result);
@@ -1471,7 +1466,7 @@ MYSQL_DATA *cli_read_rows(MYSQL *mysql,MYSQL_FIELD *mysql_fields,
     DBUG_RETURN(0);
   }
   /* Assume rowlength < 8192 */
-  init_alloc_root(&result->alloc, 8192, 0,
+  init_alloc_root(&result->alloc, "result", 8192, 0,
                   MYF(mysql->options.use_thread_specific_memory ?
                       MY_THREAD_SPECIFIC : 0));
   result->alloc.min_malloc=sizeof(MYSQL_ROWS);
@@ -1653,15 +1648,15 @@ mysql_init(MYSQL *mysql)
     How this change impacts existing apps:
     - existing apps which relyed on the default will see a behaviour change;
     they will have to set reconnect=1 after mysql_real_connect().
-    - existing apps which explicitely asked for reconnection (the only way they
+    - existing apps which explicitly asked for reconnection (the only way they
     could do it was by setting mysql.reconnect to 1 after mysql_real_connect())
     will not see a behaviour change.
-    - existing apps which explicitely asked for no reconnection
+    - existing apps which explicitly asked for no reconnection
     (mysql.reconnect=0) will not see a behaviour change.
   */
   mysql->reconnect= 0;
 
-  DBUG_PRINT("mysql",("mysql: 0x%lx", (long) mysql));
+  DBUG_PRINT("mysql",("mysql: %p", mysql));
   return mysql;
 }
 
@@ -1779,9 +1774,8 @@ mysql_get_ssl_cipher(MYSQL *mysql __attribute__((unused)))
 
 #if defined(HAVE_OPENSSL)
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L && !defined(HAVE_YASSL)
+#ifdef HAVE_X509_check_host
 #include <openssl/x509v3.h>
-#define HAVE_X509_check_host
 #endif
 
 static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const char **errptr)
@@ -1854,7 +1848,7 @@ static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const c
     goto error;
   }
 
-  cn= (char *) ASN1_STRING_data(cn_asn1);
+  cn= (char *) ASN1_STRING_get0_data(cn_asn1);
 
   if ((size_t)ASN1_STRING_length(cn_asn1) != strlen(cn))
   {
@@ -2824,11 +2818,11 @@ void mpvio_info(Vio *vio, MYSQL_PLUGIN_VIO_INFO *info)
   switch (vio->type) {
   case VIO_TYPE_TCPIP:
     info->protocol= MYSQL_VIO_TCP;
-    info->socket= vio_fd(vio);
+    info->socket= (int)vio_fd(vio);
     return;
   case VIO_TYPE_SOCKET:
     info->protocol= MYSQL_VIO_SOCKET;
-    info->socket= vio_fd(vio);
+    info->socket= (int)vio_fd(vio);
     return;
   case VIO_TYPE_SSL:
     {
@@ -2838,7 +2832,7 @@ void mpvio_info(Vio *vio, MYSQL_PLUGIN_VIO_INFO *info)
         return;
       info->protocol= addr.sa_family == AF_UNIX ?
         MYSQL_VIO_SOCKET : MYSQL_VIO_TCP;
-      info->socket= vio_fd(vio);
+      info->socket= (int)vio_fd(vio);
       return;
     }
 #ifdef _WIN32
@@ -2988,7 +2982,7 @@ int run_plugin_auth(MYSQL *mysql, char *data, uint data_len,
       /* new "use different plugin" packet */
       uint len;
       auth_plugin_name= (char*)mysql->net.read_pos + 1;
-      len= strlen(auth_plugin_name); /* safe as my_net_read always appends \0 */
+      len= (uint)strlen(auth_plugin_name); /* safe as my_net_read always appends \0 */
       mpvio.cached_server_reply.pkt_len= pkt_length - len - 2;
       mpvio.cached_server_reply.pkt= mysql->net.read_pos + len + 2;
       DBUG_PRINT ("info", ("change plugin packet from server for plugin %s",
@@ -3071,6 +3065,7 @@ set_connect_attributes(MYSQL *mysql, char *buff, size_t buf_len)
   rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_client_name");
   rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_os");
   rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_platform");
+  rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_server_host");
   rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_pid");
   rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_thread");
   rc+= mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_DELETE, "_client_version");
@@ -3086,6 +3081,8 @@ set_connect_attributes(MYSQL *mysql, char *buff, size_t buf_len)
                       "_os", SYSTEM_TYPE);
   rc+= mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD,
                       "_platform", MACHINE_TYPE);
+  rc+= mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD,
+                      "_server_host", mysql->host);                      
 #ifdef __WIN__
   snprintf(buff, buf_len, "%lu", (ulong) GetCurrentProcessId());
 #else
@@ -3134,11 +3131,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
     DBUG_RETURN(0);
   }
 
-  if (set_connect_attributes(mysql, buff, sizeof(buff)))
-    DBUG_RETURN(0);
-
   mysql->methods= &client_methods;
-  net->vio = 0;				/* If something goes wrong */
   mysql->client_flag=0;			/* For handshake */
 
   /* use default options */
@@ -3232,7 +3225,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
   {
     my_socket sock= socket(AF_UNIX, SOCK_STREAM, 0);
     DBUG_PRINT("info", ("Using socket"));
-    if (sock == SOCKET_ERROR)
+    if (sock == INVALID_SOCKET)
     {
       set_mysql_extended_error(mysql, CR_SOCKET_CREATE_ERROR,
                                unknown_sqlstate,
@@ -3279,7 +3272,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
   if (!net->vio &&
       (mysql->options.protocol == MYSQL_PROTOCOL_PIPE ||
        (host && !strcmp(host,LOCAL_HOST_NAMEDPIPE)) ||
-       (! have_tcpip && (unix_socket || !host && is_NT()))))
+       (! have_tcpip && (unix_socket || !host ))))
   {
     if ((hPipe= create_named_pipe(mysql, mysql->options.connect_timeout,
                                   (char**) &host, (char**) &unix_socket)) ==
@@ -3313,7 +3306,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
     struct addrinfo *res_lst, hints, *t_res;
     int gai_errno;
     char port_buf[NI_MAXSERV];
-    my_socket sock= SOCKET_ERROR;
+    my_socket sock= INVALID_SOCKET;
     int saved_error= 0, status= -1;
 
     unix_socket=0;				/* This is not used */
@@ -3361,7 +3354,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
                           t_res->ai_family, t_res->ai_socktype,
                           t_res->ai_protocol));
       sock= socket(t_res->ai_family, t_res->ai_socktype, t_res->ai_protocol);
-      if (sock == SOCKET_ERROR)
+      if (sock == INVALID_SOCKET)
       {
         saved_error= socket_errno;
         continue;
@@ -3378,7 +3371,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
 
       DBUG_PRINT("info", ("Connect socket"));
       status= connect_sync_or_async(mysql, net, sock,
-                                    t_res->ai_addr, t_res->ai_addrlen);
+                                    t_res->ai_addr, (uint)t_res->ai_addrlen);
       /*
         Here we rely on my_connect() to return success only if the
         connect attempt was really successful. Otherwise we would stop
@@ -3399,11 +3392,11 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
     }
     DBUG_PRINT("info",
                ("End of connect attempts, sock: %d  status: %d  error: %d",
-                sock, status, saved_error));
+                (int)sock, status, saved_error));
 
     freeaddrinfo(res_lst);
 
-    if (sock == SOCKET_ERROR)
+    if (sock == INVALID_SOCKET)
     {
       set_mysql_extended_error(mysql, CR_IPSOCK_ERROR, unknown_sqlstate,
                                 ER(CR_IPSOCK_ERROR), saved_error);
@@ -3578,11 +3571,11 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
       scramble_data_len= pkt_scramble_len;
       scramble_plugin= scramble_data + scramble_data_len;
       if (scramble_data + scramble_data_len > pkt_end)
-        scramble_data_len= pkt_end - scramble_data;
+        scramble_data_len= (int)(pkt_end - scramble_data);
     }
     else
     {
-      scramble_data_len= pkt_end - scramble_data;
+      scramble_data_len= (int)(pkt_end - scramble_data);
       scramble_plugin= native_password_plugin_name;
     }
   }
@@ -3590,6 +3583,8 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
     mysql->server_capabilities&= ~CLIENT_SECURE_CONNECTION;
 
   mysql->client_flag= client_flag;
+
+  set_connect_attributes(mysql, buff, sizeof(buff));
 
   /*
     Part 2: invoke the plugin to send the authentication data to the server
@@ -3653,7 +3648,7 @@ CLI_MYSQL_REAL_CONNECT(MYSQL *mysql,const char *host, const char *user,
   }
 #endif
 
-  DBUG_PRINT("exit", ("Mysql handler: 0x%lx", (long) mysql));
+  DBUG_PRINT("exit", ("Mysql handler: %p",mysql));
   DBUG_RETURN(mysql);
 
 error:
@@ -3666,7 +3661,7 @@ error:
     end_server(mysql);
     mysql_close_free(mysql);
     if (!(client_flag & CLIENT_REMEMBER_OPTIONS) &&
-        !mysql->options.extension->async_context)
+        !(mysql->options.extension && mysql->options.extension->async_context))
       mysql_close_free_options(mysql);
   }
   DBUG_RETURN(0);
@@ -3975,7 +3970,7 @@ void STDCALL mysql_close_slow_part(MYSQL *mysql)
 void STDCALL mysql_close(MYSQL *mysql)
 {
   DBUG_ENTER("mysql_close");
-  DBUG_PRINT("enter", ("mysql: 0x%lx", (long) mysql));
+  DBUG_PRINT("enter", ("mysql: %p",  mysql));
 
   if (mysql)					/* Some simple safety */
   {
@@ -4086,7 +4081,7 @@ int STDCALL
 mysql_real_query(MYSQL *mysql, const char *query, ulong length)
 {
   DBUG_ENTER("mysql_real_query");
-  DBUG_PRINT("enter",("handle: 0x%lx", (long) mysql));
+  DBUG_PRINT("enter",("handle: %p", mysql));
   DBUG_PRINT("query",("Query = '%-.4096s'",query));
 
   if (mysql_send_query(mysql,query,length))
@@ -4791,4 +4786,12 @@ mysql_get_socket(const MYSQL *mysql)
   if (mysql->net.vio)
     return vio_fd(mysql->net.vio);
   return INVALID_SOCKET;
+}
+
+
+int STDCALL mysql_cancel(MYSQL *mysql)
+{
+  if (mysql->net.vio)
+	return vio_shutdown(mysql->net.vio, SHUT_RDWR);
+  return -1;
 }

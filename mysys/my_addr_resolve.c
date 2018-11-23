@@ -49,6 +49,13 @@ static const char *strip_path(const char *s)
 static bfd *bfdh= 0;
 static asymbol **symtable= 0;
 
+#if defined(HAVE_LINK_H) && defined(HAVE_DLOPEN)
+#include <link.h>
+static ElfW(Addr) offset= 0;
+#else
+#define offset 0
+#endif
+
 /**
   finds a file name, a line number, and a function name corresponding to addr.
 
@@ -60,7 +67,7 @@ static asymbol **symtable= 0;
 */
 int my_addr_resolve(void *ptr, my_addr_loc *loc)
 {
-  bfd_vma addr= (intptr)ptr;
+  bfd_vma addr= (intptr)ptr - offset;
   asection *sec;
 
   for (sec= bfdh->sections; sec; sec= sec->next)
@@ -103,6 +110,12 @@ const char *my_addr_resolve_init()
     uint unused;
     char **matching;
 
+#if defined(HAVE_LINK_H) && defined(HAVE_DLOPEN)
+    struct link_map *lm = (struct link_map*) dlopen(0, RTLD_NOW);
+    if (lm)
+      offset= lm->l_addr;
+#endif
+
     bfdh= bfd_openr(my_progname, NULL);
     if (!bfdh)
       goto err;
@@ -132,7 +145,6 @@ err:
 
 #include <m_string.h>
 #include <ctype.h>
-
 #include <sys/wait.h>
 
 static int in[2], out[2];
@@ -208,7 +220,7 @@ int my_addr_resolve(void *ptr, my_addr_loc *loc)
     if (start_addr2line_fork(info.dli_fname))
     {
       addr2line_binary[0] = '\0';
-      return 1;
+      return 2;
     }
     /* Save result for future comparisons. */
     strnmov(addr2line_binary, info.dli_fname, sizeof(addr2line_binary));
@@ -216,7 +228,7 @@ int my_addr_resolve(void *ptr, my_addr_loc *loc)
   offset = info.dli_fbase;
   len= my_snprintf(input, sizeof(input), "%08x\n", (ulonglong)(ptr - offset));
   if (write(in[1], input, len) <= 0)
-    return 1;
+    return 3;
 
   FD_ZERO(&set);
   FD_SET(out[0], &set);
@@ -231,7 +243,7 @@ int my_addr_resolve(void *ptr, my_addr_loc *loc)
     extra_bytes_read= read(out[0], output + total_bytes_read,
                            sizeof(output) - total_bytes_read);
     if (extra_bytes_read < 0)
-      return 1;
+      return 4;
     /* Timeout or max bytes read. */
     if (extra_bytes_read == 0)
       break;
@@ -259,7 +271,7 @@ int my_addr_resolve(void *ptr, my_addr_loc *loc)
 
   /* Response is malformed. */
   if (filename_start == -1 || line_number_start == -1)
-   return 1;
+   return 5;
 
   loc->func= output;
   loc->file= output + filename_start;
@@ -267,7 +279,7 @@ int my_addr_resolve(void *ptr, my_addr_loc *loc)
 
   /* Addr2line was unable to extract any meaningful information. */
   if (strcmp(loc->file, "??") == 0)
-    return 1;
+    return 6;
 
   loc->file= strip_path(loc->file);
 

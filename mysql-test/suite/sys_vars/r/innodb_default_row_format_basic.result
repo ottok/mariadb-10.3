@@ -1,6 +1,6 @@
 SELECT  @@global.innodb_default_row_format;
 @@global.innodb_default_row_format
-compact
+dynamic
 SET GLOBAL innodb_default_row_format = 'redundant';
 SELECT @@global.innodb_default_row_format;
 @@global.innodb_default_row_format

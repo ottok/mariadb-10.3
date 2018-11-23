@@ -14,12 +14,11 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include "mariadb.h"
 #include "mysqld.h"
 #include "sys_vars_shared.h"
 #include "wsrep.h"
 #include "wsrep_sst.h"
-//#include <sql_class.h>
-//#include "wsrep_mysqld.h"
 
 extern char *my_bind_addr_str;
 

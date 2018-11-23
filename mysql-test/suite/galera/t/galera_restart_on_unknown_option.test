@@ -130,6 +130,7 @@ SELECT * FROM t1;
 --connection node_1
 
 DROP TABLE t1;
+--source include/auto_increment_offset_restore.inc
 
 #
 # We should count the number of "Assertion failed" warnings

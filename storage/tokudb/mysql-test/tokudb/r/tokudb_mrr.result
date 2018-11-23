@@ -296,6 +296,9 @@ drop table t1, t2;
 #
 # Bug#41029 "MRR: SELECT FOR UPDATE fails to lock gaps (InnoDB table)"
 #
+connect  con1,localhost,root,,;
+connect  con2,localhost,root,,;
+connection con1;
 SET AUTOCOMMIT=0;
 CREATE TABLE t1 (
 dummy INT PRIMARY KEY,
@@ -316,11 +319,16 @@ SELECT * FROM t1 WHERE a >= 2 FOR UPDATE;
 dummy	a	b
 3	3	3
 5	5	5
+connection con2;
 SET AUTOCOMMIT=0;
 SET TOKUDB_LOCK_TIMEOUT=2;
 START TRANSACTION;
 INSERT INTO t1 VALUES (2,2,2);
 ERROR HY000: Lock wait timeout exceeded; try restarting transaction
 ROLLBACK;
+connection con1;
 ROLLBACK;
 DROP TABLE t1;
+connection default;
+disconnect con1;
+disconnect con2;

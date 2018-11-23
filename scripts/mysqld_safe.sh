@@ -20,7 +20,6 @@ mysqld_ld_preload=
 mysqld_ld_library_path=
 flush_caches=0
 numa_interleave=0
-unsafe_my_cnf=0
 wsrep_on=0
 dry_run=0
 
@@ -104,35 +103,6 @@ EOF
         exit 1
 }
 
-my_which ()
-{
-  save_ifs="${IFS-UNSET}"
-  IFS=:
-  ret=0
-  for file
-  do
-    for dir in $PATH
-    do
-      if [ -f "$dir/$file" ]
-      then
-        echo "$dir/$file"
-        continue 2
-      fi
-    done
-
-	ret=1  #signal an error
-	break
-  done
-
-  if [ "$save_ifs" = UNSET ]
-  then
-    unset IFS
-  else
-    IFS="$save_ifs"
-  fi
-  return $ret  # Success
-}
-
 find_in_bin() {
   if test -x "$MY_BASEDIR_VERSION/bin/$1"
   then
@@ -154,7 +124,11 @@ log_generic () {
   echo "$msg"
   case $logging in
     init) ;;  # Just echo the message, don't save it anywhere
-    file) echo "$msg" | "$helper" "$user" log "$err_log" ;;
+    file)
+      if [ -n "$helper" ]; then
+        echo "$msg" | "$helper" "$user" log "$err_log"
+      fi
+    ;;
     syslog) logger -t "$syslog_tag_mysqld_safe" -p "$priority" "$*" ;;
     *)
       echo "Internal program error (non-fatal):" \
@@ -174,7 +148,11 @@ log_notice () {
 eval_log_error () {
   local cmd="$1"
   case $logging in
-    file) cmd="$cmd 2>&1 | "`shell_quote_string "$helper"`" $user log "`shell_quote_string "$err_log"` ;;
+    file)
+     if [ -n "$helper" ]; then
+        cmd="$cmd 2>&1 | "`shell_quote_string "$helper"`" $user log "`shell_quote_string "$err_log"`
+     fi
+     ;;
     syslog)
       # mysqld often prefixes its messages with a timestamp, which is
       # redundant when logging to syslog (which adds its own timestamp)
@@ -213,7 +191,8 @@ wsrep_pick_url() {
 
   log_error "WSREP: 'wsrep_urls' is DEPRECATED! Use wsrep_cluster_address to specify multiple addresses instead."
 
-  if ! which nc >/dev/null; then
+  if ! command -v nc >/dev/null
+  then
     log_error "ERROR: nc tool not found in PATH! Make sure you have it installed."
     return 1
   fi
@@ -291,13 +270,6 @@ wsrep_recover_position() {
   return $ret
 }
 
-check_executable_location() {
-  if test "$unsafe_my_cnf" = 1 -a "$unrecognized_handling" != collect; then
-    log_error "Cannot accept $1 from a config file, when my.cnf is in the datadir"
-    exit 1
-  fi
-}
-
 parse_arguments() {
   for arg do
     val=`echo "$arg" | sed -e "s;--[^=]*=;;"`
@@ -328,14 +300,13 @@ parse_arguments() {
 
       # mysqld_safe-specific options - must be set in my.cnf ([mysqld_safe])!
       --core[-_]file[-_]size=*) core_file_size="$val" ;;
-      --ledir=*) check_executable_location "$arg" ; ledir="$val" ;;
-      --malloc[-_]lib=*) check_executable_location "$arg"; set_malloc_lib "$val" ;;
-      --crash[-_]script=*) check_executable_location "$arg"; crash_script="$val" ;;
-      --mysqld=*) check_executable_location "$arg"; MYSQLD="$val" ;;
+      --ledir=*) ledir="$val" ;;
+      --malloc[-_]lib=*) set_malloc_lib "$val" ;;
+      --crash[-_]script=*) crash_script="$val" ;;
+      --mysqld=*) MYSQLD="$val" ;;
       --mysqld[-_]version=*)
         if test -n "$val"
         then
-          check_executable_location "$arg"
           MYSQLD="mysqld-$val"
           PLUGIN_VARIANT="/$val"
         else
@@ -464,8 +435,9 @@ get_mysql_config() {
 
 # set_malloc_lib LIB
 # - If LIB is empty, do nothing and return
-# - If LIB is 'tcmalloc', look for tcmalloc shared library in /usr/lib
-#   then pkglibdir.  tcmalloc is part of the Google perftools project.
+# - If LIB starts with 'tcmalloc' or 'jemalloc', look for the shared library in
+#   /usr/lib, /usr/lib64 and then pkglibdir.
+#   tcmalloc is part of the Google perftools project.
 # - If LIB is an absolute path, assume it is a malloc shared library
 #
 # Put LIB in mysqld_ld_preload, which will be added to LD_PRELOAD when
@@ -473,23 +445,23 @@ get_mysql_config() {
 set_malloc_lib() {
   malloc_lib="$1"
 
-  if [ "$malloc_lib" = tcmalloc ]; then
+  if expr "$malloc_lib" : "\(tcmalloc\|jemalloc\)" > /dev/null ; then
     pkglibdir=`get_mysql_config --variable=pkglibdir`
-    malloc_lib=
+    where=''
     # This list is kept intentionally simple.  Simply set --malloc-lib
     # to a full path if another location is desired.
-    for libdir in /usr/lib "$pkglibdir" "$pkglibdir/mysql"; do
-      for flavor in _minimal '' _and_profiler _debug; do
-        tmp="$libdir/libtcmalloc$flavor.so"
-        #log_notice "DEBUG: Checking for malloc lib '$tmp'"
-        [ -r "$tmp" ] || continue
-        malloc_lib="$tmp"
-        break 2
-      done
+    for libdir in /usr/lib /usr/lib64 "$pkglibdir" "$pkglibdir/mysql"; do
+       tmp=`echo "$libdir/lib$malloc_lib.so".[0-9]`
+       where="$where $libdir"
+       # log_notice "DEBUG: Checking for malloc lib '$tmp'"
+       [ -r "$tmp" ] || continue
+       malloc_lib="$tmp"
+       where=''
+       break
     done
 
-    if [ -z "$malloc_lib" ]; then
-      log_error "no shared library for --malloc-lib=tcmalloc found in /usr/lib or $pkglibdir"
+    if [ -n "$where" ]; then
+      log_error "no shared library for lib$malloc_lib.so.[0-9] found in$where"
       exit 1
     fi
   fi
@@ -505,8 +477,8 @@ set_malloc_lib() {
       fi
       ;;
     *)
-      log_error "--malloc-lib must be an absolute path or 'tcmalloc'; " \
-        "ignoring value '$malloc_lib'"
+      log_error "--malloc-lib must be an absolute path, 'tcmalloc' or " \
+      "'jemalloc'; ignoring value '$malloc_lib'"
       exit 1
       ;;
   esac
@@ -558,6 +530,9 @@ fi
 helper=`find_in_bin mysqld_safe_helper`
 print_defaults=`find_in_bin my_print_defaults`
 
+# Check if helper exists
+$helper --help >/dev/null 2>&1 || helper=""
+
 #
 # Second, try to find the data directory
 #
@@ -566,10 +541,6 @@ print_defaults=`find_in_bin my_print_defaults`
 if test -d $MY_BASEDIR_VERSION/data/mysql
 then
   DATADIR=$MY_BASEDIR_VERSION/data
-  if test -z "$defaults" -a -r "$DATADIR/my.cnf"
-  then
-    defaults="--defaults-extra-file=$DATADIR/my.cnf"
-  fi
 # Next try where the source installs put it
 elif test -d $MY_BASEDIR_VERSION/var/mysql
 then
@@ -581,24 +552,13 @@ fi
 
 if test -z "$MYSQL_HOME"
 then 
-  if test -r "$MY_BASEDIR_VERSION/my.cnf" && test -r "$DATADIR/my.cnf"
-  then
-    log_error "WARNING: Found two instances of my.cnf -
-$MY_BASEDIR_VERSION/my.cnf and
-$DATADIR/my.cnf
-IGNORING $DATADIR/my.cnf"
-
-    MYSQL_HOME=$MY_BASEDIR_VERSION
-  elif test -r "$DATADIR/my.cnf"
+  if test -r "$DATADIR/my.cnf"
   then
     log_error "WARNING: Found $DATADIR/my.cnf
-The data directory is a deprecated location for my.cnf, please move it to
+The data directory is not a valid location for my.cnf, please move it to
 $MY_BASEDIR_VERSION/my.cnf"
-    unsafe_my_cnf=1
-    MYSQL_HOME=$DATADIR
-  else
-    MYSQL_HOME=$MY_BASEDIR_VERSION
   fi
+  MYSQL_HOME=$MY_BASEDIR_VERSION
 fi
 export MYSQL_HOME
 
@@ -658,8 +618,7 @@ plugin_dir="${plugin_dir}${PLUGIN_VARIANT}"
 # Ensure that 'logger' exists, if it's requested
 if [ $want_syslog -eq 1 ]
 then
-  my_which logger > /dev/null 2>&1
-  if [ $? -ne 0 ]
+  if ! command -v logger > /dev/null
   then
     log_error "--syslog requested, but no 'logger' program found.  Please ensure that 'logger' is in your PATH, or do not specify the --syslog option to mysqld_safe."
     exit 1
@@ -775,7 +734,7 @@ then
 does not exist or is not executable. Please cd to the mysql installation
 directory and restart this script from there as follows:
 ./bin/mysqld_safe&
-See http://dev.mysql.com/doc/mysql/en/mysqld-safe.html for more information"
+See https://mariadb.com/kb/en/mysqld_safe for more information"
   exit 1
 fi
 
@@ -890,7 +849,7 @@ fi
 if @TARGET_LINUX@ && test $flush_caches -eq 1
 then
   # Locate sync, ensure it exists.
-  if ! my_which sync > /dev/null 2>&1
+  if ! command -v sync > /dev/null
   then
     log_error "sync command not found, required for --flush-caches"
     exit 1
@@ -902,7 +861,7 @@ then
   fi
 
   # Locate sysctl, ensure it exists.
-  if ! my_which sysctl > /dev/null 2>&1
+  if ! command -v sysctl > /dev/null
   then
     log_error "sysctl command not found, required for --flush-caches"
     exit 1
@@ -946,7 +905,7 @@ cmd="`mysqld_ld_preload_text`$NOHUP_NICENESS"
 if @TARGET_LINUX@ && test $numa_interleave -eq 1
 then
   # Locate numactl, ensure it exists.
-  if ! my_which numactl > /dev/null 2>&1
+  if ! command -v numactl > /dev/null
   then
     log_error "numactl command not found, required for --numa-interleave"
     exit 1

@@ -146,6 +146,8 @@ static CONTROL_FILE_ERROR create_control_file(const char *name,
 {
   uint32 sum;
   uchar buffer[CF_CREATE_TIME_TOTAL_SIZE];
+  ulong rnd1,rnd2;
+
   DBUG_ENTER("maria_create_control_file");
 
   if ((control_file_fd= mysql_file_create(key_file_control, name, 0,
@@ -157,7 +159,9 @@ static CONTROL_FILE_ERROR create_control_file(const char *name,
   cf_changeable_size=  CF_CHANGEABLE_TOTAL_SIZE;
 
   /* Create unique uuid for the control file */
-  my_uuid_init((ulong) &buffer, (ulong) &maria_uuid);
+  my_random_bytes((uchar *)&rnd1, sizeof (rnd1));
+  my_random_bytes((uchar *)&rnd2, sizeof (rnd2));
+  my_uuid_init(rnd1, rnd2);
   my_uuid(maria_uuid);
 
   /* Prepare and write the file header */
@@ -213,7 +217,6 @@ static CONTROL_FILE_ERROR create_control_file(const char *name,
 
 static int lock_control_file(const char *name)
 {
-  uint retry= 0;
   /*
     On Windows, my_lock() uses locking() which is mandatory locking and so
     prevents maria-recovery.test from copying the control file. And in case of
@@ -224,6 +227,7 @@ static int lock_control_file(const char *name)
     file under Windows.
   */
 #ifndef __WIN__
+  uint retry= 0;
   /*
     We can't here use the automatic wait in my_lock() as the alarm thread
     may not yet exists.
@@ -579,8 +583,8 @@ int ma_control_file_end(void)
 
   close_error= mysql_file_close(control_file_fd, MYF(MY_WME));
   /*
-    As mysql_file_close() frees structures even if close() fails, we do the same,
-    i.e. we mark the file as closed in all cases.
+    As mysql_file_close() frees structures even if close() fails, we do the
+    same, i.e. we mark the file as closed in all cases.
   */
   control_file_fd= -1;
   /*

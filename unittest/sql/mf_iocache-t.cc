@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include <my_global.h>
 #include <my_sys.h>
 #include <my_crypt.h>
 #include <tap.h>
@@ -92,8 +93,8 @@ void sql_print_error(const char *format, ...)
 IO_CACHE info;
 #define CACHE_SIZE 16384
 
-#define INFO_TAIL ", pos_in_file = %llu, pos_in_mem = %td", \
-                info.pos_in_file, *info.current_pos - info.request_pos
+#define INFO_TAIL ", pos_in_file = %llu, pos_in_mem = %lu", \
+    info.pos_in_file, (ulong) ((info.type == READ_CACHE ? info.read_pos : info.write_pos) - info.request_pos)
 
 #define FILL 0x5A
 
@@ -137,7 +138,7 @@ void temp_io_cache()
   res= reinit_io_cache(&info, READ_CACHE, 0, 0, 0);
   ok(res == 0, "reinit READ_CACHE" INFO_TAIL);
 
-  res= my_pread(info.file, buf, 50, 50, MYF(MY_NABP));
+  res= (int)my_pread(info.file, buf, 50, 50, MYF(MY_NABP));
   ok(res == 0 && data_bad(buf, 50) == encrypt_tmp_files,
      "file must be %sreadable", encrypt_tmp_files ?"un":"");
 
@@ -175,7 +176,7 @@ void mdev9044()
   res= reinit_io_cache(&info, READ_CACHE, 0, 0, 0);
   ok(res == 0, "reinit READ_CACHE" INFO_TAIL);
 
-  res= my_b_fill(&info);
+  res= (int)my_b_fill(&info);
   ok(res == 0, "fill" INFO_TAIL);
 
   res= reinit_io_cache(&info, READ_CACHE, 0, 0, 0);
@@ -208,18 +209,18 @@ void mdev10259()
   res= my_b_flush_io_cache(&info, 1);
   ok(res == 0, "flush" INFO_TAIL);
 
-  ulong saved_pos=  my_b_tell(&info);
+  my_off_t saved_pos=  my_b_tell(&info);
   res= reinit_io_cache(&info, READ_CACHE, 0, 0, 0);
   ok(res == 0, "reinit READ_CACHE" INFO_TAIL);
 
-  res= my_b_fill(&info);
-  ok(res == 200, "fill" INFO_TAIL);
+  size_t s= my_b_fill(&info);
+  ok(s == 200, "fill" INFO_TAIL);
 
-  res= my_b_fill(&info);
-  ok(res == 0, "fill" INFO_TAIL);
+  s= my_b_fill(&info);
+  ok(s == 0, "fill" INFO_TAIL);
 
-  res= my_b_fill(&info);
-  ok(res == 0, "fill" INFO_TAIL);
+  s= my_b_fill(&info);
+  ok(s == 0, "fill" INFO_TAIL);
 
   res= reinit_io_cache(&info, WRITE_CACHE, saved_pos, 0, 0);
   ok(res == 0, "reinit WRITE_CACHE" INFO_TAIL);
@@ -229,14 +230,14 @@ void mdev10259()
 
   ok(200 == my_b_bytes_in_cache(&info),"my_b_bytes_in_cache == 200");
 
-  res= my_b_fill(&info);
-  ok(res == 0, "fill" INFO_TAIL);
+  s= my_b_fill(&info);
+  ok(s == 0, "fill" INFO_TAIL);
 
-  res= my_b_fill(&info);
-  ok(res == 0, "fill" INFO_TAIL);
+  s= my_b_fill(&info);
+  ok(s == 0, "fill" INFO_TAIL);
 
-  res= my_b_fill(&info);
-  ok(res == 0, "fill" INFO_TAIL);
+  s= my_b_fill(&info);
+  ok(s == 0, "fill" INFO_TAIL);
 
   res= reinit_io_cache(&info, WRITE_CACHE, saved_pos, 0, 0);
   ok(res == 0, "reinit WRITE_CACHE" INFO_TAIL);
@@ -287,7 +288,8 @@ void mdev14014()
 
 void mdev17133()
 {
-  int   res, k;
+  my_off_t res;
+  int k;
   const int eof_iter=4, read_iter= 4;
   uchar buf_i[1024*256];      // read
   uchar buf_o[sizeof(buf_i)]; // write
@@ -326,18 +328,18 @@ void mdev17133()
       MY_MIN(sizeof(buf_o),
              info.end_of_file + eof_block_size +
              // plus 25% of block for randomization to the average
-             (eof_block_size/4 - rand() % (eof_block_size/2)));
+             eof_block_size/4 - rand() % (eof_block_size/2));
 
     // read a chunk by blocks of variable size read_iter times
     // the last block completes the current chunk
     for (i= 0; i < read_iter; i++, total += curr_read_size)
     {
       char buf_check[eof_block_size];
-      uint a,b;
+      size_t a,b;
 
-      a= info.end_of_file - total;
+      a= (size_t)(info.end_of_file - total);
       b= read_size + read_size/4 - rand() % (read_size/2);
-      curr_read_size= (i == read_iter - 1) ? info.end_of_file - total :
+      curr_read_size= (i == read_iter - 1) ? a :
         MY_MIN(a, b);
 
       DBUG_ASSERT(curr_read_size <= info.end_of_file - total);

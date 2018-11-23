@@ -23,7 +23,6 @@ Smart ALTER TABLE
 
 /*************************************************************//**
 Copies an InnoDB record to table->record[0]. */
-UNIV_INTERN
 void
 innobase_rec_to_mysql(
 /*==================*/
@@ -36,7 +35,6 @@ innobase_rec_to_mysql(
 
 /*************************************************************//**
 Copies an InnoDB index entry to table->record[0]. */
-UNIV_INTERN
 void
 innobase_fields_to_mysql(
 /*=====================*/
@@ -47,7 +45,6 @@ innobase_fields_to_mysql(
 
 /*************************************************************//**
 Copies an InnoDB row to table->record[0]. */
-UNIV_INTERN
 void
 innobase_row_to_mysql(
 /*==================*/
@@ -56,27 +53,17 @@ innobase_row_to_mysql(
 	const dtuple_t*		row)	/*!< in: InnoDB row */
 	MY_ATTRIBUTE((nonnull));
 
-/*************************************************************//**
-Resets table->record[0]. */
-UNIV_INTERN
-void
-innobase_rec_reset(
-/*===============*/
-	struct TABLE*		table)		/*!< in/out: MySQL table */
-	MY_ATTRIBUTE((nonnull));
-
 /** Generate the next autoinc based on a snapshot of the session
 auto_increment_increment and auto_increment_offset variables. */
 struct ib_sequence_t {
 
 	/**
-	@param thd - the session
-	@param start_value - the lower bound
-	@param max_value - the upper bound (inclusive) */
+	@param thd the session
+	@param start_value the lower bound
+	@param max_value the upper bound (inclusive) */
 	ib_sequence_t(THD* thd, ulonglong start_value, ulonglong max_value);
 
-	/**
-	Postfix increment
+	/** Postfix increment
 	@return the value to insert */
 	ulonglong operator++(int) UNIV_NOTHROW;
 

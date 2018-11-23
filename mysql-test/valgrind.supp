@@ -362,13 +362,10 @@
    memory "loss" from _dl_init 2
    Memcheck:Leak
    fun:malloc
-   fun:pool
    ...
    fun:call_init*
    fun:_dl_init
 }
-
-
 
 #
 #  dlclose can allocate memory for error message, the memory will be
@@ -1108,6 +1105,16 @@
 }
 
 {
+   OpenSSL still reachable.
+   Memcheck:Leak
+   fun:*alloc
+   fun:CRYPTO_malloc
+   fun:sk_new
+   fun:SSL_COMP_get_compression_methods
+   fun:SSL_library_init
+}
+
+{
    libcrypto 2.2.1 leak
    Memcheck:Leak
    fun:malloc
@@ -1245,10 +1252,17 @@
 }
 
 {
-  XtraDB uses gcc __thread variables
+  TokuDB uses gcc __thread variables
   Memcheck:Leak
   fun:memalign
   fun:*
+  fun:__tls_get_addr
+}
+
+{
+  Galera uses gcc __thread variables
+  Memcheck:Leak
+  fun:memalign
   fun:__tls_get_addr
 }
 
@@ -1622,4 +1636,146 @@
    fun:run_async_sender
    fun:start_thread
    fun:clone
+}
+
+# 
+# MDEV-11061: OpenSSL 0.9.8 problems
+#
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Cond
+   obj:*/libz.so*
+   ...
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Value8
+   obj:*/libz.so*
+   ...
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Cond
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Value8
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Cond
+   obj:*/libssl.so.0.9.8
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Value8
+   obj:*/libssl.so.0.9.8
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Cond
+   fun:memcpy
+   obj:*/libcrypto.so.0.9.8
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Value8
+   fun:memcpy
+   obj:*/libcrypto.so.0.9.8
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Cond
+   fun:is_overlap
+   fun:memcpy
+   obj:*/libcrypto.so.0.9.8
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Cond
+   fun:memset
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Value8
+   fun:memset
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+{
+   MDEV-11061: OpenSSL 0.9.8
+   Memcheck:Param
+   write(buf)
+   obj:*/libpthread-2.9.so*
+   obj:*/libcrypto.so.0.9.8
+   ...
+   obj:*/libssl.so.0.9.8
+   ...
+}
+
+#
+# OpenSSL 1.0.1k problems
+#
+
+{
+   OPENSSL 1.0.1k crypto leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   fun:CRYPTO_malloc
+   ...
+   fun:ENGINE_add
+}
+
+{
+   OPENSSL 1.0.1k crypto leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   fun:CRYPTO_malloc
+   fun:ENGINE_new
 }

@@ -55,6 +55,9 @@ struct st_irem
   struct st_irem *next;        /* Linked list of structures       */
   struct st_irem *prev;        /* Other link                      */
   size_t datasize;             /* Size requested                  */
+#if SIZEOF_SIZE_T == 4
+  size_t pad;                  /* Compensate 32bit datasize */
+#endif
 #ifdef HAVE_BACKTRACE
   void *frame[SF_REMEMBER_FRAMES]; /* call stack                  */
 #endif
@@ -290,7 +293,7 @@ static void warn(const char *format,...)
   {
     void *frame[SF_REMEMBER_FRAMES + SF_FRAMES_SKIP];
     int frames= backtrace(frame, array_elements(frame));
-    fprintf(stderr, " ");
+    fprintf(stderr, " at ");
     if (frames < SF_REMEMBER_FRAMES + SF_FRAMES_SKIP)
       frame[frames]= 0;
     print_stack(frame + SF_FRAMES_SKIP);
@@ -315,7 +318,8 @@ static int bad_ptr(const char *where, void *ptr)
   }
   if (irem->marker != MAGICSTART)
   {
-    warn("Error: %s unallocated data or underrun buffer", where);
+    DBUG_PRINT("error",("Unallocated data or underrun buffer %p", ptr));
+    warn("Error: %s unallocated data or underrun buffer %p", ptr, where);
     return 1;
   }
 
@@ -325,7 +329,8 @@ static int bad_ptr(const char *where, void *ptr)
       magicend[2] != MAGICEND2 ||
       magicend[3] != MAGICEND3)
   {
-    warn("Error: %s overrun buffer ", where);
+    DBUG_PRINT("error",("Overrun buffer %p", ptr));
+    warn("Error: %s overrun buffer %p", where, ptr);
     fprintf(stderr, "Allocated at ");
     print_stack(irem->frame);
     return 1;
@@ -335,7 +340,7 @@ static int bad_ptr(const char *where, void *ptr)
 }
 
 /* check all allocated memory list for consistency */
-static int sf_sanity()
+int sf_sanity()
 {
   struct st_irem *irem;
   int flag= 0;
@@ -375,7 +380,7 @@ void sf_report_leaked_memory(my_thread_id id)
     {
       my_thread_id tid = irem->thread_id && irem->flags & MY_THREAD_SPECIFIC ?
                          irem->thread_id : 0;
-      fprintf(stderr, "Warning: %4lu bytes lost at %p, allocated by T@%lu at ",
+      fprintf(stderr, "Warning: %4lu bytes lost at %p, allocated by T@%llu at ",
               (ulong) irem->datasize, (char*) (irem + 1), tid);
       print_stack(irem->frame);
       total+= irem->datasize;

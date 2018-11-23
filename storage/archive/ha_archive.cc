@@ -21,7 +21,8 @@
 #pragma implementation        // gcc: Class implementation
 #endif
 
-#include "sql_class.h"                          // SSV and my_global.h
+#include <my_global.h>
+#include "sql_class.h"                          // SSV
 #include "sql_table.h"                          // build_table_filename
 #include <myisam.h>                             // T_EXTEND
 
@@ -376,6 +377,27 @@ unsigned int ha_archive::pack_row_v1(uchar *record)
   uchar *pos;
   DBUG_ENTER("pack_row_v1");
   memcpy(record_buffer->buffer, record, table->s->reclength);
+
+  /*
+    The end of VARCHAR fields are filled with garbage,so here
+    we explicitly set the end of the VARCHAR fields with zeroes
+  */
+
+  for (Field** field= table->field; (*field) ; field++)
+  {
+    Field *fld= *field;
+    if (fld->type() == MYSQL_TYPE_VARCHAR)
+    {
+      if (!(fld->is_real_null(record - table->record[0])))
+      {
+        ptrdiff_t  start= (fld->ptr - table->record[0]);
+        Field_varstring *const field_var= (Field_varstring *)fld;
+        uint offset= field_var->data_length() + field_var->length_size();
+        memset(record_buffer->buffer + start + offset, 0,
+               fld->field_length - offset + 1);
+      }
+    }
+  }
   pos= record_buffer->buffer + table->s->reclength;
   for (blob= table->s->blob_field, end= blob + table->s->blob_fields;
        blob != end; blob++)
@@ -383,13 +405,12 @@ unsigned int ha_archive::pack_row_v1(uchar *record)
     uint32 length= ((Field_blob *) table->field[*blob])->get_length();
     if (length)
     {
-      uchar *data_ptr;
-      ((Field_blob *) table->field[*blob])->get_ptr(&data_ptr);
+      uchar *data_ptr= ((Field_blob *) table->field[*blob])->get_ptr();
       memcpy(pos, data_ptr, length);
       pos+= length;
     }
   }
-  DBUG_RETURN(pos - record_buffer->buffer);
+  DBUG_RETURN((int)(pos - record_buffer->buffer));
 }
 
 /*
@@ -877,18 +898,19 @@ int ha_archive::real_write_row(uchar *buf, azio_stream *writer)
   the bytes required for the length in the header.
 */
 
-uint32 ha_archive::max_row_length(const uchar *buf)
+uint32 ha_archive::max_row_length(const uchar *record)
 {
   uint32 length= (uint32)(table->s->reclength + table->s->fields*2);
   length+= ARCHIVE_ROW_HEADER_SIZE;
+  my_ptrdiff_t const rec_offset= record - table->record[0];
 
   uint *ptr, *end;
   for (ptr= table->s->blob_field, end=ptr + table->s->blob_fields ;
        ptr != end ;
        ptr++)
   {
-    if (!table->field[*ptr]->is_null())
-      length += 2 + ((Field_blob*)table->field[*ptr])->get_length();
+    if (!table->field[*ptr]->is_null(rec_offset))
+      length += 2 + ((Field_blob*)table->field[*ptr])->get_length(rec_offset);
   }
 
   return length;
@@ -898,9 +920,8 @@ uint32 ha_archive::max_row_length(const uchar *buf)
 unsigned int ha_archive::pack_row(uchar *record, azio_stream *writer)
 {
   uchar *ptr;
-
+  my_ptrdiff_t const rec_offset= record - table->record[0];
   DBUG_ENTER("ha_archive::pack_row");
-
 
   if (fix_rec_buff(max_row_length(record)))
     DBUG_RETURN(HA_ERR_OUT_OF_MEM); /* purecov: inspected */
@@ -915,7 +936,7 @@ unsigned int ha_archive::pack_row(uchar *record, azio_stream *writer)
 
   for (Field **field=table->field ; *field ; field++)
   {
-    if (!((*field)->is_null()))
+    if (!((*field)->is_null(rec_offset)))
       ptr= (*field)->pack(ptr, record + (*field)->offset(record));
   }
 
@@ -1340,7 +1361,7 @@ int ha_archive::get_row_version2(azio_stream *file_to_read, uchar *buf)
 
         if ((size_t) read != size)
           DBUG_RETURN(HA_ERR_END_OF_FILE);
-        ((Field_blob*) table->field[*ptr])->set_ptr(size, (uchar*) last);
+        ((Field_blob*) table->field[*ptr])->set_ptr(read, (uchar*) last);
         last += size;
       }
       else
@@ -1645,7 +1666,7 @@ void ha_archive::update_create_info(HA_CREATE_INFO *create_info)
   }
 
   if (!(my_readlink(tmp_real_path, share->data_file_name, MYF(0))))
-    create_info->data_file_name= sql_strdup(tmp_real_path);
+    create_info->data_file_name= thd_strdup(ha_thd(), tmp_real_path);
 
   DBUG_VOID_RETURN;
 }

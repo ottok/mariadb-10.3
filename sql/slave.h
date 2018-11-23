@@ -18,6 +18,14 @@
 #define SLAVE_H
 
 /**
+  MASTER_DELAY can be at most (1 << 31) - 1.
+*/
+#define MASTER_DELAY_MAX (0x7FFFFFFF)
+#if INT_MAX < 0x7FFFFFFF
+#error "don't support platforms where INT_MAX < 0x7FFFFFFF"
+#endif
+
+/**
   @defgroup Replication Replication
   @{
 
@@ -40,10 +48,11 @@
 #include "my_list.h"
 #include "rpl_filter.h"
 #include "rpl_tblmap.h"
+#include "rpl_gtid.h"
 
-#define SLAVE_NET_TIMEOUT  3600
+#define SLAVE_NET_TIMEOUT  60
 
-#define MAX_SLAVE_ERROR    2000
+#define MAX_SLAVE_ERROR    ER_ERROR_LAST+1
 
 #define MAX_REPLICATION_THREAD 64
 
@@ -102,12 +111,14 @@ int init_dynarray_intvar_from_file(DYNAMIC_ARRAY* arr, IO_CACHE* f);
 
   In Master_info: run_lock, data_lock
   run_lock protects all information about the run state: slave_running, thd
-  and the existence of the I/O thread to stop/start it, you need this mutex).
+  and the existence of the I/O thread (to stop/start it, you need this mutex).
   data_lock protects some moving members of the struct: counters (log name,
   position) and relay log (MYSQL_BIN_LOG object).
 
   In Relay_log_info: run_lock, data_lock
   see Master_info
+  However, note that run_lock does not protect
+  Relay_log_info.run_state; that is protected by data_lock.
   
   Order of acquisition: if you want to have LOCK_active_mi and a run_lock, you
   must acquire LOCK_active_mi first.
@@ -121,6 +132,9 @@ extern ulong master_retry_count;
 extern MY_BITMAP slave_error_mask;
 extern char slave_skip_error_names[];
 extern bool use_slave_mask;
+extern char slave_transaction_retry_error_names[];
+extern uint *slave_transaction_retry_errors;
+extern uint slave_transaction_retry_error_length;
 extern char *slave_load_tmpdir;
 extern char *master_info_file;
 extern MYSQL_PLUGIN_IMPORT char *relay_log_info_file;
@@ -128,8 +142,10 @@ extern char *opt_relay_logname, *opt_relaylog_index_name;
 extern my_bool opt_skip_slave_start, opt_reckless_slave;
 extern my_bool opt_log_slave_updates;
 extern char *opt_slave_skip_errors;
+extern char *opt_slave_transaction_retry_errors;
 extern my_bool opt_replicate_annotate_row_events;
 extern ulonglong relay_log_space_limit;
+extern ulonglong opt_read_binlog_speed_limit;
 extern ulonglong slave_skipped_errors;
 extern const char *relay_log_index;
 extern const char *relay_log_basename;
@@ -172,8 +188,8 @@ extern const char *relay_log_basename;
 
 int init_slave();
 int init_recovery(Master_info* mi, const char** errmsg);
-void init_slave_skip_errors(const char* arg);
-bool flush_relay_log_info(Relay_log_info* rli);
+bool init_slave_skip_errors(const char* arg);
+bool init_slave_transaction_retry_errors(const char* arg);
 int register_slave_on_master(MYSQL* mysql);
 int terminate_slave_threads(Master_info* mi, int thread_mask,
 			     bool skip_lock = 0);
@@ -241,22 +257,31 @@ void set_slave_thread_options(THD* thd);
 void set_slave_thread_default_charset(THD *thd, rpl_group_info *rgi);
 int rotate_relay_log(Master_info* mi);
 int has_temporary_error(THD *thd);
+int sql_delay_event(Log_event *ev, THD *thd, rpl_group_info *rgi);
 int apply_event_and_update_pos(Log_event* ev, THD* thd,
                                struct rpl_group_info *rgi);
 int apply_event_and_update_pos_for_parallel(Log_event* ev, THD* thd,
                                             struct rpl_group_info *rgi);
+
+int init_intvar_from_file(int* var, IO_CACHE* f, int default_val);
+int init_floatvar_from_file(float* var, IO_CACHE* f, float default_val);
+int init_strvar_from_file(char *var, int max_size, IO_CACHE *f,
+                          const char *default_val);
+int init_dynarray_intvar_from_file(DYNAMIC_ARRAY* arr, IO_CACHE* f);
 
 pthread_handler_t handle_slave_io(void *arg);
 void slave_output_error_info(rpl_group_info *rgi, THD *thd);
 pthread_handler_t handle_slave_sql(void *arg);
 bool net_request_file(NET* net, const char* fname);
 void slave_background_kill_request(THD *to_kill);
+void slave_background_gtid_pos_create_request
+        (rpl_slave_state::gtid_pos_table *table_entry);
 
 extern bool volatile abort_loop;
 extern Master_info *active_mi; /* active_mi for multi-master */
 extern Master_info *default_master_info; /* To replace active_mi */
 extern Master_info_index *master_info_index;
-extern LEX_STRING default_master_connection_name;
+extern LEX_CSTRING default_master_connection_name;
 extern my_bool replicate_same_server_id;
 
 extern int disconnect_slave_event_count, abort_slave_event_count ;

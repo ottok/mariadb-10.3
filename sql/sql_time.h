@@ -17,7 +17,6 @@
 #ifndef SQL_TIME_INCLUDED
 #define SQL_TIME_INCLUDED
 
-#include "my_global.h"                          /* ulong */
 #include "my_time.h"
 #include "mysql_time.h"                         /* timestamp_type */
 #include "sql_error.h"                          /* Sql_condition */
@@ -39,8 +38,7 @@ bool time_to_datetime(MYSQL_TIME *ltime);
 void time_to_daytime_interval(MYSQL_TIME *l_time);
 bool get_date_from_daynr(long daynr,uint *year, uint *month, uint *day);
 my_time_t TIME_to_timestamp(THD *thd, const MYSQL_TIME *t, uint *error_code);
-bool str_to_datetime_with_warn(CHARSET_INFO *cs, const char *str,
-                               uint length, MYSQL_TIME *l_time,
+bool str_to_datetime_with_warn(CHARSET_INFO *cs, const char *str, size_t length, MYSQL_TIME *l_time,
                                ulonglong flags);
 bool double_to_datetime_with_warn(double value, MYSQL_TIME *ltime,
                                   ulonglong fuzzydate,
@@ -106,7 +104,7 @@ inline void datetime_to_date(MYSQL_TIME *ltime)
   DBUG_ASSERT(ltime->time_type == MYSQL_TIMESTAMP_DATE ||
               ltime->time_type == MYSQL_TIMESTAMP_DATETIME);
   DBUG_ASSERT(ltime->neg == 0);
-  ltime->hour= ltime->minute= ltime->second= ltime->second_part= 0;
+  ltime->second_part= ltime->hour= ltime->minute= ltime->second= 0;
   ltime->time_type= MYSQL_TIMESTAMP_DATE;
 }
 inline void date_to_datetime(MYSQL_TIME *ltime)
@@ -123,8 +121,7 @@ void make_truncated_value_warning(THD *thd,
                                   const char *field_name);
 
 static inline void make_truncated_value_warning(THD *thd,
-                Sql_condition::enum_warning_level level, const char *str_val,
-                uint str_length, timestamp_type time_type,
+                Sql_condition::enum_warning_level level, const char *str_val, size_t str_length, timestamp_type time_type,
                 const char *field_name)
 {
   const ErrConvString str(str_val, str_length, &my_charset_bin);
@@ -142,9 +139,11 @@ bool my_TIME_to_str(const MYSQL_TIME *ltime, String *str, uint dec);
 
 /* MYSQL_TIME operations */
 bool date_add_interval(MYSQL_TIME *ltime, interval_type int_type,
-                       INTERVAL interval);
+                       const INTERVAL &interval);
 bool calc_time_diff(const MYSQL_TIME *l_time1, const MYSQL_TIME *l_time2,
                     int l_sign, longlong *seconds_out, long *microseconds_out);
+int append_interval(String *str, interval_type int_type,
+                    const INTERVAL &interval);
 /**
   Calculate time difference between two MYSQL_TIME values and
   store the result as an out MYSQL_TIME value in MYSQL_TIMESTAMP_TIME format.
@@ -171,6 +170,7 @@ bool calc_time_diff(const MYSQL_TIME *l_time1, const MYSQL_TIME *l_time2,
                     int lsign, MYSQL_TIME *l_time3, ulonglong fuzzydate);
 int my_time_compare(const MYSQL_TIME *a, const MYSQL_TIME *b);
 void localtime_to_TIME(MYSQL_TIME *to, struct tm *from);
+
 void calc_time_from_sec(MYSQL_TIME *to, long seconds, long microseconds);
 uint calc_week(MYSQL_TIME *l_time, uint week_behaviour, uint *year);
 
@@ -179,12 +179,12 @@ bool parse_date_time_format(timestamp_type format_type,
                             const char *format, uint format_length,
                             DATE_TIME_FORMAT *date_time_format);
 /* Character set-aware version of str_to_time() */
-bool str_to_time(CHARSET_INFO *cs, const char *str,uint length,
+bool str_to_time(CHARSET_INFO *cs, const char *str,size_t length,
                  MYSQL_TIME *l_time, ulonglong fuzzydate,
                  MYSQL_TIME_STATUS *status);
 /* Character set-aware version of str_to_datetime() */
 bool str_to_datetime(CHARSET_INFO *cs,
-                     const char *str, uint length,
+                     const char *str, size_t length,
                      MYSQL_TIME *l_time, ulonglong flags,
                      MYSQL_TIME_STATUS *status);
 
@@ -194,7 +194,7 @@ inline bool parse_date_time_format(timestamp_type format_type,
 {
   return parse_date_time_format(format_type,
                                 date_time_format->format.str,
-                                date_time_format->format.length,
+                                (uint) date_time_format->format.length,
                                 date_time_format);
 }
 
@@ -203,7 +203,7 @@ extern DATE_TIME_FORMAT global_date_format;
 extern DATE_TIME_FORMAT global_datetime_format;
 extern DATE_TIME_FORMAT global_time_format;
 extern KNOWN_DATE_TIME_FORMAT known_date_time_formats[];
-extern LEX_STRING interval_type_to_name[];
+extern LEX_CSTRING interval_type_to_name[];
 
 static inline bool
 non_zero_hhmmssuu(const MYSQL_TIME *ltime)
@@ -232,5 +232,9 @@ bool check_date_with_warn(const MYSQL_TIME *ltime, ulonglong fuzzy_date,
 bool make_date_with_warn(MYSQL_TIME *ltime,
                          ulonglong fuzzy_date, timestamp_type ts_type);
 bool adjust_time_range_with_warn(MYSQL_TIME *ltime, uint dec);
+
+longlong pack_time(const MYSQL_TIME *my_time);
+void unpack_time(longlong packed, MYSQL_TIME *my_time,
+                 enum_mysql_timestamp_type ts_type);
 
 #endif /* SQL_TIME_INCLUDED */

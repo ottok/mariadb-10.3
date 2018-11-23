@@ -18,15 +18,16 @@
   on Windows.
 */
 #define DONT_DEFINE_VOID
-#include <my_global.h>
+#include "mariadb.h"
 #include <my_getopt.h>
-#include <my_sys.h>
 #include <m_string.h>
 
 #include <windows.h>
 #include <shellapi.h>
 #include <accctrl.h>
 #include <aclapi.h>
+struct IUnknown;
+#include <shlwapi.h>
 
 #define USAGETEXT \
 "mysql_install_db.exe  Ver 1.00 for Windows\n" \
@@ -47,6 +48,7 @@ static char *opt_datadir;
 static char *opt_service;
 static char *opt_password;
 static int  opt_port;
+static int  opt_innodb_page_size;
 static char *opt_socket;
 static char *opt_os_user;
 static char *opt_os_password;
@@ -56,6 +58,7 @@ static my_bool opt_skip_networking;
 static my_bool opt_verbose_bootstrap;
 static my_bool verbose_errors;
 
+#define DEFAULT_INNODB_PAGE_SIZE 16*1024
 
 static struct my_option my_long_options[]=
 {
@@ -81,6 +84,8 @@ static struct my_option my_long_options[]=
   {"skip-networking", 'N', "Do not use TCP connections, use pipe instead",
   &opt_skip_networking, &opt_skip_networking, 0 , GET_BOOL, OPT_ARG, 0, 0, 0, 0,
   0, 0},
+  { "innodb-page-size", 'i', "Page size for innodb",
+  &opt_innodb_page_size, &opt_innodb_page_size, 0, GET_INT, REQUIRED_ARG, DEFAULT_INNODB_PAGE_SIZE, 1*1024, 64*1024, 0, 0, 0 },
   {"silent", 's', "Print less information", &opt_silent,
    &opt_silent, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
   {"verbose-bootstrap", 'o', "Include mysqld bootstrap output",&opt_verbose_bootstrap,
@@ -90,9 +95,7 @@ static struct my_option my_long_options[]=
 
 
 static my_bool
-get_one_option(int optid, 
-   const struct my_option *opt __attribute__ ((unused)),
-   char *argument __attribute__ ((unused)))
+get_one_option(int optid, const struct my_option *,  char *)
 {
   DBUG_ENTER("get_one_option");
   switch (optid) {
@@ -106,7 +109,7 @@ get_one_option(int optid,
 }
 
 
-static void die(const char *fmt, ...)
+ATTRIBUTE_NORETURN  static void die(const char *fmt, ...)
 {
   va_list args;
   DBUG_ENTER("die");
@@ -259,13 +262,13 @@ static char *init_bootstrap_command_line(char *cmdline, size_t size)
   char basedir[MAX_PATH];
   get_basedir(basedir, sizeof(basedir), mysqld_path);
 
-  my_snprintf(cmdline, size-1, 
-    "\"\"%s\" --no-defaults %s --bootstrap"
+  my_snprintf(cmdline, size - 1,
+    "\"\"%s\" --no-defaults %s --innodb-page-size=%d --bootstrap"
     " \"--lc-messages-dir=%s/share\""
     " --basedir=. --datadir=. --default-storage-engine=myisam"
     " --max_allowed_packet=9M "
     " --net-buffer-length=16k\"", mysqld_path,
-    opt_verbose_bootstrap?"--console":"", basedir );
+    opt_verbose_bootstrap ? "--console" : "", opt_innodb_page_size, basedir);
   return cmdline;
 }
 
@@ -287,7 +290,7 @@ static int create_myini()
   FILE *myini= fopen("my.ini","wt");
   if (!myini)
   {
-    die("Cannot create my.ini in data directory");
+    die("Can't create my.ini in data directory");
   }
 
   /* Write out server settings. */
@@ -305,7 +308,7 @@ static int create_myini()
 
   if (enable_named_pipe)
   {
-    fprintf(myini,"enable-named-pipe\n");
+    fprintf(myini,"named-pipe=ON\n");
   }
 
   if (opt_socket && opt_socket[0])
@@ -316,7 +319,10 @@ static int create_myini()
   {
     fprintf(myini,"port=%d\n", opt_port);
   }
-
+  if (opt_innodb_page_size != DEFAULT_INNODB_PAGE_SIZE)
+  {
+    fprintf(myini, "innodb-page-size=%d\n", opt_innodb_page_size);
+  }
   /* Write out client settings. */
   fprintf(myini, "[client]\n");
 
@@ -436,7 +442,6 @@ static int set_directory_permissions(const char *dir, const char *os_user)
   ACL* pOldDACL;
   SECURITY_DESCRIPTOR* pSD= NULL; 
   EXPLICIT_ACCESS ea={0};
-  BOOL isWellKnownSID= FALSE;
   WELL_KNOWN_SID_TYPE wellKnownSidType = WinNullSid;
   PSID pSid= NULL;
 
@@ -503,7 +508,7 @@ static int set_directory_permissions(const char *dir, const char *os_user)
   ea.grfInheritance= CONTAINER_INHERIT_ACE|OBJECT_INHERIT_ACE; 
   ea.Trustee.TrusteeType= TRUSTEE_IS_UNKNOWN; 
   ACL* pNewDACL= 0; 
-  DWORD err= SetEntriesInAcl(1,&ea,pOldDACL,&pNewDACL); 
+  SetEntriesInAcl(1,&ea,pOldDACL,&pNewDACL);
   if (pNewDACL)
   {
     SetSecurityInfo(hDir,SE_FILE_OBJECT,DACL_SECURITY_INFORMATION,NULL, NULL,
@@ -518,27 +523,6 @@ static int set_directory_permissions(const char *dir, const char *os_user)
 }
 
 
-/* 
-  Give directory permissions for special service user NT SERVICE\servicename
-  this user is available only on Win7 and later.
-*/
-
-void grant_directory_permissions_to_service()
-{
-  char service_user[MAX_PATH+ 12];
-  OSVERSIONINFO info;
-  info.dwOSVersionInfoSize= sizeof(info);
-  GetVersionEx(&info);
-  if (info.dwMajorVersion >6 || 
-    (info.dwMajorVersion== 6 && info.dwMinorVersion > 0)
-    && opt_service)
-  {
-    my_snprintf(service_user,sizeof(service_user), "NT SERVICE\\%s", 
-      opt_service);
-    set_directory_permissions(opt_datadir, service_user);
-  }
-}
-
 
 /* Create database instance (including registering as service etc) .*/
 
@@ -549,20 +533,78 @@ static int create_db_instance()
   DWORD cwd_len= MAX_PATH;
   char cmdline[3*MAX_PATH];
   FILE *in;
+  bool cleanup_datadir= true;
+  DWORD last_error;
 
   verbose("Running bootstrap");
 
   GetCurrentDirectory(cwd_len, cwd);
-  CreateDirectory(opt_datadir, NULL); /*ignore error, it might already exist */
+
+  /* Create datadir and datadir/mysql, if they do not already exist. */
+
+  if (!CreateDirectory(opt_datadir, NULL) && (GetLastError() != ERROR_ALREADY_EXISTS))
+  {
+    last_error = GetLastError();
+    switch(last_error)
+    {
+      case ERROR_ACCESS_DENIED:
+        die("Can't create data directory '%s' (access denied)\n",
+            opt_datadir);
+        break;
+      case ERROR_PATH_NOT_FOUND:
+        die("Can't create data directory '%s' "
+            "(one or more intermediate directories do not exist)\n",
+            opt_datadir);
+        break;
+      default:
+        die("Can't create data directory '%s', last error %u\n",
+         opt_datadir, last_error);
+        break;
+    }
+  }
 
   if (!SetCurrentDirectory(opt_datadir))
   {
-    die("Cannot set current directory to '%s'\n",opt_datadir);
-    return -1;
+    last_error = GetLastError();
+    switch (last_error)
+    {
+      case ERROR_DIRECTORY:
+        die("Can't set current directory to '%s', the path is not a valid directory \n",
+            opt_datadir);
+        break;
+      default:
+        die("Can' set current directory to '%s', last error %u\n",
+            opt_datadir, last_error);
+        break;
+    }
   }
 
-  CreateDirectory("mysql",NULL);
-  CreateDirectory("test", NULL);
+  if (PathIsDirectoryEmpty(opt_datadir))
+  {
+    cleanup_datadir= false;
+  }
+
+  if (!CreateDirectory("mysql",NULL))
+  {
+    last_error = GetLastError();
+    DWORD attributes;
+    switch(last_error)
+    {
+      case ERROR_ACCESS_DENIED:
+        die("Can't create subdirectory 'mysql' in '%s' (access denied)\n",opt_datadir);
+        break;
+      case ERROR_ALREADY_EXISTS:
+       attributes = GetFileAttributes("mysql");
+
+       if (attributes == INVALID_FILE_ATTRIBUTES)
+         die("GetFileAttributes() failed for existing file '%s\\mysql', last error %u",
+            opt_datadir, GetLastError());
+       else if (!(attributes & FILE_ATTRIBUTE_DIRECTORY))
+         die("File '%s\\mysql' exists, but it is not a directory", opt_datadir);
+
+       break;
+    }
+  }
 
   /*
     Set data directory permissions for both current user and 
@@ -583,11 +625,11 @@ static int create_db_instance()
 
   if (setvbuf(in, NULL, _IONBF, 0))
   {
-    verbose("WARNING: Cannot disable buffering on mysqld's stdin");
+    verbose("WARNING: Can't disable buffering on mysqld's stdin");
   }
   if (fwrite("use mysql;\n",11,1, in) != 1)
   {
-    verbose("ERROR: Cannot write to mysqld's stdin");
+    verbose("ERROR: Can't write to mysqld's stdin");
     ret= 1;
     goto end;
   }
@@ -598,7 +640,7 @@ static int create_db_instance()
     /* Write the bootstrap script to stdin. */
     if (fwrite(mysql_bootstrap_sql[i], strlen(mysql_bootstrap_sql[i]), 1, in) != 1)
     {
-      verbose("ERROR: Cannot write to mysqld's stdin");
+      verbose("ERROR: Can't write to mysqld's stdin");
       ret= 1;
       goto end;
     }
@@ -652,13 +694,6 @@ static int create_db_instance()
     goto end;
   }
 
-  /* 
-    Remove innodb log files if they exist (this works around "different size logs" 
-    error in MSI installation). TODO : remove this with the next Innodb, where
-    different size is handled gracefully.
-  */
-  DeleteFile("ib_logfile0");
-  DeleteFile("ib_logfile1");
 
   /* Create my.ini file in data directory.*/
   ret= create_myini();
@@ -669,13 +704,12 @@ static int create_db_instance()
   if (opt_service && opt_service[0])
   {
     ret= register_service();
-    grant_directory_permissions_to_service();
     if (ret)
       goto end;
   }
 
 end:
-  if (ret)
+  if (ret && cleanup_datadir)
   {
     SetCurrentDirectory(cwd);
     clean_directory(opt_datadir);

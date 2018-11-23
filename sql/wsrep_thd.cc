@@ -13,8 +13,8 @@
    with this program; if not, write to the Free Software Foundation, Inc.,
    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA. */
 
+#include "mariadb.h"
 #include "wsrep_thd.h"
-
 #include "transaction.h"
 #include "rpl_rli.h"
 #include "log_event.h"
@@ -50,8 +50,8 @@ int wsrep_show_bf_aborts (THD *thd, SHOW_VAR *var, char *buff,
 /* must have (&thd->LOCK_thd_data) */
 void wsrep_client_rollback(THD *thd)
 {
-  WSREP_DEBUG("client rollback due to BF abort for (%ld), query: %s",
-              thd->thread_id, thd->query());
+  WSREP_DEBUG("client rollback due to BF abort for (%lld), query: %s",
+              (longlong) thd->thread_id, thd->query());
 
   WSREP_ATOMIC_ADD_LONG(&wsrep_bf_aborts_counter, 1);
 
@@ -61,14 +61,16 @@ void wsrep_client_rollback(THD *thd)
 
   if (thd->locked_tables_mode && thd->lock)
   {
-    WSREP_DEBUG("unlocking tables for BF abort (%ld)", thd->thread_id);
+    WSREP_DEBUG("unlocking tables for BF abort (%lld)",
+                (longlong) thd->thread_id);
     thd->locked_tables_list.unlock_locked_tables(thd);
     thd->variables.option_bits&= ~(OPTION_TABLE_LOCK);
   }
 
   if (thd->global_read_lock.is_acquired())
   {
-    WSREP_DEBUG("unlocking GRL for BF abort (%ld)", thd->thread_id);
+    WSREP_DEBUG("unlocking GRL for BF abort (%lld)",
+                (longlong) thd->thread_id);
     thd->global_read_lock.unlock_global_read_lock(thd);
   }
 
@@ -80,7 +82,8 @@ void wsrep_client_rollback(THD *thd)
 
   if (thd->get_binlog_table_maps())
   {
-    WSREP_DEBUG("clearing binlog table map for BF abort (%ld)", thd->thread_id);
+    WSREP_DEBUG("clearing binlog table map for BF abort (%lld)",
+                (longlong) thd->thread_id);
     thd->clear_binlog_table_maps();
   }
   mysql_mutex_lock(&thd->LOCK_thd_data);
@@ -94,14 +97,13 @@ static rpl_group_info* wsrep_relay_group_init(const char* log_fname)
 {
   Relay_log_info* rli= new Relay_log_info(false);
 
-  rli->no_storage= true;
   if (!rli->relay_log.description_event_for_exec)
   {
     rli->relay_log.description_event_for_exec=
       new Format_description_log_event(4);
   }
 
-  static LEX_STRING connection_name= { C_STRING_WITH_LEN("wsrep") };
+  static LEX_CSTRING connection_name= { STRING_WITH_LEN("wsrep") };
 
   /*
     Master_info's constructor initializes rpl_filter by either an already
@@ -162,22 +164,23 @@ static void wsrep_prepare_bf_thd(THD *thd, struct wsrep_thd_shadow* shadow)
   thd->variables.tx_isolation = ISO_READ_COMMITTED;
   thd->tx_isolation           = ISO_READ_COMMITTED;
 
-  shadow->db            = thd->db;
-  shadow->db_length     = thd->db_length;
+  shadow->db            = thd->db.str;
+  shadow->db_length     = thd->db.length;
   shadow->user_time     = thd->user_time;
   shadow->row_count_func= thd->get_row_count_func();
-  thd->reset_db(NULL, 0);
+  thd->reset_db(&null_clex_str);
 }
 
 static void wsrep_return_from_bf_mode(THD *thd, struct wsrep_thd_shadow* shadow)
 {
+  LEX_CSTRING db= {shadow->db, shadow->db_length };
   thd->variables.option_bits  = shadow->options;
   thd->server_status          = shadow->server_status;
   thd->wsrep_exec_mode        = shadow->wsrep_exec_mode;
   thd->net.vio                = shadow->vio;
   thd->variables.tx_isolation = shadow->tx_isolation;
   thd->user_time              = shadow->user_time;
-  thd->reset_db(shadow->db, shadow->db_length);
+  thd->reset_db(&db);
 
   delete thd->system_thread_info.rpl_sql_info;
   delete thd->wsrep_rgi->rli->mi;
@@ -236,8 +239,8 @@ void wsrep_replay_transaction(THD *thd)
       close_thread_tables(thd);
       if (thd->locked_tables_mode && thd->lock)
       {
-        WSREP_DEBUG("releasing table lock for replaying (%ld)",
-                    thd->thread_id);
+        WSREP_DEBUG("releasing table lock for replaying (%lld)",
+                    (longlong) thd->thread_id);
         thd->locked_tables_list.unlock_locked_tables(thd);
         thd->variables.option_bits&= ~(OPTION_TABLE_LOCK);
       }
@@ -250,7 +253,7 @@ void wsrep_replay_transaction(THD *thd)
       MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
       thd->m_statement_psi= NULL;
       thd->m_digest= NULL;
-      thd_proc_info(thd, "wsrep replaying trx");
+      thd_proc_info(thd, "WSREP replaying trx");
       WSREP_DEBUG("replay trx: %s %lld",
                   thd->query() ? thd->query() : "void",
                   (long long)wsrep_thd_trx_seqno(thd));
@@ -276,15 +279,16 @@ void wsrep_replay_transaction(THD *thd)
       case WSREP_OK:
         thd->wsrep_conflict_state= NO_CONFLICT;
         wsrep->post_commit(wsrep, &thd->wsrep_ws_handle);
-        WSREP_DEBUG("trx_replay successful for: %ld %llu",
-                    thd->thread_id, (long long)thd->real_id);
+        WSREP_DEBUG("trx_replay successful for: %lld %lld",
+                    (longlong) thd->thread_id, (longlong) thd->real_id);
         if (thd->get_stmt_da()->is_sent())
         {
           WSREP_WARN("replay ok, thd has reported status");
         }
         else if (thd->get_stmt_da()->is_set())
         {
-          if (thd->get_stmt_da()->status() != Diagnostics_area::DA_OK)
+          if (thd->get_stmt_da()->status() != Diagnostics_area::DA_OK &&
+              thd->get_stmt_da()->status() != Diagnostics_area::DA_OK_BULK)
           {
             WSREP_WARN("replay ok, thd has error status %d",
                        thd->get_stmt_da()->status());
@@ -313,15 +317,13 @@ void wsrep_replay_transaction(THD *thd)
         else
         {
           WSREP_DEBUG("replay failed, rolling back");
-          //my_error(ER_LOCK_DEADLOCK, MYF(0), "wsrep aborted transaction");
         }
         thd->wsrep_conflict_state= ABORTED;
         wsrep->post_rollback(wsrep, &thd->wsrep_ws_handle);
         break;
       default:
         WSREP_ERROR("trx_replay failed for: %d, schema: %s, query: %s",
-                    rcode,
-                    (thd->db ? thd->db : "(null)"),
+                    rcode, thd->get_db(),
                     thd->query() ? thd->query() : "void");
         /* we're now in inconsistent state, must abort */
 
@@ -336,8 +338,8 @@ void wsrep_replay_transaction(THD *thd)
 
       mysql_mutex_lock(&LOCK_wsrep_replaying);
       wsrep_replaying--;
-      WSREP_DEBUG("replaying decreased: %d, thd: %lu",
-                  wsrep_replaying, thd->thread_id);
+      WSREP_DEBUG("replaying decreased: %d, thd: %lld",
+                  wsrep_replaying, (longlong) thd->thread_id);
       mysql_cond_broadcast(&COND_wsrep_replaying);
       mysql_mutex_unlock(&LOCK_wsrep_replaying);
     }
@@ -403,13 +405,10 @@ static void wsrep_replication_process(THD *thd)
   mysql_cond_broadcast(&COND_thread_count);
   mysql_mutex_unlock(&LOCK_thread_count);
 
-  TABLE *tmp;
-  while ((tmp = thd->temporary_tables))
+  if(thd->has_thd_temporary_tables())
   {
-    WSREP_WARN("Applier %lu, has temporary tables at exit: %s.%s",
-                  thd->thread_id, 
-                  (tmp->s) ? tmp->s->db.str : "void",
-                  (tmp->s) ? tmp->s->table_name.str : "void");
+    WSREP_WARN("Applier %lld has temporary tables at exit.",
+               thd->thread_id);
   }
   wsrep_return_from_bf_mode(thd, &shadow);
   DBUG_VOID_RETURN;
@@ -464,7 +463,7 @@ static void wsrep_rollback_process(THD *thd)
   wsrep_aborting_thd= NULL;
 
   while (thd->killed == NOT_KILLED) {
-    thd_proc_info(thd, "wsrep aborter idle");
+    thd_proc_info(thd, "WSREP aborter idle");
     thd->mysys_var->current_mutex= &LOCK_wsrep_rollback;
     thd->mysys_var->current_cond=  &COND_wsrep_rollback;
 
@@ -473,7 +472,7 @@ static void wsrep_rollback_process(THD *thd)
     WSREP_DEBUG("WSREP rollback thread wakes for signal");
 
     mysql_mutex_lock(&thd->mysys_var->mutex);
-    thd_proc_info(thd, "wsrep aborter active");
+    thd_proc_info(thd, "WSREP aborter active");
     thd->mysys_var->current_mutex= 0;
     thd->mysys_var->current_cond=  0;
     mysql_mutex_unlock(&thd->mysys_var->mutex);
@@ -516,8 +515,9 @@ static void wsrep_rollback_process(THD *thd)
 
       mysql_mutex_lock(&aborting->LOCK_thd_data);
       wsrep_client_rollback(aborting);
-      WSREP_DEBUG("WSREP rollbacker aborted thd: (%lu %llu)",
-                  aborting->thread_id, (long long)aborting->real_id);
+      WSREP_DEBUG("WSREP rollbacker aborted thd: (%lld %lld)",
+                  (longlong) aborting->thread_id,
+                  (longlong) aborting->real_id);
       mysql_mutex_unlock(&aborting->LOCK_thd_data);
 
       set_current_thd(thd); 

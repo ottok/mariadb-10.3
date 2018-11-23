@@ -17,6 +17,7 @@
 INCLUDE_DIRECTORIES(${ZLIB_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/mysys)
 
 SET(MYSYS_SOURCES  array.c charset-def.c charset.c checksum.c my_default.c
+                get_password.c
 				errors.c hash.c list.c
                                 mf_cache.c mf_dirname.c mf_fn_ext.c
 				mf_format.c mf_getdate.c mf_iocache.c mf_iocache2.c mf_keycache.c 
@@ -36,12 +37,14 @@ SET(MYSYS_SOURCES  array.c charset-def.c charset.c checksum.c my_default.c
 				string.c thr_alarm.c thr_lock.c thr_mutex.c
 				thr_rwlock.c thr_timer.c
                                 tree.c typelib.c base64.c my_memmem.c
-                                 my_getpagesize.c
+                                my_getpagesize.c
+                                guess_malloc_library.c
 				lf_alloc-pin.c lf_dynarray.c lf_hash.c
                                 safemalloc.c my_new.cc
-				my_atomic.c my_getncpus.c my_safehash.c my_chmod.c my_rnd.c
-                                my_uuid.c wqueue.c waiting_threads.c ma_dyncol.c
+				my_getncpus.c my_safehash.c my_chmod.c my_rnd.c
+                                my_uuid.c wqueue.c waiting_threads.c ma_dyncol.c ../sql-common/my_time.c
 				my_rdtsc.c my_context.c psi_noop.c
+				my_atomic_writes.c my_likely.c
                                 file_logger.c my_dlerror.c)
 
 IF (WIN32)
@@ -62,7 +65,7 @@ IF(CMAKE_SYSTEM_NAME MATCHES "SunOS" AND CMAKE_C_COMPILER_ID MATCHES "SunPro")
    PROPERTIES COMPILE_FLAGS "${CMAKE_CURRENT_SOURCE_DIR}/my_timer_cycles.il")
 ENDIF()
 
-IF(HAVE_LARGE_PAGES)
+IF(HAVE_LINUX_LARGE_PAGES)
  SET(MYSYS_SOURCES ${MYSYS_SOURCES} my_largepage.c)
 ENDIF()
 
@@ -72,7 +75,7 @@ ENDIF()
 
 ADD_CONVENIENCE_LIBRARY(mysys ${MYSYS_SOURCES})
 TARGET_LINK_LIBRARIES(mysys dbug strings mysys_ssl ${ZLIB_LIBRARY} 
- ${LIBNSL} ${LIBM} ${LIBRT} ${LIBDL} ${LIBSOCKET} ${LIBEXECINFO})
+ ${LIBNSL} ${LIBM} ${LIBRT} ${LIBDL} ${LIBSOCKET} ${LIBEXECINFO} ${CRC32_LIBRARY})
 DTRACE_INSTRUMENT(mysys)
 
 IF(HAVE_BFD_H)
@@ -95,6 +98,10 @@ SET_TARGET_PROPERTIES(thr_lock PROPERTIES COMPILE_FLAGS "-DMAIN")
 ADD_EXECUTABLE(thr_timer thr_timer.c)
 TARGET_LINK_LIBRARIES(thr_timer mysys)
 SET_TARGET_PROPERTIES(thr_timer PROPERTIES COMPILE_FLAGS "-DMAIN")
+
+ADD_EXECUTABLE(test_hash hash.c)
+TARGET_LINK_LIBRARIES(test_hash mysys)
+SET_TARGET_PROPERTIES(test_hash PROPERTIES COMPILE_FLAGS "-DMAIN")
 
 IF(MSVC)
    INSTALL_DEBUG_TARGET(mysys DESTINATION ${INSTALL_LIBDIR}/debug)

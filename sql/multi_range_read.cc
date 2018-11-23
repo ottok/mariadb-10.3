@@ -13,10 +13,12 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include "mariadb.h"
 #include "sql_parse.h"
 #include <my_bit.h>
 #include "sql_select.h"
 #include "key.h"
+#include "sql_statistics.h"
 
 /****************************************************************************
  * Default MRR implementation (MRR to non-MRR converter)
@@ -63,7 +65,12 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
   ha_rows rows, total_rows= 0;
   uint n_ranges=0;
   THD *thd= table->in_use;
+  uint limit= thd->variables.eq_range_index_dive_limit;
   
+  bool use_statistics_for_eq_range= eq_ranges_exceeds_limit(seq,
+                                                            seq_init_param,
+                                                            limit);
+
   /* Default MRR implementation doesn't need buffer */
   *bufsz= 0;
 
@@ -87,8 +94,15 @@ handler::multi_range_read_info_const(uint keyno, RANGE_SEQ_IF *seq,
       min_endp= range.start_key.length? &range.start_key : NULL;
       max_endp= range.end_key.length? &range.end_key : NULL;
     }
+    int keyparts_used= my_count_bits(range.start_key.keypart_map);
     if ((range.range_flag & UNIQUE_RANGE) && !(range.range_flag & NULL_RANGE))
       rows= 1; /* there can be at most one row */
+    else if (use_statistics_for_eq_range &&
+             !(range.range_flag & NULL_RANGE) &&
+             (range.range_flag & EQ_RANGE) &&
+             table->key_info[keyno].actual_rec_per_key(keyparts_used - 1) > 0.5)
+      rows=
+        (ha_rows) table->key_info[keyno].actual_rec_per_key(keyparts_used - 1);
     else
     {
       if (HA_POS_ERROR == (rows= this->records_in_range(keyno, min_endp, 
@@ -755,12 +769,6 @@ int Mrr_ordered_rndpos_reader::get_next(range_id_t *range_info)
 
     res= file->ha_rnd_pos(file->get_table()->record[0], 
                           rowid_buffer->read_ptr1);
-
-    if (res == HA_ERR_RECORD_DELETED)
-    {
-      /* not likely to get this code with current storage engines, but still */
-      continue;
-    }
 
     if (res)
       return res; /* Some fatal error */
@@ -1655,10 +1663,10 @@ int DsMrr_impl::dsmrr_explain_info(uint mrr_mode, char *str, size_t size)
     else if (mrr_mode & DSMRR_IMPL_SORT_ROWIDS)
       used_str= rowid_ordered;
 
-    uint used_str_len= strlen(used_str);
-    uint copy_len= MY_MIN(used_str_len, size);
+    size_t used_str_len= strlen(used_str);
+    size_t copy_len= MY_MIN(used_str_len, size);
     memcpy(str, used_str, copy_len);
-    return copy_len;
+    return (int)copy_len;
   }
   return 0;
 }
@@ -1717,7 +1725,7 @@ bool DsMrr_impl::get_disk_sweep_mrr_cost(uint keynr, ha_rows rows, uint flags,
   else
   {
     cost->reset();
-    *buffer_size= MY_MAX(*buffer_size, 
+    *buffer_size= (uint)MY_MAX(*buffer_size, 
                       (size_t)(1.2*rows_in_last_step) * elem_size + 
                       primary_file->ref_length + table->key_info[keynr].key_length);
   }

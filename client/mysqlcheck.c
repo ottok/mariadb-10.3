@@ -541,7 +541,7 @@ static int process_selected_tables(char *db, char **table_names, int tables)
 {
   int view;
   char *table;
-  uint table_len;
+  size_t table_len;
   DBUG_ENTER("process_selected_tables");
 
   if (use_db(db))
@@ -585,6 +585,7 @@ static int process_selected_tables(char *db, char **table_names, int tables)
     my_free(table_names_comma_sep);
   }
   else
+  {
     for (; tables > 0; tables--, table_names++)
     {
       table= *table_names;
@@ -594,6 +595,7 @@ static int process_selected_tables(char *db, char **table_names, int tables)
         continue;
       handle_request_for_tables(table, table_len, view == 1, opt_all_in_1);
     }
+  }
   DBUG_RETURN(0);
 } /* process_selected_tables */
 
@@ -667,7 +669,7 @@ static int process_all_tables_in_db(char *database)
     size_t tot_length = 0;
 
     char *views, *views_end;
-    uint tot_views_length = 0;
+    size_t tot_views_length = 0;
 
     while ((row = mysql_fetch_row(res)))
     {
@@ -913,16 +915,29 @@ static int handle_request_for_tables(char *tables, size_t length,
     }
     break;
   case DO_ANALYZE:
+    if (view)
+    {
+      printf("%-50s %s\n", tables, "Can't run anaylyze on a view");
+      DBUG_RETURN(1);
+    }
     DBUG_ASSERT(!view);
     op= (opt_write_binlog) ? "ANALYZE" : "ANALYZE NO_WRITE_TO_BINLOG";
     if (opt_persistent_all) end = strmov(end, " PERSISTENT FOR ALL");
     break;
   case DO_OPTIMIZE:
-    DBUG_ASSERT(!view);
+    if (view)
+    {
+      printf("%-50s %s\n", tables, "Can't run optimize on a view");
+      DBUG_RETURN(1);
+    }
     op= (opt_write_binlog) ? "OPTIMIZE" : "OPTIMIZE NO_WRITE_TO_BINLOG";
     break;
   case DO_FIX_NAMES:
-    DBUG_ASSERT(!view);
+    if (view)
+    {
+      printf("%-50s %s\n", tables, "Can't run fix names on a view");
+      DBUG_RETURN(1);
+    }
     DBUG_RETURN(fix_table_storage_name(tables));
   }
 
@@ -951,7 +966,7 @@ static int handle_request_for_tables(char *tables, size_t length,
   }
   if (verbose >= 3)
     puts(query);
-  if (mysql_real_query(sock, query, query_length))
+  if (mysql_real_query(sock, query, (ulong)query_length))
   {
     sprintf(message, "when executing '%s%s... %s'", op, tab_view, options);
     DBerror(sock, message);
@@ -962,7 +977,7 @@ static int handle_request_for_tables(char *tables, size_t length,
   if (opt_flush_tables)
   {
     query_length= sprintf(query, "FLUSH TABLES %s", table_name);
-    if (mysql_real_query(sock, query, query_length))
+    if (mysql_real_query(sock, query, (ulong)query_length))
     {
       DBerror(sock, query);
       my_free(query);
@@ -1077,6 +1092,7 @@ static void print_result()
 
 static int dbConnect(char *host, char *user, char *passwd)
 {
+  my_bool reconnect= 1;
   DBUG_ENTER("dbConnect");
   if (verbose > 1)
   {
@@ -1115,7 +1131,7 @@ static int dbConnect(char *host, char *user, char *passwd)
     DBerror(&mysql_connection, "when trying to connect");
     DBUG_RETURN(1);
   }
-  mysql_connection.reconnect= 1;
+  mysql_options(&mysql_connection, MYSQL_OPT_RECONNECT, &reconnect);
   DBUG_RETURN(0);
 } /* dbConnect */
 

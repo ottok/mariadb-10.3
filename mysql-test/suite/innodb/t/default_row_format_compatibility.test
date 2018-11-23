@@ -1,9 +1,6 @@
 --source include/have_innodb.inc
 
 SET @row_format = @@GLOBAL.innodb_default_row_format;
-SET @large_prefix = @@GLOBAL.innodb_large_prefix;
-SET @file_format = @@GLOBAL.innodb_file_format;
-SET GLOBAL innodb_file_format = barracuda;
 
 # set the variables
 let $MYSQLD_DATADIR = `SELECT @@datadir`;
@@ -63,10 +60,6 @@ ALTER TABLE tab IMPORT TABLESPACE;
 # Cleanup
 DROP TABLE tab;
 
-# Remove orphan files
---remove_file $MYSQLD_DATADIR/test/tab.cfg
---remove_file $MYSQLD_DATADIR/test/tab.ibd
-
 # Set the default_row_format=Compact
 SET GLOBAL innodb_default_row_format=Compact;
 
@@ -107,7 +100,6 @@ DROP TABLE tab;
 
 # Set the default_row_format=Dynamic
 SET GLOBAL innodb_default_row_format=Dynamic;
-SET GLOBAL innodb_large_prefix=ON;
 
 SELECT @@innodb_default_row_format;
 
@@ -170,5 +162,3 @@ SHOW TABLE STATUS LIKE 'tab';
 DROP TABLE tab;
 
 SET GLOBAL innodb_default_row_format =  @row_format;
-SET GLOBAL innodb_large_prefix = @large_prefix;
-SET GLOBAL innodb_file_format = @file_format;

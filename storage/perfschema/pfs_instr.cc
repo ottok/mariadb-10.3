@@ -952,7 +952,7 @@ PFS_thread* create_thread(PFS_thread_class *klass, const void *identity,
         pfs->m_thread_internal_id=
           PFS_atomic::add_u64(&thread_internal_id_counter, 1);
         pfs->m_parent_thread_internal_id= 0;
-        pfs->m_processlist_id= processlist_id;
+        pfs->m_processlist_id= (ulong)processlist_id;
         pfs->m_event_id= 1;
         pfs->m_stmt_lock.set_allocated();
         pfs->m_session_lock.set_allocated();
@@ -1296,7 +1296,7 @@ find_or_create_file(PFS_thread *thread, PFS_file_class *klass,
   *buf_end= '\0';
 
   normalized_filename= buffer;
-  normalized_length= strlen(normalized_filename);
+  normalized_length= (int)strlen(normalized_filename);
 
   PFS_file **entry;
   uint retry_count= 0;
@@ -1604,7 +1604,7 @@ PFS_socket* create_socket(PFS_socket_class *klass, const my_socket *fd,
   uint addr_len_used= addr_len;
 
   if (fd != NULL)
-    fd_used= *fd;
+    fd_used= (int)*fd;
 
   if (addr_len_used > sizeof(sockaddr_storage))
     addr_len_used= sizeof(sockaddr_storage);

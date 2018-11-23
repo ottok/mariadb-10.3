@@ -20,7 +20,7 @@
 
 #include "rpl_rli.h"
 #include "rpl_reporting.h"
-#include "my_sys.h"
+#include <my_sys.h>
 #include "rpl_filter.h"
 #include "keycaches.h"
 
@@ -133,6 +133,19 @@ public:
 
 extern TYPELIB slave_parallel_mode_typelib;
 
+typedef struct st_rows_event_tracker
+{
+  char binlog_file_name[FN_REFLEN];
+  my_off_t first_seen;
+  my_off_t last_seen;
+  bool stmt_end_seen;
+  void update(const char* file_name, my_off_t pos,
+              const char* buf,
+              const Format_description_log_event *fdle);
+  void reset();
+  bool check_and_report(const char* file_name, my_off_t pos);
+} Rows_event_tracker;
+
 /*****************************************************************************
   Replication IO Thread
 
@@ -172,7 +185,7 @@ class Master_info : public Slave_reporting_capability
     USE_GTID_NO= 0, USE_GTID_CURRENT_POS= 1, USE_GTID_SLAVE_POS= 2
   };
 
-  Master_info(LEX_STRING *connection_name, bool is_slave_recovery);
+  Master_info(LEX_CSTRING *connection_name, bool is_slave_recovery);
   ~Master_info();
   bool shall_ignore_server_id(ulong s_id);
   void clear_in_memory_info(bool all);
@@ -197,8 +210,8 @@ class Master_info : public Slave_reporting_capability
   char host[HOSTNAME_LENGTH*SYSTEM_CHARSET_MBMAXLEN+1];
   char user[USERNAME_LENGTH+1];
   char password[MAX_PASSWORD_LENGTH*SYSTEM_CHARSET_MBMAXLEN+1];
-  LEX_STRING connection_name;  		/* User supplied connection name */
-  LEX_STRING cmp_connection_name;	/* Connection name in lower case */
+  LEX_CSTRING connection_name; 		/* User supplied connection name */
+  LEX_CSTRING cmp_connection_name;	/* Connection name in lower case */
   bool ssl; // enables use of SSL connection if true
   char ssl_ca[FN_REFLEN], ssl_capath[FN_REFLEN], ssl_cert[FN_REFLEN];
   char ssl_cipher[FN_REFLEN], ssl_key[FN_REFLEN];
@@ -301,16 +314,39 @@ class Master_info : public Slave_reporting_capability
   uint64 gtid_reconnect_event_skip_count;
   /* gtid_event_seen is false until we receive first GTID event from master. */
   bool gtid_event_seen;
+  /**
+    The struct holds some history of Rows- log-event reading/queuing
+    by the receiver thread. Its fields are updated per each such event
+    at time of queue_event(), and they are checked to detect
+    the Rows- event group integrity violation at time of first non-Rows-
+    event gets handled.
+  */
+  Rows_event_tracker rows_event_tracker;
   bool in_start_all_slaves, in_stop_all_slaves;
   bool in_flush_all_relay_logs;
   uint users;                                   /* Active user for object */
   uint killed;
+
+
+  /* No of DDL event group */
+  volatile uint64 total_ddl_groups;
+
+  /* No of non-transactional event group*/
+  volatile uint64 total_non_trans_groups;
+
+  /* No of transactional event group*/
+  volatile uint64 total_trans_groups;
 
   /* domain-id based filter */
   Domain_id_filter domain_id_filter;
 
   /* The parallel replication mode. */
   enum_slave_parallel_mode parallel_mode;
+  /*
+    semi_ack is used to identify if the current binlog event needs an
+    ACK from slave, or if delay_master is enabled.
+  */
+  int semi_ack;
 };
 
 int init_master_info(Master_info* mi, const char* master_info_fname,
@@ -343,14 +379,14 @@ public:
   HASH master_info_hash;
 
   bool init_all_master_info();
-  bool write_master_name_to_index_file(LEX_STRING *connection_name,
+  bool write_master_name_to_index_file(LEX_CSTRING *connection_name,
                                        bool do_sync);
 
-  bool check_duplicate_master_info(LEX_STRING *connection_name,
+  bool check_duplicate_master_info(LEX_CSTRING *connection_name,
                                    const char *host, uint port);
   bool add_master_info(Master_info *mi, bool write_to_file);
   bool remove_master_info(Master_info *mi);
-  Master_info *get_master_info(const LEX_STRING *connection_name,
+  Master_info *get_master_info(const LEX_CSTRING *connection_name,
                                Sql_condition::enum_warning_level warning);
   bool start_all_slaves(THD *thd);
   bool stop_all_slaves(THD *thd);
@@ -368,18 +404,18 @@ public:
 };
 
 
-Master_info *get_master_info(const LEX_STRING *connection_name,
+Master_info *get_master_info(const LEX_CSTRING *connection_name,
                              Sql_condition::enum_warning_level warning);
-bool check_master_connection_name(LEX_STRING *name);
+bool check_master_connection_name(LEX_CSTRING *name);
 void create_logfile_name_with_suffix(char *res_file_name, size_t length,
                              const char *info_file, 
                              bool append,
-                             LEX_STRING *suffix);
+                             LEX_CSTRING *suffix);
 
 uchar *get_key_master_info(Master_info *mi, size_t *length,
                            my_bool not_used __attribute__((unused)));
 void free_key_master_info(Master_info *mi);
-uint any_slave_sql_running();
+uint any_slave_sql_running(bool already_locked);
 bool give_error_if_slave_running(bool already_lock);
 
 #endif /* HAVE_REPLICATION */

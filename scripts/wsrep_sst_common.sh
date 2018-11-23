@@ -174,13 +174,13 @@ CLIENT_DIR="$SCRIPTS_DIR/../client"
 if [ -x "$CLIENT_DIR/mysql" ]; then
     MYSQL_CLIENT="$CLIENT_DIR/mysql"
 else
-    MYSQL_CLIENT=$(which mysql)
+    MYSQL_CLIENT=mysql
 fi
 
 if [ -x "$CLIENT_DIR/mysqldump" ]; then
     MYSQLDUMP="$CLIENT_DIR/mysqldump"
 else
-    MYSQLDUMP=$(which mysqldump)
+    MYSQLDUMP=mysqldump
 fi
 
 if [ -x "$SCRIPTS_DIR/my_print_defaults" ]; then
@@ -188,7 +188,7 @@ if [ -x "$SCRIPTS_DIR/my_print_defaults" ]; then
 elif [ -x "$EXTRA_DIR/my_print_defaults" ]; then
     MY_PRINT_DEFAULTS="$EXTRA_DIR/my_print_defaults"
 else
-    MY_PRINT_DEFAULTS=$(which my_print_defaults)
+    MY_PRINT_DEFAULTS=my_print_defaults
 fi
 
 readonly WSREP_SST_OPT_CONF="$WSREP_SST_OPT_DEFAULT $WSREP_SST_OPT_EXTRA_DEFAULT $WSREP_SST_OPT_SUFFIX_DEFAULT"
@@ -210,9 +210,8 @@ readonly WSREP_SST_OPT_AUTH
 # Splitting AUTH into potential user:password pair
 if ! wsrep_auth_not_set
 then
-    readonly AUTH_VEC=(${WSREP_SST_OPT_AUTH//:/ })
-    WSREP_SST_OPT_USER="${AUTH_VEC[0]:-}"
-    WSREP_SST_OPT_PSWD="${AUTH_VEC[1]:-}"
+    WSREP_SST_OPT_USER="${WSREP_SST_OPT_AUTH%%:*}"
+    WSREP_SST_OPT_PSWD="${WSREP_SST_OPT_AUTH##*:}"
 fi
 readonly WSREP_SST_OPT_USER
 readonly WSREP_SST_OPT_PSWD
@@ -256,10 +255,10 @@ wsrep_check_program()
 {
     local prog=$1
 
-    if ! which $prog >/dev/null
+    if ! command -v $prog >/dev/null
     then
         echo "'$prog' not found in PATH"
-        return 2 # no such file or directory
+        exit 2 # ENOENT no such file or directory
     fi
 }
 
@@ -269,11 +268,9 @@ wsrep_check_programs()
 
     while [ $# -gt 0 ]
     do
-        wsrep_check_program $1 || ret=$?
+        wsrep_check_program $1
         shift
     done
-
-    return $ret
 }
 
 #

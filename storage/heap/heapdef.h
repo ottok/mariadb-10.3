@@ -15,7 +15,8 @@
 
 /* This file is included in all heap-files */
 
-#include <my_base.h>			/* This includes global */
+#include <my_global.h>
+#include <my_base.h>
 C_MODE_START
 #include <my_pthread.h>
 #include "heap.h"			/* Structs & some defines */
@@ -82,12 +83,10 @@ extern uchar *hp_search_next(HP_INFO *info, HP_KEYDEF *keyinfo,
 			    const uchar *key, HASH_INFO *pos);
 extern ulong hp_hashnr(HP_KEYDEF *keyinfo,const uchar *key);
 extern ulong hp_rec_hashnr(HP_KEYDEF *keyinfo,const uchar *rec);
-extern ulong hp_mask(ulong hashnr,ulong buffmax,ulong maxlength);
 extern void hp_movelink(HASH_INFO *pos,HASH_INFO *next_link,
 			 HASH_INFO *newlink);
 extern int hp_rec_key_cmp(HP_KEYDEF *keydef,const uchar *rec1,
-			  const uchar *rec2,
-                          my_bool diff_if_only_endspace_difference);
+			  const uchar *rec2);
 extern int hp_key_cmp(HP_KEYDEF *keydef,const uchar *rec,
 		      const uchar *key);
 extern void hp_make_key(HP_KEYDEF *keydef,uchar *key,const uchar *rec);
@@ -97,7 +96,7 @@ extern uint hp_rb_key_length(HP_KEYDEF *keydef, const uchar *key);
 extern uint hp_rb_null_key_length(HP_KEYDEF *keydef, const uchar *key);
 extern uint hp_rb_var_key_length(HP_KEYDEF *keydef, const uchar *key);
 extern my_bool hp_if_null_in_key(HP_KEYDEF *keyinfo, const uchar *record);
-extern int hp_close(register HP_INFO *info);
+extern int hp_close(HP_INFO *info);
 extern void hp_clear(HP_SHARE *info);
 extern void hp_clear_keys(HP_SHARE *info);
 extern uint hp_rb_pack_key(HP_KEYDEF *keydef, uchar *key, const uchar *old,
@@ -111,3 +110,22 @@ void init_heap_psi_keys();
 #endif /* HAVE_PSI_INTERFACE */
 
 C_MODE_END
+
+/*
+  Calculate position number for hash value.
+  SYNOPSIS
+    hp_mask()
+      hashnr     Hash value
+      buffmax    Value such that
+                 2^(n-1) < maxlength <= 2^n = buffmax
+      maxlength
+
+  RETURN
+    Array index, in [0..maxlength)
+*/
+
+static inline ulong hp_mask(ulong hashnr, ulong buffmax, ulong maxlength)
+{
+  if ((hashnr & (buffmax-1)) < maxlength) return (hashnr & (buffmax-1));
+  return (hashnr & ((buffmax >> 1) -1));
+}

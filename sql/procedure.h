@@ -40,23 +40,30 @@ class Item_proc :public Item
 public:
   Item_proc(THD *thd, const char *name_par): Item(thd)
   {
-     this->name=(char*) name_par;
+     this->name.str=    name_par;
+     this->name.length= strlen(name_par);
   }
   enum Type type() const { return Item::PROC_ITEM; }
   virtual void set(double nr)=0;
   virtual void set(const char *str,uint length,CHARSET_INFO *cs)=0;
   virtual void set(longlong nr)=0;
-  virtual enum_field_types field_type() const=0;
+  const Type_handler *type_handler() const=0;
   void set(const char *str) { set(str,(uint) strlen(str), default_charset()); }
-  void make_field(Send_field *tmp_field)
+  void make_send_field(THD *thd, Send_field *tmp_field)
   {
-    init_make_field(tmp_field,field_type());
+    init_make_send_field(tmp_field,field_type());
   }
   unsigned int size_of() { return sizeof(*this);}
-  bool check_vcol_func_processor(uchar *int_arg) 
+  bool check_vcol_func_processor(void *arg)
   {
-    return trace_unsupported_by_check_vcol_func_processor("proc"); 
+    DBUG_ASSERT(0); // impossible
+    return mark_unsupported_function("proc", arg, VCOL_IMPOSSIBLE);
   }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    return type_handler()->Item_get_date(this, ltime, fuzzydate);
+  }
+  Item* get_copy(THD *thd) { return 0; }
 };
 
 class Item_proc_real :public Item_proc
@@ -68,8 +75,7 @@ public:
   {
      decimals=dec; max_length=float_length(dec);
   }
-  enum Item_result result_type () const { return REAL_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_DOUBLE; }
+  const Type_handler *type_handler() const { return &type_handler_double; }
   void set(double nr) { value=nr; }
   void set(longlong nr) { value=(double) nr; }
   void set(const char *str,uint length,CHARSET_INFO *cs)
@@ -95,8 +101,7 @@ class Item_proc_int :public Item_proc
 public:
   Item_proc_int(THD *thd, const char *name_par): Item_proc(thd, name_par)
   { max_length=11; }
-  enum Item_result result_type () const { return INT_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_LONGLONG; }
+  const Type_handler *type_handler() const { return &type_handler_longlong; }
   void set(double nr) { value=(longlong) nr; }
   void set(longlong nr) { value=nr; }
   void set(const char *str,uint length, CHARSET_INFO *cs)
@@ -114,8 +119,7 @@ class Item_proc_string :public Item_proc
 public:
   Item_proc_string(THD *thd, const char *name_par, uint length):
     Item_proc(thd, name_par) { this->max_length=length; }
-  enum Item_result result_type () const { return STRING_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_VARCHAR; }
+  const Type_handler *type_handler() const { return &type_handler_varchar; }
   void set(double nr) { str_value.set_real(nr, 2, default_charset()); }
   void set(longlong nr) { str_value.set(nr, default_charset()); }
   void set(const char *str, uint length, CHARSET_INFO *cs)

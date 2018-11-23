@@ -16,18 +16,11 @@
 #ifndef THR_MALLOC_INCLUDED
 #define THR_MALLOC_INCLUDED
 
-#include "my_global.h"                          // uint, size_t
-
 typedef struct st_mem_root MEM_ROOT;
 
-void init_sql_alloc(MEM_ROOT *root, uint block_size, uint pre_alloc_size,
-                    myf my_flags);
-void *sql_alloc(size_t);
-void *sql_calloc(size_t);
-char *sql_strdup(const char *str);
-char *sql_strmake(const char *str, size_t len);
-void *sql_memdup(const void * ptr, size_t size);
-char *sql_strmake_with_convert(const char *str, size_t arg_length,
+void init_sql_alloc(MEM_ROOT *root, const char *area_name, uint block_size,
+                    uint pre_alloc_size, myf my_flags);
+char *sql_strmake_with_convert(THD *thd, const char *str, size_t arg_length,
 			       CHARSET_INFO *from_cs,
 			       size_t max_res_length,
 			       CHARSET_INFO *to_cs, size_t *result_length);

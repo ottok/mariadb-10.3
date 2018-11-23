@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <mysql_version.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <my_sys.h>
 
 
 /** Determine if (i) is a user tablespace id or not. */

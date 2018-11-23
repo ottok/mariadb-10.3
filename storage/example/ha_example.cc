@@ -431,7 +431,7 @@ int ha_example::write_row(uchar *buf)
   @see
   sql_select.cc, sql_acl.cc, sql_update.cc and sql_insert.cc
 */
-int ha_example::update_row(const uchar *old_data, uchar *new_data)
+int ha_example::update_row(const uchar *old_data, const uchar *new_data)
 {
 
   DBUG_ENTER("ha_example::update_row");
@@ -896,7 +896,7 @@ int ha_example::create(const char *name, TABLE *table_arg,
     ha_field_option_struct *field_options= (*field)->option_struct;
     DBUG_ASSERT(field_options);
     DBUG_PRINT("info", ("field: %s  complex: '%-.64s'",
-                         (*field)->field_name,
+                         (*field)->field_name.str,
                          (field_options->complex_param_to_parse_it_in_engine ?
                           field_options->complex_param_to_parse_it_in_engine :
                           "<NULL>")));
@@ -928,7 +928,7 @@ ha_example::check_if_supported_inplace_alter(TABLE* altered_table,
   HA_CREATE_INFO *info= ha_alter_info->create_info;
   DBUG_ENTER("ha_example::check_if_supported_inplace_alter");
 
-  if (ha_alter_info->handler_flags & Alter_inplace_info::CHANGE_CREATE_OPTION)
+  if (ha_alter_info->handler_flags & ALTER_CHANGE_CREATE_OPTION)
   {
     /*
       This example shows how custom engine specific table and field
@@ -964,7 +964,7 @@ ha_example::check_if_supported_inplace_alter(TABLE* altered_table,
     }
   }
 
-  if (ha_alter_info->handler_flags & Alter_inplace_info::ALTER_COLUMN_OPTION)
+  if (ha_alter_info->handler_flags & ALTER_COLUMN_OPTION)
   {
     for (uint i= 0; i < table->s->fields; i++)
     {
@@ -975,7 +975,7 @@ ha_example::check_if_supported_inplace_alter(TABLE* altered_table,
       {
         push_warning_printf(ha_thd(), Sql_condition::WARN_LEVEL_NOTE,
                             ER_UNKNOWN_ERROR, "EXAMPLE DEBUG: Field %`s COMPLEX '%s' -> '%s'",
-                            table->s->field[i]->field_name,
+                            table->s->field[i]->field_name.str,
                             f_old->complex_param_to_parse_it_in_engine,
                             f_new->complex_param_to_parse_it_in_engine);
       }

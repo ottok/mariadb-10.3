@@ -276,13 +276,13 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
 {
   int kfile,open_mode,save_errno;
   uint i,j,len,errpos,head_length,base_pos,keys, realpath_err,
-    key_parts,unique_key_parts,fulltext_keys,uniques;
+    key_parts,base_key_parts,unique_key_parts,fulltext_keys,uniques;
   uint internal_table= MY_TEST(open_flags & HA_OPEN_INTERNAL_TABLE);
   uint file_version;
   size_t info_length;
   char name_buff[FN_REFLEN], org_name[FN_REFLEN], index_name[FN_REFLEN],
        data_name[FN_REFLEN];
-  uchar *disk_cache, *disk_pos, *end_pos;
+  uchar *UNINIT_VAR(disk_cache), *disk_pos, *end_pos;
   MARIA_HA info, *UNINIT_VAR(m_info), *old_info;
   MARIA_SHARE share_buff,*share;
   double *rec_per_key_part;
@@ -406,21 +406,11 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
       Allocate space for header information and for data that is too
       big to keep on stack
     */
-    if (!my_multi_malloc(MY_WME,
-                         &disk_cache, info_length+128,
-                         &rec_per_key_part,
-                         (sizeof(*rec_per_key_part) * HA_MAX_POSSIBLE_KEY *
-                          HA_MAX_KEY_SEG),
-                         &nulls_per_key_part,
-                         (sizeof(*nulls_per_key_part) * HA_MAX_POSSIBLE_KEY *
-                          HA_MAX_KEY_SEG),
-                         NullS))
+    if (!(disk_cache= my_malloc(info_length+128, MYF(MY_WME))))
     {
       my_errno=ENOMEM;
       goto err;
     }
-    share_buff.state.rec_per_key_part=   rec_per_key_part;
-    share_buff.state.nulls_per_key_part= nulls_per_key_part;
 
     end_pos=disk_cache+info_length;
     errpos= 3;
@@ -433,7 +423,7 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
     keys=    (uint) share->state.header.keys;
     uniques= (uint) share->state.header.uniques;
     fulltext_keys= (uint) share->state.header.fulltext_keys;
-    key_parts= mi_uint2korr(share->state.header.key_parts);
+    base_key_parts= key_parts= mi_uint2korr(share->state.header.key_parts);
     unique_key_parts= mi_uint2korr(share->state.header.unique_key_parts);
     if (len != MARIA_STATE_INFO_SIZE)
     {
@@ -443,7 +433,8 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
     }
     share->state_diff_length=len-MARIA_STATE_INFO_SIZE;
 
-    _ma_state_info_read(disk_cache, &share->state);
+    if (!_ma_state_info_read(disk_cache, &share->state))
+      goto err;
     len= mi_uint2korr(share->state.header.base_info_length);
     if (len != MARIA_BASE_INFO_SIZE)
     {
@@ -567,7 +558,10 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
     set_if_smaller(max_data_file_length, INT_MAX32);
     set_if_smaller(max_key_file_length, INT_MAX32);
 #endif
-    share->base.max_data_file_length=(my_off_t) max_data_file_length;
+    /* For internal temporary tables, max_data_file_length is already set */
+    if (!internal_table || !share->base.max_data_file_length)
+      share->base.max_data_file_length=(my_off_t) max_data_file_length;
+    DBUG_ASSERT(share->base.max_data_file_length);
     share->base.max_key_file_length=(my_off_t) max_key_file_length;
 
     if (share->options & HA_OPTION_COMPRESS_RECORD)
@@ -581,9 +575,9 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
     share->open_file_name.length=   strlen(name);
     if (!my_multi_malloc(MY_WME,
 			 &share,sizeof(*share),
-			 &share->state.rec_per_key_part,
+			 &rec_per_key_part,
                          sizeof(double) * key_parts,
-                         &share->state.nulls_per_key_part,
+                         &nulls_per_key_part,
                          sizeof(long)* key_parts,
 			 &share->keyinfo,keys*sizeof(MARIA_KEYDEF),
 			 &share->uniqueinfo,uniques*sizeof(MARIA_UNIQUEDEF),
@@ -608,11 +602,16 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
       goto err;
     errpos= 4;
 
-    *share=share_buff;
-    memcpy((char*) share->state.rec_per_key_part,
-	   (char*) rec_per_key_part, sizeof(double)*key_parts);
-    memcpy((char*) share->state.nulls_per_key_part,
-	   (char*) nulls_per_key_part, sizeof(long)*key_parts);
+    *share= share_buff;
+    share->state.rec_per_key_part=   rec_per_key_part;
+    share->state.nulls_per_key_part= nulls_per_key_part;
+
+    memcpy((char*) rec_per_key_part,
+	   (char*) share_buff.state.rec_per_key_part,
+           sizeof(double)*base_key_parts);
+    memcpy((char*) nulls_per_key_part,
+	   (char*) share_buff.state.nulls_per_key_part,
+           sizeof(long)*base_key_parts);
     memcpy((char*) share->state.key_root,
 	   (char*) key_root, sizeof(my_off_t)*keys);
     strmov(share->unique_file_name.str, name_buff);
@@ -910,9 +909,17 @@ MARIA_HA *maria_open(const char *name, int mode, uint open_flags)
 					(keys ? MARIA_INDEX_BLOCK_MARGIN *
 					 share->block_size * keys : 0));
     my_free(disk_cache);
+    my_free(share_buff.state.rec_per_key_part);
+    disk_cache= 0;
+    share_buff.state.rec_per_key_part= 0;
+
     _ma_setup_functions(share);
+    max_data_file_length= share->base.max_data_file_length;
     if ((*share->once_init)(share, info.dfile.file))
       goto err;
+    if (internal_table)
+      set_if_smaller(share->base.max_data_file_length,
+                     max_data_file_length);
     if (share->now_transactional)
     {
       /* Setup initial state that is visible for all */
@@ -1087,6 +1094,7 @@ err:
     /* fall through */
   case 3:
     my_free(disk_cache);
+    my_free(share_buff.state.rec_per_key_part);
     /* fall through */
   case 1:
     mysql_file_close(kfile,MYF(0));
@@ -1378,7 +1386,7 @@ uint _ma_state_info_write(MARIA_SHARE *share, uint pWrite)
       is too new). Recovery does it by itself.
     */
     share->state.is_of_horizon= translog_get_horizon();
-    DBUG_PRINT("info", ("is_of_horizon set to LSN (%lu,0x%lx)",
+    DBUG_PRINT("info", ("is_of_horizon set to LSN " LSN_FMT,
                         LSN_IN_PARTS(share->state.is_of_horizon)));
   }
   res= _ma_state_info_write_sub(share->kfile.file, &share->state, pWrite);
@@ -1501,6 +1509,16 @@ static uchar *_ma_state_info_read(uchar *ptr, MARIA_STATE_INFO *state)
   ptr+= sizeof(state->header);
   keys= (uint) state->header.keys;
   key_parts= mi_uint2korr(state->header.key_parts);
+
+  /* Allocate memory for key parts if not already done */
+  if (!state->rec_per_key_part &&
+      !my_multi_malloc(MY_WME,
+                       &state->rec_per_key_part,
+                       sizeof(*state->rec_per_key_part) * key_parts,
+                       &state->nulls_per_key_part,
+                       sizeof(*state->nulls_per_key_part) * key_parts,
+                       NullS))
+    DBUG_RETURN(0);
 
   state->open_count = mi_uint2korr(ptr);		ptr+= 2;
   state->changed= mi_uint2korr(ptr);			ptr+= 2;

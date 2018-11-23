@@ -60,7 +60,7 @@
 
 *****************************************************************************/
 
-#include <my_global.h>
+#include "mariadb.h"
 #include <my_sys.h>
 #include <m_string.h>
 #include <password.h>
@@ -90,7 +90,7 @@
 
 void hash_password(ulong *result, const char *password, uint password_len)
 {
-  register ulong nr=1345345333L, add=7, nr2=0x12345671L;
+  ulong nr=1345345333L, add=7, nr2=0x12345671L;
   ulong tmp;
   const char *password_end= password + password_len;
   for (; password < password_end; password++)
@@ -278,29 +278,6 @@ void make_password_from_salt_323(char *to, const ulong *salt)
      **************** MySQL 4.1.1 authentication routines *************
 */
 
-#if MYSQL_VERSION_ID < 0x100200
-/**
-    Generate string of printable random characters of requested length.
-  
-    @param to[out]  Buffer for generation; must be at least length+1 bytes
-                    long; result string is always null-terminated
-    length[in]      How many random characters to put in buffer
-    rand_st         Structure used for number generation
-*/
-
-void create_random_string(char *to, uint length,
-                          struct my_rnd_struct *rand_st)
-{
-  char *end= to + length;
-  /* Use pointer arithmetics as it is faster way to do so. */
-  for (; to < end; to++)
-    *to= (char) (my_rnd(rand_st)*94+33);
-  *to= '\0';
-}
-#else
-#error
-#endif
-
 
 /* Character to use as version identifier for version 4.1 */
 
@@ -319,7 +296,7 @@ void create_random_string(char *to, uint length,
     buf+len*2
 */
 
-char *octet2hex(char *to, const char *str, uint len)
+char *octet2hex(char *to, const char *str, size_t len)
 {
   const char *str_end= str + len; 
   for (; str != str_end; ++str)
@@ -348,7 +325,7 @@ hex2octet(uint8 *to, const char *str, uint len)
   const char *str_end= str + len;
   while (str < str_end)
   {
-    register char tmp= char_val(*str++);
+    char tmp= char_val(*str++);
     *to++= (tmp << 4) | char_val(*str++);
   }
 }

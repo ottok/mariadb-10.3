@@ -1,3 +1,5 @@
+#--source include/innodb_page_size.inc
+
 CREATE TABLE t1(c1 INT, b CHAR(20)) ENGINE=INNODB PAGE_COMPRESSED=1;
 
 DELIMITER //;
@@ -27,7 +29,7 @@ let $targetdir=$MYSQLTEST_VARDIR/tmp/backup;
 --disable_result_log
 exec $XTRABACKUP --defaults-file=$MYSQLTEST_VARDIR/my.cnf  --backup "--tables=test.*1" --target-dir=$targetdir;
 echo # xtrabackup prepare;
-exec $XTRABACKUP --prepare --export --target-dir=$targetdir;
+exec $XTRABACKUP --defaults-file=$MYSQLTEST_VARDIR/my.cnf --defaults-group-suffix=.1 --prepare --export --target-dir=$targetdir;
 --enable_result_log
 
 ALTER TABLE t1 DISCARD TABLESPACE;
@@ -41,4 +43,3 @@ SELECT COUNT(*) FROM t1;
 DROP PROCEDURE innodb_insert_proc;
 DROP TABLE t1;
 rmdir $targetdir;
-

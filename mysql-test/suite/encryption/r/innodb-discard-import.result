@@ -1,10 +1,5 @@
 call mtr.add_suppression("InnoDB: Tablespace for table .* is set as discarded.");
 call mtr.add_suppression("InnoDB: Cannot calculate statistics for table .* because the .ibd file is missing. Please refer to .* for how to resolve the issue.");
-SET @innodb_file_format_orig = @@GLOBAL.innodb_file_format;
-SET @innodb_file_per_table_orig = @@GLOBAL.innodb_file_per_table;
-SET @innodb_compression_algo = @@GLOBAL.innodb_compression_algorithm;
-SET GLOBAL innodb_file_format = `Barracuda`;
-SET GLOBAL innodb_file_per_table = ON;
 SET GLOBAL innodb_compression_algorithm = 1;
 create table t1(c1 bigint not null, b char(200))  engine=innodb encrypted=yes encryption_key_id=4;
 show warnings;
@@ -49,6 +44,7 @@ count(*)
 2000
 FLUSH TABLE t1,t2,t3,t4 FOR EXPORT;
 # List before copying files
+db.opt
 t1.cfg
 t1.frm
 t1.ibd
@@ -65,6 +61,7 @@ backup: t1
 backup: t2
 backup: t3
 backup: t4
+db.opt
 t1.cfg
 t1.frm
 t1.ibd
@@ -137,6 +134,3 @@ NOT FOUND /tmpres/ in t3.ibd
 NOT FOUND /mysql/ in t4.ibd
 DROP PROCEDURE innodb_insert_proc;
 DROP TABLE t1,t2,t3,t4;
-SET GLOBAL innodb_file_format = @innodb_file_format_orig;
-SET GLOBAL innodb_file_per_table = @innodb_file_per_table_orig;
-SET GLOBAL innodb_compression_algorithm = @innodb_compression_algo;

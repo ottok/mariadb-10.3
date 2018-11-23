@@ -109,7 +109,7 @@ CALL test1.pr1();
 --echo
 --echo # Connect with foo_node_2
 --connection foo_node_2
-
+--sleep 1
 --error ER_PROCACCESS_DENIED_ERROR
 CALL test1.pr1();
 

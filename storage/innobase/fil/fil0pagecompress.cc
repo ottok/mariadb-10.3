@@ -48,15 +48,9 @@ Updated 14/02/2015
 #include "trx0sys.h"
 #include "row0mysql.h"
 #include "ha_prototypes.h"  // IB_LOG_
-#ifndef UNIV_HOTBACKUP
-# include "buf0lru.h"
-# include "ibuf0ibuf.h"
-# include "sync0sync.h"
-# include "os0sync.h"
-#else /* !UNIV_HOTBACKUP */
-# include "srv0srv.h"
-static ulint srv_data_read, srv_data_written;
-#endif /* !UNIV_HOTBACKUP */
+#include "buf0lru.h"
+#include "ibuf0ibuf.h"
+#include "sync0sync.h"
 #include "zlib.h"
 #ifdef __linux__
 #include <linux/fs.h>
@@ -88,8 +82,8 @@ static ulint srv_data_read, srv_data_written;
 @param[in]	encrypted	whether the page will be subsequently encrypted
 @return actual length of compressed page
 @retval	0	if the page was not compressed */
-UNIV_INTERN ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
-				    ulint block_size, bool encrypted)
+ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
+			ulint block_size, bool encrypted)
 {
 	int comp_level = int(level);
 	ulint header_len = FIL_PAGE_DATA + FIL_PAGE_COMPRESSED_SIZE;
@@ -113,7 +107,7 @@ UNIV_INTERN ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
 	/* If no compression level was provided to this table, use system
 	default level */
 	if (comp_level == 0) {
-		comp_level = page_zip_level;
+		comp_level = int(page_zip_level);
 	}
 
 	ulint write_size = srv_page_size - header_len;
@@ -257,7 +251,8 @@ success:
 		page_t page[UNIV_PAGE_SIZE_MAX];
 		memcpy(page, out_buf, srv_page_size);
 		ut_ad(fil_page_decompress(tmp_buf, page));
-		ut_ad(!buf_page_is_corrupted(false, page, 0, NULL));
+		ut_ad(!buf_page_is_corrupted(false, page, univ_page_size,
+					     NULL));
 	}
 #endif /* UNIV_DEBUG */
 
@@ -284,12 +279,6 @@ success:
 	srv_stats.page_compression_saved.add(srv_page_size - write_size);
 	srv_stats.pages_page_compressed.inc();
 
-	/* If we do not persistently trim rest of page, we need to write it
-	all */
-	if (!srv_use_trim) {
-		memset(out_buf + write_size, 0, srv_page_size - write_size);
-	}
-
 	return write_size;
 }
 
@@ -299,11 +288,11 @@ success:
 @return size of the compressed data
 @retval	0		if decompression failed
 @retval	srv_page_size	if the page was not compressed */
-UNIV_INTERN ulint fil_page_decompress(byte* tmp_buf, byte* buf)
+ulint fil_page_decompress(byte* tmp_buf, byte* buf)
 {
 	const unsigned	ptype = mach_read_from_2(buf+FIL_PAGE_TYPE);
 	ulint header_len;
-	ib_uint64_t compression_alg;
+	uint64_t compression_alg;
 	switch (ptype) {
 	case FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED:
 		header_len = FIL_PAGE_DATA + FIL_PAGE_COMPRESSED_SIZE
@@ -334,9 +323,8 @@ UNIV_INTERN ulint fil_page_decompress(byte* tmp_buf, byte* buf)
 
 	switch (compression_alg) {
 	default:
-		ib_logf(IB_LOG_LEVEL_ERROR,
-			"Unknown compression algorithm " UINT64PF,
-			compression_alg);
+		ib::error() << "Unknown compression algorithm "
+			    << compression_alg;
 		return 0;
 	case PAGE_ZLIB_ALGORITHM:
 		{

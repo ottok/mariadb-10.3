@@ -14,12 +14,13 @@
    51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
 
 
+#include "mariadb.h"
 #include "sql_class.h"
 #include "debug_sync.h"
 #include "sql_array.h"
 #include "rpl_rli.h"
 #include <lf.h>
-#include <mysqld_error.h>
+#include "unireg.h"
 #include <mysql/plugin.h>
 #include <mysql/service_thd_wait.h>
 #include <mysql/psi/mysql_stage.h>
@@ -84,6 +85,7 @@ PSI_stage_info MDL_key::m_namespace_to_wait_state_name[NAMESPACE_END]=
   {0, "Waiting for table metadata lock", 0},
   {0, "Waiting for stored function metadata lock", 0},
   {0, "Waiting for stored procedure metadata lock", 0},
+  {0, "Waiting for stored package body metadata lock", 0},
   {0, "Waiting for trigger metadata lock", 0},
   {0, "Waiting for event metadata lock", 0},
   {0, "Waiting for commit lock", 0},
@@ -391,7 +393,11 @@ public:
     virtual const bitmap_t *incompatible_waiting_types_bitmap() const
     { return m_waiting_incompatible; }
     virtual bool needs_notification(const MDL_ticket *ticket) const
-    { return (ticket->get_type() >= MDL_SHARED_NO_WRITE); }
+    {
+      return ticket->get_type() == MDL_SHARED_NO_WRITE ||
+             ticket->get_type() == MDL_SHARED_NO_READ_WRITE ||
+             ticket->get_type() == MDL_EXCLUSIVE;
+    }
 
     /**
       Notify threads holding a shared metadata locks on object which
@@ -1413,7 +1419,8 @@ const MDL_lock::bitmap_t
 MDL_lock::MDL_scoped_lock::m_granted_incompatible[MDL_TYPE_END]=
 {
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED),
-  MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_INTENTION_EXCLUSIVE), 0, 0, 0, 0, 0, 0,
+  MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_INTENTION_EXCLUSIVE),
+  0, 0, 0, 0, 0, 0, 0,
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED) | MDL_BIT(MDL_INTENTION_EXCLUSIVE)
 };
 
@@ -1421,7 +1428,7 @@ const MDL_lock::bitmap_t
 MDL_lock::MDL_scoped_lock::m_waiting_incompatible[MDL_TYPE_END]=
 {
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED),
-  MDL_BIT(MDL_EXCLUSIVE), 0, 0, 0, 0, 0, 0, 0
+  MDL_BIT(MDL_EXCLUSIVE), 0, 0, 0, 0, 0, 0, 0, 0
 };
 
 
@@ -1433,39 +1440,41 @@ MDL_lock::MDL_scoped_lock::m_waiting_incompatible[MDL_TYPE_END]=
   The first array specifies if particular type of request can be satisfied
   if there is granted lock of certain type.
 
-     Request  |  Granted requests for lock       |
-      type    | S  SH  SR  SW  SU  SNW  SNRW  X  |
-    ----------+----------------------------------+
-    S         | +   +   +   +   +   +    +    -  |
-    SH        | +   +   +   +   +   +    +    -  |
-    SR        | +   +   +   +   +   +    -    -  |
-    SW        | +   +   +   +   +   -    -    -  |
-    SU        | +   +   +   +   -   -    -    -  |
-    SNW       | +   +   +   -   -   -    -    -  |
-    SNRW      | +   +   -   -   -   -    -    -  |
-    X         | -   -   -   -   -   -    -    -  |
-    SU -> X   | -   -   -   -   0   0    0    0  |
-    SNW -> X  | -   -   -   0   0   0    0    0  |
-    SNRW -> X | -   -   0   0   0   0    0    0  |
+     Request  |  Granted requests for lock            |
+      type    | S  SH  SR  SW  SU  SRO  SNW  SNRW  X  |
+    ----------+---------------------------------------+
+    S         | +   +   +   +   +   +    +    +    -  |
+    SH        | +   +   +   +   +   +    +    +    -  |
+    SR        | +   +   +   +   +   +    +    -    -  |
+    SW        | +   +   +   +   +   -    -    -    -  |
+    SU        | +   +   +   +   -   +    -    -    -  |
+    SRO       | +   +   +   -   +   +    +    -    -  |
+    SNW       | +   +   +   -   -   +    -    -    -  |
+    SNRW      | +   +   -   -   -   -    -    -    -  |
+    X         | -   -   -   -   -   -    -    -    -  |
+    SU -> X   | -   -   -   -   0   -    0    0    0  |
+    SNW -> X  | -   -   -   0   0   -    0    0    0  |
+    SNRW -> X | -   -   0   0   0   0    0    0    0  |
 
   The second array specifies if particular type of request can be satisfied
   if there is waiting request for the same lock of certain type. In other
   words it specifies what is the priority of different lock types.
 
-     Request  |  Pending requests for lock      |
-      type    | S  SH  SR  SW  SU  SNW  SNRW  X |
-    ----------+---------------------------------+
-    S         | +   +   +   +   +   +     +   - |
-    SH        | +   +   +   +   +   +     +   + |
-    SR        | +   +   +   +   +   +     -   - |
-    SW        | +   +   +   +   +   -     -   - |
-    SU        | +   +   +   +   +   +     +   - |
-    SNW       | +   +   +   +   +   +     +   - |
-    SNRW      | +   +   +   +   +   +     +   - |
-    X         | +   +   +   +   +   +     +   + |
-    SU -> X   | +   +   +   +   +   +     +   + |
-    SNW -> X  | +   +   +   +   +   +     +   + |
-    SNRW -> X | +   +   +   +   +   +     +   + |
+     Request  |  Pending requests for lock           |
+      type    | S  SH  SR  SW  SU  SRO  SNW  SNRW  X |
+    ----------+--------------------------------------+
+    S         | +   +   +   +   +   +    +     +   - |
+    SH        | +   +   +   +   +   +    +     +   + |
+    SR        | +   +   +   +   +   +    +     -   - |
+    SW        | +   +   +   +   +   +    -     -   - |
+    SU        | +   +   +   +   +   +    +     +   - |
+    SRO       | +   +   +   -   +   +    +     -   - |
+    SNW       | +   +   +   +   +   +    +     +   - |
+    SNRW      | +   +   +   +   +   +    +     +   - |
+    X         | +   +   +   +   +   +    +     +   + |
+    SU -> X   | +   +   +   +   +   +    +     +   + |
+    SNW -> X  | +   +   +   +   +   +    +     +   + |
+    SNRW -> X | +   +   +   +   +   +    +     +   + |
 
   Here: "+" -- means that request can be satisfied
         "-" -- means that request can't be satisfied and should wait
@@ -1487,19 +1496,23 @@ MDL_lock::MDL_object_lock::m_granted_incompatible[MDL_TYPE_END]=
   MDL_BIT(MDL_EXCLUSIVE),
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE),
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
-    MDL_BIT(MDL_SHARED_NO_WRITE),
+    MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_READ_ONLY),
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
     MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_UPGRADABLE),
+  MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
+    MDL_BIT(MDL_SHARED_WRITE),
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
     MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_UPGRADABLE) |
     MDL_BIT(MDL_SHARED_WRITE),
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
-    MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_UPGRADABLE) |
-    MDL_BIT(MDL_SHARED_WRITE) | MDL_BIT(MDL_SHARED_READ),
+    MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_READ_ONLY) |
+    MDL_BIT(MDL_SHARED_UPGRADABLE) | MDL_BIT(MDL_SHARED_WRITE) |
+    MDL_BIT(MDL_SHARED_READ),
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
-    MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_UPGRADABLE) |
-    MDL_BIT(MDL_SHARED_WRITE) | MDL_BIT(MDL_SHARED_READ) |
-    MDL_BIT(MDL_SHARED_HIGH_PRIO) | MDL_BIT(MDL_SHARED)
+    MDL_BIT(MDL_SHARED_NO_WRITE) | MDL_BIT(MDL_SHARED_READ_ONLY) |
+    MDL_BIT(MDL_SHARED_UPGRADABLE) | MDL_BIT(MDL_SHARED_WRITE) |
+    MDL_BIT(MDL_SHARED_READ) | MDL_BIT(MDL_SHARED_HIGH_PRIO) |
+    MDL_BIT(MDL_SHARED)
 };
 
 
@@ -1513,6 +1526,8 @@ MDL_lock::MDL_object_lock::m_waiting_incompatible[MDL_TYPE_END]=
   MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
     MDL_BIT(MDL_SHARED_NO_WRITE),
   MDL_BIT(MDL_EXCLUSIVE),
+  MDL_BIT(MDL_EXCLUSIVE) | MDL_BIT(MDL_SHARED_NO_READ_WRITE) |
+    MDL_BIT(MDL_SHARED_WRITE),
   MDL_BIT(MDL_EXCLUSIVE),
   MDL_BIT(MDL_EXCLUSIVE),
   0
@@ -2073,6 +2088,14 @@ MDL_context::acquire_lock(MDL_request *mdl_request, double lock_wait_timeout)
   */
   lock= ticket->m_lock;
 
+  if (lock_wait_timeout == 0)
+  {
+    mysql_prlock_unlock(&lock->m_rwlock);
+    MDL_ticket::destroy(ticket);
+    my_error(ER_LOCK_WAIT_TIMEOUT, MYF(0));
+    DBUG_RETURN(TRUE);
+  }
+
   lock->m_waiting.add_ticket(ticket);
 
   /*
@@ -2097,11 +2120,11 @@ MDL_context::acquire_lock(MDL_request *mdl_request, double lock_wait_timeout)
     the parallel replication scheduler should never schedule a DDL while
     DML's are still running.
   */
-  DBUG_ASSERT((mdl_request->type != MDL_INTENTION_EXCLUSIVE &&
-               mdl_request->type != MDL_EXCLUSIVE) ||
-              !(get_thd()->rgi_slave &&
-                get_thd()->rgi_slave->is_parallel_exec &&
-                lock->check_if_conflicting_replication_locks(this)));
+  DBUG_SLOW_ASSERT((mdl_request->type != MDL_INTENTION_EXCLUSIVE &&
+                    mdl_request->type != MDL_EXCLUSIVE) ||
+                   !(get_thd()->rgi_slave &&
+                     get_thd()->rgi_slave->is_parallel_exec &&
+                     lock->check_if_conflicting_replication_locks(this)));
 
   mysql_prlock_unlock(&lock->m_rwlock);
 
@@ -2306,11 +2329,6 @@ MDL_context::upgrade_shared_lock(MDL_ticket *mdl_ticket,
   */
   if (mdl_ticket->has_stronger_or_equal_type(new_type))
     DBUG_RETURN(FALSE);
-
-  /* Only allow upgrades from SHARED_UPGRADABLE/NO_WRITE/NO_READ_WRITE */
-  DBUG_ASSERT(mdl_ticket->m_type == MDL_SHARED_UPGRADABLE ||
-              mdl_ticket->m_type == MDL_SHARED_NO_WRITE ||
-              mdl_ticket->m_type == MDL_SHARED_NO_READ_WRITE);
 
   mdl_xlock_request.init(&mdl_ticket->m_lock->key, new_type,
                          MDL_TRANSACTION);
@@ -2627,7 +2645,7 @@ void MDL_context::release_lock(enum_mdl_duration duration, MDL_ticket *ticket)
 
 void MDL_context::release_lock(MDL_ticket *ticket)
 {
-  DBUG_ASSERT(ticket->m_duration == MDL_EXPLICIT);
+  DBUG_SLOW_ASSERT(ticket->m_duration == MDL_EXPLICIT);
 
   release_lock(MDL_EXPLICIT, ticket);
 }
@@ -2887,8 +2905,8 @@ bool MDL_context::has_lock(const MDL_savepoint &mdl_savepoint,
 void MDL_context::set_lock_duration(MDL_ticket *mdl_ticket,
                                     enum_mdl_duration duration)
 {
-  DBUG_ASSERT(mdl_ticket->m_duration == MDL_TRANSACTION &&
-              duration != MDL_TRANSACTION);
+  DBUG_SLOW_ASSERT(mdl_ticket->m_duration == MDL_TRANSACTION &&
+                   duration != MDL_TRANSACTION);
 
   m_tickets[MDL_TRANSACTION].remove(mdl_ticket);
   m_tickets[duration].push_front(mdl_ticket);
@@ -2997,34 +3015,55 @@ bool MDL_context::has_explicit_locks()
 }
 
 #ifdef WITH_WSREP
+static
+const char *wsrep_get_mdl_type_name(enum_mdl_type type)
+{
+  switch (type)
+  {
+  case MDL_INTENTION_EXCLUSIVE  : return "intention exclusive";
+  case MDL_SHARED               : return "shared";
+  case MDL_SHARED_HIGH_PRIO     : return "shared high prio";
+  case MDL_SHARED_READ          : return "shared read";
+  case MDL_SHARED_WRITE         : return "shared write";
+  case MDL_SHARED_UPGRADABLE    : return "shared upgradable";
+  case MDL_SHARED_NO_WRITE      : return "shared no write";
+  case MDL_SHARED_NO_READ_WRITE : return "shared no read write";
+  case MDL_EXCLUSIVE            : return "exclusive";
+  default: break;
+  }
+  return "UNKNOWN";
+}
+
+static
+const char *wsrep_get_mdl_namespace_name(MDL_key::enum_mdl_namespace ns)
+{
+  switch (ns)
+  {
+  case MDL_key::GLOBAL    : return "GLOBAL";
+  case MDL_key::SCHEMA    : return "SCHEMA";
+  case MDL_key::TABLE     : return "TABLE";
+  case MDL_key::FUNCTION  : return "FUNCTION";
+  case MDL_key::PROCEDURE : return "PROCEDURE";
+  case MDL_key::PACKAGE_BODY: return "PACKAGE BODY";
+  case MDL_key::TRIGGER   : return "TRIGGER";
+  case MDL_key::EVENT     : return "EVENT";
+  case MDL_key::COMMIT    : return "COMMIT";
+  case MDL_key::USER_LOCK : return "USER_LOCK";
+  default: break;
+  }
+  return "UNKNOWN";
+}
+
 void MDL_ticket::wsrep_report(bool debug)
 {
-  if (debug)
-  {
-      const PSI_stage_info *psi_stage = m_lock->key.get_wait_state_name();
+  if (!debug) return;
 
-      WSREP_DEBUG("MDL ticket: type: %s space: %s db: %s name: %s (%s)",
-       	 (get_type()  == MDL_INTENTION_EXCLUSIVE)  ? "intention exclusive"  :
-       	 ((get_type() == MDL_SHARED)               ? "shared"               :
-       	 ((get_type() == MDL_SHARED_HIGH_PRIO      ? "shared high prio"     :
-       	 ((get_type() == MDL_SHARED_READ)          ? "shared read"          :
-       	 ((get_type() == MDL_SHARED_WRITE)         ? "shared write"         :
-       	 ((get_type() == MDL_SHARED_NO_WRITE)      ? "shared no write"      :
-         ((get_type() == MDL_SHARED_NO_READ_WRITE) ? "shared no read write" :
-       	 ((get_type() == MDL_EXCLUSIVE)            ? "exclusive"            :
-          "UNKNOWN")))))))),
-         (m_lock->key.mdl_namespace()  == MDL_key::GLOBAL) ? "GLOBAL"       :
-         ((m_lock->key.mdl_namespace() == MDL_key::SCHEMA) ? "SCHEMA"       :
-         ((m_lock->key.mdl_namespace() == MDL_key::TABLE)  ? "TABLE"        :
-         ((m_lock->key.mdl_namespace() == MDL_key::TABLE)  ? "FUNCTION"     :
-         ((m_lock->key.mdl_namespace() == MDL_key::TABLE)  ? "PROCEDURE"    :
-         ((m_lock->key.mdl_namespace() == MDL_key::TABLE)  ? "TRIGGER"      :
-         ((m_lock->key.mdl_namespace() == MDL_key::TABLE)  ? "EVENT"        :
-         ((m_lock->key.mdl_namespace() == MDL_key::COMMIT) ? "COMMIT"       :
-         (char *)"UNKNOWN"))))))),
-         m_lock->key.db_name(),
-       	 m_lock->key.name(),
-         psi_stage->m_name);
-    }
+  const PSI_stage_info *psi_stage= m_lock->key.get_wait_state_name();
+  WSREP_DEBUG("MDL ticket: type: %s space: %s db: %s name: %s (%s)",
+              wsrep_get_mdl_type_name(get_type()),
+              wsrep_get_mdl_namespace_name(m_lock->key.mdl_namespace()),
+              m_lock->key.db_name(),
+              m_lock->key.name(),
+              psi_stage->m_name);
 }
 #endif /* WITH_WSREP */

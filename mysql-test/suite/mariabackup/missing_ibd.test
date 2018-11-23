@@ -7,6 +7,15 @@ create table t1(c1 int) engine=InnoDB;
 INSERT INTO t1 VALUES(1);
 let MYSQLD_DATADIR=`select @@datadir`;
 
+--disable_query_log
+call mtr.add_suppression("InnoDB: Cannot open datafile for read-only: '.*test.t1\.ibd'");
+call mtr.add_suppression('InnoDB: Operating system error number');
+call mtr.add_suppression('InnoDB: The error means the system cannot find the path specified\.');
+call mtr.add_suppression('InnoDB: If you are installing InnoDB');
+call mtr.add_suppression('InnoDB: Table test/t1 in the InnoDB data dictionary has tablespace id .*, but tablespace with that id or name does not exist');
+call mtr.add_suppression('InnoDB: Ignoring tablespace for `test`\.`t1` because it could not be opened\.');
+--enable_query_log
+
 --source include/shutdown_mysqld.inc
 
 --remove_file $MYSQLD_DATADIR/test/t1.ibd

@@ -98,17 +98,17 @@ SELECT @@session.div_precision_increment;
 # Change the value of div_precision_increment to an invalid value #
 ###################################################################
 
-SET @@global.div_precision_increment = 31;
+SET @@global.div_precision_increment = 39;
 SELECT @@global.div_precision_increment;
-SET @@global.div_precision_increment = 40;
+SET @@global.div_precision_increment = 50;
 SELECT @@global.div_precision_increment;
 SET @@global.div_precision_increment = -1024;
 SELECT @@global.div_precision_increment;
 SET @@global.div_precision_increment = 65536;
 SELECT @@global.div_precision_increment;
-SET @@session.div_precision_increment = 40;
+SET @@session.div_precision_increment = 50;
 SELECT @@session.div_precision_increment;
-SET @@session.div_precision_increment = 31;
+SET @@session.div_precision_increment = 37;
 SELECT @@session.div_precision_increment;
 SET @@session.div_precision_increment = -2;
 SELECT @@session.div_precision_increment;
@@ -179,12 +179,8 @@ SELECT @@local.div_precision_increment = @@session.div_precision_increment;
 
 SET div_precision_increment = 1;
 SELECT @@div_precision_increment;
---Error ER_PARSE_ERROR
-SET local.div_precision_increment = 1;
 --Error ER_UNKNOWN_TABLE
 SELECT local.div_precision_increment;
---Error ER_PARSE_ERROR
-SET session.div_precision_increment = 1;
 --Error ER_UNKNOWN_TABLE
 SELECT session.div_precision_increment;
 --Error ER_BAD_FIELD_ERROR

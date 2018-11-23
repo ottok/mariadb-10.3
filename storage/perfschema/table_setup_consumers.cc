@@ -174,7 +174,7 @@ int table_setup_consumers::read_row_values(TABLE *table,
       switch(f->field_index)
       {
       case 0: /* NAME */
-        set_field_varchar_utf8(f, m_row->m_name.str, m_row->m_name.length);
+        set_field_varchar_utf8(f, m_row->m_name.str,(uint) m_row->m_name.length);
         break;
       case 1: /* ENABLED */
         set_field_enum(f, (*m_row->m_enabled_ptr) ? ENUM_YES : ENUM_NO);
@@ -190,7 +190,7 @@ int table_setup_consumers::read_row_values(TABLE *table,
 
 int table_setup_consumers::update_row_values(TABLE *table,
                                              const unsigned char *,
-                                             unsigned char *,
+                                             const unsigned char *,
                                              Field **fields)
 {
   Field *f;

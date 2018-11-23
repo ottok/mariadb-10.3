@@ -205,7 +205,7 @@ inline mutex_t::mutex_t(pfs_key_t key) {
     int  r MY_ATTRIBUTE((unused)) = mysql_mutex_init(key, &_mutex, MY_MUTEX_INIT_FAST);
     assert_debug(r == 0);
 }
-inline mutex_t::~mutex_t(void) {
+inline mutex_t::~mutex_t() {
 #ifdef TOKUDB_DEBUG
     assert_debug(_owners == 0);
 #endif
@@ -273,7 +273,7 @@ inline rwlock_t::rwlock_t(pfs_key_t key) {
     int r MY_ATTRIBUTE((unused)) = mysql_rwlock_init(key, &_rwlock);
     assert_debug(r == 0);
 }
-inline rwlock_t::~rwlock_t(void) {
+inline rwlock_t::~rwlock_t() {
     int r MY_ATTRIBUTE((unused)) = mysql_rwlock_destroy(&_rwlock);
     assert_debug(r == 0);
 }

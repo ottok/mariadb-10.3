@@ -47,7 +47,7 @@ size_t my_strnxfrmlen_simple(CHARSET_INFO *cs, size_t len)
      is equal to comparing two original strings with my_strnncollsp_xxx().
      
      Not more than 'dstlen' bytes are written into 'dst'.
-     To garantee that the whole string is transformed, 'dstlen' must be
+     To guarantee that the whole string is transformed, 'dstlen' must be
      at least srclen*cs->strnxfrm_multiply bytes long. Otherwise,
      consequent memcmp() may return a non-accurate result.
      
@@ -71,15 +71,15 @@ size_t my_strnxfrmlen_simple(CHARSET_INFO *cs, size_t len)
 */
 
 
-size_t my_strnxfrm_simple(CHARSET_INFO * cs, 
-                          uchar *dst, size_t dstlen, uint nweights,
-                          const uchar *src, size_t srclen, uint flags)
+size_t my_strnxfrm_simple_internal(CHARSET_INFO * cs,
+                                   uchar *dst, size_t dstlen, uint *nweights,
+                                   const uchar *src, size_t srclen)
 {
   const uchar *map= cs->sort_order;
   uchar *d0= dst;
   uint frmlen;
-  if ((frmlen= MY_MIN(dstlen, nweights)) > srclen)
-    frmlen= srclen;
+  if ((frmlen= (uint)MY_MIN(dstlen, *nweights)) > srclen)
+    frmlen= (uint)srclen;
   if (dst != src)
   {
     const uchar *end;
@@ -92,8 +92,32 @@ size_t my_strnxfrm_simple(CHARSET_INFO * cs,
     for (end= dst + frmlen; dst < end; dst++)
       *dst= map[(uchar) *dst];
   }
+  *nweights-= frmlen;
+  return dst - d0;
+}
+
+
+size_t my_strnxfrm_simple(CHARSET_INFO * cs,
+                          uchar *dst, size_t dstlen, uint nweights,
+                          const uchar *src, size_t srclen, uint flags)
+{
+  uchar *d0= dst;
+  dst= d0 + my_strnxfrm_simple_internal(cs, dst, dstlen, &nweights,
+                                        src, srclen);
   return my_strxfrm_pad_desc_and_reverse(cs, d0, dst, d0 + dstlen,
-                                         nweights - frmlen, flags, 0);
+                                         nweights, flags, 0);
+}
+
+
+size_t my_strnxfrm_simple_nopad(CHARSET_INFO * cs,
+                                uchar *dst, size_t dstlen, uint nweights,
+                                const uchar *src, size_t srclen, uint flags)
+{
+  uchar *d0= dst;
+  dst= d0 + my_strnxfrm_simple_internal(cs, dst, dstlen, &nweights,
+                                        src, srclen);
+  return my_strxfrm_pad_desc_and_reverse_nopad(cs, d0, dst, d0 + dstlen,
+                                               nweights, flags, 0);
 }
 
 
@@ -128,9 +152,6 @@ int my_strnncoll_simple(CHARSET_INFO * cs, const uchar *s, size_t slen,
     a_length		Length of 'a'
     b			Second string to compare
     b_length		Length of 'b'
-    diff_if_only_endspace_difference
-		        Set to 1 if the strings should be regarded as different
-                        if they only difference in end space
 
   IMPLEMENTATION
     If one string is shorter as the other, then we space extend the other
@@ -149,16 +170,11 @@ int my_strnncoll_simple(CHARSET_INFO * cs, const uchar *s, size_t slen,
 */
 
 int my_strnncollsp_simple(CHARSET_INFO * cs, const uchar *a, size_t a_length, 
-			  const uchar *b, size_t b_length,
-                          my_bool diff_if_only_endspace_difference)
+			  const uchar *b, size_t b_length)
 {
   const uchar *map= cs->sort_order, *end;
   size_t length;
   int res;
-
-#ifndef VARCHAR_WITH_DIFF_ENDSPACE_ARE_DIFFERENT_FOR_UNIQUE
-  diff_if_only_endspace_difference= 0;
-#endif
 
   end= a + (length= MY_MIN(a_length, b_length));
   while (a < end)
@@ -170,8 +186,6 @@ int my_strnncollsp_simple(CHARSET_INFO * cs, const uchar *a, size_t a_length,
   if (a_length != b_length)
   {
     int swap= 1;
-    if (diff_if_only_endspace_difference)
-      res= 1;                                   /* Assume 'a' is bigger */
     /*
       Check the next not space character of the longer key. If it's < ' ',
       then it's smaller than the other key.
@@ -191,6 +205,14 @@ int my_strnncollsp_simple(CHARSET_INFO * cs, const uchar *a, size_t a_length,
     }
   }
   return res;
+}
+
+
+int my_strnncollsp_simple_nopad(CHARSET_INFO * cs,
+                                const uchar *a, size_t a_length,
+                                const uchar *b, size_t b_length)
+{
+  return my_strnncoll_simple(cs, a, a_length, b, b_length, FALSE);
 }
 
 
@@ -297,7 +319,7 @@ size_t my_snprintf_8bit(CHARSET_INFO *cs  __attribute__((unused)),
 		     const char* fmt, ...)
 {
   va_list args;
-  int result;
+  size_t result;
   va_start(args,fmt);
   result= my_vsnprintf(to, n, fmt, args);
   va_end(args);
@@ -305,13 +327,28 @@ size_t my_snprintf_8bit(CHARSET_INFO *cs  __attribute__((unused)),
 }
 
 
+void my_hash_sort_simple_nopad(CHARSET_INFO *cs,
+			       const uchar *key, size_t len,
+			       ulong *nr1, ulong *nr2)
+{
+  register const uchar *sort_order=cs->sort_order;
+  const uchar *end= key + len;
+  register ulong m1= *nr1, m2= *nr2;
+  for (; key < (uchar*) end ; key++)
+  {
+    MY_HASH_ADD(m1, m2, (uint) sort_order[(uint) *key]);
+  }
+  *nr1= m1;
+  *nr2= m2;
+}
+
+
 void my_hash_sort_simple(CHARSET_INFO *cs,
-			 const uchar *key, size_t len,
-			 ulong *nr1, ulong *nr2)
+                         const uchar *key, size_t len,
+                         ulong *nr1, ulong *nr2)
 {
   register const uchar *sort_order=cs->sort_order;
   const uchar *end;
-  register ulong m1= *nr1, m2= *nr2;
   uint16 space_weight= sort_order[' '];
 
   /*
@@ -346,13 +383,7 @@ void my_hash_sort_simple(CHARSET_INFO *cs,
       break;
     }
   }
-
-  for (; key < (uchar*) end ; key++)
-  {
-    MY_HASH_ADD(m1, m2, (uint) sort_order[(uint) *key]);
-  }
-  *nr1= m1;
-  *nr2= m2;
+  my_hash_sort_simple_nopad(cs, key, end - key, nr1, nr2);
 }
 
 
@@ -461,7 +492,6 @@ ulong my_strntoul_8bit(CHARSET_INFO *cs,
   register uint cutlim;
   register uint32 i;
   register const char *s;
-  register uchar c;
   const char *save, *e;
   int overflow;
 
@@ -496,8 +526,9 @@ ulong my_strntoul_8bit(CHARSET_INFO *cs,
   overflow = 0;
   i = 0;
   
-  for (c = *s; s != e; c = *++s)
+  for ( ; s != e; ++s)
   {
+    register uchar c= *s;
     if (c>='0' && c<='9')
       c -= '0';
     else if (c>='A' && c<='Z')
@@ -1026,9 +1057,9 @@ my_bool my_like_range_simple(CHARSET_INFO *cs,
     if (*ptr == w_many)				/* '%' in SQL */
     {
       /* Calculate length of keys */
-      *min_length= ((cs->state & MY_CS_BINSORT) ?
+      *min_length= (cs->state & (MY_CS_BINSORT | MY_CS_NOPAD)) ?
                     (size_t) (min_str - min_org) :
-                    res_length);
+                    res_length;
       *max_length= res_length;
       do
       {
@@ -1067,6 +1098,13 @@ size_t my_scan_8bit(CHARSET_INFO *cs, const char *str, const char *end, int sq)
         break;
     }
     return (size_t) (str - str0);
+  case MY_SEQ_NONSPACES:
+    for ( ; str < end ; str++)
+    {
+      if (my_isspace(cs, *str))
+        break;
+    }
+    return (size_t) (str - str0);
   default:
     return 0;
   }
@@ -1100,16 +1138,6 @@ size_t my_charpos_8bit(CHARSET_INFO *cs __attribute__((unused)),
                        size_t pos)
 {
   return pos;
-}
-
-
-size_t my_well_formed_len_8bit(CHARSET_INFO *cs __attribute__((unused)),
-                               const char *start, const char *end,
-                               size_t nchars, int *error)
-{
-  size_t nbytes= (size_t) (end-start);
-  *error= 0;
-  return MY_MIN(nbytes, nchars);
 }
 
 
@@ -1196,13 +1224,13 @@ skip:
 	if (nmatch > 0)
 	{
 	  match[0].beg= 0;
-	  match[0].end= (size_t) (str- (const uchar*)b-1);
+	  match[0].end= (uint) (str- (const uchar*)b-1);
 	  match[0].mb_len= match[0].end;
 	  
 	  if (nmatch > 1)
 	  {
 	    match[1].beg= match[0].end;
-	    match[1].end= match[0].end+s_length;
+	    match[1].end= (uint)(match[0].end+s_length);
 	    match[1].mb_len= match[1].end-match[1].beg;
 	  }
 	}
@@ -1341,12 +1369,85 @@ create_fromuni(struct charset_info_st *cs,
   return FALSE;
 }
 
+
+/*
+  Detect if a character set is 8bit,
+  and it is pure ascii, i.e. doesn't have
+  characters outside U+0000..U+007F
+  This functions is shared between "conf_to_src"
+  and dynamic charsets loader in "mysqld".
+*/
+static my_bool
+my_charset_is_8bit_pure_ascii(CHARSET_INFO *cs)
+{
+  size_t code;
+  if (!cs->tab_to_uni)
+    return 0;
+  for (code= 0; code < 256; code++)
+  {
+    if (cs->tab_to_uni[code] > 0x7F)
+      return 0;
+  }
+  return 1;
+}
+
+
+/*
+  Shared function between conf_to_src and mysys.
+  Check if a 8bit character set is compatible with
+  ascii on the range 0x00..0x7F.
+*/
+static my_bool
+my_charset_is_ascii_compatible(CHARSET_INFO *cs)
+{
+  uint i;
+  if (!cs->tab_to_uni)
+    return 1;
+  for (i= 0; i < 128; i++)
+  {
+    if (cs->tab_to_uni[i] != i)
+      return 0;
+  }
+  return 1;
+}
+
+
+uint my_8bit_charset_flags_from_data(CHARSET_INFO *cs)
+{
+  uint flags= 0;
+  if (my_charset_is_8bit_pure_ascii(cs))
+    flags|= MY_CS_PUREASCII;
+  if (!my_charset_is_ascii_compatible(cs))
+    flags|= MY_CS_NONASCII;
+  return flags;
+}
+
+
+/*
+  Check if case sensitive sort order: A < a < B.
+  We need MY_CS_FLAG for regex library, and for
+  case sensitivity flag for 5.0 client protocol,
+  to support isCaseSensitive() method in JDBC driver
+*/
+uint my_8bit_collation_flags_from_data(CHARSET_INFO *cs)
+{
+  uint flags= 0;
+  if (cs->sort_order && cs->sort_order['A'] < cs->sort_order['a'] &&
+                        cs->sort_order['a'] < cs->sort_order['B'])
+    flags|= MY_CS_CSSORT;
+  return flags;
+}
+
+
 static my_bool
 my_cset_init_8bit(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
 {
+  cs->state|= my_8bit_charset_flags_from_data(cs);
   cs->caseup_multiply= 1;
   cs->casedn_multiply= 1;
   cs->pad_char= ' ';
+  if (!cs->to_lower || !cs->to_upper || !cs->ctype || !cs->tab_to_uni)
+    return TRUE;
   return create_fromuni(cs, loader);
 }
 
@@ -1372,6 +1473,9 @@ static void set_max_sort_char(struct charset_info_st *cs)
 static my_bool my_coll_init_simple(struct charset_info_st *cs,
                                    MY_CHARSET_LOADER *loader __attribute__((unused)))
 {
+  if (!cs->sort_order)
+    return TRUE;
+  cs->state|= my_8bit_collation_flags_from_data(cs);
   set_max_sort_char(cs);
   return FALSE;
 }
@@ -1431,7 +1535,7 @@ static ulonglong d10[DIGITS_IN_ULONGLONG]=
   Convert a string to unsigned long long integer value
   with rounding.
   
-  SYNOPSYS
+  SYNOPSIS
     my_strntoull10_8bit()
       cs              in      pointer to character set
       str             in      pointer to the string to be converted
@@ -1597,7 +1701,7 @@ my_strntoull10rnd_8bit(CHARSET_INFO *cs __attribute__((unused)),
     /* Unknown character, exit the loop */
     break; 
   }
-  shift= dot ? dot - str : 0; /* Right shift */
+  shift= dot ? (int)(dot - str) : 0; /* Right shift */
   addon= 0;
 
 exp:    /* [ E [ <sign> ] <unsigned integer> ] */
@@ -1913,8 +2017,30 @@ my_strxfrm_pad_desc_and_reverse(CHARSET_INFO *cs,
   my_strxfrm_desc_and_reverse(str, frmend, flags, level);
   if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && frmend < strend)
   {
-    uint fill_length= strend - frmend;
+    size_t fill_length= strend - frmend;
     cs->cset->fill(cs, (char*) frmend, fill_length, cs->pad_char);
+    frmend= strend;
+  }
+  return frmend - str;
+}
+
+
+size_t
+my_strxfrm_pad_desc_and_reverse_nopad(CHARSET_INFO *cs,
+                                      uchar *str, uchar *frmend, uchar *strend,
+                                      uint nweights, uint flags, uint level)
+{
+  if (nweights && frmend < strend && (flags & MY_STRXFRM_PAD_WITH_SPACE))
+  {
+    uint fill_length= MY_MIN((uint) (strend - frmend), nweights * cs->mbminlen);
+    memset(frmend, 0x00, fill_length);
+    frmend+= fill_length;
+  }
+  my_strxfrm_desc_and_reverse(str, frmend, flags, level);
+  if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && frmend < strend)
+  {
+    size_t fill_length= strend - frmend;
+    memset(frmend, 0x00, fill_length);
     frmend= strend;
   }
   return frmend - str;
@@ -1924,11 +2050,8 @@ my_strxfrm_pad_desc_and_reverse(CHARSET_INFO *cs,
 MY_CHARSET_HANDLER my_charset_8bit_handler=
 {
     my_cset_init_8bit,
-    NULL,			/* ismbchar      */
-    my_mbcharlen_8bit,		/* mbcharlen     */
     my_numchars_8bit,
     my_charpos_8bit,
-    my_well_formed_len_8bit,
     my_lengthsp_8bit,
     my_numcells_8bit,
     my_mb_wc_8bit,
@@ -1968,5 +2091,21 @@ MY_COLLATION_HANDLER my_collation_8bit_simple_ci_handler =
     my_strcasecmp_8bit,
     my_instr_simple,
     my_hash_sort_simple,
+    my_propagate_simple
+};
+
+
+MY_COLLATION_HANDLER my_collation_8bit_simple_nopad_ci_handler =
+{
+    my_coll_init_simple,	/* init */
+    my_strnncoll_simple,
+    my_strnncollsp_simple_nopad,
+    my_strnxfrm_simple_nopad,
+    my_strnxfrmlen_simple,
+    my_like_range_simple,
+    my_wildcmp_8bit,
+    my_strcasecmp_8bit,
+    my_instr_simple,
+    my_hash_sort_simple_nopad,
     my_propagate_simple
 };

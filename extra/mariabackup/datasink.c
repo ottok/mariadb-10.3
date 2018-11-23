@@ -18,6 +18,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 *******************************************************/
 
+#include <my_global.h>
 #include <my_base.h>
 #include "common.h"
 #include "datasink.h"
@@ -108,6 +109,9 @@ Write to a datasink file.
 int
 ds_write(ds_file_t *file, const void *buf, size_t len)
 {
+	if (len == 0) {
+		return 0;
+	}
 	return file->datasink->write(file, (const uchar *)buf, len);
 }
 

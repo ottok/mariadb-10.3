@@ -24,4 +24,8 @@ fi
 systemctl set-environment _WSREP_NEW_CLUSTER='--wsrep-new-cluster' && \
     systemctl start ${1:-mariadb}
 
+extcode=$?
+
 systemctl set-environment _WSREP_NEW_CLUSTER=''
+
+exit $extcode

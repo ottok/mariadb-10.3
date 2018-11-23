@@ -14,7 +14,7 @@ void my_exit(int c)
   exit(c);
 }
 
-void do_usage()
+void do_usage(void)
 {
   printf("Usage:\n"
          "  %s <user> log  <filename>\n"

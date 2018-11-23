@@ -84,7 +84,7 @@
 #define MAX_FIELDS	4096			/* Limit in the .frm file */
 #define MAX_PARTITIONS  8192
 
-#define MAX_SELECT_NESTING (sizeof(nesting_map)*8-1)
+#define MAX_SELECT_NESTING (SELECT_NESTING_MAP_SIZE - 1)
 
 #define MAX_SORT_MEMORY 2048*1024
 #define MIN_SORT_MEMORY 1024
@@ -113,6 +113,8 @@
 #define DISK_BUFFER_SIZE	(uint) (IO_SIZE*16) /* Size of diskbuffer */
 
 #define FRM_VER_TRUE_VARCHAR (FRM_VER+4) /* 10 */
+#define FRM_VER_EXPRESSSIONS (FRM_VER+5) /* 11 */
+#define FRM_VER_CURRENT  FRM_VER_EXPRESSSIONS
 
 /***************************************************************************
   Configuration parameters
@@ -124,6 +126,7 @@
 #define MAX_ACCEPT_RETRY	10	// Test accept this many times
 #define MAX_FIELDS_BEFORE_HASH	32
 #define USER_VARS_HASH_SIZE     16
+#define SEQUENCES_HASH_SIZE     16
 #define TABLE_OPEN_CACHE_MIN    200
 #define TABLE_OPEN_CACHE_DEFAULT 2000
 #define TABLE_DEF_CACHE_DEFAULT 400
@@ -172,6 +175,11 @@
 #define TABLE_ALLOC_BLOCK_SIZE		1024
 #define WARN_ALLOC_BLOCK_SIZE		2048
 #define WARN_ALLOC_PREALLOC_SIZE	1024
+/*
+  Note that if we are using 32K or less, then TCmalloc will use a local
+  heap without locks!
+*/
+#define SHOW_ALLOC_BLOCK_SIZE           (32768-MALLOC_OVERHEAD)
 
 /*
   The following parameters is to decide when to use an extra cache to
@@ -223,6 +231,7 @@
 */
 #define HEAP_TEMPTABLE_LOOKUP_COST 0.05
 #define DISK_TEMPTABLE_LOOKUP_COST 1.0
+#define SORT_INDEX_CMP_COST 0.02
 
 #define MY_CHARSET_BIN_MB_MAXLEN 1
 
@@ -247,6 +256,8 @@
   that does not respond to "initial server greeting" timely
 */
 #define CONNECT_TIMEOUT		10
+ /* Wait 5 minutes before removing thread from thread cache */
+#define THREAD_CACHE_TIMEOUT	5*60
 
 /* The following can also be changed from the command line */
 #define DEFAULT_CONCURRENCY	10

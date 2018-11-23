@@ -46,8 +46,8 @@ basedir=
 datadir=
 
 # Default value, in seconds, afterwhich the script should timeout waiting
-# for server start. 
-# Value here is overridden by value in my.cnf. 
+# for server start.
+# Value here is overridden by value in my.cnf.
 # 0 means don't wait at all
 # Negative numbers mean to wait indefinitely
 service_startup_timeout=900
@@ -373,7 +373,7 @@ case "$mode" in
     ;;
   'status')
     # First, check to see if pid file exists
-    if test -s "$mysqld_pid_file_path" ; then 
+    if test -s "$mysqld_pid_file_path" ; then
       read mysqld_pid < "$mysqld_pid_file_path"
       if su_kill -0 $mysqld_pid ; then
         log_success_msg "MariaDB running ($mysqld_pid)"
@@ -391,11 +391,11 @@ case "$mode" in
       if test $pid_count -gt 1 ; then
         log_failure_msg "Multiple MariaDB running but PID file could not be found ($mysqld_pid)"
         exit 5
-      elif test -z $mysqld_pid ; then 
-        if test -f "$lock_file_path" ; then 
+      elif test -z $mysqld_pid ; then
+        if test -f "$lock_file_path" ; then
           log_failure_msg "MariaDB is not running, but lock file ($lock_file_path) exists"
           exit 2
-        fi 
+        fi
         log_failure_msg "MariaDB is not running"
         exit 3
       else

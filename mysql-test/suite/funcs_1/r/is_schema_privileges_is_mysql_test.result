@@ -16,6 +16,7 @@ GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	PRIVILEGE_TYPE	IS_GRANTABLE
 ''@'%'	def	test	CREATE TEMPORARY TABLES	NO
 ''@'%'	def	test	CREATE VIEW	NO
 ''@'%'	def	test	DELETE	NO
+''@'%'	def	test	DELETE VERSIONING ROWS	NO
 ''@'%'	def	test	DROP	NO
 ''@'%'	def	test	EVENT	NO
 ''@'%'	def	test	INDEX	NO
@@ -35,7 +36,7 @@ mysql
 SHOW DATABASES LIKE 'test';
 Database (test)
 test
-# Establish connection testuser1 (user=testuser1)
+connect  testuser1, localhost, testuser1, , db_datadict;
 SELECT * FROM information_schema.schema_privileges
 WHERE table_schema IN ('information_schema','mysql','test')
 ORDER BY grantee, table_schema, privilege_type;
@@ -48,6 +49,6 @@ Database (mysql)
 SHOW DATABASES LIKE 'test';
 Database (test)
 test
-# Switch to connection default and close connection testuser1
+connection default;
 DROP USER 'testuser1'@'localhost';
 DROP DATABASE db_datadict;

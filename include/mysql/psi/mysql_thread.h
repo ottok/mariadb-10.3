@@ -62,6 +62,35 @@
   @{
 */
 
+#ifdef HAVE_PSI_THREAD_INTERFACE
+#define PSI_CALL_delete_current_thread    PSI_THREAD_CALL(delete_current_thread)
+#define PSI_CALL_get_thread               PSI_THREAD_CALL(get_thread)
+#define PSI_CALL_new_thread               PSI_THREAD_CALL(new_thread)
+#define PSI_CALL_register_thread          PSI_THREAD_CALL(register_thread)
+#define PSI_CALL_set_thread               PSI_THREAD_CALL(set_thread)
+#define PSI_CALL_set_thread_connect_attrs PSI_THREAD_CALL(set_thread_connect_attrs)
+#define PSI_CALL_set_thread_db            PSI_THREAD_CALL(set_thread_db)
+#define PSI_CALL_set_thread_id            PSI_THREAD_CALL(set_thread_id)
+#define PSI_CALL_set_thread_info          PSI_THREAD_CALL(set_thread_info)
+#define PSI_CALL_set_thread_start_time    PSI_THREAD_CALL(set_thread_start_time)
+#define PSI_CALL_set_thread_user_host     PSI_THREAD_CALL(set_thread_user_host)
+#define PSI_CALL_spawn_thread             PSI_THREAD_CALL(spawn_thread)
+#else
+#define PSI_CALL_delete_current_thread()                do { } while(0)
+#define PSI_CALL_get_thread()                           NULL
+#define PSI_CALL_new_thread(A1,A2,A3)                   NULL
+#define PSI_CALL_register_thread(A1,A2,A3)              do { } while(0)
+#define PSI_CALL_set_thread(A1)                         do { } while(0)
+#define PSI_CALL_set_thread_connect_attrs(A1,A2,A3)     0
+#define PSI_CALL_set_thread_db(A1,A2)                   do { } while(0)
+#define PSI_CALL_set_thread_id(A1,A2)                   do { } while(0)
+#define PSI_CALL_set_thread_info(A1, A2)                do { } while(0)
+#define PSI_CALL_set_thread_start_time(A1)              do { } while(0)
+#define PSI_CALL_set_thread_user_host(A1, A2, A3, A4)   do { } while(0)
+#define PSI_CALL_spawn_thread(A1, A2, A3, A4, A5)       0
+#endif
+
+
 /**
   An instrumented mutex structure.
   @sa mysql_mutex_t
@@ -71,8 +100,6 @@ struct st_mysql_mutex
   /** The real mutex. */
 #ifdef SAFE_MUTEX
   safe_mutex_t m_mutex;
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  my_pthread_fastmutex_t m_mutex;
 #else
   pthread_mutex_t m_mutex;
 #endif
@@ -575,7 +602,7 @@ typedef struct st_mysql_cond mysql_cond_t;
 
 /**
   @def mysql_thread_set_psi_id(I)
-  Set the thread indentifier for the instrumentation.
+  Set the thread identifier for the instrumentation.
   @param I The thread identifier
 */
 #ifdef HAVE_PSI_THREAD_INTERFACE
@@ -619,8 +646,6 @@ static inline int inline_mysql_mutex_init(
 #endif
 #ifdef SAFE_MUTEX
   return safe_mutex_init(&that->m_mutex, attr, src_name, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  return my_pthread_fastmutex_init(&that->m_mutex, attr);
 #else
   return pthread_mutex_init(&that->m_mutex, attr);
 #endif
@@ -642,8 +667,6 @@ static inline int inline_mysql_mutex_destroy(
 #endif
 #ifdef SAFE_MUTEX
   return safe_mutex_destroy(&that->m_mutex, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  return pthread_mutex_destroy(&that->m_mutex.mutex);
 #else
   return pthread_mutex_destroy(&that->m_mutex);
 #endif
@@ -659,7 +682,7 @@ static inline int inline_mysql_mutex_lock(
   int result;
 
 #ifdef HAVE_PSI_MUTEX_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_mutex_locker *locker;
@@ -670,8 +693,6 @@ static inline int inline_mysql_mutex_lock(
     /* Instrumented code */
 #ifdef SAFE_MUTEX
     result= safe_mutex_lock(&that->m_mutex, FALSE, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-    result= my_pthread_fastmutex_lock(&that->m_mutex);
 #else
     result= pthread_mutex_lock(&that->m_mutex);
 #endif
@@ -687,8 +708,6 @@ static inline int inline_mysql_mutex_lock(
   /* Non instrumented code */
 #ifdef SAFE_MUTEX
   result= safe_mutex_lock(&that->m_mutex, FALSE, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  result= my_pthread_fastmutex_lock(&that->m_mutex);
 #else
   result= pthread_mutex_lock(&that->m_mutex);
 #endif
@@ -706,7 +725,7 @@ static inline int inline_mysql_mutex_trylock(
   int result;
 
 #ifdef HAVE_PSI_MUTEX_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_mutex_locker *locker;
@@ -717,8 +736,6 @@ static inline int inline_mysql_mutex_trylock(
     /* Instrumented code */
 #ifdef SAFE_MUTEX
     result= safe_mutex_lock(&that->m_mutex, TRUE, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-    result= pthread_mutex_trylock(&that->m_mutex.mutex);
 #else
     result= pthread_mutex_trylock(&that->m_mutex);
 #endif
@@ -734,8 +751,6 @@ static inline int inline_mysql_mutex_trylock(
   /* Non instrumented code */
 #ifdef SAFE_MUTEX
   result= safe_mutex_lock(&that->m_mutex, TRUE, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  result= pthread_mutex_trylock(&that->m_mutex.mutex);
 #else
   result= pthread_mutex_trylock(&that->m_mutex);
 #endif
@@ -753,14 +768,12 @@ static inline int inline_mysql_mutex_unlock(
   int result;
 
 #ifdef HAVE_PSI_MUTEX_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
     PSI_MUTEX_CALL(unlock_mutex)(that->m_psi);
 #endif
 
 #ifdef SAFE_MUTEX
   result= safe_mutex_unlock(&that->m_mutex, src_file, src_line);
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  result= pthread_mutex_unlock(&that->m_mutex.mutex);
 #else
   result= pthread_mutex_unlock(&that->m_mutex);
 #endif
@@ -822,7 +835,7 @@ static inline int inline_mysql_rwlock_destroy(
   mysql_rwlock_t *that)
 {
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     PSI_RWLOCK_CALL(destroy_rwlock)(that->m_psi);
     that->m_psi= NULL;
@@ -836,7 +849,7 @@ static inline int inline_mysql_prlock_destroy(
   mysql_prlock_t *that)
 {
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     PSI_RWLOCK_CALL(destroy_rwlock)(that->m_psi);
     that->m_psi= NULL;
@@ -856,7 +869,7 @@ static inline int inline_mysql_rwlock_rdlock(
   int result;
 
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_rwlock_locker *locker;
@@ -892,7 +905,7 @@ static inline int inline_mysql_prlock_rdlock(
   int result;
 
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_rwlock_locker *locker;
@@ -928,7 +941,7 @@ static inline int inline_mysql_rwlock_wrlock(
   int result;
 
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_rwlock_locker *locker;
@@ -964,7 +977,7 @@ static inline int inline_mysql_prlock_wrlock(
   int result;
 
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_rwlock_locker *locker;
@@ -1000,7 +1013,7 @@ static inline int inline_mysql_rwlock_tryrdlock(
   int result;
 
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_rwlock_locker *locker;
@@ -1035,7 +1048,7 @@ static inline int inline_mysql_rwlock_trywrlock(
   int result;
 
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_rwlock_locker *locker;
@@ -1065,7 +1078,7 @@ static inline int inline_mysql_rwlock_unlock(
 {
   int result;
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
     PSI_RWLOCK_CALL(unlock_rwlock)(that->m_psi);
 #endif
   result= rw_unlock(&that->m_rwlock);
@@ -1078,7 +1091,7 @@ static inline int inline_mysql_prlock_unlock(
 {
   int result;
 #ifdef HAVE_PSI_RWLOCK_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
     PSI_RWLOCK_CALL(unlock_rwlock)(that->m_psi);
 #endif
   result= rw_pr_unlock(&that->m_prlock);
@@ -1122,7 +1135,7 @@ static inline int inline_mysql_cond_destroy(
   mysql_cond_t *that)
 {
 #ifdef HAVE_PSI_COND_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     PSI_COND_CALL(destroy_cond)(that->m_psi);
     that->m_psi= NULL;
@@ -1142,7 +1155,7 @@ static inline int inline_mysql_cond_wait(
   int result;
 
 #ifdef HAVE_PSI_COND_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_cond_locker *locker;
@@ -1179,7 +1192,7 @@ static inline int inline_mysql_cond_timedwait(
   int result;
 
 #ifdef HAVE_PSI_COND_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
   {
     /* Instrumentation start */
     PSI_cond_locker *locker;
@@ -1191,7 +1204,7 @@ static inline int inline_mysql_cond_timedwait(
     result= my_cond_timedwait(&that->m_cond, &mutex->m_mutex, abstime);
 
     /* Instrumentation end */
-    if (locker != NULL)
+    if (psi_likely(locker != NULL))
       PSI_COND_CALL(end_cond_wait)(locker, result);
 
     return result;
@@ -1209,7 +1222,7 @@ static inline int inline_mysql_cond_signal(
 {
   int result;
 #ifdef HAVE_PSI_COND_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
     PSI_COND_CALL(signal_cond)(that->m_psi);
 #endif
   result= pthread_cond_signal(&that->m_cond);
@@ -1221,7 +1234,7 @@ static inline int inline_mysql_cond_broadcast(
 {
   int result;
 #ifdef HAVE_PSI_COND_INTERFACE
-  if (that->m_psi != NULL)
+  if (psi_likely(that->m_psi != NULL))
     PSI_COND_CALL(broadcast_cond)(that->m_psi);
 #endif
   result= pthread_cond_broadcast(&that->m_cond);
@@ -1256,7 +1269,7 @@ static inline int inline_mysql_thread_create(
   return result;
 }
 
-static inline void inline_mysql_thread_set_psi_id(ulong id)
+static inline void inline_mysql_thread_set_psi_id(my_thread_id id)
 {
   struct PSI_thread *psi= PSI_THREAD_CALL(get_thread)();
   PSI_THREAD_CALL(set_thread_id)(psi, id);

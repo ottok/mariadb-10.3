@@ -72,6 +72,7 @@ typedef struct st_sel_arg_range_seq
 range_seq_t sel_arg_range_seq_init(void *init_param, uint n_ranges, uint flags)
 {
   SEL_ARG_RANGE_SEQ *seq= (SEL_ARG_RANGE_SEQ*)init_param;
+  seq->param->range_count=0;
   seq->at_start= TRUE;
   seq->stack[0].key_tree= NULL;
   seq->stack[0].min_key= seq->param->min_key;
@@ -135,7 +136,7 @@ static void step_down_to(SEL_ARG_RANGE_SEQ *arg, SEL_ARG *key_tree)
     TRUE   No more ranges in the sequence
 */
 
-#if (_MSC_FULL_VER == 160030319)
+#if defined(_MSC_FULL_VER) && (_MSC_FULL_VER == 160030319)
 /*
    Workaround Visual Studio 2010 RTM compiler backend bug, the function enters 
    infinite loop.
@@ -199,9 +200,9 @@ walk_right_n_up:
   {
     {
       RANGE_SEQ_ENTRY *cur= &seq->stack[seq->i];
-      uint min_key_length= cur->min_key - seq->param->min_key;
-      uint max_key_length= cur->max_key - seq->param->max_key;
-      uint len= cur->min_key - cur[-1].min_key;
+      size_t min_key_length= cur->min_key - seq->param->min_key;
+      size_t max_key_length= cur->max_key - seq->param->max_key;
+      size_t len= cur->min_key - cur[-1].min_key;
       if (!(min_key_length == max_key_length &&
             !memcmp(cur[-1].min_key, cur[-1].max_key, len) &&
             !key_tree->min_flag && !key_tree->max_flag))
@@ -238,7 +239,7 @@ walk_up_n_right:
 
   /* Ok got a tuple */
   RANGE_SEQ_ENTRY *cur= &seq->stack[seq->i];
-  uint min_key_length= cur->min_key - seq->param->min_key;
+  uint min_key_length= (uint)(cur->min_key - seq->param->min_key);
   
   range->ptr= (char*)(intptr)(key_tree->part);
   if (cur->min_key_flag & GEOM_FLAG)
@@ -256,13 +257,13 @@ walk_up_n_right:
     range->range_flag= cur->min_key_flag | cur->max_key_flag;
     
     range->start_key.key=    seq->param->min_key;
-    range->start_key.length= cur->min_key - seq->param->min_key;
+    range->start_key.length= (uint)(cur->min_key - seq->param->min_key);
     range->start_key.keypart_map= make_prev_keypart_map(cur->min_key_parts);
     range->start_key.flag= (cur->min_key_flag & NEAR_MIN ? HA_READ_AFTER_KEY : 
                                                            HA_READ_KEY_EXACT);
 
     range->end_key.key=    seq->param->max_key;
-    range->end_key.length= cur->max_key - seq->param->max_key;
+    range->end_key.length= (uint)(cur->max_key - seq->param->max_key);
     range->end_key.flag= (cur->max_key_flag & NEAR_MAX ? HA_READ_BEFORE_KEY : 
                                                          HA_READ_AFTER_KEY);
     range->end_key.keypart_map= make_prev_keypart_map(cur->max_key_parts);
@@ -272,25 +273,44 @@ walk_up_n_right:
       key_info= NULL;
     else
       key_info= &seq->param->table->key_info[seq->real_keyno];
-    
+
     /*
-      Conditions below:
-       (1) - range analysis is used for estimating condition selectivity
-       (2) - This is a unique key, and we have conditions for all its 
-             user-defined key parts.
-       (3) - The table uses extended keys, this key covers all components,
-             and we have conditions for all key parts.
+      This is an equality range (keypart_0=X and ... and keypart_n=Z) if
+        (1) - There are no flags indicating open range (e.g.,
+              "keypart_x > y") or GIS.
+        (2) - The lower bound and the upper bound of the range has the
+              same value (min_key == max_key).
     */
-    if (!(cur->min_key_flag & ~NULL_RANGE) && !cur->max_key_flag &&
-        (!key_info ||   // (1)
-         ((uint)key_tree->part+1 == key_info->user_defined_key_parts && // (2)
-	  key_info->flags & HA_NOSAME) ||                               // (2)
-         ((key_info->flags & HA_EXT_NOSAME) &&                 // (3)
-          (uint)key_tree->part+1 == key_info->ext_key_parts)  // (3)
-        ) &&
-        range->start_key.length == range->end_key.length &&
-        !memcmp(seq->param->min_key,seq->param->max_key,range->start_key.length))
-      range->range_flag= UNIQUE_RANGE | (cur->min_key_flag & NULL_RANGE);
+    const uint is_open_range =
+        (NO_MIN_RANGE | NO_MAX_RANGE | NEAR_MIN | NEAR_MAX | GEOM_FLAG);
+    const bool is_eq_range_pred =
+        !(cur->min_key_flag & is_open_range) &&              // (1)
+        !(cur->max_key_flag & is_open_range) &&              // (1)
+        range->start_key.length == range->end_key.length &&  // (2)
+        !memcmp(seq->param->min_key, seq->param->max_key,    // (2)
+                range->start_key.length);
+
+    if (is_eq_range_pred)
+    {
+      range->range_flag = EQ_RANGE;
+
+      /*
+        Conditions below:
+          (1) - Range analysis is used for estimating condition selectivity
+          (2) - This is a unique key, and we have conditions for all its
+                user-defined key parts.
+          (3) - The table uses extended keys, this key covers all components,
+             and we have conditions for all key parts.
+      */
+      if (
+          !key_info ||                                                   // (1)
+          ((uint)key_tree->part+1 == key_info->user_defined_key_parts && // (2)
+	   key_info->flags & HA_NOSAME) ||                               // (2)
+          ((key_info->flags & HA_EXT_NOSAME) &&                          // (3)
+           (uint)key_tree->part+1 == key_info->ext_key_parts)            // (3)
+         )
+        range->range_flag |= UNIQUE_RANGE | (cur->min_key_flag & NULL_RANGE);
+    }
       
     if (seq->param->is_ror_scan)
     {
@@ -315,7 +335,7 @@ walk_up_n_right:
   return 0;
 }
 
-#if (_MSC_FULL_VER == 160030319)
+#if defined(_MSC_FULL_VER) && (_MSC_FULL_VER == 160030319)
 /* VS2010 compiler bug workaround */
 #pragma optimize("g", on)
 #endif

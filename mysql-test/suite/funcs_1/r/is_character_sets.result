@@ -38,7 +38,7 @@ CHARACTER_SETS	CREATE TEMPORARY TABLE `CHARACTER_SETS` (
   `CHARACTER_SET_NAME` varchar(32) NOT NULL DEFAULT '',
   `DEFAULT_COLLATE_NAME` varchar(32) NOT NULL DEFAULT '',
   `DESCRIPTION` varchar(60) NOT NULL DEFAULT '',
-  `MAXLEN` bigint(3) NOT NULL DEFAULT '0'
+  `MAXLEN` bigint(3) NOT NULL DEFAULT 0
 ) ENGINE=MEMORY DEFAULT CHARSET=utf8
 SHOW COLUMNS FROM information_schema.CHARACTER_SETS;
 Field	Type	Null	Key	Default	Extra
@@ -57,7 +57,7 @@ INSERT INTO information_schema.character_sets
 SELECT * FROM information_schema.character_sets;
 ERROR 42000: Access denied for user 'root'@'localhost' to database 'information_schema'
 UPDATE information_schema.character_sets SET description = 'just updated';
-ERROR 42000: Access denied for user 'root'@'localhost' to database 'information_schema'
+Got one of the listed errors
 DELETE FROM information_schema.character_sets WHERE table_name = 't1';
 ERROR 42000: Access denied for user 'root'@'localhost' to database 'information_schema'
 TRUNCATE information_schema.character_sets;

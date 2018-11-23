@@ -31,9 +31,9 @@ public:
   TABLE *table;
   List<Item> fields;                            /* Fields, set on open */
   THD *thd;
-  LEX_STRING handler_name;
-  LEX_STRING db;
-  LEX_STRING table_name;
+  LEX_CSTRING handler_name;
+  LEX_CSTRING db;
+  LEX_CSTRING table_name;
   MEM_ROOT mem_root;
   MYSQL_LOCK *lock;
   MDL_request mdl_request;
@@ -68,7 +68,7 @@ struct TABLE_LIST;
 
 bool mysql_ha_open(THD *thd, TABLE_LIST *tables, SQL_HANDLER *reopen);
 bool mysql_ha_close(THD *thd, TABLE_LIST *tables);
-bool mysql_ha_read(THD *, TABLE_LIST *,enum enum_ha_read_modes,char *,
+bool mysql_ha_read(THD *, TABLE_LIST *,enum enum_ha_read_modes, const char *,
                    List<Item> *,enum ha_rkey_function,Item *,ha_rows,ha_rows);
 void mysql_ha_flush(THD *thd);
 void mysql_ha_flush_tables(THD *thd, TABLE_LIST *all_tables);
@@ -78,6 +78,8 @@ void mysql_ha_set_explicit_lock_duration(THD *thd);
 void mysql_ha_rm_temporary_tables(THD *thd);
 
 SQL_HANDLER *mysql_ha_read_prepare(THD *thd, TABLE_LIST *tables,
-                                   enum enum_ha_read_modes mode, char *keyname,
-                                   List<Item> *key_expr, Item *cond);
+                                   enum enum_ha_read_modes mode,
+                                   const char *keyname,
+                                   List<Item> *key_expr, enum ha_rkey_function ha_rkey_mode,
+                                   Item *cond);
 #endif

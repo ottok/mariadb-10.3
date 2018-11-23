@@ -15,7 +15,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_parse.h"                          // check_access
@@ -100,10 +100,11 @@ ulong Events::inited;
     1   s > t
 */
 
-int sortcmp_lex_string(LEX_STRING s, LEX_STRING t, CHARSET_INFO *cs)
+int sortcmp_lex_string(const LEX_CSTRING *s, const LEX_CSTRING *t,
+                       const CHARSET_INFO *cs)
 {
- return cs->coll->strnncollsp(cs, (uchar *) s.str,s.length,
-                                  (uchar *) t.str,t.length, 0);
+ return cs->coll->strnncollsp(cs, (uchar *) s->str, s->length,
+                                  (uchar *) t->str, t->length);
 }
 
 
@@ -319,7 +320,7 @@ Events::create_event(THD *thd, Event_parse_data *parse_data)
   enum_binlog_format save_binlog_format;
   DBUG_ENTER("Events::create_event");
 
-  if (check_if_system_tables_error())
+  if (unlikely(check_if_system_tables_error()))
     DBUG_RETURN(TRUE);
 
   /*
@@ -356,7 +357,7 @@ Events::create_event(THD *thd, Event_parse_data *parse_data)
   save_binlog_format= thd->set_current_stmt_binlog_format_stmt();
 
   if (thd->lex->create_info.or_replace() && event_queue)
-    event_queue->drop_event(thd, parse_data->dbname, parse_data->name);
+    event_queue->drop_event(thd, &parse_data->dbname, &parse_data->name);
 
   /* On error conditions my_error() is called so no need to handle here */
   if (!(ret= db_repository->create_event(thd, parse_data,
@@ -369,12 +370,12 @@ Events::create_event(THD *thd, Event_parse_data *parse_data)
     {
       if (!(new_element= new Event_queue_element()))
         ret= TRUE;                                // OOM
-      else if ((ret= db_repository->load_named_event(thd, parse_data->dbname,
-                                                     parse_data->name,
+      else if ((ret= db_repository->load_named_event(thd, &parse_data->dbname,
+                                                     &parse_data->name,
                                                      new_element)))
       {
-        if (!db_repository->drop_event(thd, parse_data->dbname,
-                                       parse_data->name, TRUE))
+        if (!db_repository->drop_event(thd, &parse_data->dbname,
+                                       &parse_data->name, TRUE))
           dropped= 1;
         delete new_element;
       }
@@ -446,7 +447,7 @@ WSREP_ERROR_LABEL:
 
 bool
 Events::update_event(THD *thd, Event_parse_data *parse_data,
-                     LEX_STRING *new_dbname, LEX_STRING *new_name)
+                     LEX_CSTRING *new_dbname, LEX_CSTRING *new_name)
 {
   int ret;
   enum_binlog_format save_binlog_format;
@@ -454,7 +455,7 @@ Events::update_event(THD *thd, Event_parse_data *parse_data,
 
   DBUG_ENTER("Events::update_event");
 
-  if (check_if_system_tables_error())
+  if (unlikely(check_if_system_tables_error()))
     DBUG_RETURN(TRUE);
 
   if (parse_data->check_parse_data(thd) || parse_data->do_not_create)
@@ -479,9 +480,9 @@ Events::update_event(THD *thd, Event_parse_data *parse_data,
   if (new_dbname)                               /* It's a rename */
   {
     /* Check that the new and the old names differ. */
-    if ( !sortcmp_lex_string(parse_data->dbname, *new_dbname,
+    if ( !sortcmp_lex_string(&parse_data->dbname, new_dbname,
                              system_charset_info) &&
-         !sortcmp_lex_string(parse_data->name, *new_name,
+         !sortcmp_lex_string(&parse_data->name, new_name,
                              system_charset_info))
     {
       my_error(ER_EVENT_SAME_NAME, MYF(0));
@@ -522,12 +523,12 @@ Events::update_event(THD *thd, Event_parse_data *parse_data,
   if (!(ret= db_repository->update_event(thd, parse_data,
                                          new_dbname, new_name)))
   {
-    LEX_STRING dbname= new_dbname ? *new_dbname : parse_data->dbname;
-    LEX_STRING name= new_name ? *new_name : parse_data->name;
+    LEX_CSTRING dbname= new_dbname ? *new_dbname : parse_data->dbname;
+    LEX_CSTRING name= new_name ? *new_name : parse_data->name;
 
     if (!(new_element= new Event_queue_element()))
       ret= TRUE;                                // OOM
-    else if ((ret= db_repository->load_named_event(thd, dbname, name,
+    else if ((ret= db_repository->load_named_event(thd, &dbname, &name,
                                                    new_element)))
       delete new_element;
     else
@@ -539,7 +540,7 @@ Events::update_event(THD *thd, Event_parse_data *parse_data,
         it right away.
       */
       if (event_queue)
-        event_queue->update_event(thd, parse_data->dbname, parse_data->name,
+        event_queue->update_event(thd, &parse_data->dbname, &parse_data->name,
                                   new_element);
       /* Binlog the alter event. */
       DBUG_ASSERT(thd->query() && thd->query_length());
@@ -580,16 +581,17 @@ WSREP_ERROR_LABEL:
 */
 
 bool
-Events::drop_event(THD *thd, LEX_STRING dbname, LEX_STRING name, bool if_exists)
+Events::drop_event(THD *thd, const LEX_CSTRING *dbname,
+                   const LEX_CSTRING *name, bool if_exists)
 {
   int ret;
   enum_binlog_format save_binlog_format;
   DBUG_ENTER("Events::drop_event");
 
-  if (check_if_system_tables_error())
+  if (unlikely(check_if_system_tables_error()))
     DBUG_RETURN(TRUE);
 
-  if (check_access(thd, EVENT_ACL, dbname.str, NULL, NULL, 0, 0))
+  if (check_access(thd, EVENT_ACL, dbname->str, NULL, NULL, 0, 0))
     DBUG_RETURN(TRUE);
 
   WSREP_TO_ISOLATION_BEGIN(WSREP_MYSQL_DB, NULL, NULL);
@@ -601,7 +603,7 @@ Events::drop_event(THD *thd, LEX_STRING dbname, LEX_STRING name, bool if_exists)
   save_binlog_format= thd->set_current_stmt_binlog_format_stmt();
 
   if (lock_object_name(thd, MDL_key::EVENT,
-                       dbname.str, name.str))
+                       dbname->str, name->str))
     DBUG_RETURN(TRUE);
   /* On error conditions my_error() is called so no need to handle here */
   if (!(ret= db_repository->drop_event(thd, dbname, name, if_exists)))
@@ -633,22 +635,22 @@ WSREP_ERROR_LABEL:
 */
 
 void
-Events::drop_schema_events(THD *thd, char *db)
+Events::drop_schema_events(THD *thd, const char *db)
 {
-  LEX_STRING const db_lex= { db, strlen(db) };
+  const LEX_CSTRING db_lex= { db, strlen(db) };
 
   DBUG_ENTER("Events::drop_schema_events");
   DBUG_PRINT("enter", ("dropping events from %s", db));
 
-  DBUG_ASSERT(ok_for_lower_case_names(db));
+  DBUG_SLOW_ASSERT(ok_for_lower_case_names(db));
 
   /*
     Sic: no check if the scheduler is disabled or system tables
     are damaged, as intended.
   */
   if (event_queue)
-    event_queue->drop_schema_events(thd, db_lex);
-  db_repository->drop_schema_events(thd, db_lex);
+    event_queue->drop_schema_events(thd, &db_lex);
+  db_repository->drop_schema_events(thd, &db_lex);
 
   DBUG_VOID_RETURN;
 }
@@ -665,7 +667,7 @@ send_show_create_event(THD *thd, Event_timed *et, Protocol *protocol)
   char show_str_buf[10 * STRING_BUFFER_USUAL_SIZE];
   String show_str(show_str_buf, sizeof(show_str_buf), system_charset_info);
   List<Item> field_list;
-  LEX_STRING sql_mode;
+  LEX_CSTRING sql_mode;
   const String *tz_name;
   MEM_ROOT *mem_root= thd->mem_root;
   DBUG_ENTER("send_show_create_event");
@@ -748,18 +750,19 @@ send_show_create_event(THD *thd, Event_timed *et, Protocol *protocol)
 */
 
 bool
-Events::show_create_event(THD *thd, LEX_STRING dbname, LEX_STRING name)
+Events::show_create_event(THD *thd, const LEX_CSTRING *dbname,
+                          const LEX_CSTRING *name)
 {
   Event_timed et;
   bool ret;
 
   DBUG_ENTER("Events::show_create_event");
-  DBUG_PRINT("enter", ("name: %s@%s", dbname.str, name.str));
+  DBUG_PRINT("enter", ("name: %s@%s", dbname->str, name->str));
 
-  if (check_if_system_tables_error())
+  if (unlikely(check_if_system_tables_error()))
     DBUG_RETURN(TRUE);
 
-  if (check_access(thd, EVENT_ACL, dbname.str, NULL, NULL, 0, 0))
+  if (check_access(thd, EVENT_ACL, dbname->str, NULL, NULL, 0, 0))
     DBUG_RETURN(TRUE);
 
   /*
@@ -800,8 +803,9 @@ Events::show_create_event(THD *thd, LEX_STRING dbname, LEX_STRING name)
 int
 Events::fill_schema_events(THD *thd, TABLE_LIST *tables, COND * /* cond */)
 {
-  char *db= NULL;
+  const char *db= NULL;
   int ret;
+  char db_tmp[SAFE_NAME_LEN];
   DBUG_ENTER("Events::fill_schema_events");
 
   /*
@@ -811,7 +815,7 @@ Events::fill_schema_events(THD *thd, TABLE_LIST *tables, COND * /* cond */)
   if (opt_noacl)
     DBUG_RETURN(0);
 
-  if (check_if_system_tables_error())
+  if (unlikely(check_if_system_tables_error()))
     DBUG_RETURN(1);
 
   /*
@@ -820,15 +824,12 @@ Events::fill_schema_events(THD *thd, TABLE_LIST *tables, COND * /* cond */)
   */
   if (thd->lex->sql_command == SQLCOM_SHOW_EVENTS)
   {
-    DBUG_ASSERT(thd->lex->select_lex.db);
-    if (!is_infoschema_db(thd->lex->select_lex.db) && // There is no events in I_S
-        check_access(thd, EVENT_ACL, thd->lex->select_lex.db,
+    DBUG_ASSERT(thd->lex->select_lex.db.str);
+    if (!is_infoschema_db(&thd->lex->select_lex.db) && // There is no events in I_S
+        check_access(thd, EVENT_ACL, thd->lex->select_lex.db.str,
                      NULL, NULL, 0, 0))
       DBUG_RETURN(1);
-    db= thd->lex->select_lex.db;
-
-    if (lower_case_table_names)
-      my_casedn_str(system_charset_info, db);
+    db= normalize_db_name(thd->lex->select_lex.db.str, db_tmp, sizeof(db_tmp));
   }
   ret= db_repository->fill_schema_events(thd, tables, db);
 
@@ -873,7 +874,7 @@ Events::init(THD *thd, bool opt_noacl_or_bootstrap)
   if (!thd)
   {
 
-    if (!(thd= new THD()))
+    if (!(thd= new THD(0)))
     {
       res= TRUE;
       goto end;
@@ -1137,7 +1138,7 @@ Events::load_events_from_db(THD *thd)
   uint count= 0;
   ulong saved_master_access;
   DBUG_ENTER("Events::load_events_from_db");
-  DBUG_PRINT("enter", ("thd: 0x%lx", (long) thd));
+  DBUG_PRINT("enter", ("thd: %p", thd));
 
   /*
     NOTE: even if we run in read-only mode, we should be able to lock the
@@ -1166,13 +1167,13 @@ Events::load_events_from_db(THD *thd)
     DBUG_RETURN(TRUE);
   }
 
-  if (init_read_record(&read_record_info, thd, table, NULL, 0, 1, FALSE))
+  if (init_read_record(&read_record_info, thd, table, NULL, NULL, 0, 1, FALSE))
   {
     close_thread_tables(thd);
     DBUG_RETURN(TRUE);
   }
 
-  while (!(read_record_info.read_record(&read_record_info)))
+  while (!(read_record_info.read_record()))
   {
     Event_queue_element *et;
     bool created, dropped;
@@ -1249,7 +1250,7 @@ int wsrep_create_event_query(THD *thd, uchar** buf, size_t* buf_len)
   if (create_query_string(thd, &log_query))
   {
     WSREP_WARN("events create string failed: schema: %s, query: %s",
-               (thd->db ? thd->db : "(null)"), thd->query());
+               thd->get_db(), thd->query());
     return 1;
   }
   return wsrep_to_buf_helper(thd, log_query.ptr(), log_query.length(), buf, buf_len);

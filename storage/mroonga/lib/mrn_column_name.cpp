@@ -32,7 +32,12 @@
 namespace mrn {
   ColumnName::ColumnName(const char *mysql_name)
     : mysql_name_(mysql_name) {
-    encode();
+    encode(mysql_name, strlen(mysql_name));
+  }
+
+  ColumnName::ColumnName(const LEX_CSTRING &mysql_name)
+    : mysql_name_(mysql_name.str) {
+    encode(mysql_name.str, mysql_name.length);
   }
 
   const char *ColumnName::mysql_name() {
@@ -47,12 +52,13 @@ namespace mrn {
     return length_;
   }
 
-  void ColumnName::encode() {
+  void ColumnName::encode(const char *mysql_name,
+                          size_t mysql_name_length) {
     MRN_DBUG_ENTER_METHOD();
     uint errors;
     length_ = mrn_strconvert(system_charset_info,
-                             mysql_name_,
-                             strlen(mysql_name_),
+                             mysql_name,
+                             mysql_name_length,
                              &my_charset_filename,
                              name_,
                              MRN_MAX_PATH_SIZE,

@@ -43,6 +43,7 @@ typedef struct st_mem_root
   /* if block have less memory it will be put in 'used' list */
   size_t min_malloc;
   size_t block_size;               /* initial block size */
+  size_t total_alloc;
   unsigned int block_num;          /* allocated blocks counter */
   /* 
      first free block in queue test counter (if it exceed 
@@ -51,6 +52,7 @@ typedef struct st_mem_root
   unsigned int first_block_usage;
 
   void (*error_handler)(void);
+  const char *name;
 } MEM_ROOT;
 
 #ifdef  __cplusplus

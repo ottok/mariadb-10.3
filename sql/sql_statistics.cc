@@ -23,11 +23,12 @@
   @{
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_base.h"
 #include "key.h"
 #include "sql_statistics.h"
 #include "opt_range.h"
+#include "uniques.h"
 #include "my_atomic.h"
 #include "sql_show.h"
 
@@ -64,15 +65,12 @@ static const uint STATISTICS_TABLES= 3;
   The names of the statistical tables in this array must correspond the
   definitions of the tables in the file ../scripts/mysql_system_tables.sql
 */
-static const LEX_STRING stat_table_name[STATISTICS_TABLES]=
+static const LEX_CSTRING stat_table_name[STATISTICS_TABLES]=
 {
-  { C_STRING_WITH_LEN("table_stats") },
-  { C_STRING_WITH_LEN("column_stats") },
-  { C_STRING_WITH_LEN("index_stats") }
+  { STRING_WITH_LEN("table_stats") },
+  { STRING_WITH_LEN("column_stats") },
+  { STRING_WITH_LEN("index_stats") }
 };
-
-/* Name of database to which the statistical tables belong */
-static const LEX_STRING stat_tables_db_name= { C_STRING_WITH_LEN("mysql") };
 
 
 /**
@@ -92,10 +90,9 @@ inline void init_table_list_for_stat_tables(TABLE_LIST *tables, bool for_write)
 
   for (i= 0; i < STATISTICS_TABLES; i++)
   {
-    tables[i].db= stat_tables_db_name.str;
-    tables[i].db_length= stat_tables_db_name.length;
-    tables[i].alias= tables[i].table_name= stat_table_name[i].str;
-    tables[i].table_name_length= stat_table_name[i].length;
+    tables[i].db= MYSQL_SCHEMA_NAME;
+    tables[i].table_name= stat_table_name[i];
+    tables[i].alias=      stat_table_name[i];
     tables[i].lock_type= for_write ? TL_WRITE : TL_READ;
     if (i < STATISTICS_TABLES - 1)
     tables[i].next_global= tables[i].next_local=
@@ -114,17 +111,16 @@ inline void init_table_list_for_stat_tables(TABLE_LIST *tables, bool for_write)
   otherwise it is set to TL_WRITE.
 */
 
-static
-inline void init_table_list_for_single_stat_table(TABLE_LIST *tbl,
-                                                  const LEX_STRING *stat_tab_name, 
-                                                  bool for_write)
+static inline
+void init_table_list_for_single_stat_table(TABLE_LIST *tbl,
+                                           const LEX_CSTRING *stat_tab_name,
+                                           bool for_write)
 {
   memset((char *) tbl, 0, sizeof(TABLE_LIST));
 
-  tbl->db= stat_tables_db_name.str;
-  tbl->db_length= stat_tables_db_name.length;
-  tbl->alias= tbl->table_name= stat_tab_name->str;
-  tbl->table_name_length= stat_tab_name->length;
+  tbl->db= MYSQL_SCHEMA_NAME;
+  tbl->table_name= *stat_tab_name;
+  tbl->alias=      *stat_tab_name;
   tbl->lock_type= for_write ? TL_WRITE : TL_READ;
 }
 
@@ -135,18 +131,18 @@ static const
 TABLE_FIELD_TYPE table_stat_fields[TABLE_STAT_N_FIELDS] =
 {
   {
-    { C_STRING_WITH_LEN("db_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("db_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("table_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("table_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("cardinality") },
-    { C_STRING_WITH_LEN("bigint(21)") },
+    { STRING_WITH_LEN("cardinality") },
+    { STRING_WITH_LEN("bigint(21)") },
     { NULL, 0 }
   },
 };
@@ -158,58 +154,58 @@ static const
 TABLE_FIELD_TYPE column_stat_fields[COLUMN_STAT_N_FIELDS] =
 {
   {
-    { C_STRING_WITH_LEN("db_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("db_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("table_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("table_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("column_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("column_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("min_value") },
-    { C_STRING_WITH_LEN("varbinary(255)") },
+    { STRING_WITH_LEN("min_value") },
+    { STRING_WITH_LEN("varbinary(255)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("max_value") },
-    { C_STRING_WITH_LEN("varbinary(255)") },
+    { STRING_WITH_LEN("max_value") },
+    { STRING_WITH_LEN("varbinary(255)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("nulls_ratio") },
-    { C_STRING_WITH_LEN("decimal(12,4)") },
+    { STRING_WITH_LEN("nulls_ratio") },
+    { STRING_WITH_LEN("decimal(12,4)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("avg_length") },
-    { C_STRING_WITH_LEN("decimal(12,4)") },
+    { STRING_WITH_LEN("avg_length") },
+    { STRING_WITH_LEN("decimal(12,4)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("avg_frequency") },
-    { C_STRING_WITH_LEN("decimal(12,4)") },
+    { STRING_WITH_LEN("avg_frequency") },
+    { STRING_WITH_LEN("decimal(12,4)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("hist_size") },
-    { C_STRING_WITH_LEN("tinyint(3)") },
+    { STRING_WITH_LEN("hist_size") },
+    { STRING_WITH_LEN("tinyint(3)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("hist_type") },
-    { C_STRING_WITH_LEN("enum('SINGLE_PREC_HB','DOUBLE_PREC_HB')") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("hist_type") },
+    { STRING_WITH_LEN("enum('SINGLE_PREC_HB','DOUBLE_PREC_HB')") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("histogram") },
-    { C_STRING_WITH_LEN("varbinary(255)") },
+    { STRING_WITH_LEN("histogram") },
+    { STRING_WITH_LEN("varbinary(255)") },
     { NULL, 0 }
   }
 };
@@ -221,28 +217,28 @@ static const
 TABLE_FIELD_TYPE index_stat_fields[INDEX_STAT_N_FIELDS] =
 {
   {
-    { C_STRING_WITH_LEN("db_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("db_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("table_name") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("table_name") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("index") },
-    { C_STRING_WITH_LEN("varchar(64)") },
-    { C_STRING_WITH_LEN("utf8") }
+    { STRING_WITH_LEN("index") },
+    { STRING_WITH_LEN("varchar(64)") },
+    { STRING_WITH_LEN("utf8") }
   },
   {
-    { C_STRING_WITH_LEN("prefix_arity") },
-    { C_STRING_WITH_LEN("int(11)") },
+    { STRING_WITH_LEN("prefix_arity") },
+    { STRING_WITH_LEN("int(11)") },
     { NULL, 0 }
   },
   {
-    { C_STRING_WITH_LEN("avg_frequency") },
-    { C_STRING_WITH_LEN("decimal(12,4)") },
+    { STRING_WITH_LEN("avg_frequency") },
+    { STRING_WITH_LEN("decimal(12,4)") },
     { NULL, 0 }
   }
 };
@@ -293,7 +289,7 @@ inline int open_stat_tables(THD *thd, TABLE_LIST *tables,
 */
 static
 inline int open_single_stat_table(THD *thd, TABLE_LIST *table,
-                                  const LEX_STRING *stat_tab_name,
+                                  const LEX_CSTRING *stat_tab_name,
                                   Open_tables_backup *backup,
                                   bool for_write)
 {
@@ -470,9 +466,9 @@ protected:
   
   /* Table for which statistical data is read / updated */
   TABLE *table;
-  TABLE_SHARE *table_share; /* Table share for 'table */    
-  LEX_STRING *db_name;      /* Name of the database containing 'table' */ 
-  LEX_STRING *table_name;   /* Name of the table 'table' */
+  TABLE_SHARE *table_share; /* Table share for 'table */
+  const LEX_CSTRING *db_name;      /* Name of the database containing 'table' */
+  const LEX_CSTRING *table_name;   /* Name of the table 'table' */
 
   void store_record_for_update()
   {
@@ -527,12 +523,10 @@ public:
     by the database name 'db' and the table name 'tab'.
   */  
   
-  Stat_table(TABLE *stat, LEX_STRING *db, LEX_STRING *tab)
-    :stat_table(stat), table_share(NULL)
+  Stat_table(TABLE *stat, const LEX_CSTRING *db, const LEX_CSTRING *tab)
+    :stat_table(stat), table_share(NULL),db_name(db), table_name(tab)
   {
     common_init_stat_table();
-    db_name= db;
-    table_name= tab;
   } 
 
 
@@ -552,7 +546,7 @@ public:
     The method is called by the update_table_name_key_parts function.
   */      
 
- virtual void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)= 0;
+ virtual void change_full_table_name(const LEX_CSTRING *db, const LEX_CSTRING *tab)= 0;
 
  
   /**
@@ -665,16 +659,22 @@ public:
   {
     if (find_stat())
     {    
+      bool res;
       store_record_for_update();
       store_stat_fields();
-      return update_record();
+      res= update_record();
+      DBUG_ASSERT(res == 0);
+      return res;
     }
     else
     {
       int err;
       store_stat_fields();
       if ((err= stat_file->ha_write_row(record[0])))
+      {
+        DBUG_ASSERT(0);
 	return TRUE;
+      }
       /* Make change permanent and avoid 'table is marked as crashed' errors */
       stat_file->extra(HA_EXTRA_FLUSH);
     } 
@@ -702,7 +702,7 @@ public:
     to store the new names in the record buffer used for updates.
   */
 
-  bool update_table_name_key_parts(LEX_STRING *db, LEX_STRING *tab)
+  bool update_table_name_key_parts(const LEX_CSTRING *db, const LEX_CSTRING *tab)
   {
     store_record_for_update();
     change_full_table_name(db, tab);
@@ -764,7 +764,7 @@ private:
     table_name_field= stat_table->field[TABLE_STAT_TABLE_NAME];
   }
 
-  void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)
+  void change_full_table_name(const LEX_CSTRING *db, const LEX_CSTRING *tab)
   {
     db_name_field->store(db->str, db->length, system_charset_info);
     table_name_field->store(tab->str, tab->length, system_charset_info);
@@ -794,7 +794,7 @@ public:
     from the database 'db'.
   */
 
-  Table_stat(TABLE *stat, LEX_STRING *db, LEX_STRING *tab) 
+  Table_stat(TABLE *stat, const LEX_CSTRING *db, const LEX_CSTRING *tab)
     :Stat_table(stat, db, tab)
   {
     common_init_table_stat();
@@ -842,7 +842,7 @@ public:
     else
     {
       stat_field->set_notnull();
-      stat_field->store(table->collected_stats->cardinality);
+      stat_field->store(table->collected_stats->cardinality,true);
     }
   }
 
@@ -908,7 +908,7 @@ private:
     column_name_field= stat_table->field[COLUMN_STAT_COLUMN_NAME];
   } 
 
-  void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)
+  void change_full_table_name(const LEX_CSTRING *db, const LEX_CSTRING *tab)
   {
      db_name_field->store(db->str, db->length, system_charset_info);
      table_name_field->store(tab->str, tab->length, system_charset_info);
@@ -938,7 +938,7 @@ public:
     from the database 'db'. 
   */
 
-  Column_stat(TABLE *stat, LEX_STRING *db, LEX_STRING *tab) 
+  Column_stat(TABLE *stat, const LEX_CSTRING *db, const LEX_CSTRING *tab)
     :Stat_table(stat, db, tab)
   {
     common_init_column_stat_table();
@@ -982,8 +982,7 @@ public:
   void set_key_fields(Field *col)
   {
     set_full_table_name();
-    const char *column_name= col->field_name;
-    column_name_field->store(column_name, strlen(column_name),
+    column_name_field->store(col->field_name.str, col->field_name.length,
                              system_charset_info);  
     table_field= col;
   }
@@ -1054,7 +1053,7 @@ public:
         switch (i) {
         case COLUMN_STAT_MIN_VALUE:
           if (table_field->type() == MYSQL_TYPE_BIT)
-            stat_field->store(table_field->collected_stats->min_value->val_int());
+            stat_field->store(table_field->collected_stats->min_value->val_int(),true);
           else
           {
             table_field->collected_stats->min_value->val_str(&val);
@@ -1063,7 +1062,7 @@ public:
           break;
         case COLUMN_STAT_MAX_VALUE:
           if (table_field->type() == MYSQL_TYPE_BIT)
-            stat_field->store(table_field->collected_stats->max_value->val_int());
+            stat_field->store(table_field->collected_stats->max_value->val_int(),true);
           else
           {
             table_field->collected_stats->max_value->val_str(&val);
@@ -1244,7 +1243,7 @@ private:
     prefix_arity_field= stat_table->field[INDEX_STAT_PREFIX_ARITY];
   } 
 
-  void change_full_table_name(LEX_STRING *db, LEX_STRING *tab)
+  void change_full_table_name(const LEX_CSTRING *db, const LEX_CSTRING *tab)
   {
      db_name_field->store(db->str, db->length, system_charset_info);
      table_name_field->store(tab->str, tab->length, system_charset_info);
@@ -1276,7 +1275,7 @@ public:
     from the database 'db'. 
   */
 
-  Index_stat(TABLE *stat, LEX_STRING *db, LEX_STRING *tab) 
+  Index_stat(TABLE *stat, const LEX_CSTRING *db, const LEX_CSTRING *tab)
     :Stat_table(stat, db, tab)
   {
     common_init_index_stat_table();
@@ -1319,8 +1318,8 @@ public:
   void set_index_prefix_key_fields(KEY *index_info)
   {
     set_full_table_name();
-    char *index_name= index_info->name;
-    index_name_field->store(index_name, strlen(index_name),
+    const char *index_name= index_info->name.str;
+    index_name_field->store(index_name, index_info->name.length,
                             system_charset_info);
     table_key_info= index_info;
   }
@@ -1631,7 +1630,7 @@ public:
     of the parameters to be passed to the constructor of the Unique object. 
   */  
 
-  Count_distinct_field(Field *field, uint max_heap_table_size)
+  Count_distinct_field(Field *field, size_t max_heap_table_size)
   {
     table_field= field;
     tree_key_length= field->pack_length();
@@ -1729,7 +1728,7 @@ class Count_distinct_field_bit: public Count_distinct_field
 {
 public:
 
-  Count_distinct_field_bit(Field *field, uint max_heap_table_size)
+  Count_distinct_field_bit(Field *field, size_t max_heap_table_size)
   {
     table_field= field;
     tree_key_length= sizeof(ulonglong);
@@ -1801,8 +1800,9 @@ private:
 public:
 
   bool is_single_comp_pk;
+  bool is_partial_fields_present;
 
-  Index_prefix_calc(TABLE *table, KEY *key_info)
+  Index_prefix_calc(THD *thd, TABLE *table, KEY *key_info)
     : index_table(table), index_info(key_info)
   {
     uint i;
@@ -1812,7 +1812,7 @@ public:
     prefixes= 0;
     LINT_INIT_STRUCT(calc_state);
 
-    is_single_comp_pk= FALSE;
+    is_partial_fields_present= is_single_comp_pk= FALSE;
     uint pk= table->s->primary_key;
     if ((uint) (table->key_info - key_info) == pk &&
         table->key_info[pk].user_defined_key_parts == 1)
@@ -1823,9 +1823,9 @@ public:
     }
         
     if ((calc_state=
-         (Prefix_calc_state *) sql_alloc(sizeof(Prefix_calc_state)*key_parts)))
+         (Prefix_calc_state *) thd->alloc(sizeof(Prefix_calc_state)*key_parts)))
     {
-      uint keyno= key_info-table->key_info;
+      uint keyno= (uint)(key_info-table->key_info);
       for (i= 0, state= calc_state; i < key_parts; i++, state++)
       {
         /* 
@@ -1834,10 +1834,14 @@ public:
           calculating the values of 'avg_frequency' for prefixes.
 	*/   
         if (!key_info->key_part[i].field->part_of_key.is_set(keyno))
+        {
+          is_partial_fields_present= TRUE;
           break;
+        }
 
         if (!(state->last_prefix=
-              new Cached_item_field(key_info->key_part[i].field)))
+              new (thd->mem_root) Cached_item_field(thd,
+                                    key_info->key_part[i].field)))
           break;
         state->entry_count= state->prefix_count= 0;
         prefixes++;
@@ -1960,7 +1964,7 @@ void create_min_max_statistical_fields_for_table(TABLE *table)
 
     for (uint i=0; i < 2; i++, record+= rec_buff_length)
     {
-      for (Field **field_ptr= table->field; *field_ptr; field_ptr++) 
+      for (Field **field_ptr= table->field; *field_ptr; field_ptr++)
       {
         Field *fld;
         Field *table_field= *field_ptr;
@@ -2029,7 +2033,7 @@ void create_min_max_statistical_fields_for_table_share(THD *thd,
 
     for (uint i=0; i < 2; i++, record+= rec_buff_length)
     {
-      for (Field **field_ptr= table_share->field; *field_ptr; field_ptr++) 
+      for (Field **field_ptr= table_share->field; *field_ptr; field_ptr++)
       {
         Field *fld;
         Field *table_field= *field_ptr;
@@ -2438,7 +2442,7 @@ int alloc_histograms_for_table_share(THD* thd, TABLE_SHARE *table_share,
 inline
 void Column_statistics_collected::init(THD *thd, Field *table_field)
 {
-  uint max_heap_table_size= thd->variables.max_heap_table_size;
+  size_t max_heap_table_size= (size_t)thd->variables.max_heap_table_size;
   TABLE *table= table_field->table;
   uint pk= table->s->primary_key;
   
@@ -2492,7 +2496,7 @@ bool Column_statistics_collected::add(ha_rows rowno)
       set_not_null(COLUMN_STAT_MIN_VALUE);
     if (max_value && column->update_max(max_value, rowno == nulls))
       set_not_null(COLUMN_STAT_MAX_VALUE);
-    if (count_distinct) 
+    if (count_distinct)
       err= count_distinct->add();
   } 
   return err;
@@ -2621,7 +2625,7 @@ int collect_statistics_for_index(THD *thd, TABLE *table, uint index)
   if (key_info->flags & (HA_FULLTEXT|HA_SPATIAL))
     DBUG_RETURN(rc);
 
-  Index_prefix_calc index_prefix_calc(table, key_info);
+  Index_prefix_calc index_prefix_calc(thd, table, key_info);
 
   DEBUG_SYNC(table->in_use, "statistics_collection_start1");
   DEBUG_SYNC(table->in_use, "statistics_collection_start2");
@@ -2632,9 +2636,13 @@ int collect_statistics_for_index(THD *thd, TABLE *table, uint index)
     DBUG_RETURN(rc);
   }
 
-  table->key_read= 1;
-  table->file->extra(HA_EXTRA_KEYREAD);
-
+  /*
+    Request "only index read" in case of absence of fields which are
+    partially in the index to avoid problems with partitioning (for example)
+    which want to get whole field value.
+  */
+  if (!index_prefix_calc.is_partial_fields_present)
+    table->file->ha_start_keyread(index);
   table->file->ha_index_init(index, TRUE);
   rc= table->file->ha_index_first(table->record[0]);
   while (rc != HA_ERR_END_OF_FILE)
@@ -2648,7 +2656,7 @@ int collect_statistics_for_index(THD *thd, TABLE *table, uint index)
     index_prefix_calc.add();
     rc= table->file->ha_index_next(table->record[0]);
   }
-  table->key_read= 0;
+  table->file->ha_end_keyread();
   table->file->ha_index_end();
 
   rc= (rc == HA_ERR_END_OF_FILE && !thd->killed) ? 0 : 1;
@@ -2746,11 +2754,7 @@ int collect_statistics_for_table(THD *thd, TABLE *table)
         break;
 
       if (rc)
-      {
-        if (rc == HA_ERR_RECORD_DELETED)
-          continue;
         break;
-      }
 
       for (field_ptr= table->field; *field_ptr; field_ptr++)
       {
@@ -3129,7 +3133,7 @@ bool statistics_for_tables_is_needed(THD *thd, TABLE_LIST *tables)
       TABLE_SHARE *table_share= tl->table->s;
       if (table_share && 
           table_share->table_category != TABLE_CATEGORY_USER
-          && is_stat_table(tl->db, tl->alias))
+          && is_stat_table(&tl->db, &tl->alias))
         return FALSE;
     }
   }
@@ -3321,7 +3325,7 @@ int read_statistics_for_tables_if_needed(THD *thd, TABLE_LIST *tables)
   The function is called when executing the statement DROP TABLE 'tab'.
 */
 
-int delete_statistics_for_table(THD *thd, LEX_STRING *db, LEX_STRING *tab)
+int delete_statistics_for_table(THD *thd, const LEX_CSTRING *db, const LEX_CSTRING *tab)
 {
   int err;
   enum_binlog_format save_binlog_format;
@@ -3559,8 +3563,8 @@ int delete_statistics_for_index(THD *thd, TABLE *tab, KEY *key_info,
   The function is called when executing any statement that renames a table
 */
 
-int rename_table_in_stat_tables(THD *thd, LEX_STRING *db, LEX_STRING *tab,
-                                LEX_STRING *new_db, LEX_STRING *new_tab)
+int rename_table_in_stat_tables(THD *thd, const LEX_CSTRING *db, const LEX_CSTRING *tab,
+                                const LEX_CSTRING *new_db, const LEX_CSTRING *new_tab)
 {
   int err;
   enum_binlog_format save_binlog_format;
@@ -3568,7 +3572,6 @@ int rename_table_in_stat_tables(THD *thd, LEX_STRING *db, LEX_STRING *tab,
   TABLE_LIST tables[STATISTICS_TABLES];
   Open_tables_backup open_tables_backup;
   int rc= 0;
-
   DBUG_ENTER("rename_table_in_stat_tables");
    
   if (open_stat_tables(thd, tables, &open_tables_backup, TRUE))
@@ -3758,14 +3761,14 @@ double get_column_avg_frequency(Field * field)
   */
   if (!table->s->field)
   {
-    res= table->stat_records();
+    res= (double)table->stat_records();
     return res;
   }
  
-  Column_statistics *col_stats= table->s->field[field->field_index]->read_stats;
+  Column_statistics *col_stats= field->read_stats;
 
   if (!col_stats)
-    res= table->stat_records();
+    res= (double)table->stat_records();
   else
     res= col_stats->get_avg_frequency();
   return res;
@@ -3790,7 +3793,10 @@ double get_column_avg_frequency(Field * field)
   using the statistical data from the table column_stats.
 
   @retval
-  The required estimate of the rows in the column range
+  - The required estimate of the rows in the column range
+  - If there is some kind of error, this function should return DBL_MAX (and
+    not HA_POS_ERROR as that is an integer constant).
+
 */
 
 double get_column_range_cardinality(Field *field,
@@ -3800,8 +3806,8 @@ double get_column_range_cardinality(Field *field,
 {
   double res;
   TABLE *table= field->table;
-  Column_statistics *col_stats= table->field[field->field_index]->read_stats;
-  double tab_records= table->stat_records();
+  Column_statistics *col_stats= field->read_stats;
+  double tab_records= (double)table->stat_records();
 
   if (!col_stats)
     return tab_records;
@@ -4023,15 +4029,15 @@ double Histogram::point_selectivity(double pos, double avg_sel)
 /*
   Check whether the table is one of the persistent statistical tables.
 */
-bool is_stat_table(const char *db, const char *table)
+bool is_stat_table(const LEX_CSTRING *db, LEX_CSTRING *table)
 {
-  DBUG_ASSERT(db && table);
+  DBUG_ASSERT(db->str && table->str);
 
-  if (!my_strcasecmp(table_alias_charset, db, stat_tables_db_name.str))
+  if (!my_strcasecmp(table_alias_charset, db->str, MYSQL_SCHEMA_NAME.str))
   {
     for (uint i= 0; i < STATISTICS_TABLES; i ++)
     {
-      if (!my_strcasecmp(table_alias_charset, table, stat_table_name[i].str))
+      if (!my_strcasecmp(table_alias_charset, table->str, stat_table_name[i].str))
         return true;
     }
   }

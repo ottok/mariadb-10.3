@@ -16,7 +16,6 @@
 #ifndef PFS_GLOBAL_H
 #define PFS_GLOBAL_H
 
-#include "my_global.h"
 #include "my_compiler.h"
 
 /**
@@ -31,7 +30,7 @@ extern bool pfs_initialized;
 extern size_t pfs_allocated_memory;
 
 #if defined(HAVE_POSIX_MEMALIGN) || defined(HAVE_MEMALIGN) || defined(HAVE_ALIGNED_MALLOC)
-#define PFS_ALIGNEMENT 64
+#define PFS_ALIGNEMENT CPU_LEVEL1_DCACHE_LINESIZE
 #define PFS_ALIGNED MY_ALIGNED(PFS_ALIGNEMENT)
 #else
 /*
@@ -80,7 +79,7 @@ inline uint randomized_index(const void *ptr, uint max_size)
   static uint seed1= 0;
   static uint seed2= 0;
   uint result;
-  register intptr value;
+  intptr value;
 
   if (unlikely(max_size == 0))
     return 0;

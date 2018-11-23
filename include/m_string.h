@@ -14,15 +14,15 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-/* There may be prolems include all of theese. Try to test in
-   configure with ones are needed? */
+/* There may be problems included in all of these. Try to test in
+   configure which ones are needed? */
 
 /*  This is needed for the definitions of strchr... on solaris */
 
 #ifndef _m_string_h
 #define _m_string_h
 
-#include "my_global.h"                          /* HAVE_* */
+#include "my_decimal_limits.h"
 
 #ifndef __USE_GNU
 #define __USE_GNU				/* We want to use stpcpy */
@@ -99,7 +99,7 @@ extern	char *strmake(char *dst,const char *src,size_t length);
 #define strmake_buf(D,S)        strmake(D, S, sizeof(D) - 1)
 #else
 #define strmake_buf(D,S) ({                             \
-  compile_time_assert(sizeof(D) != sizeof(char*));      \
+  typeof (D) __x __attribute__((unused)) = { 2 };       \
   strmake(D, S, sizeof(D) - 1);                         \
   })
 #endif
@@ -131,14 +131,13 @@ size_t my_fcvt(double x, int precision, char *to, my_bool *error);
 size_t my_gcvt(double x, my_gcvt_arg_type type, int width, char *to,
                my_bool *error);
 
-#define NOT_FIXED_DEC 31
-
 /*
   The longest string my_fcvt can return is 311 + "precision" bytes.
-  Here we assume that we never cal my_fcvt() with precision >= NOT_FIXED_DEC
+  Here we assume that we never cal my_fcvt() with
+  precision >= DECIMAL_NOT_SPECIFIED
   (+ 1 byte for the terminating '\0').
 */
-#define FLOATING_POINT_BUFFER (311 + NOT_FIXED_DEC)
+#define FLOATING_POINT_BUFFER (311 + DECIMAL_NOT_SPECIFIED)
 
 /*
   We want to use the 'e' format in some cases even if we have enough space
@@ -202,12 +201,8 @@ extern ulonglong strtoull(const char *str, char **ptr, int base);
 #define STRING_WITH_LEN(X) (X), ((size_t) (sizeof(X) - 1))
 #define USTRING_WITH_LEN(X) ((uchar*) X), ((size_t) (sizeof(X) - 1))
 #define C_STRING_WITH_LEN(X) ((char *) (X)), ((size_t) (sizeof(X) - 1))
+#define LEX_STRING_WITH_LEN(X) (X).str, (X).length
 
-struct st_mysql_const_lex_string
-{
-  const char *str;
-  size_t length;
-};
 typedef struct st_mysql_const_lex_string LEX_CSTRING;
 
 /* A variant with const and unsigned */
@@ -218,10 +213,16 @@ struct st_mysql_const_unsigned_lex_string
 };
 typedef struct st_mysql_const_unsigned_lex_string LEX_CUSTRING;
 
-static inline void lex_string_set(LEX_STRING *lex_str, const char *c_str)
+static inline void lex_string_set(LEX_CSTRING *lex_str, const char *c_str)
 {
-  lex_str->str= (char *) c_str;
+  lex_str->str= c_str;
   lex_str->length= strlen(c_str);
+}
+static inline void lex_string_set3(LEX_CSTRING *lex_str, const char *c_str,
+                                   size_t len)
+{
+  lex_str->str= c_str;
+  lex_str->length= len;
 }
 
 #ifdef __cplusplus

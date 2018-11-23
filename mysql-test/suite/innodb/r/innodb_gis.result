@@ -507,8 +507,8 @@ down3,left3,right3,up3
 SELECT GROUP_CONCAT(a2.name ORDER BY a2.name) AS equals       FROM t1 a1 JOIN t1 a2 ON Equals(        a1.square, a2.square) WHERE a1.name = "center" GROUP BY a1.name;
 equals
 center
-SELECT GROUP_CONCAT(a2.name ORDER BY a2.name) AS intersect    FROM t1 a1 JOIN t1 a2 ON Intersects(    a1.square, a2.square) WHERE a1.name = "center" GROUP BY a1.name;
-intersect
+SELECT GROUP_CONCAT(a2.name ORDER BY a2.name) AS intersects   FROM t1 a1 JOIN t1 a2 ON Intersects(    a1.square, a2.square) WHERE a1.name = "center" GROUP BY a1.name;
+intersects
 big,center,down,down2,left,left2,right,right2,small,up,up2
 SELECT GROUP_CONCAT(a2.name ORDER BY a2.name) AS overlaps     FROM t1 a1 JOIN t1 a2 ON Overlaps(      a1.square, a2.square) WHERE a1.name = "center" GROUP BY a1.name;
 overlaps
@@ -598,4 +598,13 @@ create table t1 (a int not null, b linestring not null, unique key b (b(12)));
 create unique index a on t1(a);
 drop table t1;
 create table t1 (g geometry not null, spatial gk(g)) engine=innodb;
-ERROR HY000: The storage engine InnoDB doesn't support SPATIAL indexes
+drop table t1;
+create table t1(id int not null primary key, g1 geometry not null, spatial index(g1));
+insert into t1 values(1, polygonfromtext('POLYGON((0 0, 0 5, 5 5, 5 0, 0 0))'));
+explain select id from t1 where contains(g1, pointfromtext('POINT(1 1)'));
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	t1	range	g1	g1	34	NULL	1	Using where
+select id from t1 where contains(g1, pointfromtext('POINT(1 1)'));
+id
+1
+drop table t1;

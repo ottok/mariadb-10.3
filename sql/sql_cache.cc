@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab
+   Copyright (c) 2010, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -328,8 +328,12 @@ TODO list:
       (This could be done with almost no speed penalty)
 */
 
-#include <my_global.h>                          /* NO_EMBEDDED_ACCESS_CHECKS */
+#include "mariadb.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
+#if defined(DBUG_OFF) && defined(HAVE_MADVISE)
+#include <sys/mman.h>
+#endif
 #include "sql_priv.h"
+#include "sql_basic_types.h"
 #include "sql_cache.h"
 #include "sql_parse.h"                          // check_table_access
 #include "tztime.h"                             // struct Time_zone
@@ -344,7 +348,6 @@ TODO list:
 #include "../storage/myisammrg/ha_myisammrg.h"
 #include "../storage/myisammrg/myrg_def.h"
 #include "probes_mysql.h"
-#include "log_slow.h"
 #include "transaction.h"
 #include "strfunc.h"
 
@@ -354,28 +357,28 @@ const uchar *query_state_map;
 #include "emb_qcache.h"
 #endif
 
-#if !defined(EXTRA_DBUG) && !defined(DBUG_OFF)
-#define RW_WLOCK(M) {DBUG_PRINT("lock", ("rwlock wlock 0x%lx",(ulong)(M))); \
+#if defined(EXTRA_DEBUG) && !defined(DBUG_OFF)
+#define RW_WLOCK(M) {DBUG_PRINT("lock", ("rwlock wlock %p",(M))); \
   if (!mysql_rwlock_wrlock(M)) DBUG_PRINT("lock", ("rwlock wlock ok")); \
   else DBUG_PRINT("lock", ("rwlock wlock FAILED %d", errno)); }
-#define RW_RLOCK(M) {DBUG_PRINT("lock", ("rwlock rlock 0x%lx", (ulong)(M))); \
+#define RW_RLOCK(M) {DBUG_PRINT("lock", ("rwlock rlock %p",(M))); \
   if (!mysql_rwlock_rdlock(M)) DBUG_PRINT("lock", ("rwlock rlock ok")); \
   else DBUG_PRINT("lock", ("rwlock wlock FAILED %d", errno)); }
-#define RW_UNLOCK(M) {DBUG_PRINT("lock", ("rwlock unlock 0x%lx",(ulong)(M))); \
+#define RW_UNLOCK(M) {DBUG_PRINT("lock", ("rwlock unlock %p",(M))); \
   if (!mysql_rwlock_unlock(M)) DBUG_PRINT("lock", ("rwlock unlock ok")); \
   else DBUG_PRINT("lock", ("rwlock unlock FAILED %d", errno)); }
-#define BLOCK_LOCK_WR(B) {DBUG_PRINT("lock", ("%d LOCK_WR 0x%lx",\
-  __LINE__,(ulong)(B))); \
+#define BLOCK_LOCK_WR(B) {DBUG_PRINT("lock", ("%d LOCK_WR %p",\
+  __LINE__,(B))); \
   B->query()->lock_writing();}
-#define BLOCK_LOCK_RD(B) {DBUG_PRINT("lock", ("%d LOCK_RD 0x%lx",\
-  __LINE__,(ulong)(B))); \
+#define BLOCK_LOCK_RD(B) {DBUG_PRINT("lock", ("%d LOCK_RD %p",\
+  __LINE__,(B))); \
   B->query()->lock_reading();}
 #define BLOCK_UNLOCK_WR(B) { \
-  DBUG_PRINT("lock", ("%d UNLOCK_WR 0x%lx",\
-  __LINE__,(ulong)(B)));B->query()->unlock_writing();}
+  DBUG_PRINT("lock", ("%d UNLOCK_WR %p",\
+  __LINE__,(B)));B->query()->unlock_writing();}
 #define BLOCK_UNLOCK_RD(B) { \
-  DBUG_PRINT("lock", ("%d UNLOCK_RD 0x%lx",\
-  __LINE__,(ulong)(B)));B->query()->unlock_reading();}
+  DBUG_PRINT("lock", ("%d UNLOCK_RD %p",\
+  __LINE__,(B)));B->query()->unlock_reading();}
 #define DUMP(C) DBUG_EXECUTE("qcache", {\
   (C)->cache_dump(); (C)->queries_dump();(C)->tables_dump();})
 #else
@@ -646,7 +649,7 @@ bool Query_cache::try_lock(THD *thd, Cache_try_lock_mode mode)
       else if (mode == TIMEOUT)
       {
         struct timespec waittime;
-        set_timespec_nsec(waittime,(ulong)(50000000L));  /* Wait for 50 msec */
+        set_timespec_nsec(waittime,50000000UL);  /* Wait for 50 msec */
         int res= mysql_cond_timedwait(&COND_cache_status_changed,
                                       &structure_guard_mutex, &waittime);
         if (res == ETIMEDOUT)
@@ -817,10 +820,10 @@ inline Query_cache_block * Query_cache_block_table::block()
    Query_cache_block method(s)
 *****************************************************************************/
 
-void Query_cache_block::init(ulong block_length)
+void Query_cache_block::init(size_t block_length)
 {
   DBUG_ENTER("Query_cache_block::init");
-  DBUG_PRINT("qcache", ("init block: 0x%lx  length: %lu", (ulong) this,
+  DBUG_PRINT("qcache", ("init block: %p  length: %zu", this,
 			block_length));
   length = block_length;
   used = 0;
@@ -832,8 +835,8 @@ void Query_cache_block::init(ulong block_length)
 void Query_cache_block::destroy()
 {
   DBUG_ENTER("Query_cache_block::destroy");
-  DBUG_PRINT("qcache", ("destroy block 0x%lx, type %d",
-			(ulong) this, type));
+  DBUG_PRINT("qcache", ("destroy block %p, type %d",
+			 this, type));
   type = INCOMPLETE;
   DBUG_VOID_RETURN;
 }
@@ -935,7 +938,7 @@ bool Query_cache_query::try_lock_writing()
     DBUG_PRINT("info", ("can't lock rwlock"));
     DBUG_RETURN(0);
   }
-  DBUG_PRINT("info", ("rwlock 0x%lx locked", (ulong) &lock));
+  DBUG_PRINT("info", ("rwlock %p locked", &lock));
   DBUG_RETURN(1);
 }
 
@@ -961,12 +964,12 @@ inline void Query_cache_query::unlock_reading()
 void Query_cache_query::init_n_lock()
 {
   DBUG_ENTER("Query_cache_query::init_n_lock");
-  res=0; wri = 0; len = 0; ready= 0;
+  res=0; wri = 0; len = 0; ready= 0; hit_count = 0;
   mysql_rwlock_init(key_rwlock_query_cache_query_lock, &lock);
   lock_writing();
-  DBUG_PRINT("qcache", ("inited & locked query for block 0x%lx",
-			(long) (((uchar*) this) -
-                                ALIGN_SIZE(sizeof(Query_cache_block)))));
+  DBUG_PRINT("qcache", ("inited & locked query for block %p",
+			(uchar*) this -
+                                ALIGN_SIZE(sizeof(Query_cache_block))));
   DBUG_VOID_RETURN;
 }
 
@@ -974,9 +977,9 @@ void Query_cache_query::init_n_lock()
 void Query_cache_query::unlock_n_destroy()
 {
   DBUG_ENTER("Query_cache_query::unlock_n_destroy");
-  DBUG_PRINT("qcache", ("destroyed & unlocked query for block 0x%lx",
-			(long) (((uchar*) this) -
-                                ALIGN_SIZE(sizeof(Query_cache_block)))));
+  DBUG_PRINT("qcache", ("destroyed & unlocked query for block %p",
+			(uchar*) this -
+                                ALIGN_SIZE(sizeof(Query_cache_block))));
   /*
     The following call is not needed on system where one can destroy an
     active semaphore
@@ -1037,7 +1040,7 @@ uchar *query_cache_query_get_key(const uchar *record, size_t *length,
 /**
   libmysql convenience wrapper to insert data into query cache.
 */
-void query_cache_insert(void *thd_arg, const char *packet, ulong length,
+void query_cache_insert(void *thd_arg, const char *packet, size_t length,
                         unsigned pkt_nr)
 {
   THD *thd= (THD*) thd_arg;
@@ -1049,11 +1052,11 @@ void query_cache_insert(void *thd_arg, const char *packet, ulong length,
     called for this thread.
   */
 
-  if (!thd)
+  if (unlikely(!thd))
     return;
 
   query_cache.insert(thd, &thd->query_cache_tls,
-                     packet, length,
+                     packet, (size_t)length,
                      pkt_nr);
 }
 
@@ -1064,7 +1067,7 @@ void query_cache_insert(void *thd_arg, const char *packet, ulong length,
 
 void
 Query_cache::insert(THD *thd, Query_cache_tls *query_cache_tls,
-                    const char *packet, ulong length,
+                    const char *packet, size_t length,
                     unsigned pkt_nr)
 {
   DBUG_ENTER("Query_cache::insert");
@@ -1097,7 +1100,7 @@ Query_cache::insert(THD *thd, Query_cache_tls *query_cache_tls,
   Query_cache_block *result= header->result();
 
   DUMP(this);
-  DBUG_PRINT("qcache", ("insert packet %lu bytes long",length));
+  DBUG_PRINT("qcache", ("insert packet %zu bytes long",length));
 
   /*
     On success, STRUCT_UNLOCK is done by append_result_data. Otherwise, we
@@ -1109,7 +1112,7 @@ Query_cache::insert(THD *thd, Query_cache_tls *query_cache_tls,
   {
     DBUG_PRINT("warning", ("Can't append data"));
     header->result(result);
-    DBUG_PRINT("qcache", ("free query 0x%lx", (ulong) query_block));
+    DBUG_PRINT("qcache", ("free query %p", query_block));
     // The following call will remove the lock on query_block
     query_cache.free_query(query_block);
     query_cache.refused++;
@@ -1206,8 +1209,8 @@ void Query_cache::end_of_result(THD *thd)
     BLOCK_LOCK_WR(query_block);
     Query_cache_query *header= query_block->query();
     Query_cache_block *last_result_block;
-    ulong allign_size;
-    ulong len;
+    size_t allign_size;
+    size_t len;
 
     if (header->result() == 0)
     {
@@ -1267,9 +1270,9 @@ void mysql_query_cache_invalidate4(THD *thd,
    Query_cache methods
 *****************************************************************************/
 
-Query_cache::Query_cache(ulong query_cache_limit_arg,
-			 ulong min_allocation_unit_arg,
-			 ulong min_result_data_size_arg,
+Query_cache::Query_cache(size_t query_cache_limit_arg,
+			 size_t min_allocation_unit_arg,
+			 size_t min_result_data_size_arg,
 			 uint def_query_hash_size_arg,
 			 uint def_table_hash_size_arg)
   :query_cache_size(0),
@@ -1283,7 +1286,7 @@ Query_cache::Query_cache(ulong query_cache_limit_arg,
    def_table_hash_size(ALIGN_SIZE(def_table_hash_size_arg)),
    initialized(0)
 {
-  ulong min_needed= (ALIGN_SIZE(sizeof(Query_cache_block)) +
+  size_t min_needed= (ALIGN_SIZE(sizeof(Query_cache_block)) +
 		     ALIGN_SIZE(sizeof(Query_cache_block_table)) +
 		     ALIGN_SIZE(sizeof(Query_cache_query)) + 3);
   set_if_bigger(min_allocation_unit,min_needed);
@@ -1292,11 +1295,11 @@ Query_cache::Query_cache(ulong query_cache_limit_arg,
 }
 
 
-ulong Query_cache::resize(ulong query_cache_size_arg)
+size_t Query_cache::resize(size_t query_cache_size_arg)
 {
-  ulong new_query_cache_size;
+  size_t new_query_cache_size;
   DBUG_ENTER("Query_cache::resize");
-  DBUG_PRINT("qcache", ("from %lu to %lu",query_cache_size,
+  DBUG_PRINT("qcache", ("from %zu to %zu",query_cache_size,
 			query_cache_size_arg));
   DBUG_ASSERT(initialized);
 
@@ -1350,7 +1353,7 @@ ulong Query_cache::resize(ulong query_cache_size_arg)
 }
 
 
-ulong Query_cache::set_min_res_unit(ulong size)
+size_t Query_cache::set_min_res_unit(size_t size)
 {
   DBUG_ASSERT(size % 8 == 0);
   if (size < min_allocation_unit)
@@ -1362,7 +1365,7 @@ ulong Query_cache::set_min_res_unit(ulong size)
 void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
 {
   TABLE_COUNTER_TYPE local_tables;
-  ulong tot_length;
+  size_t tot_length;
   const char *query;
   size_t query_length;
   uint8 tables_type;
@@ -1386,6 +1389,21 @@ void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
     DBUG_VOID_RETURN;
   }
 
+  /*
+    Do not store queries while tracking transaction state.
+    The tracker already flags queries that actually have
+    transaction tracker items, but this will make behavior
+    more straight forward.
+  */
+#ifndef EMBEDDED_LIBRARY
+  if (thd->variables.session_track_transaction_info != TX_TRACK_NONE)
+  {
+    DBUG_PRINT("qcache", ("Do not work with transaction tracking"));
+    DBUG_VOID_RETURN;
+  }
+#endif //EMBEDDED_LIBRARY
+
+
   /* The following assert fails if we haven't called send_result_to_client */
   DBUG_ASSERT(thd->base_query.is_alloced() ||
               thd->base_query.ptr() == thd->query());
@@ -1401,6 +1419,8 @@ void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
     flags.client_long_flag= MY_TEST(thd->client_capabilities & CLIENT_LONG_FLAG);
     flags.client_protocol_41= MY_TEST(thd->client_capabilities &
                                       CLIENT_PROTOCOL_41);
+    flags.client_depr_eof= MY_TEST(thd->client_capabilities &
+                                      CLIENT_DEPRECATE_EOF);
     /*
       Protocol influences result format, so statement results in the binary
       protocol (COM_EXECUTE) cannot be served to statements asking for results
@@ -1431,20 +1451,21 @@ void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
     flags.div_precision_increment= thd->variables.div_precincrement;
     flags.default_week_format= thd->variables.default_week_format;
     DBUG_PRINT("qcache", ("\
-long %d, 4.1: %d, bin_proto: %d, more results %d, pkt_nr: %d, \
-CS client: %u, CS result: %u, CS conn: %u, limit: %lu, TZ: 0x%lx, \
-sql mode: 0x%llx, sort len: %lu, conncat len: %lu, div_precision: %lu, \
-def_week_frmt: %lu, in_trans: %d, autocommit: %d",
+long %d, 4.1: %d, eof: %d, bin_proto: %d, more results %d, pkt_nr: %d, \
+CS client: %u, CS result: %u, CS conn: %u, limit: %llu, TZ: %p, \
+sql mode: 0x%llx, sort len: %llu, conncat len: %llu, div_precision: %zu, \
+def_week_frmt: %zu, in_trans: %d, autocommit: %d",
                           (int)flags.client_long_flag,
                           (int)flags.client_protocol_41,
+                          (int)flags.client_depr_eof,
                           (int)flags.protocol_type,
                           (int)flags.more_results_exists,
                           flags.pkt_nr,
                           flags.character_set_client_num,
                           flags.character_set_results_num,
                           flags.collation_connection_num,
-                          (ulong) flags.limit,
-                          (ulong) flags.time_zone,
+                          (ulonglong)flags.limit,
+                          flags.time_zone,
                           flags.sql_mode,
                           flags.max_sort_length,
                           flags.group_concat_max_len,
@@ -1452,12 +1473,6 @@ def_week_frmt: %lu, in_trans: %d, autocommit: %d",
                           flags.default_week_format,
                           (int)flags.in_trans,
                           (int)flags.autocommit));
-
-    /*
-     Make InnoDB to release the adaptive hash index latch before
-     acquiring the query cache mutex.
-    */
-    ha_release_temporary_latches(thd);
 
     /*
       A table- or a full flush operation can potentially take a long time to
@@ -1490,18 +1505,18 @@ def_week_frmt: %lu, in_trans: %d, autocommit: %d",
     query_length= thd->base_query.length();
 
     /* Key is query + database + flag */
-    if (thd->db_length)
+    if (thd->db.length)
     {
       memcpy((char*) (query + query_length + 1 + QUERY_CACHE_DB_LENGTH_SIZE),
-             thd->db, thd->db_length);
+             thd->db.str, thd->db.length);
       DBUG_PRINT("qcache", ("database: %s  length: %u",
-			    thd->db, (unsigned) thd->db_length)); 
+			    thd->db.str, (unsigned) thd->db.length));
     }
     else
     {
       DBUG_PRINT("qcache", ("No active database"));
     }
-    tot_length= (query_length + thd->db_length + 1 + 
+    tot_length= (query_length + thd->db.length + 1 +
                  QUERY_CACHE_DB_LENGTH_SIZE + QUERY_CACHE_FLAGS_SIZE);
     /*
       We should only copy structure (don't use it location directly)
@@ -1513,7 +1528,7 @@ def_week_frmt: %lu, in_trans: %d, autocommit: %d",
     /* Check if another thread is processing the same query? */
     Query_cache_block *competitor = (Query_cache_block *)
       my_hash_search(&queries, (uchar*) query, tot_length);
-    DBUG_PRINT("qcache", ("competitor 0x%lx", (ulong) competitor));
+    DBUG_PRINT("qcache", ("competitor %p", competitor));
     if (competitor == 0)
     {
       /* Query is not in cache and no one is working with it; Store it */
@@ -1523,8 +1538,8 @@ def_week_frmt: %lu, in_trans: %d, autocommit: %d",
 				    Query_cache_block::QUERY, local_tables);
       if (query_block != 0)
       {
-	DBUG_PRINT("qcache", ("query block 0x%lx allocated, %lu",
-			    (ulong) query_block, query_block->used));
+	DBUG_PRINT("qcache", ("query block %p allocated, %zu",
+			    query_block, query_block->used));
 
 	Query_cache_query *header = query_block->query();
 	header->init_n_lock();
@@ -1603,7 +1618,7 @@ end:
     @retval TRUE On error
 */
 static bool
-send_data_in_chunks(NET *net, const uchar *packet, ulong len)
+send_data_in_chunks(NET *net, const uchar *packet, size_t len)
 {
   /*
     On the client we may require more memory than max_allowed_packet
@@ -1619,7 +1634,7 @@ send_data_in_chunks(NET *net, const uchar *packet, ulong len)
     for max_allowed_packet, but large enough to ensure there is no
     unnecessary overhead from too many syscalls per result set.
   */
-  static const ulong MAX_CHUNK_LENGTH= 1024*1024;
+  static const size_t MAX_CHUNK_LENGTH= 1024*1024;
 
   while (len > MAX_CHUNK_LENGTH)
   {
@@ -1687,7 +1702,7 @@ size_t build_normalized_name(char *buff, size_t bufflen,
   In case of -1, no error is sent to the client.
 
   *) The buffer must be allocated memory of size:
-  tot_length= query_length + thd->db_length + 1 + QUERY_CACHE_FLAGS_SIZE;
+  tot_length= query_length + thd->db.length + 1 + QUERY_CACHE_FLAGS_SIZE;
 */
 
 int
@@ -1700,7 +1715,7 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
 #endif
   Query_cache_block *result_block;
   Query_cache_block_table *block_table, *block_table_end;
-  ulong tot_length;
+  size_t tot_length;
   Query_cache_query_flags flags;
   const char *sql, *sql_end, *found_brace= 0;
   DBUG_ENTER("Query_cache::send_result_to_client");
@@ -1725,6 +1740,20 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
     DBUG_PRINT("qcache", ("SELECT is non-cacheable"));
     goto err;
   }
+
+  /*
+    Don't allow serving from Query_cache while tracking transaction
+    state. This is a safeguard in case an otherwise matching query
+    was added to the cache before tracking was turned on.
+  */
+#ifndef EMBEDDED_LIBRARY
+  if (thd->variables.session_track_transaction_info != TX_TRACK_NONE)
+  {
+    DBUG_PRINT("qcache", ("Do not work with transaction tracking"));
+    goto err;
+  }
+#endif //EMBEDDED_LIBRARY
+
 
   thd->query_cache_is_applicable= 1;
   sql= org_sql; sql_end= sql + query_length;
@@ -1804,7 +1833,10 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
   }
   if ((my_toupper(system_charset_info, sql[0]) != 'S' ||
        my_toupper(system_charset_info, sql[1]) != 'E' ||
-       my_toupper(system_charset_info, sql[2]) != 'L'))
+       my_toupper(system_charset_info, sql[2]) != 'L') &&
+      (my_toupper(system_charset_info, sql[0]) != 'W' ||
+       my_toupper(system_charset_info, sql[1]) != 'I' ||
+       my_toupper(system_charset_info, sql[2]) != 'T'))
   {
     DBUG_PRINT("qcache", ("The statement is not a SELECT; Not cached"));
     goto err;
@@ -1829,7 +1861,7 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
       as the previous one.
     */
     size_t db_len= uint2korr(sql_end+1);
-    if (thd->db_length != db_len)
+    if (thd->db.length != db_len)
     {
       /*
         We should probably reallocate the buffer in this case,
@@ -1863,7 +1895,7 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
     if (found_brace)
       sql= found_brace;
     make_base_query(&thd->base_query, sql, (size_t) (sql_end - sql),
-                    thd->db_length + 1 + QUERY_CACHE_DB_LENGTH_SIZE +
+                    thd->db.length + 1 + QUERY_CACHE_DB_LENGTH_SIZE +
                     QUERY_CACHE_FLAGS_SIZE);
     sql=          thd->base_query.ptr();
     query_length= thd->base_query.length();
@@ -1875,14 +1907,14 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
   }
 
   tot_length= (query_length + 1 + QUERY_CACHE_DB_LENGTH_SIZE +
-               thd->db_length + QUERY_CACHE_FLAGS_SIZE);
+               thd->db.length + QUERY_CACHE_FLAGS_SIZE);
 
-  if (thd->db_length)
+  if (thd->db.length)
   {
     memcpy((uchar*) sql + query_length + 1 + QUERY_CACHE_DB_LENGTH_SIZE,
-           thd->db, thd->db_length);
+           thd->db.str, thd->db.length);
     DBUG_PRINT("qcache", ("database: '%s'  length: %u",
-			  thd->db, (uint) thd->db_length));
+			  thd->db.str, (uint) thd->db.length));
   }
   else
   {
@@ -1896,6 +1928,8 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
   flags.client_long_flag= MY_TEST(thd->client_capabilities & CLIENT_LONG_FLAG);
   flags.client_protocol_41= MY_TEST(thd->client_capabilities &
                                     CLIENT_PROTOCOL_41);
+  flags.client_depr_eof= MY_TEST(thd->client_capabilities &
+                                    CLIENT_DEPRECATE_EOF);
   flags.protocol_type= (unsigned int) thd->protocol->type();
   flags.more_results_exists= MY_TEST(thd->server_status &
                                      SERVER_MORE_RESULTS_EXISTS);
@@ -1917,20 +1951,21 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
   flags.default_week_format= thd->variables.default_week_format;
   flags.lc_time_names= thd->variables.lc_time_names;
   DBUG_PRINT("qcache", ("\
-long %d, 4.1: %d, bin_proto: %d, more results %d, pkt_nr: %d, \
-CS client: %u, CS result: %u, CS conn: %u, limit: %lu, TZ: 0x%lx, \
-sql mode: 0x%llx, sort len: %lu, conncat len: %lu, div_precision: %lu, \
-def_week_frmt: %lu, in_trans: %d, autocommit: %d",
+long %d, 4.1: %d, eof: %d, bin_proto: %d, more results %d, pkt_nr: %d, \
+CS client: %u, CS result: %u, CS conn: %u, limit: %llu, TZ: %p, \
+sql mode: 0x%llx, sort len: %llu, conncat len: %llu, div_precision: %zu, \
+def_week_frmt: %zu, in_trans: %d, autocommit: %d",
                           (int)flags.client_long_flag,
                           (int)flags.client_protocol_41,
+                          (int)flags.client_depr_eof,
                           (int)flags.protocol_type,
                           (int)flags.more_results_exists,
                           flags.pkt_nr,
                           flags.character_set_client_num,
                           flags.character_set_results_num,
                           flags.collation_connection_num,
-                          (ulong) flags.limit,
-                          (ulong) flags.time_zone,
+                          (ulonglong) flags.limit,
+                          flags.time_zone,
                           flags.sql_mode,
                           flags.max_sort_length,
                           flags.group_concat_max_len,
@@ -1957,7 +1992,7 @@ lookup:
     DBUG_PRINT("qcache", ("No query in query hash or no results"));
     goto err_unlock;
   }
-  DBUG_PRINT("qcache", ("Query in query hash 0x%lx", (ulong)query_block));
+  DBUG_PRINT("qcache", ("Query in query hash %p",query_block));
 
 #ifdef WITH_WSREP
   if (once_more && WSREP_CLIENT(thd) && wsrep_must_sync_wait(thd))
@@ -1988,7 +2023,7 @@ lookup:
     BLOCK_UNLOCK_RD(query_block);
     goto err_unlock;
   }
-  DBUG_PRINT("qcache", ("Query have result 0x%lx", (ulong) query));
+  DBUG_PRINT("qcache", ("Query have result %p", query));
 
   if (thd->in_multi_stmt_transaction_mode() &&
       (query->tables_type() & HA_CACHE_TBL_TRANSACT))
@@ -2006,47 +2041,46 @@ lookup:
   for (; block_table != block_table_end; block_table++)
   {
     TABLE_LIST table_list;
-    TABLE *tmptable;
+    TMP_TABLE_SHARE *tmptable;
     Query_cache_table *table = block_table->parent;
 
     /*
-      Check that we have not temporary tables with same names of tables
-      of this query. If we have such tables, we will not send data from
-      query cache, because temporary tables hide real tables by which
+      Check that we do not have temporary tables with same names as that of
+      base tables from this query. If we have such tables, we will not send
+      data from query cache, because temporary tables hide real tables by which
       query in query cache was made.
     */
-    for (tmptable= thd->temporary_tables; tmptable ; tmptable= tmptable->next)
+    if ((tmptable=
+         thd->find_tmp_table_share_w_base_key((char *) table->data(),
+                                              table->key_length())))
     {
-      if (tmptable->s->table_cache_key.length - TMP_TABLE_KEY_EXTRA == 
-          table->key_length() &&
-          !memcmp(tmptable->s->table_cache_key.str, table->data(),
-                  table->key_length()))
-      {
-        DBUG_PRINT("qcache",
-                   ("Temporary table detected: '%s.%s'",
-                    tmptable->s->db.str, tmptable->alias.c_ptr()));
-        unlock();
-        /*
-          We should not store result of this query because it contain
-          temporary tables => assign following variable to make check
-          faster.
-        */
-        thd->query_cache_is_applicable= 0;      // Query can't be cached
-        thd->lex->safe_to_cache_query= 0;       // For prepared statements
-        BLOCK_UNLOCK_RD(query_block);
-        DBUG_RETURN(-1);
-      }
+      DBUG_PRINT("qcache",
+                 ("Temporary table detected: '%s.%s'",
+                  tmptable->db.str, tmptable->table_name.str));
+      unlock();
+      /*
+        We should not store result of this query because it contain
+        temporary tables => assign following variable to make check
+        faster.
+      */
+      thd->query_cache_is_applicable= 0;        // Query can't be cached
+      thd->lex->safe_to_cache_query= 0;         // For prepared statements
+      BLOCK_UNLOCK_RD(query_block);
+      DBUG_RETURN(-1);
     }
 
     bzero((char*) &table_list,sizeof(table_list));
-    table_list.db = table->db();
-    table_list.alias= table_list.table_name= table->table();
+    table_list.db.str= table->db();
+    table_list.db.length= strlen(table_list.db.str);
+    table_list.alias.str= table_list.table_name.str= table->table();
+    table_list.alias.length= table_list.table_name.length= strlen(table->table());
+
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     if (check_table_access(thd,SELECT_ACL,&table_list, FALSE, 1,TRUE))
     {
       DBUG_PRINT("qcache",
 		 ("probably no SELECT access to %s.%s =>  return to normal processing",
-		  table_list.db, table_list.alias));
+		  table_list.db.str, table_list.alias.str));
       unlock();
       thd->query_cache_is_applicable= 0;        // Query can't be cached
       thd->lex->safe_to_cache_query= 0;         // For prepared statements
@@ -2056,7 +2090,7 @@ lookup:
     if (table_list.grant.want_privilege)
     {
       DBUG_PRINT("qcache", ("Need to check column privileges for %s.%s",
-			    table_list.db, table_list.alias));
+			    table_list.db.str, table_list.alias.str));
       BLOCK_UNLOCK_RD(query_block);
       thd->query_cache_is_applicable= 0;        // Query can't be cached
       thd->lex->safe_to_cache_query= 0;         // For prepared statements
@@ -2067,7 +2101,7 @@ lookup:
     if (table->callback()) 
     {
       char qcache_se_key_name[FN_REFLEN + 10];
-      uint qcache_se_key_len, db_length= strlen(table->db());
+      size_t qcache_se_key_len, db_length= strlen(table->db());
       engine_data= table->engine_data();
 
       qcache_se_key_len= build_normalized_name(qcache_se_key_name,
@@ -2081,17 +2115,17 @@ lookup:
                                                table->suffix_length());
    
       if (!(*table->callback())(thd, qcache_se_key_name,
-                                qcache_se_key_len, &engine_data))
+                                (uint)qcache_se_key_len, &engine_data))
       {
         DBUG_PRINT("qcache", ("Handler does not allow caching for %.*s",
-                              qcache_se_key_len, qcache_se_key_name));
+                              (int)qcache_se_key_len, qcache_se_key_name));
         BLOCK_UNLOCK_RD(query_block);
         if (engine_data != table->engine_data())
         {
           DBUG_PRINT("qcache",
-                     ("Handler require invalidation queries of %.*s %lu-%lu",
-                      qcache_se_key_len, qcache_se_key_name,
-                      (ulong) engine_data, (ulong) table->engine_data()));
+                     ("Handler require invalidation queries of %.*s %llu-%llu",
+                      (int)qcache_se_key_len, qcache_se_key_name,
+                      engine_data, table->engine_data()));
           invalidate_table_internal(thd,
                                     (uchar *) table->db(),
                                     table->key_length());
@@ -2116,10 +2150,11 @@ lookup:
     }
     else
       DBUG_PRINT("qcache", ("handler allow caching %s,%s",
-			    table_list.db, table_list.alias));
+			    table_list.db.str, table_list.alias.str));
   }
   move_to_query_list_end(query_block);
   hits++;
+  query->increment_hits();
   unlock();
 
   /*
@@ -2129,9 +2164,9 @@ lookup:
   THD_STAGE_INFO(thd, stage_sending_cached_result_to_client);
   do
   {
-    DBUG_PRINT("qcache", ("Results  (len: %lu  used: %lu  headers: %lu)",
+    DBUG_PRINT("qcache", ("Results  (len: %zu  used: %zu  headers: %u)",
 			  result_block->length, result_block->used,
-			  (ulong) (result_block->headers_len()+
+			  (uint) (result_block->headers_len()+
                                    ALIGN_SIZE(sizeof(Query_cache_result)))));
     
     Query_cache_result *result = result_block->result();
@@ -2169,7 +2204,7 @@ lookup:
   thd->get_stmt_da()->disable_status();
 
   BLOCK_UNLOCK_RD(query_block);
-  MYSQL_QUERY_CACHE_HIT(thd->query(), (ulong) thd->limit_found_rows);
+  MYSQL_QUERY_CACHE_HIT(thd->query(), thd->limit_found_rows);
   DBUG_RETURN(1);				// Result sent to client
 
 err_unlock:
@@ -2291,7 +2326,7 @@ void Query_cache::invalidate(THD *thd, TABLE *table,
   DBUG_VOID_RETURN;
 }
 
-void Query_cache::invalidate(THD *thd, const char *key, uint32  key_length,
+void Query_cache::invalidate(THD *thd, const char *key, size_t  key_length,
 			     my_bool using_transactions)
 {
   DBUG_ENTER("Query_cache::invalidate (key)");
@@ -2312,13 +2347,13 @@ void Query_cache::invalidate(THD *thd, const char *key, uint32  key_length,
    Remove all cached queries that uses the given database.
 */
 
-void Query_cache::invalidate(THD *thd, char *db)
+void Query_cache::invalidate(THD *thd, const char *db)
 {
   DBUG_ENTER("Query_cache::invalidate (db)");
   if (is_disabled())
     DBUG_VOID_RETURN;
 
-  DBUG_ASSERT(ok_for_lower_case_names(db));
+  DBUG_SLOW_ASSERT(ok_for_lower_case_names(db));
 
   bool restart= FALSE;
   /*
@@ -2366,7 +2401,7 @@ void Query_cache::invalidate(THD *thd, char *db)
           }
           /* 
             The used tables are linked in a circular list;
-            loop until we return to the begining.
+            loop until we return to the beginning.
           */
         } while (table_block != tables_blocks);
         /*
@@ -2435,7 +2470,7 @@ void Query_cache::flush()
 
 */
 
-void Query_cache::pack(THD *thd, ulong join_limit, uint iteration_limit)
+void Query_cache::pack(THD *thd, size_t join_limit, uint iteration_limit)
 {
   DBUG_ENTER("Query_cache::pack");
 
@@ -2555,11 +2590,11 @@ void Query_cache::init()
 }
 
 
-ulong Query_cache::init_cache()
+size_t Query_cache::init_cache()
 {
-  uint mem_bin_count, num, step;
-  ulong mem_bin_size, prev_size, inc;
-  ulong additional_data_size, max_mem_bin_size, approx_additional_data_size;
+  size_t mem_bin_count, num, step;
+  size_t mem_bin_size, prev_size, inc;
+  size_t max_mem_bin_size, approx_additional_data_size;
   int align;
 
   DBUG_ENTER("Query_cache::init_cache");
@@ -2624,8 +2659,15 @@ ulong Query_cache::init_cache()
   if (!(cache= (uchar *)
         my_malloc_lock(query_cache_size+additional_data_size, MYF(0))))
     goto err;
+#if defined(DBUG_OFF) && defined(HAVE_MADVISE) &&  defined(MADV_DONTDUMP)
+  if (madvise(cache, query_cache_size+additional_data_size, MADV_DONTDUMP))
+  {
+    DBUG_PRINT("warning", ("coudn't mark query cache memory as MADV_DONTDUMP: %s",
+			 strerror(errno)));
+  }
+#endif
 
-  DBUG_PRINT("qcache", ("cache length %lu, min unit %lu, %u bins",
+  DBUG_PRINT("qcache", ("cache length %zu, min unit %zu, %zu bins",
 		      query_cache_size, min_allocation_unit, mem_bin_num));
 
   steps = (Query_cache_memory_bin_step *) cache;
@@ -2649,9 +2691,9 @@ ulong Query_cache::init_cache()
   mem_bin_size = max_mem_bin_size >> QUERY_CACHE_MEM_BIN_STEP_PWR2;
   while (mem_bin_size > min_allocation_unit)
   {
-    ulong incr = (steps[step-1].size - mem_bin_size) / mem_bin_count;
-    unsigned long size = mem_bin_size;
-    for (uint i= mem_bin_count; i > 0; i--)
+    size_t incr = (steps[step-1].size - mem_bin_size) / mem_bin_count;
+    size_t size = mem_bin_size;
+    for (size_t i= mem_bin_count; i > 0; i--)
     {
       bins[num+i-1].init(size);
       size += incr;
@@ -2674,9 +2716,9 @@ ulong Query_cache::init_cache()
 
   steps[step].init(mem_bin_size, num + mem_bin_count - 1, inc);
   {
-    uint skiped = (min_allocation_unit - mem_bin_size)/inc;
-    ulong size = mem_bin_size + inc*skiped;
-    uint i = mem_bin_count - skiped;
+    size_t skiped = (min_allocation_unit - mem_bin_size)/inc;
+    size_t size = mem_bin_size + inc*skiped;
+    size_t i = mem_bin_count - skiped;
     while (i-- > 0)
     {
       bins[num+i].init(size);
@@ -2786,6 +2828,13 @@ void Query_cache::free_cache()
     } while (block != queries_blocks);
   }
 
+#if defined(DBUG_OFF) && defined(HAVE_MADVISE) &&  defined(MADV_DODUMP)
+  if (madvise(cache, query_cache_size+additional_data_size, MADV_DODUMP))
+  {
+    DBUG_PRINT("warning", ("coudn't mark query cache memory as MADV_DODUMP: %s",
+			 strerror(errno)));
+  }
+#endif
   my_free(cache);
   make_disabled();
   my_hash_free(&queries);
@@ -2888,8 +2937,8 @@ my_bool Query_cache::free_old_query()
 void Query_cache::free_query_internal(Query_cache_block *query_block)
 {
   DBUG_ENTER("Query_cache::free_query_internal");
-  DBUG_PRINT("qcache", ("free query 0x%lx %lu bytes result",
-		      (ulong) query_block,
+  DBUG_PRINT("qcache", ("free query %p %zu bytes result",
+		      query_block,
 		      query_block->query()->length() ));
 
   queries_in_cache--;
@@ -2958,8 +3007,8 @@ void Query_cache::free_query_internal(Query_cache_block *query_block)
 void Query_cache::free_query(Query_cache_block *query_block)
 {
   DBUG_ENTER("Query_cache::free_query");
-  DBUG_PRINT("qcache", ("free query 0x%lx %lu bytes result",
-		      (ulong) query_block,
+  DBUG_PRINT("qcache", ("free query %p %zu bytes result",
+		      query_block,
 		      query_block->query()->length() ));
 
   my_hash_delete(&queries,(uchar *) query_block);
@@ -2973,18 +3022,18 @@ void Query_cache::free_query(Query_cache_block *query_block)
 *****************************************************************************/
 
 Query_cache_block *
-Query_cache::write_block_data(ulong data_len, uchar* data,
-			      ulong header_len,
+Query_cache::write_block_data(size_t data_len, uchar* data,
+			      size_t header_len,
 			      Query_cache_block::block_type type,
 			      TABLE_COUNTER_TYPE ntab)
 {
-  ulong all_headers_len = (ALIGN_SIZE(sizeof(Query_cache_block)) +
+  size_t all_headers_len = (ALIGN_SIZE(sizeof(Query_cache_block)) +
 			   ALIGN_SIZE(ntab*sizeof(Query_cache_block_table)) +
 			   header_len);
-  ulong len = data_len + all_headers_len;
-  ulong align_len= ALIGN_SIZE(len);
+  size_t len = data_len + all_headers_len;
+  size_t align_len= ALIGN_SIZE(len);
   DBUG_ENTER("Query_cache::write_block_data");
-  DBUG_PRINT("qcache", ("data: %ld, header: %ld, all header: %ld",
+  DBUG_PRINT("qcache", ("data: %zd, header: %zd, all header: %zd",
 		      data_len, header_len, all_headers_len));
   Query_cache_block *block= allocate_block(MY_MAX(align_len,
                                            min_allocation_unit),1, 0);
@@ -3002,33 +3051,33 @@ Query_cache::write_block_data(ulong data_len, uchar* data,
 
 my_bool
 Query_cache::append_result_data(Query_cache_block **current_block,
-				ulong data_len, uchar* data,
+				size_t data_len, uchar* data,
 				Query_cache_block *query_block)
 {
   DBUG_ENTER("Query_cache::append_result_data");
-  DBUG_PRINT("qcache", ("append %lu bytes to 0x%lx query",
-		      data_len, (long) query_block));
+  DBUG_PRINT("qcache", ("append %zu bytes to %p query",
+		      data_len, query_block));
 
   if (query_block->query()->add(data_len) > query_cache_limit)
   {
-    DBUG_PRINT("qcache", ("size limit reached %lu > %lu",
+    DBUG_PRINT("qcache", ("size limit reached %zu > %zu",
 			query_block->query()->length(),
 			query_cache_limit));
     DBUG_RETURN(0);
   }
   if (*current_block == 0)
   {
-    DBUG_PRINT("qcache", ("allocated first result data block %lu", data_len));
+    DBUG_PRINT("qcache", ("allocated first result data block %zu", data_len));
     DBUG_RETURN(write_result_data(current_block, data_len, data, query_block,
 				  Query_cache_block::RES_BEG));
   }
   Query_cache_block *last_block = (*current_block)->prev;
 
-  DBUG_PRINT("qcache", ("lastblock 0x%lx len %lu used %lu",
-		      (ulong) last_block, last_block->length,
+  DBUG_PRINT("qcache", ("lastblock %p len %zu used %zu",
+		      last_block, last_block->length,
 		      last_block->used));
   my_bool success = 1;
-  ulong last_block_free_space= last_block->length - last_block->used;
+  size_t last_block_free_space= last_block->length - last_block->used;
 
   /*
     We will first allocate and write the 'tail' of data, that doesn't fit
@@ -3037,8 +3086,8 @@ Query_cache::append_result_data(Query_cache_block **current_block,
   */
 
   // Try join blocks if physically next block is free...
-  ulong tail = data_len - last_block_free_space;
-  ulong append_min = get_min_append_result_data_size();
+  size_t tail = data_len - last_block_free_space;
+  size_t append_min = get_min_append_result_data_size();
   if (last_block_free_space < data_len &&
       append_next_free_block(last_block,
 			     MY_MAX(tail, append_min)))
@@ -3046,7 +3095,7 @@ Query_cache::append_result_data(Query_cache_block **current_block,
   // If no space in last block (even after join) allocate new block
   if (last_block_free_space < data_len)
   {
-    DBUG_PRINT("qcache", ("allocate new block for %lu bytes",
+    DBUG_PRINT("qcache", ("allocate new block for %zu bytes",
 			data_len-last_block_free_space));
     Query_cache_block *new_block = 0;
     success = write_result_data(&new_block, data_len-last_block_free_space,
@@ -3069,9 +3118,9 @@ Query_cache::append_result_data(Query_cache_block **current_block,
   // Now finally write data to the last block
   if (success && last_block_free_space > 0)
   {
-    ulong to_copy = MY_MIN(data_len,last_block_free_space);
-    DBUG_PRINT("qcache", ("use free space %lub at block 0x%lx to copy %lub",
-			last_block_free_space, (ulong)last_block, to_copy));
+    size_t to_copy = MY_MIN(data_len,last_block_free_space);
+    DBUG_PRINT("qcache", ("use free space %zub at block %p to copy %zub",
+			last_block_free_space,last_block, to_copy));
     memcpy((uchar*) last_block + last_block->used, data, to_copy);
     last_block->used+=to_copy;
   }
@@ -3080,12 +3129,12 @@ Query_cache::append_result_data(Query_cache_block **current_block,
 
 
 my_bool Query_cache::write_result_data(Query_cache_block **result_block,
-				       ulong data_len, uchar* data,
+				       size_t data_len, uchar* data,
 				       Query_cache_block *query_block,
 				       Query_cache_block::block_type type)
 {
   DBUG_ENTER("Query_cache::write_result_data");
-  DBUG_PRINT("qcache", ("data_len %lu",data_len));
+  DBUG_PRINT("qcache", ("data_len %zu",data_len));
 
   /*
     Reserve block(s) for filling
@@ -3111,9 +3160,9 @@ my_bool Query_cache::write_result_data(Query_cache_block **result_block,
     do
     {
       block->type = type;
-      ulong length = block->used - headers_len;
-      DBUG_PRINT("qcache", ("write %lu byte in block 0x%lx",length,
-			    (ulong)block));
+      size_t length = block->used - headers_len;
+      DBUG_PRINT("qcache", ("write %zu byte in block %p",length,
+			   block));
       memcpy((uchar*) block+headers_len, rest, length);
       rest += length;
       block = block->next;
@@ -3152,16 +3201,16 @@ my_bool Query_cache::write_result_data(Query_cache_block **result_block,
   DBUG_RETURN(success);
 }
 
-inline ulong Query_cache::get_min_first_result_data_size()
+inline size_t Query_cache::get_min_first_result_data_size()
 {
   if (queries_in_cache < QUERY_CACHE_MIN_ESTIMATED_QUERIES_NUMBER)
     return min_result_data_size;
-  ulong avg_result = (query_cache_size - free_memory) / queries_in_cache;
+  size_t avg_result = (query_cache_size - free_memory) / queries_in_cache;
   avg_result = MY_MIN(avg_result, query_cache_limit);
   return MY_MAX(min_result_data_size, avg_result);
 }
 
-inline ulong Query_cache::get_min_append_result_data_size()
+inline size_t Query_cache::get_min_append_result_data_size()
 {
   return min_result_data_size;
 }
@@ -3170,25 +3219,25 @@ inline ulong Query_cache::get_min_append_result_data_size()
   Allocate one or more blocks to hold data
 */
 my_bool Query_cache::allocate_data_chain(Query_cache_block **result_block,
-					 ulong data_len,
+					 size_t data_len,
 					 Query_cache_block *query_block,
 					 my_bool first_block_arg)
 {
-  ulong all_headers_len = (ALIGN_SIZE(sizeof(Query_cache_block)) +
+  size_t all_headers_len = (ALIGN_SIZE(sizeof(Query_cache_block)) +
 			   ALIGN_SIZE(sizeof(Query_cache_result)));
-  ulong min_size = (first_block_arg ?
+  size_t min_size = (first_block_arg ?
 		    get_min_first_result_data_size():
 		    get_min_append_result_data_size());
   Query_cache_block *prev_block= NULL;
   Query_cache_block *new_block;
   DBUG_ENTER("Query_cache::allocate_data_chain");
-  DBUG_PRINT("qcache", ("data_len %lu, all_headers_len %lu",
+  DBUG_PRINT("qcache", ("data_len %zu, all_headers_len %zu",
 			data_len, all_headers_len));
 
   do
   {
-    ulong len= data_len + all_headers_len;
-    ulong align_len= ALIGN_SIZE(len);
+    size_t len= data_len + all_headers_len;
+    size_t align_len= ALIGN_SIZE(len);
 
     if (!(new_block= allocate_block(MY_MAX(min_size, align_len),
 				    min_result_data_size == 0,
@@ -3205,7 +3254,7 @@ my_bool Query_cache::allocate_data_chain(Query_cache_block **result_block,
     Query_cache_result *header = new_block->result();
     header->parent(query_block);
 
-    DBUG_PRINT("qcache", ("Block len %lu used %lu",
+    DBUG_PRINT("qcache", ("Block len %zu used %zu",
 			  new_block->length, new_block->used));
 
     if (prev_block)
@@ -3255,7 +3304,7 @@ void Query_cache::invalidate_table(THD *thd, TABLE *table)
                    table->s->table_cache_key.length);
 }
 
-void Query_cache::invalidate_table(THD *thd, uchar * key, uint32  key_length)
+void Query_cache::invalidate_table(THD *thd, uchar * key, size_t key_length)
 {
   DEBUG_SYNC(thd, "wait_in_query_cache_invalidate1");
 
@@ -3283,7 +3332,7 @@ void Query_cache::invalidate_table(THD *thd, uchar * key, uint32  key_length)
 */
 
 void
-Query_cache::invalidate_table_internal(THD *thd, uchar *key, uint32 key_length)
+Query_cache::invalidate_table_internal(THD *thd, uchar *key, size_t key_length)
 {
   Query_cache_block *table_block=
     (Query_cache_block*)my_hash_search(&tables, key, key_length);
@@ -3319,7 +3368,7 @@ Query_cache::invalidate_query_block_list(THD *thd,
 }
 
 /*
-  Register given table list begining with given position in tables table of
+  Register given table list beginning with given position in tables table of
   block
 
   SYNOPSIS
@@ -3376,17 +3425,17 @@ Query_cache::register_tables_from_list(THD *thd, TABLE_LIST *tables_used,
     else
     {
       DBUG_PRINT("qcache",
-                 ("table: %s  db: %s  openinfo:  0x%lx  keylen: %lu  key: 0x%lx",
+                 ("table: %s  db: %s  openinfo:  %p  keylen: %zu  key: %p",
                   tables_used->table->s->table_name.str,
                   tables_used->table->s->table_cache_key.str,
-                  (ulong) tables_used->table,
-                  (ulong) tables_used->table->s->table_cache_key.length,
-                  (ulong) tables_used->table->s->table_cache_key.str));
+                  tables_used->table,
+                  tables_used->table->s->table_cache_key.length,
+                  tables_used->table->s->table_cache_key.str));
 
       if (!insert_table(thd, tables_used->table->s->table_cache_key.length,
                         tables_used->table->s->table_cache_key.str,
                         (*block_table),
-                        tables_used->db_length, 0,
+                        tables_used->db.length, 0,
                         tables_used->table->file->table_cache_type(),
                         tables_used->callback_func,
                         tables_used->engine_data,
@@ -3418,8 +3467,8 @@ my_bool Query_cache::register_all_tables(THD *thd,
 					 TABLE_COUNTER_TYPE tables_arg)
 {
   TABLE_COUNTER_TYPE n;
-  DBUG_PRINT("qcache", ("register tables block 0x%lx, n %d, header %x",
-		      (ulong) block, (int) tables_arg,
+  DBUG_PRINT("qcache", ("register tables block %p, n %d, header %x",
+		      block, (int) tables_arg,
 		      (int) ALIGN_SIZE(sizeof(Query_cache_block))));
 
   Query_cache_block_table *block_table = block->table(0);
@@ -3449,17 +3498,16 @@ my_bool Query_cache::register_all_tables(THD *thd,
 */
 
 my_bool
-Query_cache::insert_table(THD *thd, uint key_len, const char *key,
-			  Query_cache_block_table *node,
-			  uint32 db_length, uint8 suffix_length_arg,
+Query_cache::insert_table(THD *thd, size_t key_len, const char *key,
+			  Query_cache_block_table *node, size_t db_length, uint8 suffix_length_arg,
                           uint8 cache_type,
                           qc_engine_callback callback,
                           ulonglong engine_data,
                           my_bool hash)
 {
   DBUG_ENTER("Query_cache::insert_table");
-  DBUG_PRINT("qcache", ("insert table node 0x%lx, len %d",
-		      (ulong)node, key_len));
+  DBUG_PRINT("qcache", ("insert table node %p, len %zu",
+		     node, key_len));
 
   Query_cache_block *table_block=
     (hash ?
@@ -3470,11 +3518,11 @@ Query_cache::insert_table(THD *thd, uint key_len, const char *key,
       table_block->table()->engine_data() != engine_data)
   {
     DBUG_PRINT("qcache",
-               ("Handler require invalidation queries of %s.%s %lu-%lu",
+               ("Handler require invalidation queries of %s.%s %llu-%llu",
                 table_block->table()->db(),
                 table_block->table()->table(),
-                (ulong) engine_data,
-                (ulong) table_block->table()->engine_data()));
+                engine_data,
+                table_block->table()->engine_data()));
     /*
       as far as we delete all queries with this table, table block will be
       deleted, too
@@ -3489,8 +3537,8 @@ Query_cache::insert_table(THD *thd, uint key_len, const char *key,
 
   if (table_block == 0)
   {
-    DBUG_PRINT("qcache", ("new table block from 0x%lx (%u)",
-			(ulong) key, (int) key_len));
+    DBUG_PRINT("qcache", ("new table block from %p (%u)",
+			 key, (int) key_len));
     table_block= write_block_data(key_len, (uchar*) key,
                                   ALIGN_SIZE(sizeof(Query_cache_table)),
                                   Query_cache_block::TABLE, 1);
@@ -3524,7 +3572,7 @@ Query_cache::insert_table(THD *thd, uint key_len, const char *key,
     }
     char *db= header->db();
     header->table(db + db_length + 1);
-    header->key_length(key_len);
+    header->key_length((uint32)key_len);
     header->suffix_length(suffix_length_arg);
     header->type(cache_type);
     header->callback(callback);
@@ -3596,15 +3644,15 @@ void Query_cache::unlink_table(Query_cache_block_table *node)
 *****************************************************************************/
 
 Query_cache_block *
-Query_cache::allocate_block(ulong len, my_bool not_less, ulong min)
+Query_cache::allocate_block(size_t len, my_bool not_less, size_t min)
 {
   DBUG_ENTER("Query_cache::allocate_block");
-  DBUG_PRINT("qcache", ("len %lu, not less %d, min %lu",
+  DBUG_PRINT("qcache", ("len %zu, not less %d, min %zu",
              len, not_less,min));
 
   if (len >= MY_MIN(query_cache_size, query_cache_limit))
   {
-    DBUG_PRINT("qcache", ("Query cache hase only %lu memory and limit %lu",
+    DBUG_PRINT("qcache", ("Query cache hase only %zu memory and limit %zu",
 			query_cache_size, query_cache_limit));
     DBUG_RETURN(0); // in any case we don't have such piece of memory
   }
@@ -3628,11 +3676,11 @@ Query_cache::allocate_block(ulong len, my_bool not_less, ulong min)
 
 
 Query_cache_block *
-Query_cache::get_free_block(ulong len, my_bool not_less, ulong min)
+Query_cache::get_free_block(size_t len, my_bool not_less, size_t min)
 {
   Query_cache_block *block = 0, *first = 0;
   DBUG_ENTER("Query_cache::get_free_block");
-  DBUG_PRINT("qcache",("length %lu, not_less %d, min %lu", len,
+  DBUG_PRINT("qcache",("length %zu, not_less %d, min %zu", len,
 		     (int)not_less, min));
 
   /* Find block with minimal size > len  */
@@ -3699,7 +3747,7 @@ Query_cache::get_free_block(ulong len, my_bool not_less, ulong min)
   if (block != 0)
     exclude_from_free_memory_list(block);
 
-  DBUG_PRINT("qcache",("getting block 0x%lx", (ulong) block));
+  DBUG_PRINT("qcache",("getting block %p", block));
   DBUG_RETURN(block);
 }
 
@@ -3710,9 +3758,9 @@ void Query_cache::free_memory_block(Query_cache_block *block)
   block->used=0;
   block->type= Query_cache_block::FREE; // mark block as free in any case
   DBUG_PRINT("qcache",
-	     ("first_block 0x%lx, block 0x%lx, pnext 0x%lx pprev 0x%lx",
-	      (ulong) first_block, (ulong) block, (ulong) block->pnext,
-	      (ulong) block->pprev));
+	     ("first_block %p, block %p, pnext %p pprev %p",
+	      first_block, block, block->pnext,
+	      block->pprev));
 
   if (block->pnext != first_block && block->pnext->is_free())
     block = join_free_blocks(block, block->pnext);
@@ -3723,7 +3771,7 @@ void Query_cache::free_memory_block(Query_cache_block *block)
 }
 
 
-void Query_cache::split_block(Query_cache_block *block, ulong len)
+void Query_cache::split_block(Query_cache_block *block, size_t len)
 {
   DBUG_ENTER("Query_cache::split_block");
   Query_cache_block *new_block = (Query_cache_block*)(((uchar*) block)+len);
@@ -3744,8 +3792,8 @@ void Query_cache::split_block(Query_cache_block *block, ulong len)
   else
     free_memory_block(new_block);
 
-  DBUG_PRINT("qcache", ("split 0x%lx (%lu) new 0x%lx",
-		      (ulong) block, len, (ulong) new_block));
+  DBUG_PRINT("qcache", ("split %p (%zu) new %p",
+		      block, len, new_block));
   DBUG_VOID_RETURN;
 }
 
@@ -3757,9 +3805,9 @@ Query_cache::join_free_blocks(Query_cache_block *first_block_arg,
   Query_cache_block *second_block;
   DBUG_ENTER("Query_cache::join_free_blocks");
   DBUG_PRINT("qcache",
-	     ("join first 0x%lx, pnext 0x%lx, in list 0x%lx",
-	      (ulong) first_block_arg, (ulong) first_block_arg->pnext,
-	      (ulong) block_in_list));
+	     ("join first %p, pnext %p, in list %p",
+	      first_block_arg, first_block_arg->pnext,
+	      block_in_list));
 
   exclude_from_free_memory_list(block_in_list);
   second_block = first_block_arg->pnext;
@@ -3777,16 +3825,16 @@ Query_cache::join_free_blocks(Query_cache_block *first_block_arg,
 
 
 my_bool Query_cache::append_next_free_block(Query_cache_block *block,
-					    ulong add_size)
+					    size_t add_size)
 {
   Query_cache_block *next_block = block->pnext;
   DBUG_ENTER("Query_cache::append_next_free_block");
-  DBUG_PRINT("enter", ("block 0x%lx, add_size %lu", (ulong) block,
+  DBUG_PRINT("enter", ("block %p, add_size %zu", block,
 		       add_size));
 
   if (next_block != first_block && next_block->is_free())
   {
-    ulong old_len = block->length;
+    size_t old_len = block->length;
     exclude_from_free_memory_list(next_block);
     next_block->destroy();
     total_blocks--;
@@ -3813,8 +3861,8 @@ void Query_cache::exclude_from_free_memory_list(Query_cache_block *free_block)
   bin->number--;
   free_memory-=free_block->length;
   free_memory_blocks--;
-  DBUG_PRINT("qcache",("exclude block 0x%lx, bin 0x%lx", (ulong) free_block,
-		     (ulong) bin));
+  DBUG_PRINT("qcache",("exclude block %p, bin %p", free_block,
+		     bin));
   DBUG_VOID_RETURN;
 }
 
@@ -3831,19 +3879,19 @@ void Query_cache::insert_into_free_memory_list(Query_cache_block *free_block)
 				      free_block->data());
   *bin_ptr = bins+idx;
   (*bin_ptr)->number++;
-  DBUG_PRINT("qcache",("insert block 0x%lx, bin[%d] 0x%lx",
-		     (ulong) free_block, idx, (ulong) *bin_ptr));
+  DBUG_PRINT("qcache",("insert block %p, bin[%d] %p",
+		     free_block, idx, *bin_ptr));
   DBUG_VOID_RETURN;
 }
 
-uint Query_cache::find_bin(ulong size)
+uint Query_cache::find_bin(size_t size)
 {
   DBUG_ENTER("Query_cache::find_bin");
   // Binary search
-  int left = 0, right = mem_bin_steps;
+  size_t left = 0, right = mem_bin_steps;
   do
   {
-    int middle = (left + right) / 2;
+    size_t middle = (left + right) / 2;
     if (steps[middle].size > size)
       left = middle+1;
     else
@@ -3852,15 +3900,15 @@ uint Query_cache::find_bin(ulong size)
   if (left == 0)
   {
     // first bin not subordinate of common rules
-    DBUG_PRINT("qcache", ("first bin (# 0), size %lu",size));
+    DBUG_PRINT("qcache", ("first bin (# 0), size %zu",size));
     DBUG_RETURN(0);
   }
-  uint bin =  steps[left].idx - 
-    (uint)((size - steps[left].size)/steps[left].increment);
+  size_t bin =  steps[left].idx - 
+    ((size - steps[left].size)/steps[left].increment);
 
-  DBUG_PRINT("qcache", ("bin %u step %u, size %lu step size %lu",
+  DBUG_PRINT("qcache", ("bin %zu step %zu, size %zu step size %zu",
 			bin, left, size, steps[left].size));
-  DBUG_RETURN(bin);
+  DBUG_RETURN((uint)bin);
 }
 
 
@@ -3929,7 +3977,7 @@ Query_cache::double_linked_list_simple_include(Query_cache_block *point,
 						list_pointer)
 {
   DBUG_ENTER("Query_cache::double_linked_list_simple_include");
-  DBUG_PRINT("qcache", ("including block 0x%lx", (ulong) point));
+  DBUG_PRINT("qcache", ("including block %p", point));
   if (*list_pointer == 0)
     *list_pointer=point->next=point->prev=point;
   else
@@ -3948,8 +3996,8 @@ Query_cache::double_linked_list_exclude(Query_cache_block *point,
 					Query_cache_block **list_pointer)
 {
   DBUG_ENTER("Query_cache::double_linked_list_exclude");
-  DBUG_PRINT("qcache", ("excluding block 0x%lx, list 0x%lx",
-		      (ulong) point, (ulong) list_pointer));
+  DBUG_PRINT("qcache", ("excluding block %p, list %p",
+		      point, list_pointer));
   if (point->next == point)
     *list_pointer = 0;				// empty list
   else
@@ -4038,41 +4086,35 @@ Query_cache::process_and_count_tables(THD *thd, TABLE_LIST *tables_used,
                             tables_used->view_name.str,
                             tables_used->view_db.str));
       *tables_type|= HA_CACHE_TBL_NONTRANSACT;
+      continue;
     }
-    else
+    if (tables_used->derived)
     {
-      if (tables_used->derived)
-      {
-        DBUG_PRINT("qcache", ("table: %s", tables_used->alias));
-        table_count--;
-        DBUG_PRINT("qcache", ("derived table skipped"));
-        continue;
-      }
-      DBUG_PRINT("qcache", ("table: %s  db:  %s  type: %u",
-                            tables_used->table->s->table_name.str,
-                            tables_used->table->s->db.str,
-                            tables_used->table->s->db_type()->db_type));
-      *tables_type|= tables_used->table->file->table_cache_type();
+      DBUG_PRINT("qcache", ("table: %s", tables_used->alias.str));
+      table_count--;
+      DBUG_PRINT("qcache", ("derived table skipped"));
+      continue;
+    }
 
-      /*
-        table_alias_charset used here because it depends of
-        lower_case_table_names variable
-      */
-      table_count+= tables_used->table->file->
-        count_query_cache_dependant_tables(tables_type);
+    DBUG_PRINT("qcache", ("table: %s  db:  %s  type: %u",
+                          tables_used->table->s->table_name.str,
+                          tables_used->table->s->db.str,
+                          tables_used->table->s->db_type()->db_type));
+    *tables_type|= tables_used->table->file->table_cache_type();
 
-      if (tables_used->table->s->tmp_table != NO_TMP_TABLE ||
-          (*tables_type & HA_CACHE_TBL_NOCACHE) ||
-          (tables_used->db_length == 5 &&
-           my_strnncoll(table_alias_charset,
-                        (uchar*)tables_used->table->s->table_cache_key.str, 6,
-                        (uchar*)"mysql",6) == 0))
-      {
-        DBUG_PRINT("qcache",
-                   ("select not cacheable: temporary, system or "
-                    "other non-cacheable table(s)"));
-        DBUG_RETURN(0);
-      }
+    /*
+      table_alias_charset used here because it depends of
+      lower_case_table_names variable
+    */
+    table_count+= tables_used->table->file->
+      count_query_cache_dependant_tables(tables_type);
+
+    if (tables_used->table->s->not_usable_by_query_cache)
+    {
+      DBUG_PRINT("qcache",
+                 ("select not cacheable: temporary, system or "
+                  "other non-cacheable table(s)"));
+      DBUG_RETURN(0);
     }
   }
   DBUG_RETURN(table_count);
@@ -4164,7 +4206,7 @@ my_bool Query_cache::ask_handler_allowance(THD *thd,
     handler= table->file;
     if (!handler->register_query_cache_table(thd,
                                              table->s->normalized_path.str,
-                                             table->s->normalized_path.length,
+                                             (uint)table->s->normalized_path.length,
 					     &tables_used->callback_func,
 					     &tables_used->engine_data))
     {
@@ -4190,7 +4232,7 @@ my_bool Query_cache::ask_handler_allowance(THD *thd,
 /**
   Rearrange all memory blocks so that free memory joins at the
   'bottom' of the allocated memory block containing all cache data.
-  @see Query_cache::pack(ulong join_limit, uint iteration_limit)
+  @see Query_cache::pack(size_t join_limit, uint iteration_limit)
 */
 
 void Query_cache::pack_cache()
@@ -4201,7 +4243,7 @@ void Query_cache::pack_cache()
 
   uchar *border = 0;
   Query_cache_block *before = 0;
-  ulong gap = 0;
+  size_t gap = 0;
   my_bool ok = 1;
   Query_cache_block *block = first_block;
   DUMP(this);
@@ -4235,7 +4277,7 @@ void Query_cache::pack_cache()
 
 
 my_bool Query_cache::move_by_type(uchar **border,
-				  Query_cache_block **before, ulong *gap,
+				  Query_cache_block **before, size_t *gap,
 				  Query_cache_block *block)
 {
   DBUG_ENTER("Query_cache::move_by_type");
@@ -4244,7 +4286,7 @@ my_bool Query_cache::move_by_type(uchar **border,
   switch (block->type) {
   case Query_cache_block::FREE:
   {
-    DBUG_PRINT("qcache", ("block 0x%lx FREE", (ulong) block));
+    DBUG_PRINT("qcache", ("block %p FREE", block));
     if (*border == 0)
     {
       *border = (uchar *) block;
@@ -4257,16 +4299,16 @@ my_bool Query_cache::move_by_type(uchar **border,
     block->pnext->pprev=block->pprev;
     block->destroy();
     total_blocks--;
-    DBUG_PRINT("qcache", ("added to gap (%lu)", *gap));
+    DBUG_PRINT("qcache", ("added to gap (%zu)", *gap));
     break;
   }
   case Query_cache_block::TABLE:
   {
     HASH_SEARCH_STATE record_idx;
-    DBUG_PRINT("qcache", ("block 0x%lx TABLE", (ulong) block));
+    DBUG_PRINT("qcache", ("block %p TABLE", block));
     if (*border == 0)
       break;
-    ulong len = block->length, used = block->used;
+    size_t len = block->length, used = block->used;
     Query_cache_block_table *list_root = block->table(0);
     Query_cache_block_table *tprev = list_root->prev,
 			    *tnext = list_root->next;
@@ -4275,7 +4317,7 @@ my_bool Query_cache::move_by_type(uchar **border,
 		      *pprev = block->pprev,
 		      *pnext = block->pnext,
 		      *new_block =(Query_cache_block *) *border;
-    uint tablename_offset = block->table()->table() - block->table()->db();
+    size_t tablename_offset = block->table()->table() - block->table()->db();
     char *data = (char*) block->data();
     uchar *key;
     size_t key_length;
@@ -4299,9 +4341,9 @@ my_bool Query_cache::move_by_type(uchar **border,
     nlist_root->prev = tprev;
     tprev->next = nlist_root;
     DBUG_PRINT("qcache",
-	       ("list_root: 0x%lx tnext 0x%lx tprev 0x%lx tprev->next 0x%lx tnext->prev 0x%lx",
-		(ulong) list_root, (ulong) tnext, (ulong) tprev,
-		(ulong)tprev->next, (ulong)tnext->prev));
+	       ("list_root: %p tnext %p tprev %p tprev->next %p tnext->prev %p",
+		 list_root, tnext, tprev,
+		tprev->next,tnext->prev));
     /*
       Go through all queries that uses this table and change them to
       point to the new table object
@@ -4316,18 +4358,18 @@ my_bool Query_cache::move_by_type(uchar **border,
     /* Fix hash to point at moved block */
     my_hash_replace(&tables, &record_idx, (uchar*) new_block);
 
-    DBUG_PRINT("qcache", ("moved %lu bytes to 0x%lx, new gap at 0x%lx",
-			len, (ulong) new_block, (ulong) *border));
+    DBUG_PRINT("qcache", ("moved %zu bytes to %p, new gap at %p",
+			len, new_block, *border));
     break;
   }
   case Query_cache_block::QUERY:
   {
     HASH_SEARCH_STATE record_idx;
-    DBUG_PRINT("qcache", ("block 0x%lx QUERY", (ulong) block));
+    DBUG_PRINT("qcache", ("block %p QUERY", block));
     if (*border == 0)
       break;
     BLOCK_LOCK_WR(block);
-    ulong len = block->length, used = block->used;
+    size_t len = block->length, used = block->used;
     TABLE_COUNTER_TYPE n_tables = block->n_tables;
     Query_cache_block	*prev = block->prev,
 			*next = block->next,
@@ -4362,7 +4404,7 @@ my_bool Query_cache::move_by_type(uchar **border,
     {
       Query_cache_block_table *block_table = new_block->table(j);
 
-      // use aligment from begining of table if 'next' is in same block
+      // use aligment from beginning of table if 'next' is in same block
       if ((beg_of_table_table <= block_table->next) &&
 	  (block_table->next < end_of_table_table))
 	((Query_cache_block_table *)(beg_of_new_table_table + 
@@ -4372,7 +4414,7 @@ my_bool Query_cache::move_by_type(uchar **border,
       else
 	block_table->next->prev= block_table;
 
-      // use aligment from begining of table if 'prev' is in same block
+      // use aligment from beginning of table if 'prev' is in same block
       if ((beg_of_table_table <= block_table->prev) &&
 	  (block_table->prev < end_of_table_table))
 	((Query_cache_block_table *)(beg_of_new_table_table + 
@@ -4409,8 +4451,8 @@ my_bool Query_cache::move_by_type(uchar **border,
     }
     /* Fix hash to point at moved block */
     my_hash_replace(&queries, &record_idx, (uchar*) new_block);
-    DBUG_PRINT("qcache", ("moved %lu bytes to 0x%lx, new gap at 0x%lx",
-			len, (ulong) new_block, (ulong) *border));
+    DBUG_PRINT("qcache", ("moved %zu bytes to %p, new gap at %p",
+			len, new_block, *border));
     break;
   }
   case Query_cache_block::RES_INCOMPLETE:
@@ -4418,7 +4460,7 @@ my_bool Query_cache::move_by_type(uchar **border,
   case Query_cache_block::RES_CONT:
   case Query_cache_block::RESULT:
   {
-    DBUG_PRINT("qcache", ("block 0x%lx RES* (%d)", (ulong) block,
+    DBUG_PRINT("qcache", ("block %p RES* (%d)", block,
                (int) block->type));
     if (*border == 0)
       break;
@@ -4426,7 +4468,7 @@ my_bool Query_cache::move_by_type(uchar **border,
     BLOCK_LOCK_WR(query_block);
     Query_cache_block *next= block->next, *prev= block->prev;
     Query_cache_block::block_type type= block->type;
-    ulong len = block->length, used = block->used;
+    size_t len = block->length, used = block->used;
     Query_cache_block *pprev = block->pprev,
 		      *pnext = block->pnext,
 		      *new_block =(Query_cache_block*) *border;
@@ -4444,7 +4486,7 @@ my_bool Query_cache::move_by_type(uchar **border,
     *border += len;
     *before = new_block;
     /* If result writing complete && we have free space in block */
-    ulong free_space= new_block->length - new_block->used;
+    size_t free_space= new_block->length - new_block->used;
     free_space-= free_space % ALIGN_SIZE(1);
     if (query->result()->type == Query_cache_block::RESULT &&
 	new_block->length > new_block->used &&
@@ -4454,17 +4496,17 @@ my_bool Query_cache::move_by_type(uchar **border,
       *border-= free_space;
       *gap+= free_space;
       DBUG_PRINT("qcache",
-		 ("rest of result free space added to gap (%lu)", *gap));
+		 ("rest of result free space added to gap (%zu)", *gap));
       new_block->length -= free_space;
     }
     BLOCK_UNLOCK_WR(query_block);
-    DBUG_PRINT("qcache", ("moved %lu bytes to 0x%lx, new gap at 0x%lx",
-			len, (ulong) new_block, (ulong) *border));
+    DBUG_PRINT("qcache", ("moved %zu bytes to %p, new gap at %p",
+			len, new_block, *border));
     break;
   }
   default:
-    DBUG_PRINT("error", ("unexpected block type %d, block 0x%lx",
-			 (int)block->type, (ulong) block));
+    DBUG_PRINT("error", ("unexpected block type %d, block %p",
+			 (int)block->type, block));
     ok = 0;
   }
   DBUG_RETURN(ok);
@@ -4498,7 +4540,7 @@ void Query_cache::relink(Query_cache_block *oblock,
 }
 
 
-my_bool Query_cache::join_results(ulong join_limit)
+my_bool Query_cache::join_results(size_t join_limit)
 {
   my_bool has_moving = 0;
   DBUG_ENTER("Query_cache::join_results");
@@ -4522,7 +4564,7 @@ my_bool Query_cache::join_results(ulong join_limit)
 	{
 	  has_moving = 1;
 	  Query_cache_block *first_result = header->result();
-	  ulong new_len = (header->length() +
+	  size_t new_len = (header->length() +
 			   ALIGN_SIZE(sizeof(Query_cache_block)) +
 			   ALIGN_SIZE(sizeof(Query_cache_result)));
 	  if (new_result_block->length >
@@ -4535,7 +4577,7 @@ my_bool Query_cache::join_results(ulong join_limit)
 	  new_result_block->used = new_len;
 
 	  new_result_block->next = new_result_block->prev = new_result_block;
-	  DBUG_PRINT("qcache", ("new block %lu/%lu (%lu)",
+	  DBUG_PRINT("qcache", ("new block %zu/%zu (%zu)",
 			      new_result_block->length,
 			      new_result_block->used,
 			      header->length()));
@@ -4546,9 +4588,9 @@ my_bool Query_cache::join_results(ulong join_limit)
 	  Query_cache_block *result_block = first_result;
 	  do
 	  {
-	    ulong len = (result_block->used - result_block->headers_len() -
+	    size_t len = (result_block->used - result_block->headers_len() -
 			 ALIGN_SIZE(sizeof(Query_cache_result)));
-	    DBUG_PRINT("loop", ("add block %lu/%lu (%lu)",
+	    DBUG_PRINT("loop", ("add block %zu/%zu (%zu)",
 				result_block->length,
 				result_block->used,
 				len));
@@ -4584,7 +4626,7 @@ uint Query_cache::filename_2_table_key (char *key, const char *path,
   filename=  tablename + dirname_length(tablename + 2) + 2;
   /* Find start of databasename */
   for (dbname= filename - 2 ; dbname[-1] != FN_LIBCHAR ; dbname--) ;
-  *db_length= (filename - dbname) - 1;
+  *db_length= (uint32)(filename - dbname) - 1;
   DBUG_PRINT("qcache", ("table '%-.*s.%s'", *db_length, dbname, filename));
 
   DBUG_RETURN((uint) (strmake(strmake(key, dbname,
@@ -4650,14 +4692,14 @@ void Query_cache::bins_dump()
     return;
   }
 
-  DBUG_PRINT("qcache", ("mem_bin_num=%u, mem_bin_steps=%u",
+  DBUG_PRINT("qcache", ("mem_bin_num=%zu, mem_bin_steps=%zu",
 		      mem_bin_num, mem_bin_steps));
   DBUG_PRINT("qcache", ("-------------------------"));
   DBUG_PRINT("qcache", ("      size idx       step"));
   DBUG_PRINT("qcache", ("-------------------------"));
   for (i=0; i < mem_bin_steps; i++)
   {
-    DBUG_PRINT("qcache", ("%10lu %3d %10lu", steps[i].size, steps[i].idx,
+    DBUG_PRINT("qcache", ("%10zu %3zd %10zu", steps[i].size, steps[i].idx,
 			steps[i].increment));
   }
   DBUG_PRINT("qcache", ("-------------------------"));
@@ -4665,16 +4707,16 @@ void Query_cache::bins_dump()
   DBUG_PRINT("qcache", ("-------------------------"));
   for (i=0; i < mem_bin_num; i++)
   {
-    DBUG_PRINT("qcache", ("%10lu %3d 0x%lx", bins[i].size, bins[i].number,
-			(ulong)&(bins[i])));
+    DBUG_PRINT("qcache", ("%10zu %3d %p", bins[i].size, bins[i].number,
+			&(bins[i])));
     if (bins[i].free_blocks)
     {
       Query_cache_block *block = bins[i].free_blocks;
       do{
-	DBUG_PRINT("qcache", ("\\-- %lu 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx",
-			    block->length, (ulong)block,
-			    (ulong)block->next, (ulong)block->prev,
-			    (ulong)block->pnext, (ulong)block->pprev));
+	DBUG_PRINT("qcache", ("\\-- %zu %p %p %p %p %p",
+			    block->length,block,
+			   block->next,block->prev,
+			   block->pnext,block->pprev));
 	block = block->next;
       } while ( block != bins[i].free_blocks );
     }
@@ -4698,11 +4740,11 @@ void Query_cache::cache_dump()
   do
   {
     DBUG_PRINT("qcache",
-	       ("%10lu %10lu %1d %2d 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx",
+	       ("%10zu %10zu %1d %2d %p %p %p %p %p",
 		i->length, i->used, (int)i->type,
-		i->n_tables, (ulong)i,
-		(ulong)i->next, (ulong)i->prev, (ulong)i->pnext,
-		(ulong)i->pprev));
+		i->n_tables,i,
+		i->next,i->prev,i->pnext,
+		i->pprev));
     i = i->pnext;
   } while ( i != first_block );
   DBUG_PRINT("qcache", ("-------------------------------------"));
@@ -4732,15 +4774,15 @@ void Query_cache::queries_dump()
       Query_cache_query_flags flags;
       memcpy(&flags, str+len, QUERY_CACHE_FLAGS_SIZE);
       str[len]= 0; // make zero ending DB name
-      DBUG_PRINT("qcache", ("F: %u  C: %u L: %lu  T: '%s' (%lu)  '%s'  '%s'",
+      DBUG_PRINT("qcache", ("F: %u  C: %u L: %llu  T: '%s' (%zu)  '%s'  '%s'",
 			    flags.client_long_flag,
 			    flags.character_set_client_num, 
-                            (ulong)flags.limit,
+                           flags.limit,
                             flags.time_zone->get_name()->ptr(),
-			    (ulong) len, str, strend(str)+1));
-      DBUG_PRINT("qcache", ("-b- 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx", (ulong) block,
-			    (ulong) block->next, (ulong) block->prev,
-			    (ulong)block->pnext, (ulong)block->pprev));
+			    len, str, strend(str)+1));
+      DBUG_PRINT("qcache", ("-b- %p %p %p %p %p", block,
+			    block->next, block->prev,
+			   block->pnext,block->pprev));
       memcpy(str + len, &flags, QUERY_CACHE_FLAGS_SIZE); // restore flags
       for (TABLE_COUNTER_TYPE t= 0; t < block->n_tables; t++)
       {
@@ -4754,14 +4796,14 @@ void Query_cache::queries_dump()
 	Query_cache_block *result_beg = result_block;
 	do
 	{
-	  DBUG_PRINT("qcache", ("-r- %u %lu/%lu 0x%lx 0x%lx 0x%lx 0x%lx 0x%lx",
+	  DBUG_PRINT("qcache", ("-r- %u %zu/%zu %p %p %p %p %p",
 			      (uint) result_block->type,
 			      result_block->length, result_block->used,
-			      (ulong) result_block,
-			      (ulong) result_block->next,
-			      (ulong) result_block->prev,
-			      (ulong) result_block->pnext,
-			      (ulong) result_block->pprev));
+			      result_block,
+			      result_block->next,
+			      result_block->prev,
+			      result_block->pnext,
+			      result_block->pprev));
 	  result_block = result_block->next;
 	} while ( result_block != result_beg );
       }
@@ -4832,7 +4874,7 @@ my_bool Query_cache::check_integrity(bool locked)
   }
 
   DBUG_PRINT("qcache", ("physical address check ..."));
-  ulong free=0, used=0;
+  size_t free=0, used=0;
   Query_cache_block * block = first_block;
   do
   {
@@ -4840,14 +4882,14 @@ my_bool Query_cache::check_integrity(bool locked)
     if (!block)
       break;
 
-    DBUG_PRINT("qcache", ("block 0x%lx, type %u...", 
-			  (ulong) block, (uint) block->type));  
+    DBUG_PRINT("qcache", ("block %p, type %u...", 
+			  block, (uint) block->type));  
     // Check allignment
-    if ((((long)block) % (long) ALIGN_SIZE(1)) !=
-	(((long)first_block) % (long)ALIGN_SIZE(1)))
+    if ((((size_t)block) % ALIGN_SIZE(1)) !=
+	(((size_t)first_block) % ALIGN_SIZE(1)))
     {
       DBUG_PRINT("error",
-		 ("block 0x%lx do not aligned by %d", (ulong) block,
+		 ("block %p do not aligned by %d", block,
 		  (int) ALIGN_SIZE(1)));
       result = 1;
     }
@@ -4858,10 +4900,10 @@ my_bool Query_cache::check_integrity(bool locked)
 	  ((uchar*)first_block) + query_cache_size)
       {
 	DBUG_PRINT("error", 
-		   ("block 0x%lx, type %u, ended at 0x%lx, but cache ended at 0x%lx",
-		    (ulong) block, (uint) block->type, 
-		    (ulong) (((uchar*)block) + block->length),
-		    (ulong) (((uchar*)first_block) + query_cache_size)));
+		   ("block %p, type %u, ended at %p, but cache ended at %p",
+		    block, (uint) block->type, 
+		    (((uchar*)block) + block->length),
+		    (((uchar*)first_block) + query_cache_size)));
 	result = 1;
       }
     }
@@ -4869,10 +4911,10 @@ my_bool Query_cache::check_integrity(bool locked)
       if (((uchar*)block) + block->length != ((uchar*)block->pnext))
       {
 	DBUG_PRINT("error", 
-		   ("block 0x%lx, type %u, ended at 0x%lx, but next block begining at 0x%lx",
-		    (ulong) block, (uint) block->type, 
-		    (ulong) (((uchar*)block) + block->length),
-		    (ulong) ((uchar*)block->pnext)));
+		   ("block %p, type %u, ended at %p, but next block beginning at %p",
+		    block, (uint) block->type, 
+		    (((uchar*)block) + block->length),
+		    ((uchar*)block->pnext)));
       }
     if (block->type == Query_cache_block::FREE)
       free+= block->length;
@@ -4888,16 +4930,16 @@ my_bool Query_cache::check_integrity(bool locked)
 	  ((uchar*)bin) >= ((uchar*)first_block))
       {
 	DBUG_PRINT("error", 
-		   ("free block 0x%lx have bin pointer 0x%lx beyaond of bins array bounds [0x%lx,0x%lx]",
-		    (ulong) block, 
-		    (ulong) bin,
-		    (ulong) bins,
-		    (ulong) first_block));
+		   ("free block %p have bin pointer %p beyaond of bins array bounds [%p,%p]",
+		    block, 
+		    bin,
+		    bins,
+		    first_block));
 	result = 1;
       }
       else
       {
-	int idx = (((uchar*)bin) - ((uchar*)bins)) /
+	size_t idx = (((uchar*)bin) - ((uchar*)bins)) /
 	  sizeof(Query_cache_memory_bin);
 	if (in_list(bins[idx].free_blocks, block, "free memory"))
 	  result = 1;
@@ -4939,11 +4981,11 @@ my_bool Query_cache::check_integrity(bool locked)
 	  ((uchar*)query_block) >= (((uchar*)first_block) + query_cache_size))
       {
 	DBUG_PRINT("error", 
-		   ("result block 0x%lx have query block pointer 0x%lx beyaond of block pool bounds [0x%lx,0x%lx]",
-		    (ulong) block,
-		    (ulong) query_block,
-		    (ulong) first_block,
-		    (ulong) (((uchar*)first_block) + query_cache_size)));
+		   ("result block %p have query block pointer %p beyaond of block pool bounds [%p,%p]",
+		    block,
+		    query_block,
+		    first_block,
+		    (((uchar*)first_block) + query_cache_size)));
 	result = 1;
       }
       else
@@ -4959,8 +5001,8 @@ my_bool Query_cache::check_integrity(bool locked)
       break;
     }
     default:
-      DBUG_PRINT("error", ("block 0x%lx have incorrect type %u",
-                           (long) block, block->type));
+      DBUG_PRINT("error", ("block %p have incorrect type %u",
+                           block, block->type));
       result = 1;
     }
     
@@ -4970,7 +5012,7 @@ my_bool Query_cache::check_integrity(bool locked)
   if (used + free != query_cache_size)
   {
     DBUG_PRINT("error",
-	       ("used memory (%lu) + free memory (%lu) !=  query_cache_size (%lu)",
+	       ("used memory (%zu) + free memory (%zu) !=  query_cache_size (%zu)",
 		used, free, query_cache_size));
     result = 1;
   }
@@ -4978,7 +5020,7 @@ my_bool Query_cache::check_integrity(bool locked)
   if (free != free_memory)
   {
     DBUG_PRINT("error",
-	       ("free memory (%lu) != free_memory (%lu)",
+	       ("free memory (%zu) != free_memory (%zu)",
 		free, free_memory));
     result = 1;
   }
@@ -4988,15 +5030,15 @@ my_bool Query_cache::check_integrity(bool locked)
   {
     do
     {
-      DBUG_PRINT("qcache", ("block 0x%lx, type %u...", 
-			    (ulong) block, (uint) block->type));
+      DBUG_PRINT("qcache", ("block %p, type %u...", 
+			    block, (uint) block->type));
       size_t length;
       uchar *key = query_cache_query_get_key((uchar*) block, &length, 0);
       uchar* val = my_hash_search(&queries, key, length);
       if (((uchar*)block) != val)
       {
-	DBUG_PRINT("error", ("block 0x%lx found in queries hash like 0x%lx",
-			     (ulong) block, (ulong) val));
+	DBUG_PRINT("error", ("block %p found in queries hash like %p",
+			     block, val));
       }
       if (in_blocks(block))
 	result = 1;
@@ -5006,8 +5048,8 @@ my_bool Query_cache::check_integrity(bool locked)
 	Query_cache_block * result_block = results;
 	do
 	{
-	  DBUG_PRINT("qcache", ("block 0x%lx, type %u...", 
-				(ulong) block, (uint) block->type));
+	  DBUG_PRINT("qcache", ("block %p, type %u...", 
+				block, (uint) block->type));
 	  if (in_blocks(result_block))
 	    result = 1;
 
@@ -5023,15 +5065,15 @@ my_bool Query_cache::check_integrity(bool locked)
   {
     do
     {
-      DBUG_PRINT("qcache", ("block 0x%lx, type %u...", 
-			    (ulong) block, (uint) block->type));
+      DBUG_PRINT("qcache", ("block %p, type %u...", 
+			    block, (uint) block->type));
       size_t length;
       uchar *key = query_cache_table_get_key((uchar*) block, &length, 0);
       uchar* val = my_hash_search(&tables, key, length);
       if (((uchar*)block) != val)
       {
-	DBUG_PRINT("error", ("block 0x%lx found in tables hash like 0x%lx",
-			     (ulong) block, (ulong) val));
+	DBUG_PRINT("error", ("block %p found in tables hash like %p",
+			     block, val));
       }
       
       if (in_blocks(block))
@@ -5048,8 +5090,8 @@ my_bool Query_cache::check_integrity(bool locked)
       uint count = 0;
       do
       {
-	DBUG_PRINT("qcache", ("block 0x%lx, type %u...", 
-			      (ulong) block, (uint) block->type));
+	DBUG_PRINT("qcache", ("block %p, type %u...", 
+			      block, (uint) block->type));
 	if (in_blocks(block))
 	  result = 1;
 	
@@ -5081,13 +5123,13 @@ my_bool Query_cache::in_blocks(Query_cache_block * point)
     if (block->pprev->pnext != block)
     {
       DBUG_PRINT("error",
-		 ("block 0x%lx in physical list is incorrect linked, prev block 0x%lx refered as next to 0x%lx (check from 0x%lx)",
-		  (ulong) block, (ulong) block->pprev,
-		  (ulong) block->pprev->pnext,
-		  (ulong) point));
+		 ("block %p in physical list is incorrect linked, prev block %p refered as next to %p (check from %p)",
+		  block, block->pprev,
+		  block->pprev->pnext,
+		  point));
       //back trace
       for (; block != point; block = block->pnext)
-	    DBUG_PRINT("error", ("back trace 0x%lx", (ulong) block));
+	    DBUG_PRINT("error", ("back trace %p", block));
       result = 1;
       goto err1;
     }
@@ -5096,8 +5138,8 @@ my_bool Query_cache::in_blocks(Query_cache_block * point)
   if (block != first_block)
   {
     DBUG_PRINT("error",
-	       ("block 0x%lx (0x%lx<-->0x%lx) not owned by pysical list",
-		(ulong) block, (ulong) block->pprev, (ulong )block->pnext));
+	       ("block %p (%p<-->%p) not owned by pysical list",
+		block, block->pprev, block->pnext));
     return 1;
   }
 
@@ -5109,13 +5151,13 @@ err1:
     if (block->pnext->pprev != block)
     {
       DBUG_PRINT("error",
-		 ("block 0x%lx in physicel list is incorrect linked, next block 0x%lx refered as prev to 0x%lx (check from 0x%lx)",
-		  (ulong) block, (ulong) block->pnext,
-		  (ulong) block->pnext->pprev,
-		  (ulong) point));
+		 ("block %p in physicel list is incorrect linked, next block %p refered as prev to %p (check from %p)",
+		  block, block->pnext,
+		  block->pnext->pprev,
+		  point));
       //back trace
       for (; block != point; block = block->pprev)
-	    DBUG_PRINT("error", ("back trace 0x%lx", (ulong) block));
+	    DBUG_PRINT("error", ("back trace %p", block));
       result = 1;
       goto err2;
     }
@@ -5138,13 +5180,13 @@ my_bool Query_cache::in_list(Query_cache_block * root,
     if (block->prev->next != block)
     {
       DBUG_PRINT("error",
-		 ("block 0x%lx in list '%s' 0x%lx is incorrect linked, prev block 0x%lx refered as next to 0x%lx (check from 0x%lx)",
-		  (ulong) block, name, (ulong) root, (ulong) block->prev,
-		  (ulong) block->prev->next,
-		  (ulong) point));
+		 ("block %p in list '%s' %p is incorrect linked, prev block %p refered as next to %p (check from %p)",
+		  block, name, root, block->prev,
+		  block->prev->next,
+		  point));
       //back trace
       for (; block != point; block = block->next)
-	    DBUG_PRINT("error", ("back trace 0x%lx", (ulong) block));
+	    DBUG_PRINT("error", ("back trace %p", block));
       result = 1;
       goto err1;
     }
@@ -5153,10 +5195,10 @@ my_bool Query_cache::in_list(Query_cache_block * root,
   if (block != root)
   {
     DBUG_PRINT("error",
-	       ("block 0x%lx (0x%lx<-->0x%lx) not owned by list '%s' 0x%lx",
-		(ulong) block, 
-		(ulong) block->prev, (ulong) block->next,
-		name, (ulong) root));
+	       ("block %p (%p<-->%p) not owned by list '%s' %p",
+		block, 
+		 block->prev, block->next,
+		name, root));
     return 1;
   }
 err1:
@@ -5167,13 +5209,13 @@ err1:
     if (block->next->prev != block)
     {
       DBUG_PRINT("error",
-		 ("block 0x%lx in list '%s' 0x%lx is incorrect linked, next block 0x%lx refered as prev to 0x%lx (check from 0x%lx)",
-		  (ulong) block, name, (ulong) root, (ulong) block->next,
-		  (ulong) block->next->prev,
-		  (ulong) point));
+		 ("block %p in list '%s' %p is incorrect linked, next block %p refered as prev to %p (check from %p)",
+		  block, name, root, block->next,
+		  block->next->prev,
+		  point));
       //back trace
       for (; block != point; block = block->prev)
-	    DBUG_PRINT("error", ("back trace 0x%lx", (ulong) block));
+	    DBUG_PRINT("error", ("back trace %p", block));
       result = 1;
       goto err2;
     }
@@ -5186,13 +5228,13 @@ err2:
 void dump_node(Query_cache_block_table * node, 
 	       const char * call, const char * descr)
 {
-  DBUG_PRINT("qcache", ("%s: %s: node: 0x%lx", call, descr, (ulong) node));
-  DBUG_PRINT("qcache", ("%s: %s: node block: 0x%lx",
-			call, descr, (ulong) node->block()));
-  DBUG_PRINT("qcache", ("%s: %s: next: 0x%lx", call, descr,
-			(ulong) node->next));
-  DBUG_PRINT("qcache", ("%s: %s: prev: 0x%lx", call, descr,
-			(ulong) node->prev));
+  DBUG_PRINT("qcache", ("%s: %s: node: %p", call, descr, node));
+  DBUG_PRINT("qcache", ("%s: %s: node block: %p",
+			call, descr, node->block()));
+  DBUG_PRINT("qcache", ("%s: %s: next: %p", call, descr,
+			 node->next));
+  DBUG_PRINT("qcache", ("%s: %s: prev: %p", call, descr,
+			 node->prev));
 }
 
 my_bool Query_cache::in_table_list(Query_cache_block_table * root,
@@ -5209,17 +5251,17 @@ my_bool Query_cache::in_table_list(Query_cache_block_table * root,
     if (table->prev->next != table)
     {
       DBUG_PRINT("error",
-		 ("table 0x%lx(0x%lx) in list '%s' 0x%lx(0x%lx) is incorrect linked, prev table 0x%lx(0x%lx) refered as next to 0x%lx(0x%lx) (check from 0x%lx(0x%lx))",
-		  (ulong) table, (ulong) table->block(), name, 
-		  (ulong) root, (ulong) root->block(),
-		  (ulong) table->prev, (ulong) table->prev->block(),
-		  (ulong) table->prev->next, 
-		  (ulong) table->prev->next->block(),
-		  (ulong) point, (ulong) point->block()));
+		 ("table %p(%p) in list '%s' %p(%p) is incorrect linked, prev table %p(%p) refered as next to %p(%p) (check from %p(%p))",
+		  table, table->block(), name, 
+		  root, root->block(),
+		  table->prev, table->prev->block(),
+		  table->prev->next, 
+		  table->prev->next->block(),
+		  point, point->block()));
       //back trace
       for (; table != point; table = table->next)
-	    DBUG_PRINT("error", ("back trace 0x%lx(0x%lx)", 
-				 (ulong) table, (ulong) table->block()));
+	    DBUG_PRINT("error", ("back trace %p(%p)", 
+				 table, table->block()));
       result = 1;
       goto err1;
     }
@@ -5228,11 +5270,11 @@ my_bool Query_cache::in_table_list(Query_cache_block_table * root,
   if (table != root)
   {
     DBUG_PRINT("error",
-	       ("table 0x%lx(0x%lx) (0x%lx(0x%lx)<-->0x%lx(0x%lx)) not owned by list '%s' 0x%lx(0x%lx)",
-		(ulong) table, (ulong) table->block(),
-		(ulong) table->prev, (ulong) table->prev->block(),
-		(ulong) table->next, (ulong) table->next->block(),
-		name, (ulong) root, (ulong) root->block()));
+	       ("table %p(%p) (%p(%p)<-->%p(%p)) not owned by list '%s' %p(%p)",
+		 table, table->block(),
+		 table->prev, table->prev->block(),
+		 table->next, table->next->block(),
+		name, root, root->block()));
     return 1;
   }
 err1:
@@ -5244,17 +5286,17 @@ err1:
     if (table->next->prev != table)
     {
       DBUG_PRINT("error",
-		 ("table 0x%lx(0x%lx) in list '%s' 0x%lx(0x%lx) is incorrect linked, next table 0x%lx(0x%lx) refered as prev to 0x%lx(0x%lx) (check from 0x%lx(0x%lx))",
-		  (ulong) table, (ulong) table->block(),
-		  name, (ulong) root, (ulong) root->block(),
-		  (ulong) table->next, (ulong) table->next->block(),
-		  (ulong) table->next->prev,
-		  (ulong) table->next->prev->block(),
-		  (ulong) point, (ulong) point->block()));
+		 ("table %p(%p) in list '%s' %p(%p) is incorrect linked, next table %p(%p) refered as prev to %p(%p) (check from %p(%p))",
+		  table, table->block(),
+		  name, root, root->block(),
+		  table->next, table->next->block(),
+		  table->next->prev,
+		  table->next->prev->block(),
+		  point, point->block()));
       //back trace
       for (; table != point; table = table->prev)
-	    DBUG_PRINT("error", ("back trace 0x%lx(0x%lx)",
-				 (ulong) table, (ulong) table->block()));
+	    DBUG_PRINT("error", ("back trace %p(%p)",
+				 table, table->block()));
       result = 1;
       goto err2;
     }

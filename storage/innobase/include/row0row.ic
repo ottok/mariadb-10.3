@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2011, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -30,7 +31,7 @@ Created 4/20/1996 Heikki Tuuri
 /*********************************************************************//**
 Gets the offset of the DB_TRX_ID field, in bytes relative to the origin of
 a clustered index record.
-@return	offset of DATA_TRX_ID */
+@return offset of DATA_TRX_ID */
 UNIV_INLINE
 ulint
 row_get_trx_id_offset(
@@ -56,7 +57,7 @@ row_get_trx_id_offset(
 
 /*********************************************************************//**
 Reads the trx id field from a clustered index record.
-@return	value of the field */
+@return value of the field */
 UNIV_INLINE
 trx_id_t
 row_get_rec_trx_id(
@@ -81,7 +82,7 @@ row_get_rec_trx_id(
 
 /*********************************************************************//**
 Reads the roll pointer field from a clustered index record.
-@return	value of the field */
+@return value of the field */
 UNIV_INLINE
 roll_ptr_t
 row_get_rec_roll_ptr(
@@ -118,15 +119,16 @@ row_build_index_entry(
 					inserted or purged */
 	const row_ext_t*	ext,	/*!< in: externally stored column
 					prefixes, or NULL */
-	dict_index_t*		index,	/*!< in: index on the table */
-	mem_heap_t*		heap)	/*!< in: memory heap from which
+	const dict_index_t*	index,	/*!< in: index on the table */
+	mem_heap_t*		heap)	/*!< in,out: memory heap from which
 					the memory for the index entry
 					is allocated */
 {
 	dtuple_t*	entry;
 
 	ut_ad(dtuple_check_typed(row));
-	entry = row_build_index_entry_low(row, ext, index, heap);
+	entry = row_build_index_entry_low(row, ext, index, heap,
+					  ROW_BUILD_NORMAL);
 	ut_ad(!entry || dtuple_check_typed(entry));
 	return(entry);
 }
@@ -143,8 +145,8 @@ row_build_row_ref_fast(
 	const ulint*	map,	/*!< in: array of field numbers in rec
 				telling how ref should be built from
 				the fields of rec */
-	const rec_t*	rec,	/*!< in: record in the index; must be
-				preserved while ref is used, as we do
+	const rec_t*	rec,	/*!< in: secondary index record;
+				must be preserved while ref is used, as we do
 				not copy field values to heap */
 	const ulint*	offsets)/*!< in: array returned by rec_get_offsets() */
 {
@@ -172,3 +174,52 @@ row_build_row_ref_fast(
 		}
 	}
 }
+
+/** Parse the integer data from specified data, which could be
+DATA_INT, DATA_FLOAT or DATA_DOUBLE. If the value is less than 0
+and the type is not unsigned then we reset the value to 0
+@param[in]	data		data to read
+@param[in]	len		length of data
+@param[in]	mtype		mtype of data
+@param[in]	unsigned_type	if the data is unsigned
+@return the integer value from the data */
+ib_uint64_t
+row_parse_int(
+	const byte*	data,
+	ulint		len,
+	ulint		mtype,
+	bool		unsigned_type)
+{
+	ib_uint64_t	value = 0;
+
+	switch (mtype) {
+	case DATA_INT:
+
+		ut_a(len <= sizeof value);
+		value = mach_read_int_type(data, len, unsigned_type);
+		break;
+
+	case DATA_FLOAT:
+
+		ut_a(len == sizeof(float));
+		value = static_cast<ib_uint64_t>(mach_float_read(data));
+		break;
+
+	case DATA_DOUBLE:
+
+		ut_a(len == sizeof(double));
+		value = static_cast<ib_uint64_t>(mach_double_read(data));
+		break;
+
+	default:
+		ut_error;
+
+	}
+
+	if (!unsigned_type && static_cast<int64_t>(value) < 0) {
+		value = 0;
+	}
+
+	return(value);
+}
+

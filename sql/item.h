@@ -25,45 +25,83 @@
 #include "sql_priv.h"                /* STRING_BUFFER_USUAL_SIZE */
 #include "unireg.h"
 #include "sql_const.h"                 /* RAND_TABLE_BIT, MAX_FIELD_NAME */
-#include "thr_malloc.h"                         /* sql_calloc */
 #include "field.h"                              /* Derivation */
 #include "sql_type.h"
+#include "sql_time.h"
+#include "mem_root_array.h"
 
 C_MODE_START
 #include <ma_dyncol.h>
+
+/*
+  A prototype for a C-compatible structure to store a value of any data type.
+  Currently it has to stay in /sql, as it depends on String and my_decimal.
+  We'll do the following changes:
+  1. add pure C "struct st_string" and "struct st_my_decimal"
+  2. change type of m_string to struct st_string and move inside the union
+  3. change type of m_decmal to struct st_my_decimal and move inside the union
+  4. move the definition to some file in /include
+*/
+struct st_value
+{
+  enum enum_dynamic_column_type m_type;
+  union
+  {
+    longlong m_longlong;
+    double m_double;
+    MYSQL_TIME m_time;
+  } value;
+  String m_string;
+  my_decimal m_decimal;
+};
+
 C_MODE_END
 
-#ifndef DBUG_OFF
-static inline
-bool trace_unsupported_func(const char *where, const char *processor_name)
-{
-  char buff[64];                                                         
-  sprintf(buff, "%s::%s", where, processor_name);
-  DBUG_ENTER(buff);
-  sprintf(buff, "%s returns TRUE: unsupported function", processor_name);
-  DBUG_PRINT("info", ("%s", buff));
-  DBUG_RETURN(TRUE);
-}
-#else
-#define trace_unsupported_func(X,Y) TRUE
-#endif
 
-static inline
-bool trace_unsupported_by_check_vcol_func_processor(const char *where)
+class Value: public st_value
 {
-  return trace_unsupported_func(where, "check_vcol_func_processor");
-}
+public:
+  bool is_null() const { return m_type == DYN_COL_NULL; }
+  bool is_longlong() const
+  {
+    return m_type == DYN_COL_UINT || m_type == DYN_COL_INT;
+  }
+  bool is_double() const { return m_type == DYN_COL_DOUBLE; }
+  bool is_temporal() const { return m_type == DYN_COL_DATETIME; }
+  bool is_string() const { return m_type == DYN_COL_STRING; }
+  bool is_decimal() const { return m_type == DYN_COL_DECIMAL; }
+};
+
+
+template<size_t buffer_size>
+class ValueBuffer: public Value
+{
+  char buffer[buffer_size];
+  void reset_buffer()
+  {
+    m_string.set(buffer, buffer_size, &my_charset_bin);
+  }
+public:
+  ValueBuffer()
+  {
+    reset_buffer();
+  }
+};
+
 
 #ifdef DBUG_OFF
 static inline const char *dbug_print_item(Item *item) { return NULL; }
 #else
-extern const char *dbug_print_item(Item *item);
+const char *dbug_print_item(Item *item);
 #endif
 
+class Virtual_tmp_table;
+class sp_head;
 class Protocol;
 struct TABLE_LIST;
 void item_init(void);			/* Init item functions */
 class Item_field;
+class Item_param;
 class user_var_entry;
 class JOIN;
 struct KEY_FIELD;
@@ -71,133 +109,48 @@ struct SARGABLE_PARAM;
 class RANGE_OPT_PARAM;
 class SEL_TREE;
 
+enum precedence {
+  LOWEST_PRECEDENCE,
+  ASSIGN_PRECEDENCE,    // :=
+  OR_PRECEDENCE,        // OR, || (unless PIPES_AS_CONCAT)
+  XOR_PRECEDENCE,       // XOR
+  AND_PRECEDENCE,       // AND, &&
+  NOT_PRECEDENCE,       // NOT (unless HIGH_NOT_PRECEDENCE)
+  BETWEEN_PRECEDENCE,   // BETWEEN, CASE, WHEN, THEN, ELSE
+  CMP_PRECEDENCE,       // =, <=>, >=, >, <=, <, <>, !=, IS, LIKE, REGEXP, IN
+  BITOR_PRECEDENCE,     // |
+  BITAND_PRECEDENCE,    // &
+  SHIFT_PRECEDENCE,     // <<, >>
+  ADDINTERVAL_PRECEDENCE, // first argument in +INTERVAL
+  ADD_PRECEDENCE,       // +, -
+  MUL_PRECEDENCE,       // *, /, DIV, %, MOD
+  BITXOR_PRECEDENCE,    // ^
+  PIPES_PRECEDENCE,     // || (if PIPES_AS_CONCAT)
+  NEG_PRECEDENCE,       // unary -, ~
+  BANG_PRECEDENCE,      // !, NOT (if HIGH_NOT_PRECEDENCE)
+  COLLATE_PRECEDENCE,   // BINARY, COLLATE
+  INTERVAL_PRECEDENCE,  // INTERVAL
+  DEFAULT_PRECEDENCE,
+  HIGHEST_PRECEDENCE
+};
 
-static inline uint32
-char_to_byte_length_safe(uint32 char_length_arg, uint32 mbmaxlen_arg)
-{
-   ulonglong tmp= ((ulonglong) char_length_arg) * mbmaxlen_arg;
-   return (tmp > UINT_MAX32) ? (uint32) UINT_MAX32 : (uint32) tmp;
-}
+bool mark_unsupported_function(const char *where, void *store, uint result);
 
+/* convenience helper for mark_unsupported_function() above */
+bool mark_unsupported_function(const char *w1, const char *w2,
+                               void *store, uint result);
 
 /* Bits for the split_sum_func() function */
 #define SPLIT_SUM_SKIP_REGISTERED 1     /* Skip registered funcs */
 #define SPLIT_SUM_SELECT 2		/* SELECT item; Split all parts */
 
-/*
-   "Declared Type Collation"
-   A combination of collation and its derivation.
 
-  Flags for collation aggregation modes:
-  MY_COLL_ALLOW_SUPERSET_CONV  - allow conversion to a superset
-  MY_COLL_ALLOW_COERCIBLE_CONV - allow conversion of a coercible value
-                                 (i.e. constant).
-  MY_COLL_ALLOW_CONV           - allow any kind of conversion
-                                 (combination of the above two)
-  MY_COLL_ALLOW_NUMERIC_CONV   - if all items were numbers, convert to
-                                 @@character_set_connection
-  MY_COLL_DISALLOW_NONE        - don't allow return DERIVATION_NONE
-                                 (e.g. when aggregating for comparison)
-  MY_COLL_CMP_CONV             - combination of MY_COLL_ALLOW_CONV
-                                 and MY_COLL_DISALLOW_NONE
-*/
+#define NO_EXTRACTION_FL              (1 << 6)
+#define FULL_EXTRACTION_FL            (1 << 7)
+#define SUBSTITUTION_FL               (1 << 8)
+#define EXTRACTION_MASK               (NO_EXTRACTION_FL | FULL_EXTRACTION_FL)
 
-#define MY_COLL_ALLOW_SUPERSET_CONV   1
-#define MY_COLL_ALLOW_COERCIBLE_CONV  2
-#define MY_COLL_DISALLOW_NONE         4
-#define MY_COLL_ALLOW_NUMERIC_CONV    8
-
-#define MY_COLL_ALLOW_CONV (MY_COLL_ALLOW_SUPERSET_CONV | MY_COLL_ALLOW_COERCIBLE_CONV)
-#define MY_COLL_CMP_CONV   (MY_COLL_ALLOW_CONV | MY_COLL_DISALLOW_NONE)
-
-class DTCollation {
-public:
-  CHARSET_INFO     *collation;
-  enum Derivation derivation;
-  uint repertoire;
-  
-  void set_repertoire_from_charset(CHARSET_INFO *cs)
-  {
-    repertoire= cs->state & MY_CS_PUREASCII ?
-                MY_REPERTOIRE_ASCII : MY_REPERTOIRE_UNICODE30;
-  }
-  DTCollation()
-  {
-    collation= &my_charset_bin;
-    derivation= DERIVATION_NONE;
-    repertoire= MY_REPERTOIRE_UNICODE30;
-  }
-  DTCollation(CHARSET_INFO *collation_arg, Derivation derivation_arg)
-  {
-    collation= collation_arg;
-    derivation= derivation_arg;
-    set_repertoire_from_charset(collation_arg);
-  }
-  DTCollation(CHARSET_INFO *collation_arg,
-              Derivation derivation_arg,
-              uint repertoire_arg)
-   :collation(collation_arg),
-    derivation(derivation_arg),
-    repertoire(repertoire_arg)
-  { }
-  void set(const DTCollation &dt)
-  { 
-    collation= dt.collation;
-    derivation= dt.derivation;
-    repertoire= dt.repertoire;
-  }
-  void set(CHARSET_INFO *collation_arg, Derivation derivation_arg)
-  {
-    collation= collation_arg;
-    derivation= derivation_arg;
-    set_repertoire_from_charset(collation_arg);
-  }
-  void set(CHARSET_INFO *collation_arg,
-           Derivation derivation_arg,
-           uint repertoire_arg)
-  {
-    collation= collation_arg;
-    derivation= derivation_arg;
-    repertoire= repertoire_arg;
-  }
-  void set_numeric()
-  {
-    collation= &my_charset_numeric;
-    derivation= DERIVATION_NUMERIC;
-    repertoire= MY_REPERTOIRE_NUMERIC;
-  }
-  void set(CHARSET_INFO *collation_arg)
-  {
-    collation= collation_arg;
-    set_repertoire_from_charset(collation_arg);
-  }
-  void set(Derivation derivation_arg)
-  { derivation= derivation_arg; }
-  bool aggregate(const DTCollation &dt, uint flags= 0);
-  bool set(DTCollation &dt1, DTCollation &dt2, uint flags= 0)
-  { set(dt1); return aggregate(dt2, flags); }
-  const char *derivation_name() const
-  {
-    switch(derivation)
-    {
-      case DERIVATION_NUMERIC:   return "NUMERIC";
-      case DERIVATION_IGNORABLE: return "IGNORABLE";
-      case DERIVATION_COERCIBLE: return "COERCIBLE";
-      case DERIVATION_IMPLICIT:  return "IMPLICIT";
-      case DERIVATION_SYSCONST:  return "SYSCONST";
-      case DERIVATION_EXPLICIT:  return "EXPLICIT";
-      case DERIVATION_NONE:      return "NONE";
-      default: return "UNKNOWN";
-    }
-  }
-  int sortcmp(const String *s, const String *t) const
-  {
-    return collation->coll->strnncollsp(collation,
-                                        (uchar *) s->ptr(), s->length(),
-                                        (uchar *) t->ptr(), t->length(), 0);
-  }
-};
-
+extern const char *item_empty_name;
 
 void dummy_error_processor(THD *thd, void *data);
 
@@ -355,6 +308,28 @@ public:
   }
 };
 
+class Name_resolution_context_backup
+{
+  Name_resolution_context &ctx;
+  TABLE_LIST &table_list;
+  table_map save_map;
+  Name_resolution_context_state ctx_state;
+
+public:
+  Name_resolution_context_backup(Name_resolution_context &_ctx, TABLE_LIST &_table_list)
+    : ctx(_ctx), table_list(_table_list), save_map(_table_list.map)
+  {
+    ctx_state.save_state(&ctx, &table_list);
+    ctx.table_list= &table_list;
+    ctx.first_name_resolution_table= &table_list;
+  }
+  ~Name_resolution_context_backup()
+  {
+    ctx_state.restore_state(&ctx, &table_list);
+    table_list.map= save_map;
+  }
+};
+
 
 /*
   This enum is used to report information about monotonicity of function
@@ -394,6 +369,65 @@ typedef enum monotonicity_info
 /*************************************************************************/
 
 class sp_rcontext;
+
+/**
+  A helper class to collect different behavior of various kinds of SP variables:
+  - local SP variables and SP parameters
+  - PACKAGE BODY routine variables
+  - (there will be more kinds in the future)
+*/
+
+class Sp_rcontext_handler
+{
+public:
+  virtual ~Sp_rcontext_handler() {}
+  /**
+    A prefix used for SP variable names in queries:
+    - EXPLAIN EXTENDED
+    - SHOW PROCEDURE CODE
+    Local variables and SP parameters have empty prefixes.
+    Package body variables are marked with a special prefix.
+    This improves readability of the output of these queries,
+    especially when a local variable or a parameter has the same
+    name with a package body variable.
+  */
+  virtual const LEX_CSTRING *get_name_prefix() const= 0;
+  /**
+    At execution time THD->spcont points to the run-time context (sp_rcontext)
+    of the currently executed routine.
+    Local variables store their data in the sp_rcontext pointed by thd->spcont.
+    Package body variables store data in separate sp_rcontext that belongs
+    to the package.
+    This method provides access to the proper sp_rcontext structure,
+    depending on the SP variable kind.
+  */
+  virtual sp_rcontext *get_rcontext(sp_rcontext *ctx) const= 0;
+};
+
+
+class Sp_rcontext_handler_local: public Sp_rcontext_handler
+{
+public:
+  const LEX_CSTRING *get_name_prefix() const;
+  sp_rcontext *get_rcontext(sp_rcontext *ctx) const;
+};
+
+
+class Sp_rcontext_handler_package_body: public Sp_rcontext_handler
+{
+public:
+  const LEX_CSTRING *get_name_prefix() const;
+  sp_rcontext *get_rcontext(sp_rcontext *ctx) const;
+};
+
+
+extern MYSQL_PLUGIN_IMPORT
+  Sp_rcontext_handler_local sp_rcontext_handler_local;
+
+
+extern MYSQL_PLUGIN_IMPORT
+  Sp_rcontext_handler_package_body sp_rcontext_handler_package_body;
+
 
 
 class Item_equal;
@@ -443,7 +477,34 @@ public:
 
   virtual const Send_field *get_out_param_info() const
   { return NULL; }
+
+  virtual Item_param *get_item_param() { return 0; }
 };
+
+
+/*
+  A helper class to calculate offset and length of a query fragment
+  - outside of SP
+  - inside an SP
+  - inside a compound block
+*/
+class Query_fragment
+{
+  uint m_pos;
+  uint m_length;
+  void set(size_t pos, size_t length)
+  {
+    DBUG_ASSERT(pos < UINT_MAX32);
+    DBUG_ASSERT(length < UINT_MAX32);
+    m_pos= (uint) pos;
+    m_length= (uint) length;
+  }
+public:
+  Query_fragment(THD *thd, sp_head *sphead, const char *start, const char *end);
+  uint pos() const { return m_pos; }
+  uint length() const { return m_length; }
+};
+
 
 /**
   This is used for items in the query that needs to be rewritten
@@ -463,7 +524,7 @@ class Rewritable_query_parameter
 
   /*
     Byte length of parameter name in the statement.  This is not
-    Item::name_length because name_length contains byte length of UTF8-encoded
+    Item::name.length because name.length contains byte length of UTF8-encoded
     name, but the query string is in the client charset.
   */
   uint len_in_query;
@@ -490,7 +551,7 @@ class Copy_query_with_rewrite
   bool copy_up_to(size_t bytes)
   {
     DBUG_ASSERT(bytes >= from);
-    return dst->append(src + from, bytes - from);
+    return dst->append(src + from, uint32(bytes - from));
   }
 
 public:
@@ -521,7 +582,7 @@ struct st_dyncall_create_def
 typedef struct st_dyncall_create_def DYNCALL_CREATE_DEF;
 
 
-typedef bool (Item::*Item_processor) (uchar *arg);
+typedef bool (Item::*Item_processor) (void *arg);
 /*
   Analyzer function
     SYNOPSIS
@@ -545,6 +606,8 @@ struct find_selective_predicates_list_processor_data
   List<st_cond_statistic> list;
 };
 
+class MY_LOCALE;
+
 class Item_equal;
 class COND_EQUAL;
 
@@ -566,52 +629,9 @@ public:
   String_copier_for_item(THD *thd): m_thd(thd) { }
 };
 
-
-/**
-  A class to store type attributes for the standard data types.
-  Does not include attributes for the extended data types
-  such as ENUM, SET, GEOMETRY.
-*/
-class Type_std_attributes
-{
-public:
-  DTCollation collation;
-  uint decimals;
-  /*
-    The maximum value length in characters multiplied by collation->mbmaxlen.
-    Almost always it's the maximum value length in bytes.
-  */
-  uint32 max_length;
-  bool unsigned_flag;
-  Type_std_attributes()
-   :collation(&my_charset_bin, DERIVATION_COERCIBLE),
-    decimals(0), max_length(0), unsigned_flag(false)
-  { }
-  Type_std_attributes(const Type_std_attributes *other)
-   :collation(other->collation),
-    decimals(other->decimals),
-    max_length(other->max_length),
-    unsigned_flag(other->unsigned_flag)
-  { }
-  void set(const Type_std_attributes *other)
-  {
-    *this= *other;
-  }
-  void set(const Field *field)
-  {
-    decimals= field->decimals();
-    max_length= field->field_length;
-    collation.set(field->charset());
-    unsigned_flag= MY_TEST(field->flags & UNSIGNED_FLAG);
-  }
-};
-
-
 class Item: public Value_source,
-            public Type_std_attributes,
-            public Type_handler
+            public Type_all_attributes
 {
-  Item(const Item &);			/* Prevent use of these */
   void operator=(Item &);
   /**
     The index in the JOIN::join_tab array of the JOIN_TAB this Item is attached
@@ -632,7 +652,8 @@ public:
   static void operator delete(void *ptr,size_t size) { TRASH_FREE(ptr, size); }
   static void operator delete(void *ptr, MEM_ROOT *mem_root) {}
 
-  enum Type {FIELD_ITEM= 0, FUNC_ITEM, SUM_FUNC_ITEM, STRING_ITEM,
+  enum Type {FIELD_ITEM= 0, FUNC_ITEM, SUM_FUNC_ITEM,
+             WINDOW_FUNC_ITEM, STRING_ITEM,
 	     INT_ITEM, REAL_ITEM, NULL_ITEM, VARBIN_ITEM,
 	     COPY_STR_ITEM, FIELD_AVG_ITEM, DEFAULT_VALUE_ITEM,
 	     PROC_ITEM,COND_ITEM, REF_ITEM, FIELD_STD_ITEM,
@@ -662,7 +683,75 @@ protected:
 
   SEL_TREE *get_mm_tree_for_const(RANGE_OPT_PARAM *param);
 
-  Field *create_tmp_field(bool group, TABLE *table, uint convert_int_length);
+  /**
+    Create a field based on the exact data type handler.
+  */
+  Field *create_table_field_from_handler(TABLE *table)
+  {
+    const Type_handler *h= type_handler();
+    return h->make_and_init_table_field(&name, Record_addr(maybe_null),
+                                        *this, table);
+  }
+  /**
+    Create a field based on field_type of argument.
+    This is used to create a field for
+    - IFNULL(x,something)
+    - time functions
+    - prepared statement placeholders
+    - SP variables with data type references: DECLARE a TYPE OF t1.a;
+    @retval  NULL  error
+    @retval  !NULL on success
+  */
+  Field *tmp_table_field_from_field_type(TABLE *table)
+  {
+    const Type_handler *h= type_handler()->type_handler_for_tmp_table(this);
+    return h->make_and_init_table_field(&name, Record_addr(maybe_null),
+                                        *this, table);
+  }
+  Field *create_tmp_field_int(TABLE *table, uint convert_int_length);
+
+  void push_note_converted_to_negative_complement(THD *thd);
+  void push_note_converted_to_positive_complement(THD *thd);
+
+  /* Helper methods, to get an Item value from another Item */
+  double val_real_from_item(Item *item)
+  {
+    DBUG_ASSERT(fixed == 1);
+    double value= item->val_real();
+    null_value= item->null_value;
+    return value;
+  }
+  longlong val_int_from_item(Item *item)
+  {
+    DBUG_ASSERT(fixed == 1);
+    longlong value= item->val_int();
+    null_value= item->null_value;
+    return value;
+  }
+  String *val_str_from_item(Item *item, String *str)
+  {
+    DBUG_ASSERT(fixed == 1);
+    String *res= item->val_str(str);
+    if (res)
+      res->set_charset(collation.collation);
+    if ((null_value= item->null_value))
+      res= NULL;
+    return res;
+  }
+  my_decimal *val_decimal_from_item(Item *item, my_decimal *decimal_value)
+  {
+    DBUG_ASSERT(fixed == 1);
+    my_decimal *value= item->val_decimal(decimal_value);
+    if ((null_value= item->null_value))
+      value= NULL;
+    return value;
+  }
+  bool get_date_from_item(Item *item, MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    bool rc= item->get_date(ltime, fuzzydate);
+    null_value= MY_TEST(rc || item->null_value);
+    return rc;
+  }
   /*
     This method is used if the item was not null but convertion to
     TIME/DATE/DATETIME failed. We return a zero date if allowed,
@@ -677,9 +766,11 @@ public:
   */
   String *val_str() { return val_str(&str_value); }
 
-  char * name;			/* Name from select */
+  const MY_LOCALE *locale_from_val_str();
+
+  LEX_CSTRING name;			/* Name of item */
   /* Original item name (if it was renamed)*/
-  char * orig_name;
+  const char *orig_name;
   /**
      Intrusive list pointer for free list. If not null, points to the next
      Item on some Query_arena's free list. For instance, stored procedures
@@ -688,12 +779,6 @@ public:
      @see Query_arena::free_list
    */
   Item *next;
-  /*
-    TODO: convert name and name_length fields into LEX_STRING to keep them in
-    sync (see bug #11829681/60295 etc). Then also remove some strlen(name)
-    calls.
-  */
-  uint name_length;                     /* Length of name */
   int  marker;
   bool maybe_null;			/* If item may be null */
   bool in_rollup;                       /* If used in GROUP BY list
@@ -701,6 +786,7 @@ public:
   bool null_value;			/* if item is null */
   bool with_sum_func;                   /* True if item contains a sum func */
   bool with_param;                      /* True if contains an SP parameter */
+  bool with_window_func;             /* True if item contains a window func */
   /**
     True if any item except Item_sum contains a field. Set during parsing.
   */
@@ -708,10 +794,7 @@ public:
   bool fixed;                           /* If item fixed with fix_fields */
   bool is_autogenerated_name;           /* indicate was name of this Item
                                            autogenerated or set by user */
-  bool with_subselect;                  /* If this item is a subselect or some
-                                           of its arguments is or contains a
-                                           subselect */
-  // alloc & destruct is done as start of select using sql_alloc
+  // alloc & destruct is done as start of select on THD::mem_root
   Item(THD *thd);
   /*
      Constructor used by Item_field, Item_ref & aggregate (sum) functions.
@@ -725,18 +808,33 @@ public:
   virtual ~Item()
   {
 #ifdef EXTRA_DEBUG
-    name=0;
+    name.str= 0;
+    name.length= 0;
 #endif
   }		/*lint -e1509 */
-  void set_name(const char *str, uint length, CHARSET_INFO *cs);
-  void set_name_no_truncate(const char *str, uint length, CHARSET_INFO *cs);
-  void set_name_for_rollback(THD *thd, const char *str, uint length,
-                             CHARSET_INFO *cs);
-  void rename(char *new_name);
-  void init_make_field(Send_field *tmp_field,enum enum_field_types type);
+  void set_name(THD *thd, const char *str, size_t length, CHARSET_INFO *cs);
+  void set_name_no_truncate(THD *thd, const char *str, uint length,
+                            CHARSET_INFO *cs);
+  void init_make_send_field(Send_field *tmp_field,enum enum_field_types type);
   virtual void cleanup();
-  virtual void make_field(Send_field *field);
-  virtual Field *make_string_field(TABLE *table);
+  virtual void make_send_field(THD *thd, Send_field *field);
+
+  bool fix_fields_if_needed(THD *thd, Item **ref)
+  {
+    return fixed ? false : fix_fields(thd, ref);
+  }
+  bool fix_fields_if_needed_for_scalar(THD *thd, Item **ref)
+  {
+    return fix_fields_if_needed(thd, ref) || check_cols(1);
+  }
+  bool fix_fields_if_needed_for_bool(THD *thd, Item **ref)
+  {
+    return fix_fields_if_needed_for_scalar(thd, ref);
+  }
+  bool fix_fields_if_needed_for_order_by(THD *thd, Item **ref)
+  {
+    return fix_fields_if_needed_for_scalar(thd, ref);
+  }
   virtual bool fix_fields(THD *, Item **);
   /*
     Fix after some tables has been pulled out. Basically re-calculate all
@@ -758,9 +856,16 @@ public:
     supposed to be applied recursively.  
   */
   virtual inline void quick_fix_field() { fixed= 1; }
+
+  bool save_in_value(struct st_value *value)
+  {
+    return type_handler()->Item_save_in_value(this, value);
+  }
+
   /* Function returns 1 on overflow and -1 on fatal errors */
   int save_in_field_no_warnings(Field *field, bool no_conversions);
   virtual int save_in_field(Field *field, bool no_conversions);
+  virtual bool save_in_param(THD *thd, Item_param *param);
   virtual void save_org_in_field(Field *field,
                                  fast_field_copier data
                                  __attribute__ ((__unused__)))
@@ -769,18 +874,85 @@ public:
   { return NULL; }
   virtual int save_safe_in_field(Field *field)
   { return save_in_field(field, 1); }
-  virtual bool send(Protocol *protocol, String *str);
-  virtual bool eq(const Item *, bool binary_cmp) const;
-  /* result_type() of an item specifies how the value should be returned */
-  Item_result result_type() const { return REAL_RESULT; }
-  /* ... while cmp_type() specifies how it should be compared */
-  Item_result cmp_type() const;
-  virtual Item_result cast_to_int_type() const { return cmp_type(); }
-  enum_field_types string_field_type() const
+  virtual bool send(Protocol *protocol, st_value *buffer)
   {
-    return Type_handler::string_type_handler(max_length)->field_type();
+    return type_handler()->Item_send(this, protocol, buffer);
   }
-  enum_field_types field_type() const;
+  virtual bool eq(const Item *, bool binary_cmp) const;
+  enum_field_types field_type() const
+  {
+    return type_handler()->field_type();
+  }
+  virtual const Type_handler *type_handler() const= 0;
+  const Type_handler *type_handler_for_comparison() const
+  {
+    return type_handler()->type_handler_for_comparison();
+  }
+  virtual const Type_handler *real_type_handler() const
+  {
+    return type_handler();
+  }
+  virtual const Type_handler *cast_to_int_type_handler() const
+  {
+    return type_handler();
+  }
+  virtual const Type_handler *type_handler_for_system_time() const
+  {
+    return real_type_handler();
+  }
+  /* result_type() of an item specifies how the value should be returned */
+  Item_result result_type() const
+  {
+    return type_handler()->result_type();
+  }
+  /* ... while cmp_type() specifies how it should be compared */
+  Item_result cmp_type() const
+  {
+    return type_handler()->cmp_type();
+  }
+  const Type_handler *string_type_handler() const
+  {
+    return Type_handler::string_type_handler(max_length);
+  }
+  /*
+    Calculate the maximum length of an expression.
+    This method is used in data type aggregation for UNION, e.g.:
+      SELECT 'b' UNION SELECT COALESCE(double_10_3_field) FROM t1;
+
+    The result is usually equal to max_length, except for some numeric types.
+    In case of the INT, FLOAT, DOUBLE data types Item::max_length and
+    Item::decimals are ignored, so the returned value depends only on the
+    data type itself. E.g. for an expression of the DOUBLE(10,3) data type,
+    the result is always 53 (length 10 and precision 3 do not matter).
+
+    max_length is ignored for these numeric data types because the length limit
+    means only "expected maximum length", it is not a hard limit, so it does
+    not impose any data truncation. E.g. a column of the type INT(4) can
+    normally store big values up to 2147483647 without truncation. When we're
+    aggregating such column for UNION it's important to create a long enough
+    result column, not to lose any data.
+
+    For detailed behaviour of various data types see implementations of
+    the corresponding Type_handler_xxx::max_display_length().
+
+    Note, Item_field::max_display_length() overrides this to get
+    max_display_length() from the underlying field.
+  */
+  virtual uint32 max_display_length() const
+  {
+    return type_handler()->max_display_length(this);
+  }
+  TYPELIB *get_typelib() const { return NULL; }
+  void set_maybe_null(bool maybe_null_arg) { maybe_null= maybe_null_arg; }
+  void set_typelib(TYPELIB *typelib)
+  {
+    // Non-field Items (e.g. hybrid functions) never have ENUM/SET types yet.
+    DBUG_ASSERT(0);
+  }
+  Item_cache* get_cache(THD *thd) const
+  {
+    return type_handler()->Item_get_cache(thd, this);
+  }
   virtual enum Type type() const =0;
   /*
     real_type() is the type of base item.  This is same as type() for
@@ -857,11 +1029,54 @@ public:
       If value is not null null_value flag will be reset to FALSE.
   */
   virtual longlong val_int()=0;
+  Longlong_hybrid to_longlong_hybrid()
+  {
+    return Longlong_hybrid(val_int(), unsigned_flag);
+  }
+  /**
+    Get a value for CAST(x AS SIGNED).
+    Too large positive unsigned integer values are converted
+    to negative complements.
+    Values of non-integer data types are adjusted to the SIGNED range.
+  */
+  virtual longlong val_int_signed_typecast()
+  {
+    return cast_to_int_type_handler()->Item_val_int_signed_typecast(this);
+  }
+  longlong val_int_signed_typecast_from_str();
+  /**
+    Get a value for CAST(x AS UNSIGNED).
+    Negative signed integer values are converted
+    to positive complements.
+    Values of non-integer data types are adjusted to the UNSIGNED range.
+  */
+  virtual longlong val_int_unsigned_typecast()
+  {
+    return cast_to_int_type_handler()->Item_val_int_unsigned_typecast(this);
+  }
+  longlong val_int_unsigned_typecast_from_decimal();
+  longlong val_int_unsigned_typecast_from_int();
+  longlong val_int_unsigned_typecast_from_str();
   /*
     This is just a shortcut to avoid the cast. You should still use
     unsigned_flag to check the sign of the item.
   */
   inline ulonglong val_uint() { return (ulonglong) val_int(); }
+  /*
+    Adjust the result of val_int() to an unsigned number:
+    - NULL value is converted to 0. The caller can check "null_value"
+      to distinguish between 0 and NULL when necessary.
+    - Negative numbers are converted to 0.
+    - Positive numbers bigger than upper_bound are converted to upper_bound.
+    - Other numbers are returned as is.
+  */
+  ulonglong val_uint_from_val_int(ulonglong upper_bound)
+  {
+    longlong nr= val_int();
+    return (null_value || (nr < 0 && !unsigned_flag)) ? 0 :
+           (ulonglong) nr > upper_bound ? upper_bound : (ulonglong) nr;
+  }
+
   /*
     Return string representation of this item object.
 
@@ -962,11 +1177,19 @@ public:
       Similar to val_str()
   */
   virtual String *val_str_ascii(String *str);
-  
+
+  /*
+    Returns the result of val_str_ascii(), translating NULLs back
+    to empty strings (if MODE_EMPTY_STRING_IS_NULL is set).
+  */
+  String *val_str_ascii_revert_empty_string_is_null(THD *thd, String *str);
+
   /*
     Returns the val_str() value converted to the given character set.
   */
   String *val_str(String *str, String *converter, CHARSET_INFO *to);
+
+  virtual String *val_json(String *str) { return val_str(str); }
   /*
     Return decimal representation of item with fixed point.
 
@@ -993,7 +1216,10 @@ public:
       FALSE value is false or NULL
       TRUE value is true (not equal to 0)
   */
-  virtual bool val_bool();
+  virtual bool val_bool()
+  {
+    return type_handler()->Item_val_bool(this);
+  }
   virtual String *val_nodeset(String*) { return 0; }
 
   /*
@@ -1018,7 +1244,12 @@ public:
   my_decimal *val_decimal_from_time(my_decimal *decimal_value);
   longlong val_int_from_decimal();
   longlong val_int_from_date();
-  longlong val_int_from_real();
+  longlong val_int_from_real()
+  {
+    DBUG_ASSERT(fixed == 1);
+    return Converter_double_to_longlong_with_warn(val_real(), false).result();
+  }
+  longlong val_int_from_str(int *error);
   double val_real_from_decimal();
   double val_real_from_date();
 
@@ -1027,16 +1258,21 @@ public:
   // Check NULL value for a TIME, DATE or DATETIME expression
   bool is_null_from_temporal();
 
-  int save_time_in_field(Field *field);
-  int save_date_in_field(Field *field);
+  int save_time_in_field(Field *field, bool no_conversions);
+  int save_date_in_field(Field *field, bool no_conversions);
+  int save_str_in_field(Field *field, bool no_conversions);
+  int save_real_in_field(Field *field, bool no_conversions);
+  int save_int_in_field(Field *field, bool no_conversions);
+  int save_decimal_in_field(Field *field, bool no_conversions);
+
   int save_str_value_in_field(Field *field, String *result);
 
   virtual Field *get_tmp_table_field() { return 0; }
   virtual Field *create_field_for_create_select(TABLE *table);
   virtual Field *create_field_for_schema(THD *thd, TABLE *table);
-  virtual const char *full_name() const { return name ? name : "???"; }
+  virtual const char *full_name() const { return name.str ? name.str : "???"; }
   const char *field_name_or_null()
-  { return real_item()->type() == Item::FIELD_ITEM ? name : NULL; }
+  { return real_item()->type() == Item::FIELD_ITEM ? name.str : NULL; }
 
   /*
     *result* family of methods is analog of *val* family (see above) but
@@ -1082,11 +1318,15 @@ public:
   virtual bool basic_const_item() const { return 0; }
   /* cloning of constant items (0 if it is not const) */
   virtual Item *clone_item(THD *thd) { return 0; }
+  virtual Item* build_clone(THD *thd) { return get_copy(thd); }
   virtual cond_result eq_cmp_result() const { return COND_OK; }
   inline uint float_length(uint decimals_par) const
-  { return decimals != NOT_FIXED_DEC ? (DBL_DIG+2+decimals_par) : DBL_DIG+8;}
+  { return decimals < FLOATING_POINT_DECIMALS ? (DBL_DIG+2+decimals_par) : DBL_DIG+8;}
   /* Returns total number of decimal digits */
-  virtual uint decimal_precision() const;
+  virtual uint decimal_precision() const
+  {
+    return type_handler()->Item_decimal_precision(this);
+  }
   /* Returns the number of integer part digits only */
   inline int decimal_int_part() const
   { return my_decimal_int_part(decimal_precision(), decimals); }
@@ -1097,10 +1337,7 @@ public:
   */
   uint decimal_scale() const
   {
-    return decimals < NOT_FIXED_DEC ? decimals :
-           is_temporal_type_with_time(field_type()) ?
-           TIME_SECOND_PART_DIGITS :
-           MY_MIN(max_length, DECIMAL_MAX_SCALE);
+    return type_handler()->Item_decimal_scale(this);
   }
   /*
     Returns how many digits a divisor adds into a division result.
@@ -1121,15 +1358,25 @@ public:
   */
   uint divisor_precision_increment() const
   {
-    return decimals <  NOT_FIXED_DEC ? decimals :
-           is_temporal_type_with_time(field_type()) ?
-           TIME_SECOND_PART_DIGITS :
-           decimals;
+    return type_handler()->Item_divisor_precision_increment(this);
   }
   /**
     TIME or DATETIME precision of the item: 0..6
   */
-  uint temporal_precision(enum_field_types type);
+  uint time_precision()
+  {
+    return const_item() ? type_handler()->Item_time_precision(this) :
+                          MY_MIN(decimals, TIME_SECOND_PART_DIGITS);
+  }
+  uint datetime_precision()
+  {
+    return const_item() ? type_handler()->Item_datetime_precision(this) :
+                          MY_MIN(decimals, TIME_SECOND_PART_DIGITS);
+  }
+  virtual longlong val_int_min() const
+  {
+    return LONGLONG_MIN;
+  }
   /* 
     Returns true if this is constant (during query execution, i.e. its value
     will not change until next fix_fields) and its value is known.
@@ -1153,15 +1400,33 @@ public:
     query and why they should be generated from the Item-tree, @see
     mysql_register_view().
   */
-  virtual inline void print(String *str, enum_query_type query_type)
+  virtual enum precedence precedence() const { return DEFAULT_PRECEDENCE; }
+  void print_parenthesised(String *str, enum_query_type query_type,
+                           enum precedence parent_prec);
+  /**
+    This helper is used to print expressions as a part of a table definition,
+    in particular for
+      - generated columns
+      - check constraints
+      - default value expressions
+      - partitioning expressions
+  */
+  void print_for_table_def(String *str)
   {
-    str->append(full_name());
+    print_parenthesised(str,
+                     (enum_query_type)(QT_ITEM_ORIGINAL_FUNC_NULLIF |
+                                       QT_ITEM_IDENT_SKIP_DB_NAMES |
+                                       QT_ITEM_IDENT_SKIP_TABLE_NAMES |
+                                       QT_NO_DATA_EXPANSION |
+                                       QT_TO_SYSTEM_CHARSET),
+                     LOWEST_PRECEDENCE);
   }
+  virtual void print(String *str, enum_query_type query_type);
+  void print_item_w_name(String *str, enum_query_type query_type);
+  void print_value(String *str);
 
-  void print_item_w_name(String *, enum_query_type query_type);
-  void print_value(String *);
   virtual void update_used_tables() {}
-  virtual COND *build_equal_items(THD *thd, COND_EQUAL *inherited,
+  virtual COND *build_equal_items(THD *thd, COND_EQUAL *inheited,
                                   bool link_item_fields,
                                   COND_EQUAL **cond_equal_ref)
   {
@@ -1197,24 +1462,29 @@ public:
   {
     return false;
   }
-  virtual void split_sum_func(THD *thd, Item **ref_pointer_array,
+  virtual void split_sum_func(THD *thd, Ref_ptr_array ref_pointer_array,
                               List<Item> &fields, uint flags) {}
   /* Called for items that really have to be split */
-  void split_sum_func2(THD *thd, Item **ref_pointer_array, List<Item> &fields,
+  void split_sum_func2(THD *thd, Ref_ptr_array ref_pointer_array,
+                       List<Item> &fields,
                        Item **ref, uint flags);
-  virtual bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  virtual bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)= 0;
+  bool get_date_from_int(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  bool get_date_from_year(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  bool get_date_from_real(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  bool get_date_from_decimal(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  bool get_date_from_string(MYSQL_TIME *ltime, ulonglong fuzzydate);
   bool get_time(MYSQL_TIME *ltime)
-  { return get_date(ltime, TIME_TIME_ONLY | TIME_INVALID_DATES); }
-  // Get date with automatic TIME->DATETIME conversion
-  bool get_date_with_conversion(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  { return get_date(ltime, Time::flags_for_get_date()); }
   /*
-    Get time with automatic DATE/DATETIME to TIME conversion.
+    Get time with automatic DATE/DATETIME to TIME conversion,
+    by subtracting CURRENT_DATE.
 
-    Performce a reserve operation to get_date_with_conversion().
+    Performce a reverse operation to CAST(time AS DATETIME)
     Suppose:
     - we have a set of items (typically with the native MYSQL_TYPE_TIME type)
       whose item->get_date() return TIME1 value, and
-    - item->get_date_with_conversion() for the same Items return DATETIME1,
+    - CAST(AS DATETIME) for the same Items return DATETIME1,
       after applying time-to-datetime conversion to TIME1.
 
     then all items (typically of the native MYSQL_TYPE_{DATE|DATETIME} types)
@@ -1243,44 +1513,29 @@ public:
   // Get a DATE or DATETIME value in numeric packed format for comparison
   virtual longlong val_datetime_packed()
   {
-    MYSQL_TIME ltime;
-    uint fuzzydate= TIME_FUZZY_DATES | TIME_INVALID_DATES;
-    return get_date_with_conversion(&ltime, fuzzydate) ? 0 : pack_time(&ltime);
+    ulonglong fuzzydate= TIME_FUZZY_DATES | TIME_INVALID_DATES;
+    Datetime dt(current_thd, this, fuzzydate);
+    return dt.is_valid_datetime() ? pack_time(dt.get_mysql_time()) : 0;
   }
   // Get a TIME value in numeric packed format for comparison
   virtual longlong val_time_packed()
   {
-    MYSQL_TIME ltime;
-    uint fuzzydate= TIME_FUZZY_DATES | TIME_INVALID_DATES | TIME_TIME_ONLY;
-    return get_date(&ltime, fuzzydate) ? 0 : pack_time(&ltime);
+    Time tm(this, Time::comparison_flags_for_get_date());
+    return tm.is_valid_time() ? pack_time(tm.get_mysql_time()) : 0;
   }
+  longlong val_datetime_packed_result();
+  longlong val_time_packed_result()
+  {
+    MYSQL_TIME ltime;
+    ulonglong fuzzydate= Time::comparison_flags_for_get_date();
+    return get_date_result(&ltime, fuzzydate) ? 0 : pack_time(&ltime);
+  }
+
   // Get a temporal value in packed DATE/DATETIME or TIME format
   longlong val_temporal_packed(enum_field_types f_type)
   {
     return f_type == MYSQL_TYPE_TIME ? val_time_packed() :
                                        val_datetime_packed();
-  }
-  enum_field_types field_type_for_temporal_comparison(const Item *other) const
-  {
-    if (cmp_type() == TIME_RESULT)
-    {
-      if (other->cmp_type() == TIME_RESULT)
-        return Field::field_type_merge(field_type(), other->field_type());
-      else
-        return field_type();
-    }
-    else
-    {
-      if (other->cmp_type() == TIME_RESULT)
-        return other->field_type();
-      DBUG_ASSERT(0); // Two non-temporal data types, we should not get to here
-      return MYSQL_TYPE_DATETIME;
-    }
-  }
-  // Get a temporal value to compare to another Item
-  longlong val_temporal_packed(const Item *other)
-  {
-    return val_temporal_packed(field_type_for_temporal_comparison(other));
   }
   bool get_seconds(ulonglong *sec, ulong *sec_part);
   virtual bool get_date_result(MYSQL_TIME *ltime, ulonglong fuzzydate)
@@ -1348,6 +1603,9 @@ public:
   virtual void set_result_field(Field *field) {}
   virtual bool is_result_field() { return 0; }
   virtual bool is_bool_type() { return false; }
+  virtual bool is_json_type() { return false; }
+  /* This is to handle printing of default values */
+  virtual bool need_parentheses_in_default() { return false; }
   virtual void save_in_result_field(bool no_conversions) {}
   /*
     set value of aggregate function in case of no rows for grouping were found
@@ -1358,25 +1616,19 @@ public:
   virtual Item *copy_andor_structure(THD *thd) { return this; }
   virtual Item *real_item() { return this; }
   virtual Item *get_tmp_table_item(THD *thd) { return copy_or_same(thd); }
+  virtual Item *make_odbc_literal(THD *thd, const LEX_CSTRING *typestr)
+  {
+    return this;
+  }
 
   static CHARSET_INFO *default_charset();
 
-  /*
-    For backward compatibility, to make numeric
-    data types return "binary" charset in client-side metadata.
-  */
-  virtual CHARSET_INFO *charset_for_protocol(void) const
+  CHARSET_INFO *charset_for_protocol(void) const
   {
-    return cmp_type() == STRING_RESULT ? collation.collation :
-                                         &my_charset_bin;
+    return type_handler()->charset_for_protocol(this);
   };
 
-  virtual bool walk(Item_processor processor, bool walk_subquery, uchar *arg)
-  {
-    return (this->*processor)(arg);
-  }
-
-  virtual bool walk_top_and(Item_processor processor, uchar *arg)
+  virtual bool walk(Item_processor processor, bool walk_subquery, void *arg)
   {
     return (this->*processor)(arg);
   }
@@ -1413,73 +1665,59 @@ public:
      (*traverser)(this, arg);
    }
 
-  /*
-    This is used to get the most recent version of any function in
-    an item tree. The version is the version where a MySQL function
-    was introduced in. So any function which is added should use
-    this function and set the int_arg to maximum of the input data
-    and their own version info.
-  */
-  virtual bool intro_version(uchar *int_arg) { return 0; }
+  /*========= Item processors, to be used with Item::walk() ========*/
+  virtual bool remove_dependence_processor(void *arg) { return 0; }
+  virtual bool cleanup_processor(void *arg);
+  virtual bool cleanup_excluding_fields_processor(void *arg) { return cleanup_processor(arg); }
+  virtual bool cleanup_excluding_const_fields_processor(void *arg) { return cleanup_processor(arg); }
+  virtual bool collect_item_field_processor(void *arg) { return 0; }
+  virtual bool collect_outer_ref_processor(void *arg) {return 0; }
+  virtual bool check_inner_refs_processor(void *arg) { return 0; }
+  virtual bool find_item_in_field_list_processor(void *arg) { return 0; }
+  virtual bool find_item_processor(void *arg);
+  virtual bool change_context_processor(void *arg) { return 0; }
+  virtual bool reset_query_id_processor(void *arg) { return 0; }
+  virtual bool is_expensive_processor(void *arg) { return 0; }
 
-  virtual bool remove_dependence_processor(uchar * arg) { return 0; }
-  virtual bool cleanup_processor(uchar *arg);
-  virtual bool collect_item_field_processor(uchar * arg) { return 0; }
-  virtual bool add_field_to_set_processor(uchar * arg) { return 0; }
-  virtual bool find_item_in_field_list_processor(uchar *arg) { return 0; }
-  virtual bool find_item_processor(uchar *arg);
-  virtual bool change_context_processor(uchar *context) { return 0; }
-  virtual bool reset_query_id_processor(uchar *query_id_arg) { return 0; }
-  virtual bool is_expensive_processor(uchar *arg) { return 0; }
-  virtual bool register_field_in_read_map(uchar *arg) { return 0; }
-  virtual bool register_field_in_write_map(uchar *arg) { return 0; }
-  virtual bool enumerate_field_refs_processor(uchar *arg) { return 0; }
-  virtual bool mark_as_eliminated_processor(uchar *arg) { return 0; }
-  virtual bool eliminate_subselect_processor(uchar *arg) { return 0; }
-  virtual bool set_fake_select_as_master_processor(uchar *arg) { return 0; }
-  virtual bool update_table_bitmaps_processor(uchar *arg) { return 0; }
-  virtual bool view_used_tables_processor(uchar *arg) { return 0; }
-  virtual bool eval_not_null_tables(uchar *opt_arg) { return 0; }
-  virtual bool is_subquery_processor (uchar *opt_arg) { return 0; }
-  virtual bool count_sargable_conds(uchar *arg) { return 0; }
-  virtual bool limit_index_condition_pushdown_processor(uchar *opt_arg)
-  {
-    return FALSE;
-  }
-  virtual bool exists2in_processor(uchar *opt_arg) { return 0; }
-  virtual bool find_selective_predicates_list_processor(uchar *opt_arg)
-  { return 0; }
-  bool cleanup_is_expensive_cache_processor(uchar *arg)
+  // FIXME reduce the number of "add field to bitmap" processors
+  virtual bool add_field_to_set_processor(void *arg) { return 0; }
+  virtual bool register_field_in_read_map(void *arg) { return 0; }
+  virtual bool register_field_in_write_map(void *arg) { return 0; }
+  virtual bool register_field_in_bitmap(void *arg) { return 0; }
+  virtual bool update_table_bitmaps_processor(void *arg) { return 0; }
+
+  virtual bool enumerate_field_refs_processor(void *arg) { return 0; }
+  virtual bool mark_as_eliminated_processor(void *arg) { return 0; }
+  virtual bool eliminate_subselect_processor(void *arg) { return 0; }
+  virtual bool set_fake_select_as_master_processor(void *arg) { return 0; }
+  virtual bool view_used_tables_processor(void *arg) { return 0; }
+  virtual bool eval_not_null_tables(void *arg) { return 0; }
+  virtual bool is_subquery_processor(void *arg) { return 0; }
+  virtual bool count_sargable_conds(void *arg) { return 0; }
+  virtual bool limit_index_condition_pushdown_processor(void *arg) { return 0; }
+  virtual bool exists2in_processor(void *arg) { return 0; }
+  virtual bool find_selective_predicates_list_processor(void *arg) { return 0; }
+  bool cleanup_is_expensive_cache_processor(void *arg)
   {
     is_expensive_cache= (int8)(-1);
     return 0;
   }
 
-  /* To call bool function for all arguments */
-  struct bool_func_call_args
-  {
-    Item *original_func_item;
-    void (Item::*bool_function)();
-  };
-  bool call_bool_func_processor(uchar *org_item)
-  {
-    bool_func_call_args *info= (bool_func_call_args*) org_item;
-    /* Avoid recursion, as walk also calls for original item */
-    if (info->original_func_item != this)
-      (this->*(info->bool_function))();
-    return FALSE;
-  }
-
-
-  /*
-    The next function differs from the previous one that a bitmap to be updated
-    is passed as uchar *arg.
+  /* 
+    TRUE if the expression depends only on the table indicated by tab_map
+    or can be converted to such an exression using equalities.
+    Not to be used for AND/OR formulas.
   */
-  virtual bool register_field_in_bitmap(uchar *arg) { return 0; }
+  virtual bool excl_dep_on_table(table_map tab_map) { return false; }
+  /* 
+    TRUE if the expression depends only on grouping fields of sel
+    or can be converted to such an exression using equalities.
+    Not to be used for AND/OR formulas.
+  */
+  virtual bool excl_dep_on_grouping_fields(st_select_lex *sel) { return false; }
 
-  bool cache_const_expr_analyzer(uchar **arg);
-  Item* cache_const_expr_transformer(THD *thd, uchar *arg);
-
+  virtual bool switch_to_nullable_fields_processor(void *arg) { return 0; }
+  virtual bool find_function_processor (void *arg) { return 0; }
   /*
     Check if a partition function is allowed
     SYNOPSIS
@@ -1531,21 +1769,48 @@ public:
     assumes that there are no multi-byte collations amongst the partition
     fields.
   */
-  virtual bool check_partition_func_processor(uchar *bool_arg) { return TRUE;}
-  /*
-    @brief
-    Processor used to mark virtual columns used in partitioning expression
+  virtual bool check_partition_func_processor(void *arg) { return 1;}
+  virtual bool post_fix_fields_part_expr_processor(void *arg) { return 0; }
+  virtual bool rename_fields_processor(void *arg) { return 0; }
+  /** Processor used to check acceptability of an item in the defining
+      expression for a virtual column 
 
-    @param
-    arg     always ignored
+    @param arg     always ignored
 
-    @retval
-      FALSE      always
+    @retval 0    the item is accepted in the definition of a virtual column
+    @retval 1    otherwise
   */
-  virtual bool vcol_in_partition_func_processor(uchar *arg)
+  struct vcol_func_processor_result
   {
-    return FALSE;
+    uint errors;                                /* Bits of possible errors */
+    const char *name;                           /* Not supported function */
+  };
+  struct func_processor_rename
+  {
+    LEX_CSTRING db_name;
+    LEX_CSTRING table_name;
+    List<Create_field> fields;
+  };
+  virtual bool check_vcol_func_processor(void *arg)
+  {
+    return mark_unsupported_function(full_name(), arg, VCOL_IMPOSSIBLE);
   }
+  virtual bool check_field_expression_processor(void *arg) { return 0; }
+  virtual bool check_func_default_processor(void *arg) { return 0; }
+  /*
+    Check if an expression value has allowed arguments, like DATE/DATETIME
+    for date functions. Also used by partitioning code to reject
+    timezone-dependent expressions in a (sub)partitioning function.
+  */
+  virtual bool check_valid_arguments_processor(void *arg) { return 0; }
+  virtual bool update_vcol_processor(void *arg) { return 0; }
+  virtual bool set_fields_as_dependent_processor(void *arg) { return 0; }
+  /*============== End of Item processor list ======================*/
+
+  virtual Item *get_copy(THD *thd)=0;
+
+  bool cache_const_expr_analyzer(uchar **arg);
+  Item* cache_const_expr_transformer(THD *thd, uchar *arg);
 
   virtual Item* propagate_equal_fields(THD*, const Context &, COND_EQUAL *)
   {
@@ -1557,35 +1822,9 @@ public:
                                                     COND_EQUAL *cond,
                                                     Item **place);
 
-  /*
-    @brief
-    Processor used to check acceptability of an item in the defining
-    expression for a virtual column 
-    
-    @param
-      arg     always ignored
-      
-    @retval
-      FALSE    the item is accepted in the definition of a virtual column
-    @retval 
-      TRUE     otherwise
-  */
-  virtual bool check_vcol_func_processor(uchar *arg)
-  {
-    return trace_unsupported_by_check_vcol_func_processor(full_name());
-  }
-
   /* arg points to REPLACE_EQUAL_FIELD_ARG object */
   virtual Item *replace_equal_field(THD *thd, uchar *arg) { return this; }
-  /*
-    Check if an expression value has allowed arguments, like DATE/DATETIME
-    for date functions. Also used by partitioning code to reject
-    timezone-dependent expressions in a (sub)partitioning function.
-  */
-  virtual bool check_valid_arguments_processor(uchar *bool_arg)
-  {
-    return FALSE;
-  }
+
   struct Collect_deps_prm
   {
     List<Item> *parameters;
@@ -1595,31 +1834,6 @@ public:
     int nest_level;
     bool collect;
   };
-  /**
-    Collect outer references
-  */
-  virtual bool collect_outer_ref_processor(uchar *arg) {return FALSE; }
-
-  /**
-    Find a function of a given type
-
-    @param   arg     the function type to search (enum Item_func::Functype)
-    @return
-      @retval TRUE   the function type we're searching for is found
-      @retval FALSE  the function type wasn't found
-
-    @description
-      This function can be used (together with Item::walk()) to find functions
-      in an item tree fragment.
-  */
-  virtual bool find_function_processor (uchar *arg)
-  {
-    return FALSE;
-  }
-
-  virtual bool check_inner_refs_processor(uchar *arg) { return FALSE; }
-
-  virtual bool switch_to_nullable_fields_processor(uchar *arg) { return FALSE; }
 
   /*
     For SP local variable returns pointer to Item representing its
@@ -1635,33 +1849,51 @@ public:
   virtual Item **this_item_addr(THD *thd, Item **addr_arg) { return addr_arg; }
 
   // Row emulation
-  virtual uint cols() { return 1; }
+  virtual uint cols() const { return 1; }
   virtual Item* element_index(uint i) { return this; }
   virtual Item** addr(uint i) { return 0; }
   virtual bool check_cols(uint c);
+  bool check_type_traditional_scalar(const char *opname) const;
+  bool check_type_scalar(const char *opname) const;
+  bool check_type_or_binary(const char *opname, const Type_handler *handler) const;
+  bool check_type_general_purpose_string(const char *opname) const;
+  bool check_type_can_return_int(const char *opname) const;
+  bool check_type_can_return_decimal(const char *opname) const;
+  bool check_type_can_return_real(const char *opname) const;
+  bool check_type_can_return_str(const char *opname) const;
+  bool check_type_can_return_text(const char *opname) const;
+  bool check_type_can_return_date(const char *opname) const;
+  bool check_type_can_return_time(const char *opname) const;
   // It is not row => null inside is impossible
   virtual bool null_inside() { return 0; }
   // used in row subselects to get value of elements
   virtual void bring_value() {}
 
-  virtual Field *create_tmp_field(bool group, TABLE *table)
+  const Type_handler *type_handler_long_or_longlong() const
   {
-    /*
-      Values with MY_INT32_NUM_DECIMAL_DIGITS digits may or may not fit into
-      Field_long : make them Field_longlong.
-    */
-    return create_tmp_field(false, table, MY_INT32_NUM_DECIMAL_DIGITS - 2);
+    return Type_handler::type_handler_long_or_longlong(max_char_length());
   }
 
-  Field *tmp_table_field_from_field_type(TABLE *table,
-                                         bool fixed_length,
-                                         bool set_blob_packlength);
+  virtual Field *create_tmp_field(bool group, TABLE *table)
+  {
+    return tmp_table_field_from_field_type(table);
+  }
+
   virtual Item_field *field_for_view_update() { return 0; }
 
   virtual Item *neg_transformer(THD *thd) { return NULL; }
   virtual Item *update_value_transformer(THD *thd, uchar *select_arg)
   { return this; }
   virtual Item *expr_cache_insert_transformer(THD *thd, uchar *unused)
+  { return this; }
+  virtual Item *derived_field_transformer_for_having(THD *thd, uchar *arg)
+  { return this; }
+  virtual Item *derived_field_transformer_for_where(THD *thd, uchar *arg)
+  { return this; }
+  virtual Item *derived_grouping_field_transformer_for_where(THD *thd,
+                                                             uchar *arg)
+  { return this; }
+  virtual Item *in_predicate_to_in_subs_transformer(THD *thd, uchar *arg)
   { return this; }
   virtual bool expr_cache_is_needed(THD *) { return FALSE; }
   virtual Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs);
@@ -1725,6 +1957,20 @@ public:
   {
     return 0;
   }
+
+  virtual Load_data_outvar *get_load_data_outvar()
+  {
+    return 0;
+  }
+  Load_data_outvar *get_load_data_outvar_or_error()
+  {
+    Load_data_outvar *dst= get_load_data_outvar();
+    if (dst)
+      return dst;
+    my_error(ER_NONUPDATEABLE_COLUMN, MYF(0), name.str);
+    return NULL;
+  }
+
   /**
     Test whether an expression is expensive to compute. Used during
     optimization to avoid computing expensive expressions during this
@@ -1744,15 +1990,19 @@ public:
   virtual bool is_expensive()
   {
     if (is_expensive_cache < 0)
-      is_expensive_cache= walk(&Item::is_expensive_processor, 0, (uchar*)0);
+      is_expensive_cache= walk(&Item::is_expensive_processor, 0, NULL);
     return MY_TEST(is_expensive_cache);
   }
   virtual Field::geometry_type get_geometry_type() const
     { return Field::GEOM_GEOMETRY; };
+  uint uint_geometry_type() const
+  { return get_geometry_type(); }
+  void set_geometry_type(uint type)
+  {
+    DBUG_ASSERT(0);
+  }
   String *check_well_formed_result(String *str, bool send_error= 0);
   bool eq_by_collation(Item *item, bool binary_cmp, CHARSET_INFO *cs); 
-  uint32 max_char_length() const
-  { return max_length / collation.collation->mbmaxlen; }
   bool too_big_for_varchar() const
   { return max_char_length() > CONVERT_IF_BIGGER_TO_BLOB; }
   void fix_length_and_charset(uint32 max_char_length_arg, CHARSET_INFO *cs)
@@ -1760,7 +2010,7 @@ public:
     max_length= char_to_byte_length_safe(max_char_length_arg, cs->mbmaxlen);
     collation.collation= cs;
   }
-  void fix_char_length(uint32 max_char_length_arg)
+  void fix_char_length(size_t max_char_length_arg)
   {
     max_length= char_to_byte_length_safe(max_char_length_arg,
                                          collation.collation->mbmaxlen);
@@ -1771,9 +2021,10 @@ public:
   virtual bool is_outer_field() const { DBUG_ASSERT(fixed); return FALSE; }
 
   /**
-    Checks if this item or any of its decendents contains a subquery.
+    Checks if this item or any of its decendents contains a subquery. This is a
+    replacement of the former Item::has_subquery() and Item::with_subselect.
   */
-  virtual bool has_subquery() const { return with_subselect; }
+  virtual bool with_subquery() const { DBUG_ASSERT(fixed); return false; }
 
   Item* set_expr_cache(THD *thd);
 
@@ -1795,7 +2046,7 @@ public:
   table_map view_used_tables(TABLE_LIST *view)
   {
     view->view_used_tables= 0;
-    walk(&Item::view_used_tables_processor, 0, (uchar *) view);
+    walk(&Item::view_used_tables_processor, 0, view);
     return view->view_used_tables;
   }
 
@@ -1813,12 +2064,107 @@ public:
   /* how much position should be reserved for Exists2In transformation */
   virtual uint exists2in_reserved_items() { return 0; };
 
+  virtual Item *neg(THD *thd);
+
   /**
     Inform the item that it is located under a NOT, which is a top-level item.
   */
   virtual void under_not(Item_func_not * upper
                          __attribute__((unused))) {};
+	
+
+  void register_in(THD *thd);	 
+  
+  bool depends_only_on(table_map view_map) 
+  { return marker & FULL_EXTRACTION_FL; }
+  int get_extraction_flag()
+  { return  marker & EXTRACTION_MASK; }
+  void set_extraction_flag(int flags) 
+  { 
+    marker &= ~EXTRACTION_MASK;
+    marker|= flags; 
+  }
+  void clear_extraction_flag()
+  {
+    marker &= ~EXTRACTION_MASK;
+  }
 };
+
+MEM_ROOT *get_thd_memroot(THD *thd);
+
+template <class T>
+inline Item* get_item_copy (THD *thd, T* item)
+{
+  Item *copy= new (get_thd_memroot(thd)) T(*item);
+  if (likely(copy))
+    copy->register_in(thd);
+  return copy;
+}	
+
+
+/*
+  This class is a replacement for the former member Item::with_subselect.
+  Determines if the descendant Item is a subselect or some of
+  its arguments is or contains a subselect.
+*/
+class With_subquery_cache
+{
+protected:
+  bool m_with_subquery;
+public:
+  With_subquery_cache(): m_with_subquery(false) { }
+  void join(const Item *item) { m_with_subquery|= item->with_subquery(); }
+};
+
+
+class Type_geometry_attributes
+{
+  uint m_geometry_type;
+  static const uint m_geometry_type_unknown= Field::GEOM_GEOMETRYCOLLECTION + 1;
+  void copy(const Type_handler *handler, const Type_all_attributes *gattr)
+  {
+    // Ignore implicit NULLs
+    m_geometry_type= handler == &type_handler_geometry ?
+                     gattr->uint_geometry_type() :
+                     m_geometry_type_unknown;
+  }
+public:
+  Type_geometry_attributes()
+   :m_geometry_type(m_geometry_type_unknown)
+  { }
+  Type_geometry_attributes(const Type_handler *handler,
+                           const Type_all_attributes *gattr)
+   :m_geometry_type(m_geometry_type_unknown)
+  {
+    copy(handler, gattr);
+  }
+  void join(const Item *item)
+  {
+    // Ignore implicit NULLs
+    if (m_geometry_type == m_geometry_type_unknown)
+      copy(item->type_handler(), item);
+    else if (item->type_handler() == &type_handler_geometry)
+    {
+      m_geometry_type=
+        Field_geom::geometry_type_merge((Field_geom::geometry_type)
+                                         m_geometry_type,
+                                        (Field_geom::geometry_type)
+                                         item->uint_geometry_type());
+    }
+  }
+  Field::geometry_type get_geometry_type() const
+  {
+    return m_geometry_type == m_geometry_type_unknown ?
+           Field::GEOM_GEOMETRY :
+           (Field::geometry_type) m_geometry_type;
+  }
+  void set_geometry_type(uint type)
+  {
+    DBUG_ASSERT(type <= m_geometry_type_unknown);
+    m_geometry_type= type;
+  }
+};
+
 
 
 /**
@@ -1826,6 +2172,114 @@ public:
 */
 
 bool cmp_items(Item *a, Item *b);
+
+
+/**
+  Array of items, e.g. function or aggerate function arguments.
+*/
+class Item_args
+{
+protected:
+  Item **args, *tmp_arg[2];
+  uint arg_count;
+  void set_arguments(THD *thd, List<Item> &list);
+  bool walk_args(Item_processor processor, bool walk_subquery, void *arg)
+  {
+    for (uint i= 0; i < arg_count; i++)
+    {
+      if (args[i]->walk(processor, walk_subquery, arg))
+        return true;
+    }
+    return false;
+  }
+  bool transform_args(THD *thd, Item_transformer transformer, uchar *arg);
+  void propagate_equal_fields(THD *, const Item::Context &, COND_EQUAL *);
+  bool excl_dep_on_table(table_map tab_map)
+  {
+    for (uint i= 0; i < arg_count; i++)
+    {
+      if (args[i]->const_item())
+        continue;
+      if (!args[i]->excl_dep_on_table(tab_map))
+        return false;
+    }
+    return true;
+  }
+  bool excl_dep_on_grouping_fields(st_select_lex *sel)
+  {
+    for (uint i= 0; i < arg_count; i++)
+    {
+      if (args[i]->const_item())
+        continue;
+      if (!args[i]->excl_dep_on_grouping_fields(sel))
+        return false;
+    }
+    return true;
+  }
+  bool eq(const Item_args *other, bool binary_cmp) const
+  {
+    for (uint i= 0; i < arg_count ; i++)
+    {
+      if (!args[i]->eq(other->args[i], binary_cmp))
+        return false;
+    }
+    return true;
+  }
+public:
+  Item_args(void)
+    :args(NULL), arg_count(0)
+  { }
+  Item_args(Item *a)
+    :args(tmp_arg), arg_count(1)
+  {
+    args[0]= a;
+  }
+  Item_args(Item *a, Item *b)
+    :args(tmp_arg), arg_count(2)
+  {
+    args[0]= a; args[1]= b;
+  }
+  Item_args(THD *thd, Item *a, Item *b, Item *c)
+  {
+    arg_count= 0;
+    if (likely((args= (Item**) thd_alloc(thd, sizeof(Item*) * 3))))
+    {
+      arg_count= 3;
+      args[0]= a; args[1]= b; args[2]= c;
+    }
+  }
+  Item_args(THD *thd, Item *a, Item *b, Item *c, Item *d)
+  {
+    arg_count= 0;
+    if (likely((args= (Item**) thd_alloc(thd, sizeof(Item*) * 4))))
+    {
+      arg_count= 4;
+      args[0]= a; args[1]= b; args[2]= c; args[3]= d;
+    }
+  }
+  Item_args(THD *thd, Item *a, Item *b, Item *c, Item *d, Item* e)
+  {
+    arg_count= 5;
+    if (likely((args= (Item**) thd_alloc(thd, sizeof(Item*) * 5))))
+    {
+      arg_count= 5;
+      args[0]= a; args[1]= b; args[2]= c; args[3]= d; args[4]= e;
+    }
+  }
+  Item_args(THD *thd, List<Item> &list)
+  {
+    set_arguments(thd, list);
+  }
+  Item_args(THD *thd, const Item_args *other);
+  bool alloc_arguments(THD *thd, uint count);
+  void add_argument(Item *item)
+  {
+    args[arg_count++]= item;
+  }
+  inline Item **arguments() const { return args; }
+  inline uint argument_count() const { return arg_count; }
+  inline void remove_arguments() { arg_count=0; }
+};
 
 
 /*
@@ -1840,7 +2294,7 @@ bool cmp_items(Item *a, Item *b);
     }
 
     My_enumerator enumerator;
-    item->walk(Item::enumerate_field_refs_processor, ...,(uchar*)&enumerator);
+    item->walk(Item::enumerate_field_refs_processor, ...,&enumerator);
 
   This is similar to Visitor pattern.
 */
@@ -1853,7 +2307,6 @@ public:
   Field_enumerator() {}                       /* Remove gcc warning */
 };
 
-class sp_head;
 class Item_string;
 
 
@@ -1895,7 +2348,8 @@ protected:
     uint repertoire() const { return MY_STRING_METADATA::repertoire; }
     size_t char_length() const { return MY_STRING_METADATA::char_length; }
   };
-  void fix_charset_and_length_from_str_value(Derivation dv, Metadata metadata)
+  void fix_charset_and_length(CHARSET_INFO *cs,
+                              Derivation dv, Metadata metadata)
   {
     /*
       We have to have a different max_length than 'length' here to
@@ -1904,13 +2358,13 @@ protected:
       number of chars for a string of this type because we in Create_field::
       divide the max_length with mbmaxlen).
     */
-    collation.set(str_value.charset(), dv, metadata.repertoire());
+    collation.set(cs, dv, metadata.repertoire());
     fix_char_length(metadata.char_length());
     decimals= NOT_FIXED_DEC;
   }
-  void fix_charset_and_length_from_str_value(Derivation dv)
+  void fix_charset_and_length_from_str_value(const String &str, Derivation dv)
   {
-    fix_charset_and_length_from_str_value(dv, Metadata(&str_value));
+    fix_charset_and_length(str.charset(), dv, Metadata(&str));
   }
   Item_basic_value(THD *thd): Item(thd) {}
   /*
@@ -1952,6 +2406,13 @@ public:
   Item_basic_constant(THD *thd): Item_basic_value(thd), used_table_map(0) {};
   void set_used_tables(table_map map) { used_table_map= map; }
   table_map used_tables() const { return used_table_map; }
+  bool check_vcol_func_processor(void *arg) { return FALSE;}
+  virtual Item_basic_constant *make_string_literal_concat(THD *thd,
+                                                          const LEX_CSTRING *)
+  {
+    DBUG_ASSERT(0);
+    return this;
+  }
   /* to prevent drop fixed flag (no need parent cleanup call) */
   void cleanup()
   {
@@ -1961,7 +2422,10 @@ public:
       done again between subsequent executions of a prepared statement.
     */
     if (orig_name)
-      name= orig_name;
+    {
+      name.str=    orig_name;
+      name.length= strlen(orig_name);
+    }
   }
 };
 
@@ -1982,53 +2446,48 @@ protected:
   */
   THD *m_thd;
 
+  bool fix_fields_from_item(THD *thd, Item **, const Item *);
 public:
-  LEX_STRING m_name;
+  LEX_CSTRING m_name;
 
 public:
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   /*
     Routine to which this Item_splocal belongs. Used for checking if correct
     runtime context is used for variable handling.
   */
-  sp_head *m_sp;
+  const sp_head *m_sp;
 #endif
 
 public:
-  Item_sp_variable(THD *thd, char *sp_var_name_str, uint sp_var_name_length);
+  Item_sp_variable(THD *thd, const LEX_CSTRING *sp_var_name);
 
 public:
-  bool fix_fields(THD *thd, Item **);
+  bool fix_fields(THD *thd, Item **)= 0;
 
   double val_real();
   longlong val_int();
   String *val_str(String *sp);
   my_decimal *val_decimal(my_decimal *decimal_value);
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   bool is_null();
 
 public:
-  inline void make_field(Send_field *field);
+  void make_send_field(THD *thd, Send_field *field);
   
   inline bool const_item() const;
   
   inline int save_in_field(Field *field, bool no_conversions);
-  inline bool send(Protocol *protocol, String *str);
+  inline bool send(Protocol *protocol, st_value *buffer);
+  bool check_vcol_func_processor(void *arg) 
+  {
+    return mark_unsupported_function(m_name.str, arg, VCOL_IMPOSSIBLE);
+  }
 }; 
 
 /*****************************************************************************
   Item_sp_variable inline implementation.
 *****************************************************************************/
-
-inline void Item_sp_variable::make_field(Send_field *field)
-{
-  Item *it= this_item();
-
-  if (name)
-    it->set_name(name, (uint) strlen(name), system_charset_info);
-  else
-    it->set_name(m_name.str, (uint) m_name.length, system_charset_info);
-  it->make_field(field);
-}
 
 inline bool Item_sp_variable::const_item() const
 {
@@ -2040,9 +2499,9 @@ inline int Item_sp_variable::save_in_field(Field *field, bool no_conversions)
   return this_item()->save_in_field(field, no_conversions);
 }
 
-inline bool Item_sp_variable::send(Protocol *protocol, String *str)
+inline bool Item_sp_variable::send(Protocol *protocol, st_value *buffer)
 {
-  return this_item()->send(protocol, str);
+  return this_item()->send(protocol, buffer);
 }
 
 
@@ -2053,18 +2512,28 @@ inline bool Item_sp_variable::send(Protocol *protocol, String *str)
 
 class Item_splocal :public Item_sp_variable,
                     private Settable_routine_parameter,
-                    public Rewritable_query_parameter
+                    public Rewritable_query_parameter,
+                    public Type_handler_hybrid_field_type
 {
+protected:
+  const Sp_rcontext_handler *m_rcontext_handler;
+
   uint m_var_idx;
 
   Type m_type;
-  Item_result m_result_type;
-  enum_field_types m_field_type;
+
+  bool append_value_for_log(THD *thd, String *str);
+
+  sp_rcontext *get_rcontext(sp_rcontext *local_ctx) const;
+  Item_field *get_variable(sp_rcontext *ctx) const;
+
 public:
-  Item_splocal(THD *thd, const LEX_STRING &sp_var_name, uint sp_var_idx,
-               enum_field_types sp_var_type,
+  Item_splocal(THD *thd, const Sp_rcontext_handler *rh,
+               const LEX_CSTRING *sp_var_name, uint sp_var_idx,
+               const Type_handler *handler,
                uint pos_in_q= 0, uint len_in_q= 0);
 
+  bool fix_fields(THD *, Item **);
   Item *this_item();
   const Item *this_item() const;
   Item **this_item_addr(THD *thd, Item **);
@@ -2072,13 +2541,17 @@ public:
   virtual void print(String *str, enum_query_type query_type);
 
 public:
-  inline const LEX_STRING *my_name() const;
+  inline const LEX_CSTRING *my_name() const;
 
   inline uint get_var_idx() const;
 
   inline enum Type type() const;
-  inline Item_result result_type() const;
-  inline enum_field_types field_type() const { return m_field_type; }
+  const Type_handler *type_handler() const
+  { return Type_handler_hybrid_field_type::type_handler(); }
+  uint cols() const { return this_item()->cols(); }
+  Item* element_index(uint i) { return this_item()->element_index(i); }
+  Item** addr(uint i) { return this_item()->addr(i); }
+  bool check_cols(uint c);
 
 private:
   bool set_value(THD *thd, sp_rcontext *ctx, Item **it);
@@ -2093,13 +2566,98 @@ public:
   { return this; }
 
   bool append_for_log(THD *thd, String *str);
+  
+  Item *get_copy(THD *thd) { return 0; }
+
+  /*
+    Override the inherited create_field_for_create_select(),
+    because we want to preserve the exact data type for:
+      DECLARE a1 INT;
+      DECLARE a2 TYPE OF t1.a2;
+      CREATE TABLE t1 AS SELECT a1, a2;
+    The inherited implementation would create a column
+    based on result_type(), which is less exact.
+  */
+  Field *create_field_for_create_select(TABLE *table)
+  { return create_table_field_from_handler(table); }
 };
+
+
+/**
+  An Item_splocal variant whose data type becomes known only at
+  sp_rcontext creation time, e.g. "DECLARE var1 t1.col1%TYPE".
+*/
+class Item_splocal_with_delayed_data_type: public Item_splocal
+{
+public:
+  Item_splocal_with_delayed_data_type(THD *thd,
+                                      const Sp_rcontext_handler *rh,
+                                      const LEX_CSTRING *sp_var_name,
+                                      uint sp_var_idx,
+                                      uint pos_in_q, uint len_in_q)
+   :Item_splocal(thd, rh, sp_var_name, sp_var_idx, &type_handler_null,
+                 pos_in_q, len_in_q)
+  { }
+};
+
+
+/**
+  SP variables that are fields of a ROW.
+  DELCARE r ROW(a INT,b INT);
+  SELECT r.a; -- This is handled by Item_splocal_row_field
+*/
+class Item_splocal_row_field :public Item_splocal
+{
+protected:
+  LEX_CSTRING m_field_name;
+  uint m_field_idx;
+  bool set_value(THD *thd, sp_rcontext *ctx, Item **it);
+public:
+  Item_splocal_row_field(THD *thd,
+                         const Sp_rcontext_handler *rh,
+                         const LEX_CSTRING *sp_var_name,
+                         const LEX_CSTRING *sp_field_name,
+                         uint sp_var_idx, uint sp_field_idx,
+                         const Type_handler *handler,
+                         uint pos_in_q= 0, uint len_in_q= 0)
+   :Item_splocal(thd, rh, sp_var_name, sp_var_idx, handler, pos_in_q, len_in_q),
+    m_field_name(*sp_field_name),
+    m_field_idx(sp_field_idx)
+  { }
+  bool fix_fields(THD *thd, Item **);
+  Item *this_item();
+  const Item *this_item() const;
+  Item **this_item_addr(THD *thd, Item **);
+  bool append_for_log(THD *thd, String *str);
+  void print(String *str, enum_query_type query_type);
+};
+
+
+class Item_splocal_row_field_by_name :public Item_splocal_row_field
+{
+  bool set_value(THD *thd, sp_rcontext *ctx, Item **it);
+public:
+  Item_splocal_row_field_by_name(THD *thd,
+                                 const Sp_rcontext_handler *rh,
+                                 const LEX_CSTRING *sp_var_name,
+                                 const LEX_CSTRING *sp_field_name,
+                                 uint sp_var_idx,
+                                 const Type_handler *handler,
+                                 uint pos_in_q= 0, uint len_in_q= 0)
+   :Item_splocal_row_field(thd, rh, sp_var_name, sp_field_name,
+                           sp_var_idx, 0 /* field index will be set later */,
+                           handler, pos_in_q, len_in_q)
+  { }
+  bool fix_fields(THD *thd, Item **it);
+  void print(String *str, enum_query_type query_type);
+};
+
 
 /*****************************************************************************
   Item_splocal inline implementation.
 *****************************************************************************/
 
-inline const LEX_STRING *Item_splocal::my_name() const
+inline const LEX_CSTRING *Item_splocal::my_name() const
 {
   return &m_name;
 }
@@ -2114,12 +2672,6 @@ inline enum Item::Type Item_splocal::type() const
   return m_type;
 }
 
-inline Item_result Item_splocal::result_type() const
-{
-  return m_result_type;
-}
-
-
 /*****************************************************************************
   A reference to case expression in SP, used in runtime.
 *****************************************************************************/
@@ -2130,12 +2682,13 @@ public:
   Item_case_expr(THD *thd, uint case_expr_id);
 
 public:
+  bool fix_fields(THD *thd, Item **);
   Item *this_item();
   const Item *this_item() const;
   Item **this_item_addr(THD *thd, Item **);
 
   inline enum Type type() const;
-  inline Item_result result_type() const;
+  const Type_handler *type_handler() const { return this_item()->type_handler(); }
 
 public:
   /*
@@ -2144,6 +2697,7 @@ public:
     purposes.
   */
   virtual void print(String *str, enum_query_type query_type);
+  Item *get_copy(THD *thd) { return 0; }
 
 private:
   uint m_case_expr_id;
@@ -2157,12 +2711,6 @@ inline enum Item::Type Item_case_expr::type() const
 {
   return this_item()->type();
 }
-
-inline Item_result Item_case_expr::result_type() const
-{
-  return this_item()->result_type();
-}
-
 
 /*
   NAME_CONST(given_name, const_value). 
@@ -2193,12 +2741,13 @@ public:
   longlong val_int();
   String *val_str(String *sp);
   my_decimal *val_decimal(my_decimal *);
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   bool is_null();
   virtual void print(String *str, enum_query_type query_type);
 
-  Item_result result_type() const
+  const Type_handler *type_handler() const
   {
-    return value_item->result_type();
+    return value_item->type_handler();
   }
 
   bool const_item() const
@@ -2211,24 +2760,28 @@ public:
     return  value_item->save_in_field(field, no_conversions);
   }
 
-  bool send(Protocol *protocol, String *str)
+  bool send(Protocol *protocol, st_value *buffer)
   {
-    return value_item->send(protocol, str);
+    return value_item->send(protocol, buffer);
   }
-  bool check_vcol_func_processor(uchar *arg) 
+  bool check_vcol_func_processor(void *arg) 
   {
-    return trace_unsupported_by_check_vcol_func_processor("name_const");
+    return mark_unsupported_function("name_const()", arg, VCOL_IMPOSSIBLE);
   }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_name_const>(thd, this); }
 };
 
 class Item_num: public Item_basic_constant
 {
 public:
   Item_num(THD *thd): Item_basic_constant(thd) { collation.set_numeric(); }
-  virtual Item_num *neg(THD *thd)= 0;
   Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs);
-  bool check_partition_func_processor(uchar *int_arg) { return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  bool check_partition_func_processor(void *int_arg) { return FALSE;}
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    return type_handler()->Item_get_date(this, ltime, fuzzydate);
+  }
 };
 
 #define NO_CACHED_FIELD_INDEX ((uint)(-1))
@@ -2260,7 +2813,7 @@ public:
     save_in_field(result_field, no_conversions);
   }
   void cleanup();
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  bool check_vcol_func_processor(void *arg) { return FALSE;}
 };
 
 
@@ -2275,13 +2828,13 @@ protected:
   */
   const char *orig_db_name;
   const char *orig_table_name;
-  const char *orig_field_name;
+  LEX_CSTRING orig_field_name;
 
 public:
   Name_resolution_context *context;
   const char *db_name;
   const char *table_name;
-  const char *field_name;
+  LEX_CSTRING field_name;
   bool alias_name_used; /* true if item was resolved against alias */
   /* 
     Cached value of index for this field in table->field array, used by prep. 
@@ -2311,20 +2864,20 @@ public:
   bool can_be_depended;
   Item_ident(THD *thd, Name_resolution_context *context_arg,
              const char *db_name_arg, const char *table_name_arg,
-             const char *field_name_arg);
+             const LEX_CSTRING *field_name_arg);
   Item_ident(THD *thd, Item_ident *item);
-  Item_ident(THD *thd, TABLE_LIST *view_arg, const char *field_name_arg);
+  Item_ident(THD *thd, TABLE_LIST *view_arg, const LEX_CSTRING *field_name_arg);
   const char *full_name() const;
   void cleanup();
   st_select_lex *get_depended_from() const;
-  bool remove_dependence_processor(uchar * arg);
+  bool remove_dependence_processor(void * arg);
   virtual void print(String *str, enum_query_type query_type);
-  virtual bool change_context_processor(uchar *cntx)
+  virtual bool change_context_processor(void *cntx)
     { context= (Name_resolution_context *)cntx; return FALSE; }
   /**
     Collect outer references
   */
-  virtual bool collect_outer_ref_processor(uchar *arg);
+  virtual bool collect_outer_ref_processor(void *arg);
   friend bool insert_fields(THD *thd, Name_resolution_context *context,
                             const char *db_name,
                             const char *table_name, List_iterator<Item> *it,
@@ -2342,20 +2895,31 @@ public:
   Item_ident_for_show(THD *thd, Field *par_field, const char *db_arg,
                       const char *table_name_arg):
     Item(thd), field(par_field), db_name(db_arg), table_name(table_name_arg)
-  {}
-
+  {
+    Type_std_attributes::set(par_field->type_std_attributes());
+  }
   enum Type type() const { return FIELD_ITEM; }
   double val_real() { return field->val_real(); }
   longlong val_int() { return field->val_int(); }
   String *val_str(String *str) { return field->val_str(str); }
   my_decimal *val_decimal(my_decimal *dec) { return field->val_decimal(dec); }
-  void make_field(Send_field *tmp_field);
-  CHARSET_INFO *charset_for_protocol(void) const
-  { return field->charset_for_protocol(); }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    return field->get_date(ltime, fuzzydate);
+  }
+  void make_send_field(THD *thd, Send_field *tmp_field);
+  const Type_handler *type_handler() const
+  {
+    const Type_handler *handler= field->type_handler();
+    return handler->type_handler_for_item_field();
+  }
+  Item* get_copy(THD *thd)
+  { return get_item_copy<Item_ident_for_show>(thd, this); }
 };
 
 
-class Item_field :public Item_ident
+class Item_field :public Item_ident,
+                  public Load_data_outvar
 {
 protected:
   void set_field(Field *field);
@@ -2371,7 +2935,7 @@ public:
   bool any_privileges;
   Item_field(THD *thd, Name_resolution_context *context_arg,
              const char *db_arg,const char *table_name_arg,
-	     const char *field_name_arg);
+	     const LEX_CSTRING *field_name_arg);
   /*
     Constructor needed to process subselect with temporary tables (see Item)
   */
@@ -2401,28 +2965,56 @@ public:
   my_decimal *val_decimal_result(my_decimal *);
   bool val_bool_result();
   bool is_null_result();
-  bool send(Protocol *protocol, String *str_arg);
+  bool send(Protocol *protocol, st_value *buffer);
+  Load_data_outvar *get_load_data_outvar()
+  {
+    return this;
+  }
+  bool load_data_set_null(THD *thd, const Load_data_param *param)
+  {
+    return field->load_data_set_null(thd);
+  }
+  bool load_data_set_value(THD *thd, const char *pos, uint length,
+                           const Load_data_param *param)
+  {
+    field->load_data_set_value(pos, length, param->charset());
+    return false;
+  }
+  bool load_data_set_no_data(THD *thd, const Load_data_param *param);
+  void load_data_print_for_log_event(THD *thd, String *to) const;
+  bool load_data_add_outvar(THD *thd, Load_data_param *param) const
+  {
+    return param->add_outvar_field(thd, field);
+  }
+  uint load_data_fixed_length() const
+  {
+    return field->field_length;
+  }
   void reset_field(Field *f);
   bool fix_fields(THD *, Item **);
   void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
-  void make_field(Send_field *tmp_field);
+  void make_send_field(THD *thd, Send_field *tmp_field);
   int save_in_field(Field *field,bool no_conversions);
   void save_org_in_field(Field *field, fast_field_copier optimizer_data);
   fast_field_copier setup_fast_field_copier(Field *field);
   table_map used_tables() const;
   table_map all_used_tables() const; 
-  enum Item_result result_type () const
+  const Type_handler *type_handler() const
   {
-    return field->result_type();
+    const Type_handler *handler= field->type_handler();
+    return handler->type_handler_for_item_field();
   }
-  Item_result cast_to_int_type() const
+  const Type_handler *cast_to_int_type_handler() const
   {
-    return field->cmp_type();
+    return field->type_handler()->cast_to_int_type_handler();
   }
-  enum_field_types field_type() const
+  const Type_handler *real_type_handler() const
   {
-    return field->type();
+    if (field->is_created_from_null_item)
+      return &type_handler_null;
+    return field->type_handler();
   }
+  TYPELIB *get_typelib() const { return field->get_typelib(); }
   enum_monotonicity_info get_monotonicity_info() const
   {
     return MONOTONIC_STRICT_INCREASING;
@@ -2438,7 +3030,6 @@ public:
     {
       TABLE *tab= field->table;
       tab->covering_keys.intersect(field->part_of_key);
-      tab->merge_keys.merge(field->part_of_key);
       if (tab->read_set)
         bitmap_fast_test_and_set(tab->read_set, field->field_index);
       /* 
@@ -2475,31 +3066,65 @@ public:
                                          cond_equal_ref);
   }
   bool is_result_field() { return false; }
-  void set_result_field(Field *field_arg) {}
-  void save_in_result_field(bool no_conversions) { }
+  void save_in_result_field(bool no_conversions);
   Item *get_tmp_table_item(THD *thd);
-  bool collect_item_field_processor(uchar * arg);
-  bool add_field_to_set_processor(uchar * arg);
-  bool find_item_in_field_list_processor(uchar *arg);
-  bool register_field_in_read_map(uchar *arg);
-  bool register_field_in_write_map(uchar *arg);
-  bool register_field_in_bitmap(uchar *arg);
-  bool check_partition_func_processor(uchar *int_arg) {return FALSE;}
-  bool vcol_in_partition_func_processor(uchar *bool_arg);
-  bool enumerate_field_refs_processor(uchar *arg);
-  bool update_table_bitmaps_processor(uchar *arg);
-  bool switch_to_nullable_fields_processor(uchar *arg);
+  bool collect_item_field_processor(void * arg);
+  bool add_field_to_set_processor(void * arg);
+  bool find_item_in_field_list_processor(void *arg);
+  bool register_field_in_read_map(void *arg);
+  bool register_field_in_write_map(void *arg);
+  bool register_field_in_bitmap(void *arg);
+  bool check_partition_func_processor(void *int_arg) {return FALSE;}
+  bool post_fix_fields_part_expr_processor(void *bool_arg);
+  bool check_valid_arguments_processor(void *bool_arg);
+  bool check_field_expression_processor(void *arg);
+  bool enumerate_field_refs_processor(void *arg);
+  bool update_table_bitmaps_processor(void *arg);
+  bool switch_to_nullable_fields_processor(void *arg);
+  bool update_vcol_processor(void *arg);
+  bool rename_fields_processor(void *arg);
+  bool check_vcol_func_processor(void *arg)
+  {
+    context= 0;
+    if (field && (field->unireg_check == Field::NEXT_NUMBER))
+    {
+      // Auto increment fields are unsupported
+      return mark_unsupported_function(field_name.str, arg, VCOL_FIELD_REF | VCOL_AUTO_INC);
+    }
+    return mark_unsupported_function(field_name.str, arg, VCOL_FIELD_REF);
+  }
+  bool set_fields_as_dependent_processor(void *arg)
+  {
+    if (!(used_tables() & OUTER_REF_TABLE_BIT))
+    {
+      depended_from= (st_select_lex *) arg;
+      item_equal= NULL;
+    }
+    return 0;
+  }
   void cleanup();
   Item_equal *get_item_equal() { return item_equal; }
   void set_item_equal(Item_equal *item_eq) { item_equal= item_eq; }
   Item_equal *find_item_equal(COND_EQUAL *cond_equal);
   Item* propagate_equal_fields(THD *, const Context &, COND_EQUAL *);
   Item *replace_equal_field(THD *thd, uchar *arg);
-  inline uint32 max_disp_length() { return field->max_display_length(); }
+  uint32 max_display_length() const { return field->max_display_length(); }
   Item_field *field_for_view_update() { return this; }
   int fix_outer_field(THD *thd, Field **field, Item **reference);
   virtual Item *update_value_transformer(THD *thd, uchar *select_arg);
+  Item *derived_field_transformer_for_having(THD *thd, uchar *arg);
+  Item *derived_field_transformer_for_where(THD *thd, uchar *arg);
+  Item *derived_grouping_field_transformer_for_where(THD *thd, uchar *arg);
   virtual void print(String *str, enum_query_type query_type);
+  bool excl_dep_on_table(table_map tab_map);
+  bool excl_dep_on_grouping_fields(st_select_lex *sel);
+  bool cleanup_excluding_fields_processor(void *arg)
+  { return field ? 0 : cleanup_processor(arg); }
+  bool cleanup_excluding_const_fields_processor(void *arg)
+  { return field && const_item() ? 0 : cleanup_processor(arg); }
+  
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_field>(thd, this); }
   bool is_outer_field() const
   {
     DBUG_ASSERT(fixed);
@@ -2510,11 +3135,40 @@ public:
     DBUG_ASSERT(field_type() == MYSQL_TYPE_GEOMETRY);
     return field->get_geometry_type();
   }
-  CHARSET_INFO *charset_for_protocol(void) const
-  { return field->charset_for_protocol(); }
   friend class Item_default_value;
   friend class Item_insert_value;
   friend class st_select_lex_unit;
+};
+
+
+/**
+  Item_field for the ROW data type
+*/
+class Item_field_row: public Item_field,
+                      public Item_args
+{
+public:
+  Item_field_row(THD *thd, Field *field)
+   :Item_field(thd, field),
+    Item_args()
+  { }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_field_row>(thd, this); }
+
+  const Type_handler *type_handler() const { return &type_handler_row; }
+  uint cols() const { return arg_count; }
+  Item* element_index(uint i) { return arg_count ? args[i] : this; }
+  Item** addr(uint i) { return arg_count ? args + i : NULL; }
+  bool check_cols(uint c)
+  {
+    if (cols() != c)
+    {
+      my_error(ER_OPERAND_COLUMNS, MYF(0), c);
+      return true;
+    }
+    return false;
+  }
+  bool row_create_items(THD *thd, List<Spvar_definition> *list);
 };
 
 
@@ -2561,12 +3215,13 @@ public:
 class Item_null :public Item_basic_constant
 {
 public:
-  Item_null(THD *thd, char *name_par=0, CHARSET_INFO *cs= &my_charset_bin):
+  Item_null(THD *thd, const char *name_par=0, CHARSET_INFO *cs= &my_charset_bin):
     Item_basic_constant(thd)
   {
     maybe_null= null_value= TRUE;
     max_length= 0;
-    name= name_par ? name_par : (char*) "NULL";
+    name.str= name_par ? name_par : "NULL";
+    name.length= strlen(name.str);
     fixed= 1;
     collation.set(cs, DERIVATION_IGNORABLE, MY_REPERTOIRE_ASCII);
   }
@@ -2579,9 +3234,8 @@ public:
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   int save_in_field(Field *field, bool no_conversions);
   int save_safe_in_field(Field *field);
-  bool send(Protocol *protocol, String *str);
-  enum Item_result result_type () const { return STRING_RESULT; }
-  enum_field_types field_type() const   { return MYSQL_TYPE_NULL; }
+  bool send(Protocol *protocol, st_value *buffer);
+  const Type_handler *type_handler() const { return &type_handler_null; }
   bool basic_const_item() const { return 1; }
   Item *clone_item(THD *thd);
   bool is_null() { return 1; }
@@ -2592,8 +3246,11 @@ public:
   }
 
   Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs);
-  bool check_partition_func_processor(uchar *int_arg) {return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  bool check_partition_func_processor(void *int_arg) {return FALSE;}
+  Item_basic_constant *make_string_literal_concat(THD *thd,
+                                                  const LEX_CSTRING *);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_null>(thd, this); }
 };
 
 class Item_null_result :public Item_null
@@ -2602,124 +3259,319 @@ public:
   Field *result_field;
   Item_null_result(THD *thd): Item_null(thd), result_field(0) {}
   bool is_result_field() { return result_field != 0; }
-#if MARIADB_VERSION_ID < 100300
   enum_field_types field_type() const
   {
     return result_field->type();
   }
-#else
-  const Type_handler *type_handler() const
-  {
-    return result_field->type_handler();
-  }
-#endif
   void save_in_result_field(bool no_conversions)
   {
     save_in_field(result_field, no_conversions);
   }
-  bool check_partition_func_processor(uchar *int_arg) {return TRUE;}
-  bool check_vcol_func_processor(uchar *arg)
+  bool check_partition_func_processor(void *int_arg) {return TRUE;}
+  bool check_vcol_func_processor(void *arg)
   {
-    return trace_unsupported_by_check_vcol_func_processor(full_name());
+    return mark_unsupported_function(full_name(), arg, VCOL_IMPOSSIBLE);
   }
 };
 
-/* Item represents one placeholder ('?') of prepared statement */
+/*
+  Item represents one placeholder ('?') of prepared statement
+
+  Notes:
+  Item_param::field_type() is used when this item is in a temporary table.
+  This is NOT placeholder metadata sent to client, as this value
+  is assigned after sending metadata (in setup_one_conversion_function).
+  For example in case of 'SELECT ?' you'll get MYSQL_TYPE_STRING both
+  in result set and placeholders metadata, no matter what type you will
+  supply for this placeholder in mysql_stmt_execute.
+
+  Item_param has two Type_handler pointers,
+  which can point to different handlers:
+
+  1. In the Type_handler_hybrid_field_type member
+     It's initialized in:
+     - Item_param::setup_conversion(), for client-server PS protocol,
+       according to the bind type.
+     - Item_param::set_from_item(), for EXECUTE and EXECUTE IMMEDIATE,
+       according to the actual parameter data type.
+
+  2. In the "value" member.
+     It's initialized in:
+     - Item_param::set_param_func(), for client-server PS protocol.
+     - Item_param::set_from_item(), for EXECUTE and EXECUTE IMMEDIATE.
+*/
 
 class Item_param :public Item_basic_value,
                   private Settable_routine_parameter,
-                  public Rewritable_query_parameter
+                  public Rewritable_query_parameter,
+                  private Type_handler_hybrid_field_type,
+                  public Type_geometry_attributes
 {
-public:
+  /*
+    NO_VALUE is a special value meaning that the parameter has not been
+    assigned yet. Item_param::state is assigned to NO_VALUE in constructor
+    and is used at prepare time.
+
+    1. At prepare time
+      Item_param::fix_fields() sets "fixed" to true,
+      but as Item_param::state is still NO_VALUE,
+      Item_param::basic_const_item() returns false. This prevents various
+      optimizations to happen at prepare time fix_fields().
+      For example, in this query:
+        PREPARE stmt FROM 'SELECT FORMAT(10000,2,?)';
+      Item_param::basic_const_item() is tested from
+      Item_func_format::fix_length_and_dec().
+
+    2. At execute time:
+      When Item_param gets a value
+      (or a pseudo-value like DEFAULT_VALUE or IGNORE_VALUE):
+      - Item_param::state changes from NO_VALUE to something else
+      - Item_param::fixed is changed to true
+      All Item_param::set_xxx() make sure to do so.
+      In the state with an assigned value:
+      - Item_param::basic_const_item() returns true
+      - Item::type() returns NULL_ITEM, INT_ITEM, REAL_ITEM, DECIMAL_ITEM,
+        DATE_ITEM, STRING_ITEM, depending on the value assigned.
+      So in this state Item_param behaves in many cases like a literal.
+
+      When Item_param::cleanup() is called:
+      - Item_param::state does not change
+      - Item_param::fixed changes to false
+      Note, this puts Item_param into an inconsistent state:
+      - Item_param::basic_const_item() still returns "true"
+      - Item_param::type() still pretends to be a basic constant Item
+      Both are not expected in combination with fixed==false.
+      However, these methods are not really called in this state,
+      see asserts in Item_param::basic_const_item() and Item_param::type().
+
+      When Item_param::reset() is called:
+      - Item_param::state changes to NO_VALUE
+      - Item_param::fixed changes to false
+  */
   enum enum_item_param_state
   {
-    NO_VALUE, NULL_VALUE, INT_VALUE, REAL_VALUE,
-    STRING_VALUE, TIME_VALUE, LONG_DATA_VALUE,
-    DECIMAL_VALUE
+    NO_VALUE, NULL_VALUE, SHORT_DATA_VALUE, LONG_DATA_VALUE,
+    DEFAULT_VALUE, IGNORE_VALUE
   } state;
 
-  /*
-    A buffer for string and long data values. Historically all allocated
-    values returned from val_str() were treated as eligible to
-    modification. I. e. in some cases Item_func_concat can append it's
-    second argument to return value of the first one. Because of that we
-    can't return the original buffer holding string data from val_str(),
-    and have to have one buffer for data and another just pointing to
-    the data. This is the latter one and it's returned from val_str().
-    Can not be declared inside the union as it's not a POD type.
-  */
-  String str_value_ptr;
-  my_decimal decimal_value;
-  union
+  enum Type item_type;
+
+  void fix_type(Type type)
   {
-    longlong integer;
-    double   real;
+    item_type= type;
+    fixed= true;
+  }
+
+  void fix_temporal(uint32 max_length_arg, uint decimals_arg);
+
+  struct CONVERSION_INFO
+  {
     /*
       Character sets conversion info for string values.
       Character sets of client and connection defined at bind time are used
       for all conversions, even if one of them is later changed (i.e.
       between subsequent calls to mysql_stmt_execute).
     */
-    struct CONVERSION_INFO
+    CHARSET_INFO *character_set_client;
+    CHARSET_INFO *character_set_of_placeholder;
+    /*
+      This points at character set of connection if conversion
+      to it is required (i. e. if placeholder typecode is not BLOB).
+      Otherwise it's equal to character_set_client (to simplify
+      check in convert_str_value()).
+    */
+    CHARSET_INFO *final_character_set_of_str_value;
+  private:
+    bool needs_conversion() const
     {
-      CHARSET_INFO *character_set_client;
-      CHARSET_INFO *character_set_of_placeholder;
+      return final_character_set_of_str_value !=
+             character_set_of_placeholder;
+    }
+    bool convert(THD *thd, String *str);
+  public:
+    void set(THD *thd, CHARSET_INFO *cs);
+    bool convert_if_needed(THD *thd, String *str)
+    {
       /*
-        This points at character set of connection if conversion
-        to it is required (i. e. if placeholder typecode is not BLOB).
-        Otherwise it's equal to character_set_client (to simplify
-        check in convert_str_value()).
+        Check is so simple because all charsets were set up properly
+        in setup_one_conversion_function, where typecode of
+        placeholder was also taken into account: the variables are different
+        here only if conversion is really necessary.
       */
-      CHARSET_INFO *final_character_set_of_str_value;
-    } cs_info;
-    MYSQL_TIME     time;
-  } value;
+      if (needs_conversion())
+        return convert(thd, str);
+      str->set_charset(final_character_set_of_str_value);
+      return false;
+    }
+  };
 
-  /* Cached values for virtual methods to save us one switch.  */
-  enum Item_result item_result_type;
-  enum Type item_type;
+  bool m_empty_string_is_null;
 
+  class PValue_simple
+  {
+  public:
+    union
+    {
+      longlong integer;
+      double   real;
+      CONVERSION_INFO cs_info;
+      MYSQL_TIME     time;
+    };
+    void swap(PValue_simple &other)
+    {
+      swap_variables(PValue_simple, *this, other);
+    }
+  };
+
+  class PValue: public Type_handler_hybrid_field_type,
+                public PValue_simple,
+                public Value_source
+  {
+  public:
+    PValue(): Type_handler_hybrid_field_type(&type_handler_null) {}
+    my_decimal m_decimal;
+    String m_string;
+    /*
+      A buffer for string and long data values. Historically all allocated
+      values returned from val_str() were treated as eligible to
+      modification. I. e. in some cases Item_func_concat can append it's
+      second argument to return value of the first one. Because of that we
+      can't return the original buffer holding string data from val_str(),
+      and have to have one buffer for data and another just pointing to
+      the data. This is the latter one and it's returned from val_str().
+      Can not be declared inside the union as it's not a POD type.
+    */
+    String m_string_ptr;
+
+    void swap(PValue &other)
+    {
+      Type_handler_hybrid_field_type::swap(other);
+      PValue_simple::swap(other);
+      m_decimal.swap(other.m_decimal);
+      m_string.swap(other.m_string);
+      m_string_ptr.swap(other.m_string_ptr);
+    }
+    double val_real() const;
+    longlong val_int(const Type_std_attributes *attr) const;
+    my_decimal *val_decimal(my_decimal *dec, const Type_std_attributes *attr);
+    String *val_str(String *str, const Type_std_attributes *attr);
+  };
+
+  PValue value;
+
+  const String *value_query_val_str(THD *thd, String* str) const;
+  bool value_eq(const Item *item, bool binary_cmp) const;
+  Item *value_clone_item(THD *thd);
+  bool can_return_value() const;
+
+public:
   /*
-    Used when this item is used in a temporary table.
-    This is NOT placeholder metadata sent to client, as this value
-    is assigned after sending metadata (in setup_one_conversion_function).
-    For example in case of 'SELECT ?' you'll get MYSQL_TYPE_STRING both
-    in result set and placeholders metadata, no matter what type you will
-    supply for this placeholder in mysql_stmt_execute.
+    Used for bulk protocol only.
   */
-  enum enum_field_types param_type;
+  enum enum_indicator_type indicator;
 
-  Item_param(THD *thd, uint pos_in_query_arg);
+  const Type_handler *type_handler() const
+  { return Type_handler_hybrid_field_type::type_handler(); }
 
-  enum Item_result result_type () const { return item_result_type; }
-  enum Type type() const { return item_type; }
-  enum_field_types field_type() const { return param_type; }
+  Field::geometry_type get_geometry_type() const
+  { return Type_geometry_attributes::get_geometry_type(); };
 
-  double val_real();
-  longlong val_int();
-  my_decimal *val_decimal(my_decimal*);
-  String *val_str(String*);
+  void set_geometry_type(uint type)
+  { Type_geometry_attributes::set_geometry_type(type); }
+
+  Item_param(THD *thd, const LEX_CSTRING *name_arg,
+             uint pos_in_query_arg, uint len_in_query_arg);
+
+  enum Type type() const
+  {
+    DBUG_ASSERT(fixed || state == NO_VALUE);
+    return item_type;
+  }
+
+  double val_real()
+  {
+    return can_return_value() ? value.val_real() : 0e0;
+  }
+  longlong val_int()
+  {
+    return can_return_value() ? value.val_int(this) : 0;
+  }
+  my_decimal *val_decimal(my_decimal *dec)
+  {
+    return can_return_value() ? value.val_decimal(dec, this) : NULL;
+  }
+  String *val_str(String *str)
+  {
+    return can_return_value() ? value.val_str(str, this) : NULL;
+  }
   bool get_date(MYSQL_TIME *tm, ulonglong fuzzydate);
   int  save_in_field(Field *field, bool no_conversions);
 
+  void set_default();
+  void set_ignore();
   void set_null();
   void set_int(longlong i, uint32 max_length_arg);
   void set_double(double i);
   void set_decimal(const char *str, ulong length);
-  void set_decimal(const my_decimal *dv);
-  bool set_str(const char *str, ulong length);
+  void set_decimal(const my_decimal *dv, bool unsigned_arg);
+  bool set_str(const char *str, ulong length,
+               CHARSET_INFO *fromcs, CHARSET_INFO *tocs);
   bool set_longdata(const char *str, ulong length);
   void set_time(MYSQL_TIME *tm, timestamp_type type, uint32 max_length_arg);
-  bool set_from_user_var(THD *thd, const user_var_entry *entry);
+  void set_time(const MYSQL_TIME *tm, uint32 max_length_arg, uint decimals_arg);
+  bool set_from_item(THD *thd, Item *item);
   void reset();
+
+  void set_param_tiny(uchar **pos, ulong len);
+  void set_param_short(uchar **pos, ulong len);
+  void set_param_int32(uchar **pos, ulong len);
+  void set_param_int64(uchar **pos, ulong len);
+  void set_param_float(uchar **pos, ulong len);
+  void set_param_double(uchar **pos, ulong len);
+  void set_param_decimal(uchar **pos, ulong len);
+  void set_param_time(uchar **pos, ulong len);
+  void set_param_datetime(uchar **pos, ulong len);
+  void set_param_date(uchar **pos, ulong len);
+  void set_param_str(uchar **pos, ulong len);
+
+  void setup_conversion(THD *thd, uchar param_type);
+  void setup_conversion_blob(THD *thd);
+  void setup_conversion_string(THD *thd, CHARSET_INFO *fromcs);
+
   /*
     Assign placeholder value from bind data.
     Note, that 'len' has different semantics in embedded library (as we
     don't need to check that packet is not broken there). See
     sql_prepare.cc for details.
   */
-  void (*set_param_func)(Item_param *param, uchar **pos, ulong len);
+  void set_param_func(uchar **pos, ulong len)
+  {
+    /*
+      To avoid Item_param::set_xxx() asserting on data type mismatch,
+      we set the value type handler here:
+      - It can not be initialized yet after Item_param::setup_conversion().
+      - Also, for LIMIT clause parameters, the value type handler might have
+        changed from the real type handler to type_handler_longlong.
+        So here we'll restore it.
+    */
+    const Type_handler *h= Item_param::type_handler();
+    value.set_handler(h);
+    h->Item_param_set_param_func(this, pos, len);
+  }
 
+  bool set_value(THD *thd, const Type_all_attributes *attr,
+                 const st_value *val, const Type_handler *h)
+  {
+    value.set_handler(h); // See comments in set_param_func()
+    return h->Item_param_set_from_value(thd, this, attr, val);
+  }
+
+  bool set_limit_clause_param(longlong nr)
+  {
+    value.set_handler(&type_handler_longlong);
+    set_int(nr, MY_INT64_NUM_DECIMAL_DIGITS);
+    return !unsigned_flag && value.integer < 0;
+  }
   const String *query_val_str(THD *thd, String *str) const;
 
   bool convert_str_value(THD *thd);
@@ -2735,6 +3587,19 @@ public:
   bool is_null()
   { DBUG_ASSERT(state != NO_VALUE); return state == NULL_VALUE; }
   bool basic_const_item() const;
+  bool has_no_value() const
+  {
+    return state == NO_VALUE;
+  }
+  bool has_long_data_value() const
+  {
+    return state == LONG_DATA_VALUE;
+  }
+  bool has_int_value() const
+  {
+    return state == SHORT_DATA_VALUE &&
+           value.type_handler()->cmp_type() == INT_RESULT;
+  }
   /*
     This method is used to make a copy of a basic constant item when
     propagating constants in the optimizer. The reason to create a new
@@ -2758,11 +3623,19 @@ public:
   Rewritable_query_parameter *get_rewritable_query_parameter()
   { return this; }
   Settable_routine_parameter *get_settable_routine_parameter()
-  { return this; }
+  { return m_is_settable_routine_parameter ? this : NULL; }
 
   bool append_for_log(THD *thd, String *str);
+  bool check_vcol_func_processor(void *int_arg) {return FALSE;}
+  Item *get_copy(THD *thd) { return 0; }
+
+  bool add_as_clone(THD *thd);
+  void sync_clones();
+  bool register_clone(Item_param *i) { return m_clones.push_back(i); }
 
 private:
+  void invalid_default_param() const;
+
   virtual bool set_value(THD *thd, sp_rcontext *ctx, Item **it);
 
   virtual void set_out_param_info(Send_field *info);
@@ -2770,10 +3643,19 @@ private:
 public:
   virtual const Send_field *get_out_param_info() const;
 
-  virtual void make_field(Send_field *field);
+  Item_param *get_item_param() { return this; }
+
+  virtual void make_send_field(THD *thd, Send_field *field);
 
 private:
   Send_field *m_out_param_info;
+  bool m_is_settable_routine_parameter;
+  /*
+    Array of all references of this parameter marker used in a CTE to its clones
+    created for copies of this marker used the CTE's copies. It's used to
+    synchronize the actual value of the parameter with the values of the clones.
+  */
+  Mem_root_array<Item_param *, true> m_clones;
 };
 
 
@@ -2781,23 +3663,40 @@ class Item_int :public Item_num
 {
 public:
   longlong value;
-  Item_int(THD *thd, int32 i,uint length= MY_INT32_NUM_DECIMAL_DIGITS):
+  Item_int(THD *thd, int32 i,size_t length= MY_INT32_NUM_DECIMAL_DIGITS):
     Item_num(thd), value((longlong) i)
-    { max_length=length; fixed= 1; }
-  Item_int(THD *thd, longlong i,uint length= MY_INT64_NUM_DECIMAL_DIGITS):
+    { max_length=(uint32)length; fixed= 1; }
+  Item_int(THD *thd, longlong i,size_t length= MY_INT64_NUM_DECIMAL_DIGITS):
     Item_num(thd), value(i)
-    { max_length=length; fixed= 1; }
-  Item_int(THD *thd, ulonglong i, uint length= MY_INT64_NUM_DECIMAL_DIGITS):
+    { max_length=(uint32)length; fixed= 1; }
+  Item_int(THD *thd, ulonglong i, size_t length= MY_INT64_NUM_DECIMAL_DIGITS):
     Item_num(thd), value((longlong)i)
-    { max_length=length; fixed= 1; unsigned_flag= 1; }
-  Item_int(THD *thd, const char *str_arg,longlong i,uint length):
+    { max_length=(uint32)length; fixed= 1; unsigned_flag= 1; }
+  Item_int(THD *thd, const char *str_arg,longlong i,size_t length):
     Item_num(thd), value(i)
-    { max_length=length; name=(char*) str_arg; fixed= 1; }
-  Item_int(THD *thd, const char *str_arg, uint length=64);
+    {
+      max_length=(uint32)length;
+      name.str= str_arg; name.length= safe_strlen(name.str);
+      fixed= 1;
+    }
+  Item_int(THD *thd, const char *str_arg,longlong i,size_t length, bool flag):
+    Item_num(thd), value(i)
+    {
+      max_length=(uint32)length;
+      name.str= str_arg; name.length= safe_strlen(name.str);
+      fixed= 1;
+      unsigned_flag= flag;
+    }
+  Item_int(THD *thd, const char *str_arg, size_t length=64);
   enum Type type() const { return INT_ITEM; }
-  enum Item_result result_type () const { return INT_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_LONGLONG; }
+  const Type_handler *type_handler() const
+  { return type_handler_long_or_longlong(); }
+  Field *create_tmp_field(bool group, TABLE *table)
+  { return tmp_table_field_from_field_type(table); }
+  Field *create_field_for_create_select(TABLE *table)
+  { return tmp_table_field_from_field_type(table); }
   longlong val_int() { DBUG_ASSERT(fixed == 1); return value; }
+  longlong val_int_min() const { DBUG_ASSERT(fixed == 1); return value; }
   double val_real() { DBUG_ASSERT(fixed == 1); return (double) value; }
   my_decimal *val_decimal(my_decimal *);
   String *val_str(String*);
@@ -2805,20 +3704,35 @@ public:
   bool basic_const_item() const { return 1; }
   Item *clone_item(THD *thd);
   virtual void print(String *str, enum_query_type query_type);
-  Item_num *neg(THD *thd) { value= -value; return this; }
+  Item *neg(THD *thd);
   uint decimal_precision() const
   { return (uint) (max_length - MY_TEST(value < 0)); }
   bool eq(const Item *item, bool binary_cmp) const
   { return int_eq(value, item); }
-  bool check_partition_func_processor(uchar *bool_arg) { return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_int>(thd, this); }
+};
+
+
+/*
+  We sometimes need to distinguish a number from a boolean:
+  a[1] and a[true] are different things in XPath.
+  Also in JSON boolean values should be treated differently.
+*/
+class Item_bool :public Item_int
+{
+public:
+  Item_bool(THD *thd, const char *str_arg, longlong i):
+    Item_int(thd, str_arg, i, 1) {}
+  bool is_bool_type() { return true; }
+  Item *neg_transformer(THD *thd);
 };
 
 
 class Item_uint :public Item_int
 {
 public:
-  Item_uint(THD *thd, const char *str_arg, uint length);
+  Item_uint(THD *thd, const char *str_arg, size_t length);
   Item_uint(THD *thd, ulonglong i): Item_int(thd, i, 10) {}
   Item_uint(THD *thd, const char *str_arg, longlong i, uint length);
   double val_real()
@@ -2826,8 +3740,10 @@ public:
   String *val_str(String*);
   Item *clone_item(THD *thd);
   virtual void print(String *str, enum_query_type query_type);
-  Item_num *neg(THD *thd);
+  Item *neg(THD *thd);
   uint decimal_precision() const { return max_length; }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_uint>(thd, this); }
 };
 
 
@@ -2840,7 +3756,12 @@ public:
   int save_in_field(Field *field, bool no_conversions);
   longlong val_int();
   double val_real() { return (double)val_int(); }
-  void set(longlong packed);
+  void set(longlong packed, enum_mysql_timestamp_type ts_type);
+  bool get_date(MYSQL_TIME *to, ulonglong fuzzydate)
+  {
+    *to= ltime;
+    return false;
+  }
 };
 
 
@@ -2850,7 +3771,7 @@ class Item_decimal :public Item_num
 protected:
   my_decimal decimal_value;
 public:
-  Item_decimal(THD *thd, const char *str_arg, uint length,
+  Item_decimal(THD *thd, const char *str_arg, size_t length,
                CHARSET_INFO *charset);
   Item_decimal(THD *thd, const char *str, const my_decimal *val_arg,
                uint decimal_par, uint length);
@@ -2860,8 +3781,7 @@ public:
   Item_decimal(THD *thd, const uchar *bin, int precision, int scale);
 
   enum Type type() const { return DECIMAL_ITEM; }
-  enum Item_result result_type () const { return DECIMAL_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_NEWDECIMAL; }
+  const Type_handler *type_handler() const { return &type_handler_newdecimal; }
   longlong val_int();
   double val_real();
   String *val_str(String*);
@@ -2870,32 +3790,28 @@ public:
   bool basic_const_item() const { return 1; }
   Item *clone_item(THD *thd);
   virtual void print(String *str, enum_query_type query_type);
-  Item_num *neg(THD *thd)
-  {
-    my_decimal_neg(&decimal_value);
-    unsigned_flag= !decimal_value.sign();
-    return this;
-  }
+  Item *neg(THD *thd);
   uint decimal_precision() const { return decimal_value.precision(); }
   bool eq(const Item *, bool binary_cmp) const;
   void set_decimal_value(my_decimal *value_par);
-  bool check_partition_func_processor(uchar *bool_arg) { return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_decimal>(thd, this); }
 };
 
 
 class Item_float :public Item_num
 {
-  char *presentation;
+  const char *presentation;
 public:
   double value;
-  Item_float(THD *thd, const char *str_arg, uint length);
+  Item_float(THD *thd, const char *str_arg, size_t length);
   Item_float(THD *thd, const char *str, double val_arg, uint decimal_par,
              uint length): Item_num(thd), value(val_arg)
   {
-    presentation= name=(char*) str;
+    presentation= name.str= str;
+    name.length= safe_strlen(str);
     decimals=(uint8) decimal_par;
-    max_length=length;
+    max_length= length;
     fixed= 1;
   }
   Item_float(THD *thd, double value_par, uint decimal_par):
@@ -2906,7 +3822,7 @@ public:
   }
   int save_in_field(Field *field, bool no_conversions);
   enum Type type() const { return REAL_ITEM; }
-  enum_field_types field_type() const { return MYSQL_TYPE_DOUBLE; }
+  const Type_handler *type_handler() const { return &type_handler_double; }
   double val_real() { DBUG_ASSERT(fixed == 1); return value; }
   longlong val_int()
   {
@@ -2925,10 +3841,12 @@ public:
   my_decimal *val_decimal(my_decimal *);
   bool basic_const_item() const { return 1; }
   Item *clone_item(THD *thd);
-  Item_num *neg(THD *thd) { value= -value; return this; }
+  Item *neg(THD *thd);
   virtual void print(String *str, enum_query_type query_type);
   bool eq(const Item *item, bool binary_cmp) const
   { return real_eq(value, item); }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_float>(thd, this); }
 };
 
 
@@ -2958,14 +3876,15 @@ class Item_string :public Item_basic_constant
 protected:
   void fix_from_value(Derivation dv, const Metadata metadata)
   {
-    fix_charset_and_length_from_str_value(dv, metadata);
+    fix_charset_and_length(str_value.charset(), dv, metadata);
     // it is constant => can be used without fix_fields (and frequently used)
     fixed= 1;
   }
-  void fix_and_set_name_from_value(Derivation dv, const Metadata metadata)
+  void fix_and_set_name_from_value(THD *thd, Derivation dv,
+                                   const Metadata metadata)
   {
     fix_from_value(dv, metadata);
-    set_name(str_value.ptr(), str_value.length(), str_value.charset());
+    set_name(thd, str_value.ptr(), str_value.length(), str_value.charset());
   }
 protected:
   /* Just create an item and do not fill string representation */
@@ -2974,7 +3893,7 @@ protected:
   {
     collation.set(cs, dv);
     max_length= 0;
-    set_name(NULL, 0, system_charset_info);
+    set_name(thd, NULL, 0, system_charset_info);
     decimals= NOT_FIXED_DEC;
     fixed= 1;
   }
@@ -2983,7 +3902,7 @@ public:
     Item_basic_constant(thd)
   {
     collation.set(csi, DERIVATION_COERCIBLE);
-    set_name(NULL, 0, system_charset_info);
+    set_name(thd, NULL, 0, system_charset_info);
     decimals= NOT_FIXED_DEC;
     fixed= 1;
     str_value.copy(str_arg, length_arg, csi);
@@ -2994,14 +3913,14 @@ public:
               Derivation dv, uint repertoire): Item_basic_constant(thd)
   {
     str_value.set_or_copy_aligned(str, length, cs);
-    fix_and_set_name_from_value(dv, Metadata(&str_value, repertoire));
+    fix_and_set_name_from_value(thd, dv, Metadata(&str_value, repertoire));
   }
-  Item_string(THD *thd, const char *str, uint length,
+  Item_string(THD *thd, const char *str, size_t length,
               CHARSET_INFO *cs, Derivation dv= DERIVATION_COERCIBLE):
     Item_basic_constant(thd)
   {
     str_value.set_or_copy_aligned(str, length, cs);
-    fix_and_set_name_from_value(dv, Metadata(&str_value));
+    fix_and_set_name_from_value(thd, dv, Metadata(&str_value));
   }
   Item_string(THD *thd, const String *str, CHARSET_INFO *tocs, uint *conv_errors,
               Derivation dv, uint repertoire): Item_basic_constant(thd)
@@ -3009,24 +3928,24 @@ public:
     if (str_value.copy(str, tocs, conv_errors))
       str_value.set("", 0, tocs); // EOM ?
     str_value.mark_as_const();
-    fix_and_set_name_from_value(dv, Metadata(&str_value, repertoire));
+    fix_and_set_name_from_value(thd, dv, Metadata(&str_value, repertoire));
   }
   // Constructors with an externally provided item name
-  Item_string(THD *thd, const char *name_par, const char *str, uint length,
+  Item_string(THD *thd, const char *name_par, const char *str, size_t length,
               CHARSET_INFO *cs, Derivation dv= DERIVATION_COERCIBLE):
     Item_basic_constant(thd)
   {
     str_value.set_or_copy_aligned(str, length, cs);
     fix_from_value(dv, Metadata(&str_value));
-    set_name(name_par, 0, system_charset_info);
+    set_name(thd, name_par,safe_strlen(name_par), system_charset_info);
   }
-  Item_string(THD *thd, const char *name_par, const char *str, uint length,
+  Item_string(THD *thd, const char *name_par, const char *str, size_t length,
               CHARSET_INFO *cs, Derivation dv, uint repertoire):
     Item_basic_constant(thd)
   {
     str_value.set_or_copy_aligned(str, length, cs);
     fix_from_value(dv, Metadata(&str_value, repertoire));
-    set_name(name_par, 0, system_charset_info);
+    set_name(thd, name_par, safe_strlen(name_par), system_charset_info);
   }
   void print_value(String *to) const
   {
@@ -3041,9 +3960,12 @@ public:
     return (String*) &str_value;
   }
   my_decimal *val_decimal(my_decimal *);
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    return get_date_from_string(ltime, fuzzydate);
+  }
   int save_in_field(Field *field, bool no_conversions);
-  enum Item_result result_type () const { return STRING_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_VARCHAR; }
+  const Type_handler *type_handler() const { return &type_handler_varchar; }
   bool basic_const_item() const { return 1; }
   bool eq(const Item *item, bool binary_cmp) const
   {
@@ -3054,14 +3976,13 @@ public:
   {
     return const_charset_converter(thd, tocs, true);
   }
-  inline void append(char *str, uint length)
+  inline void append(const char *str, uint length)
   {
     str_value.append(str, length);
     max_length= str_value.numchars() * collation.collation->mbmaxlen;
   }
   virtual void print(String *str, enum_query_type query_type);
-  bool check_partition_func_processor(uchar *int_arg) {return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  bool check_partition_func_processor(void *int_arg) {return FALSE;}
 
   /**
     Return TRUE if character-set-introducer was explicitly specified in the
@@ -3090,7 +4011,7 @@ public:
   String *check_well_formed_result(bool send_error)
   { return Item::check_well_formed_result(&str_value, send_error); }
 
-  enum_field_types odbc_temporal_literal_type(const LEX_STRING *type_str) const
+  enum_field_types odbc_temporal_literal_type(const LEX_CSTRING *type_str) const
   {
     /*
       If string is a reasonably short pure ASCII string literal,
@@ -3118,6 +4039,12 @@ public:
     }
     return MYSQL_TYPE_STRING; // Not a temporal literal
   }
+  Item_basic_constant *make_string_literal_concat(THD *thd,
+                                                  const LEX_CSTRING *);
+  Item *make_odbc_literal(THD *thd, const LEX_CSTRING *typestr);
+
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_string>(thd, this); }
 
 };
 
@@ -3147,7 +4074,7 @@ public:
     Item_string(thd, str, length, system_charset_info)
   { }
   Item_string_sys(THD *thd, const char *str):
-    Item_string(thd, str, strlen(str), system_charset_info)
+    Item_string(thd, str, (uint) strlen(str), system_charset_info)
   { }
 };
 
@@ -3160,7 +4087,7 @@ public:
                 DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII)
   { }
   Item_string_ascii(THD *thd, const char *str):
-    Item_string(thd, str, strlen(str), &my_charset_latin1,
+    Item_string(thd, str, (uint) strlen(str), &my_charset_latin1,
                 DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII)
   { }
 };
@@ -3192,10 +4119,12 @@ public:
     str->append(func_name);
   }
 
-  bool check_partition_func_processor(uchar *int_arg) {return TRUE;}
-  bool check_vcol_func_processor(uchar *arg) 
-  {
-    return trace_unsupported_by_check_vcol_func_processor(func_name);
+  bool check_partition_func_processor(void *int_arg) {return TRUE;}
+
+  bool check_vcol_func_processor(void *arg)
+  { // VCOL_TIME_FUNC because the value is not constant, but does not
+    // require fix_fields() to be re-run for every statement.
+    return mark_unsupported_function(func_name, arg, VCOL_TIME_FUNC);
   }
 };
 
@@ -3208,9 +4137,9 @@ public:
                                   CHARSET_INFO *cs= NULL):
     Item_string(thd, name_arg, length, cs)
   {}
-  bool check_vcol_func_processor(uchar *arg) 
+  bool check_vcol_func_processor(void *arg) 
   {
-    return trace_unsupported_by_check_vcol_func_processor("safe_string");
+    return mark_unsupported_function("safe_string", arg, VCOL_IMPOSSIBLE);
   }
 };
 
@@ -3220,11 +4149,14 @@ class Item_return_date_time :public Item_partition_func_safe_string
   enum_field_types date_time_field_type;
 public:
   Item_return_date_time(THD *thd, const char *name_arg, uint length_arg,
-                        enum_field_types field_type_arg):
+                        enum_field_types field_type_arg, uint dec_arg= 0):
     Item_partition_func_safe_string(thd, name_arg, length_arg, &my_charset_bin),
     date_time_field_type(field_type_arg)
-  { decimals= 0; }
-  enum_field_types field_type() const { return date_time_field_type; }
+  { decimals= dec_arg; }
+  const Type_handler *type_handler() const
+  {
+    return Type_handler::get_handler_by_field_type(date_time_field_type);
+  }
 };
 
 
@@ -3232,12 +4164,22 @@ class Item_blob :public Item_partition_func_safe_string
 {
 public:
   Item_blob(THD *thd, const char *name_arg, uint length):
-    Item_partition_func_safe_string(thd, name_arg, strlen(name_arg), &my_charset_bin)
+    Item_partition_func_safe_string(thd, name_arg, (uint) safe_strlen(name_arg),
+                                    &my_charset_bin)
   { max_length= length; }
   enum Type type() const { return TYPE_HOLDER; }
-  enum_field_types field_type() const { return MYSQL_TYPE_BLOB; }
+  const Type_handler *type_handler() const
+  {
+    return Type_handler::blob_type_handler(max_length);
+  }
+  const Type_handler *real_type_handler() const
+  {
+    // Should not be called, Item_blob is used for SHOW purposes only.
+    DBUG_ASSERT(0);
+    return &type_handler_varchar;
+  }
   Field *create_field_for_schema(THD *thd, TABLE *table)
-  { return tmp_table_field_from_field_type(table, false, true); }
+  { return tmp_table_field_from_field_type(table); }
 };
 
 
@@ -3254,8 +4196,12 @@ public:
                     CHARSET_INFO *cs= NULL):
     Item_partition_func_safe_string(thd, "", 0,
                                     cs ? cs : &my_charset_utf8_general_ci)
-    { name=(char*) header; max_length= length * collation.collation->mbmaxlen; }
-  void make_field(Send_field *field);
+    {
+      name.str=    header;
+      name.length= strlen(name.str);
+      max_length= length * collation.collation->mbmaxlen;
+    }
+  void make_send_field(THD *thd, Send_field *field);
 };
 
 
@@ -3269,7 +4215,10 @@ public:
   {
     unsigned_flag=1;
   }
-  enum_field_types field_type() const { return int_field_type; }
+  const Type_handler *type_handler() const
+  {
+    return Type_handler::get_handler_by_field_type(int_field_type);
+  }
 };
 
 
@@ -3279,34 +4228,36 @@ public:
 class Item_hex_constant: public Item_basic_constant
 {
 private:
-  void hex_string_init(THD *thd, const char *str, uint str_length);
+  void hex_string_init(THD *thd, const char *str, size_t str_length);
 public:
   Item_hex_constant(THD *thd): Item_basic_constant(thd)
   {
     hex_string_init(thd, "", 0);
   }
-  Item_hex_constant(THD *thd, const char *str, uint str_length):
+  Item_hex_constant(THD *thd, const char *str, size_t str_length):
     Item_basic_constant(thd)
   {
     hex_string_init(thd, str, str_length);
   }
   enum Type type() const { return VARBIN_ITEM; }
-  enum Item_result result_type () const { return STRING_RESULT; }
-  enum_field_types field_type() const { return MYSQL_TYPE_VARCHAR; }
+  const Type_handler *type_handler() const { return &type_handler_varchar; }
   virtual Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs)
   {
     return const_charset_converter(thd, tocs, true);
   }
-  bool check_partition_func_processor(uchar *int_arg) {return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  bool check_partition_func_processor(void *int_arg) {return FALSE;}
   bool basic_const_item() const { return 1; }
   bool eq(const Item *item, bool binary_cmp) const
   {
     return item->basic_const_item() && item->type() == type() &&
-           item->cast_to_int_type() == cast_to_int_type() &&
+           item->cast_to_int_type_handler() == cast_to_int_type_handler() &&
            str_value.bin_eq(&((Item_hex_constant*)item)->str_value);
   }
   String *val_str(String*) { DBUG_ASSERT(fixed == 1); return &str_value; }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    return type_handler()->Item_get_date(this, ltime, fuzzydate);
+  }
 };
 
 
@@ -3319,25 +4270,44 @@ class Item_hex_hybrid: public Item_hex_constant
 {
 public:
   Item_hex_hybrid(THD *thd): Item_hex_constant(thd) {}
-  Item_hex_hybrid(THD *thd, const char *str, uint str_length):
+  Item_hex_hybrid(THD *thd, const char *str, size_t str_length):
     Item_hex_constant(thd, str, str_length) {}
+  uint decimal_precision() const;
   double val_real()
   { 
     DBUG_ASSERT(fixed == 1); 
     return (double) (ulonglong) Item_hex_hybrid::val_int();
   }
-  longlong val_int();
+  longlong val_int()
+  {
+    // following assert is redundant, because fixed=1 assigned in constructor
+    DBUG_ASSERT(fixed == 1);
+    return longlong_from_hex_hybrid(str_value.ptr(), str_value.length());
+  }
   my_decimal *val_decimal(my_decimal *decimal_value)
   {
     // following assert is redundant, because fixed=1 assigned in constructor
     DBUG_ASSERT(fixed == 1);
-    ulonglong value= (ulonglong) Item_hex_hybrid::val_int();
+    longlong value= Item_hex_hybrid::val_int();
     int2my_decimal(E_DEC_FATAL_ERROR, value, TRUE, decimal_value);
     return decimal_value;
   }
-  int save_in_field(Field *field, bool no_conversions);
-  enum Item_result cast_to_int_type() const { return INT_RESULT; }
+  int save_in_field(Field *field, bool no_conversions)
+  {
+    field->set_notnull();
+    return field->store_hex_hybrid(str_value.ptr(), str_value.length());
+  }
+  const Type_handler *cast_to_int_type_handler() const
+  {
+    return &type_handler_longlong;
+  }
+  const Type_handler *type_handler_for_system_time() const
+  {
+    return &type_handler_longlong;
+  }
   void print(String *str, enum_query_type query_type);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_hex_hybrid>(thd, this); }
 };
 
 
@@ -3354,7 +4324,7 @@ class Item_hex_string: public Item_hex_constant
 {
 public:
   Item_hex_string(THD *thd): Item_hex_constant(thd) {}
-  Item_hex_string(THD *thd, const char *str, uint str_length):
+  Item_hex_string(THD *thd, const char *str, size_t str_length):
     Item_hex_constant(thd, str, str_length) {}
   longlong val_int()
   {
@@ -3376,15 +4346,16 @@ public:
     return field->store(str_value.ptr(), str_value.length(), 
                         collation.collation);
   }
-  enum Item_result cast_to_int_type() const { return STRING_RESULT; }
   void print(String *str, enum_query_type query_type);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_hex_string>(thd, this); }
 };
 
 
 class Item_bin_string: public Item_hex_hybrid
 {
 public:
-  Item_bin_string(THD *thd, const char *str,uint str_length);
+  Item_bin_string(THD *thd, const char *str, size_t str_length);
 };
 
 
@@ -3397,13 +4368,14 @@ public:
     Constructor for Item_date_literal.
     @param ltime  DATE value.
   */
-  Item_temporal_literal(THD *thd, MYSQL_TIME *ltime): Item_basic_constant(thd)
+  Item_temporal_literal(THD *thd, const MYSQL_TIME *ltime)
+   :Item_basic_constant(thd)
   {
     collation.set(&my_charset_numeric, DERIVATION_NUMERIC, MY_REPERTOIRE_ASCII);
     decimals= 0;
     cached_time= *ltime;
   }
-  Item_temporal_literal(THD *thd, MYSQL_TIME *ltime, uint dec_arg):
+  Item_temporal_literal(THD *thd, const MYSQL_TIME *ltime, uint dec_arg):
     Item_basic_constant(thd)
   {
     collation.set(&my_charset_numeric, DERIVATION_NUMERIC, MY_REPERTOIRE_ASCII);
@@ -3414,11 +4386,8 @@ public:
   bool const_item() const { return true; }
   enum Type type() const { return DATE_ITEM; }
   bool eq(const Item *item, bool binary_cmp) const;
-  enum Item_result result_type () const { return STRING_RESULT; }
-  Item_result cmp_type() const { return TIME_RESULT; }
 
-  bool check_partition_func_processor(uchar *int_arg) {return FALSE;}
-  bool check_vcol_func_processor(uchar *arg) { return FALSE;}
+  bool check_partition_func_processor(void *int_arg) {return FALSE;}
 
   bool is_null()
   { return is_null_from_temporal(); }
@@ -3432,7 +4401,7 @@ public:
   my_decimal *val_decimal(my_decimal *decimal_value)
   { return  val_decimal_from_date(decimal_value); }
   int save_in_field(Field *field, bool no_conversions)
-  { return save_date_in_field(field); }
+  { return save_date_in_field(field, no_conversions); }
 };
 
 
@@ -3442,7 +4411,7 @@ public:
 class Item_date_literal: public Item_temporal_literal
 {
 public:
-  Item_date_literal(THD *thd, MYSQL_TIME *ltime)
+  Item_date_literal(THD *thd, const MYSQL_TIME *ltime)
     :Item_temporal_literal(thd, ltime)
   {
     max_length= MAX_DATE_WIDTH;
@@ -3456,10 +4425,12 @@ public:
     */
     maybe_null= !ltime->month || !ltime->day;
   }
-  enum_field_types field_type() const { return MYSQL_TYPE_DATE; }
+  const Type_handler *type_handler() const { return &type_handler_newdate; }
   void print(String *str, enum_query_type query_type);
   Item *clone_item(THD *thd);
   bool get_date(MYSQL_TIME *res, ulonglong fuzzy_date);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_date_literal>(thd, this); }
 };
 
 
@@ -3469,16 +4440,18 @@ public:
 class Item_time_literal: public Item_temporal_literal
 {
 public:
-  Item_time_literal(THD *thd, MYSQL_TIME *ltime, uint dec_arg):
+  Item_time_literal(THD *thd, const MYSQL_TIME *ltime, uint dec_arg):
     Item_temporal_literal(thd, ltime, dec_arg)
   {
     max_length= MIN_TIME_WIDTH + (decimals ? decimals + 1 : 0);
     fixed= 1;
   }
-  enum_field_types field_type() const { return MYSQL_TYPE_TIME; }
+  const Type_handler *type_handler() const { return &type_handler_time2; }
   void print(String *str, enum_query_type query_type);
   Item *clone_item(THD *thd);
   bool get_date(MYSQL_TIME *res, ulonglong fuzzy_date);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_time_literal>(thd, this); }
 };
 
 
@@ -3488,7 +4461,7 @@ public:
 class Item_datetime_literal: public Item_temporal_literal
 {
 public:
-  Item_datetime_literal(THD *thd, MYSQL_TIME *ltime, uint dec_arg):
+  Item_datetime_literal(THD *thd, const MYSQL_TIME *ltime, uint dec_arg):
     Item_temporal_literal(thd, ltime, dec_arg)
   {
     max_length= MAX_DATETIME_WIDTH + (decimals ? decimals + 1 : 0);
@@ -3496,10 +4469,12 @@ public:
     // See the comment on maybe_null in Item_date_literal
     maybe_null= !ltime->month || !ltime->day;
   }
-  enum_field_types field_type() const { return MYSQL_TYPE_DATETIME; }
+  const Type_handler *type_handler() const { return &type_handler_datetime2; }
   void print(String *str, enum_query_type query_type);
   Item *clone_item(THD *thd);
   bool get_date(MYSQL_TIME *res, ulonglong fuzzy_date);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_datetime_literal>(thd, this); }
 };
 
 
@@ -3520,7 +4495,7 @@ class Item_date_literal_for_invalid_dates: public Item_date_literal
 
     Item_date_literal_for_invalid_dates::get_date()
     (unlike the regular Item_date_literal::get_date())
-    does not check the result for NO_ZERO_IN_DATE and NO_ZER_DATE,
+    does not check the result for NO_ZERO_IN_DATE and NO_ZERO_DATE,
     always returns success (false), and does not produce error/warning messages.
 
     We need these _for_invalid_dates classes to be able to rewrite:
@@ -3532,7 +4507,7 @@ class Item_date_literal_for_invalid_dates: public Item_date_literal
     in sql_mode=TRADITIONAL.
   */
 public:
-  Item_date_literal_for_invalid_dates(THD *thd, MYSQL_TIME *ltime)
+  Item_date_literal_for_invalid_dates(THD *thd, const MYSQL_TIME *ltime)
    :Item_date_literal(thd, ltime) { }
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzy_date)
   {
@@ -3550,85 +4525,13 @@ class Item_datetime_literal_for_invalid_dates: public Item_datetime_literal
 {
 public:
   Item_datetime_literal_for_invalid_dates(THD *thd,
-                                          MYSQL_TIME *ltime, uint dec_arg)
+                                          const MYSQL_TIME *ltime, uint dec_arg)
    :Item_datetime_literal(thd, ltime, dec_arg) { }
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzy_date)
   {
     *ltime= cached_time;
     return (null_value= false);
   }
-};
-
-
-/**
-  Array of items, e.g. function or aggerate function arguments.
-*/
-class Item_args
-{
-protected:
-  Item **args, *tmp_arg[2];
-  uint arg_count;
-  void set_arguments(THD *thd, List<Item> &list);
-  bool walk_args(Item_processor processor, bool walk_subquery, uchar *arg)
-  {
-    for (uint i= 0; i < arg_count; i++)
-    {
-      if (args[i]->walk(processor, walk_subquery, arg))
-        return true;
-    }
-    return false;
-  }
-  bool transform_args(THD *thd, Item_transformer transformer, uchar *arg);
-  void propagate_equal_fields(THD *, const Item::Context &, COND_EQUAL *);
-public:
-  Item_args(void)
-    :args(NULL), arg_count(0)
-  { }
-  Item_args(Item *a)
-    :args(tmp_arg), arg_count(1)
-  {
-    args[0]= a;
-  }
-  Item_args(Item *a, Item *b)
-    :args(tmp_arg), arg_count(2)
-  {
-    args[0]= a; args[1]= b;
-  }
-  Item_args(Item *a, Item *b, Item *c)
-  {
-    arg_count= 0;
-    if ((args= (Item**) sql_alloc(sizeof(Item*) * 3)))
-    {
-      arg_count= 3;
-      args[0]= a; args[1]= b; args[2]= c;
-    }
-  }
-  Item_args(Item *a, Item *b, Item *c, Item *d)
-  {
-    arg_count= 0;
-    if ((args= (Item**) sql_alloc(sizeof(Item*) * 4)))
-    {
-      arg_count= 4;
-      args[0]= a; args[1]= b; args[2]= c; args[3]= d;
-    }
-  }
-  Item_args(Item *a, Item *b, Item *c, Item *d, Item* e)
-  {
-    arg_count= 5;
-    if ((args= (Item**) sql_alloc(sizeof(Item*) * 5)))
-    {
-      arg_count= 5;
-      args[0]= a; args[1]= b; args[2]= c; args[3]= d; args[4]= e;
-    }
-  }
-  Item_args(THD *thd, List<Item> &list)
-  {
-    set_arguments(thd, list);
-  }
-  Item_args(THD *thd, const Item_args *other);
-  inline Item **arguments() const { return args; }
-  inline uint argument_count() const { return arg_count; }
-  inline void remove_arguments() { arg_count=0; }
 };
 
 
@@ -3699,82 +4602,34 @@ public:
 */
 class Item_func_or_sum: public Item_result_field,
                         public Item_args,
-                        public Used_tables_and_const_cache
+                        public Used_tables_and_const_cache,
+                        public With_subquery_cache
 {
-  bool agg_item_collations(DTCollation &c, const char *name,
-                           Item **items, uint nitems,
-                           uint flags, int item_sep);
-  bool agg_item_set_converter(const DTCollation &coll, const char *fname,
-                              Item **args, uint nargs,
-                              uint flags, int item_sep);
 protected:
-  /*
-    Collect arguments' character sets together.
-    We allow to apply automatic character set conversion in some cases.
-    The conditions when conversion is possible are:
-    - arguments A and B have different charsets
-    - A wins according to coercibility rules
-      (i.e. a column is stronger than a string constant,
-       an explicit COLLATE clause is stronger than a column)
-    - character set of A is either superset for character set of B,
-      or B is a string constant which can be converted into the
-      character set of A without data loss.
-
-    If all of the above is true, then it's possible to convert
-    B into the character set of A, and then compare according
-    to the collation of A.
-
-    For functions with more than two arguments:
-
-      collect(A,B,C) ::= collect(collect(A,B),C)
-
-    Since this function calls THD::change_item_tree() on the passed Item **
-    pointers, it is necessary to pass the original Item **'s, not copies.
-    Otherwise their values will not be properly restored (see BUG#20769).
-    If the items are not consecutive (eg. args[2] and args[5]), use the
-    item_sep argument, ie.
-
-      agg_item_charsets(coll, fname, &args[2], 2, flags, 3)
-  */
   bool agg_arg_charsets(DTCollation &c, Item **items, uint nitems,
                         uint flags, int item_sep)
   {
-    if (agg_item_collations(c, func_name(), items, nitems, flags, item_sep))
-      return true;
-
-    return agg_item_set_converter(c, func_name(), items, nitems,
-                                  flags, item_sep);
+    return Type_std_attributes::agg_arg_charsets(c, func_name(),
+                                                 items, nitems,
+                                                 flags, item_sep);
   }
-  /*
-    Aggregate arguments for string result, e.g: CONCAT(a,b)
-    - convert to @@character_set_connection if all arguments are numbers
-    - allow DERIVATION_NONE
-  */
   bool agg_arg_charsets_for_string_result(DTCollation &c,
                                           Item **items, uint nitems,
                                           int item_sep= 1)
   {
-    uint flags= MY_COLL_ALLOW_SUPERSET_CONV |
-                MY_COLL_ALLOW_COERCIBLE_CONV |
-                MY_COLL_ALLOW_NUMERIC_CONV;
-    return agg_arg_charsets(c, items, nitems, flags, item_sep);
+    return Type_std_attributes::
+      agg_arg_charsets_for_string_result(c, func_name(),
+                                         items, nitems, item_sep);
   }
-  /*
-    Aggregate arguments for string result, when some comparison
-    is involved internally, e.g: REPLACE(a,b,c)
-    - convert to @@character_set_connection if all arguments are numbers
-    - disallow DERIVATION_NONE
-  */
   bool agg_arg_charsets_for_string_result_with_comparison(DTCollation &c,
                                                           Item **items,
                                                           uint nitems,
                                                           int item_sep= 1)
   {
-    uint flags= MY_COLL_ALLOW_SUPERSET_CONV |
-                MY_COLL_ALLOW_COERCIBLE_CONV |
-                MY_COLL_ALLOW_NUMERIC_CONV |
-                MY_COLL_DISALLOW_NONE;
-    return agg_arg_charsets(c, items, nitems, flags, item_sep);
+    return Type_std_attributes::
+      agg_arg_charsets_for_string_result_with_comparison(c, func_name(),
+                                                         items, nitems,
+                                                         item_sep);
   }
 
   /*
@@ -3786,12 +4641,9 @@ protected:
                                        Item **items, uint nitems,
                                        int item_sep= 1)
   {
-    uint flags= MY_COLL_ALLOW_SUPERSET_CONV |
-                MY_COLL_ALLOW_COERCIBLE_CONV |
-                MY_COLL_DISALLOW_NONE;
-    return agg_arg_charsets(c, items, nitems, flags, item_sep);
+    return Type_std_attributes::
+      agg_arg_charsets_for_comparison(c, func_name(), items, nitems, item_sep);
   }
-
 
 public:
   // This method is used by Arg_comparator
@@ -3824,17 +4676,18 @@ public:
   Item_func_or_sum(THD *thd, Item *a, Item *b):
     Item_result_field(thd), Item_args(a, b) { }
   Item_func_or_sum(THD *thd, Item *a, Item *b, Item *c):
-    Item_result_field(thd), Item_args(a, b, c) { }
+    Item_result_field(thd), Item_args(thd, a, b, c) { }
   Item_func_or_sum(THD *thd, Item *a, Item *b, Item *c, Item *d):
-    Item_result_field(thd), Item_args(a, b, c, d) { }
+    Item_result_field(thd), Item_args(thd, a, b, c, d) { }
   Item_func_or_sum(THD *thd, Item *a, Item *b, Item *c, Item *d, Item *e):
-    Item_result_field(thd), Item_args(a, b, c, d, e) { }
+    Item_result_field(thd), Item_args(thd, a, b, c, d, e) { }
   Item_func_or_sum(THD *thd, Item_func_or_sum *item):
     Item_result_field(thd, item), Item_args(thd, item),
     Used_tables_and_const_cache(item) { }
   Item_func_or_sum(THD *thd, List<Item> &list):
     Item_result_field(thd), Item_args(thd, list) { }
-  bool walk(Item_processor processor, bool walk_subquery, uchar *arg)
+  bool with_subquery() const { DBUG_ASSERT(fixed); return m_with_subquery; }
+  bool walk(Item_processor processor, bool walk_subquery, void *arg)
   {
     if (walk_args(processor, walk_subquery, arg))
       return true;
@@ -3857,11 +4710,42 @@ public:
     also to make printing of items inherited from Item_sum uniform.
   */
   virtual const char *func_name() const= 0;
-  virtual void fix_length_and_dec()= 0;
+  virtual bool fix_length_and_dec()= 0;
   bool const_item() const { return const_item_cache; }
   table_map used_tables() const { return used_tables_cache; }
+  Item* build_clone(THD *thd);
 };
 
+class sp_head;
+class sp_name;
+struct st_sp_security_context;
+
+class Item_sp
+{
+public:
+  Name_resolution_context *context;
+  sp_name *m_name;
+  sp_head *m_sp;
+  TABLE *dummy_table;
+  uchar result_buf[64];
+  sp_rcontext *func_ctx;
+  MEM_ROOT sp_mem_root;
+  Query_arena *sp_query_arena;
+
+  /*
+     The result field of the stored function.
+  */
+  Field *sp_result_field;
+  Item_sp(THD *thd, Name_resolution_context *context_arg, sp_name *name_arg);
+  Item_sp(THD *thd, Item_sp *item);
+  const char *func_name(THD *thd) const;
+  void cleanup();
+  bool sp_check_access(THD *thd);
+  bool execute(THD *thd, bool *null_value, Item **args, uint arg_count);
+  bool execute_impl(THD *thd, Item **args, uint arg_count);
+  bool init_result_field(THD *thd, uint max_length, uint maybe_null,
+                         bool *null_value, LEX_CSTRING *name);
+};
 
 class Item_ref :public Item_ident
 {
@@ -3874,7 +4758,7 @@ public:
   bool reference_trough_name;
   Item_ref(THD *thd, Name_resolution_context *context_arg,
            const char *db_arg, const char *table_name_arg,
-           const char *field_name_arg):
+           const LEX_CSTRING *field_name_arg):
     Item_ident(thd, context_arg, db_arg, table_name_arg, field_name_arg),
     set_properties_only(0), ref(0), reference_trough_name(1) {}
   /*
@@ -3892,10 +4776,10 @@ public:
          with Bar, and if we have a more broader set of problems like this.
   */
   Item_ref(THD *thd, Name_resolution_context *context_arg, Item **item,
-           const char *table_name_arg, const char *field_name_arg,
+           const char *table_name_arg, const LEX_CSTRING *field_name_arg,
            bool alias_name_used_arg= FALSE);
   Item_ref(THD *thd, TABLE_LIST *view_arg, Item **item,
-           const char *field_name_arg, bool alias_name_used_arg= FALSE);
+           const LEX_CSTRING *field_name_arg, bool alias_name_used_arg= FALSE);
 
   /* Constructor need to process subselect with temporary tables (see Item) */
   Item_ref(THD *thd, Item_ref *item)
@@ -3923,16 +4807,17 @@ public:
   my_decimal *val_decimal_result(my_decimal *);
   bool val_bool_result();
   bool is_null_result();
-  bool send(Protocol *prot, String *tmp);
-  void make_field(Send_field *field);
+  bool send(Protocol *prot, st_value *buffer);
+  void make_send_field(THD *thd, Send_field *field);
   bool fix_fields(THD *, Item **);
   void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   int save_in_field(Field *field, bool no_conversions);
   void save_org_in_field(Field *field, fast_field_copier optimizer_data);
   fast_field_copier setup_fast_field_copier(Field *field)
   { return (*ref)->setup_fast_field_copier(field); }
-  enum Item_result result_type () const { return (*ref)->result_type(); }
-  enum_field_types field_type() const   { return (*ref)->field_type(); }
+  const Type_handler *type_handler() const { return (*ref)->type_handler(); }
+  const Type_handler *real_type_handler() const
+  { return (*ref)->real_type_handler(); }
   Field *get_tmp_table_field()
   { return result_field ? result_field : (*ref)->get_tmp_table_field(); }
   Item *get_tmp_table_item(THD *thd);
@@ -3970,7 +4855,12 @@ public:
   {
     return ref ? (*ref)->real_item() : this;
   }
-  bool walk(Item_processor processor, bool walk_subquery, uchar *arg)
+  TYPELIB *get_typelib() const
+  {
+    return ref ? (*ref)->get_typelib() : NULL;
+  }
+
+  bool walk(Item_processor processor, bool walk_subquery, void *arg)
   { 
     if (ref && *ref)
       return (*ref)->walk(processor, walk_subquery, arg) ||
@@ -3981,7 +4871,7 @@ public:
   Item* transform(THD *thd, Item_transformer, uchar *arg);
   Item* compile(THD *thd, Item_analyzer analyzer, uchar **arg_p,
                 Item_transformer transformer, uchar *arg_t);
-  bool enumerate_field_refs_processor(uchar *arg)
+  bool enumerate_field_refs_processor(void *arg)
   { return (*ref)->enumerate_field_refs_processor(arg); }
   void no_rows_in_result()
   {
@@ -3995,10 +4885,14 @@ public:
   void cleanup();
   Item_field *field_for_view_update()
     { return (*ref)->field_for_view_update(); }
+  Load_data_outvar *get_load_data_outvar()
+  {
+    return (*ref)->get_load_data_outvar();
+  }
   virtual Ref_Type ref_type() { return REF; }
 
   // Row emulation: forwarding of ROW-related calls to ref
-  uint cols()
+  uint cols() const
   {
     return ref && result_type() == ROW_RESULT ? (*ref)->cols() : 1;
   }
@@ -4024,9 +4918,9 @@ public:
     if (ref && result_type() == ROW_RESULT)
       (*ref)->bring_value();
   }
-  bool check_vcol_func_processor(uchar *arg) 
+  bool check_vcol_func_processor(void *arg) 
   {
-    return trace_unsupported_by_check_vcol_func_processor("ref");
+    return mark_unsupported_function("ref", arg, VCOL_IMPOSSIBLE);
   }
   bool basic_const_item() const { return ref && (*ref)->basic_const_item(); }
   bool is_outer_field() const
@@ -4035,13 +4929,42 @@ public:
     DBUG_ASSERT(ref);
     return (*ref)->is_outer_field();
   }
+  
+  Item* build_clone(THD *thd);
 
   /**
     Checks if the item tree that ref points to contains a subquery.
   */
-  virtual bool has_subquery() const 
+  virtual bool with_subquery() const
+  {
+    return (*ref)->with_subquery();
+  }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_ref>(thd, this); }
+  bool excl_dep_on_table(table_map tab_map)
   { 
-    return (*ref)->has_subquery();
+    table_map used= used_tables();
+    if (used & OUTER_REF_TABLE_BIT)
+      return false;
+    return (used == tab_map) || (*ref)->excl_dep_on_table(tab_map);
+  }
+  bool excl_dep_on_grouping_fields(st_select_lex *sel)
+  { return (*ref)->excl_dep_on_grouping_fields(sel); }
+  bool cleanup_excluding_fields_processor(void *arg)
+  {
+    Item *item= real_item();
+    if (item && item->type() == FIELD_ITEM &&
+        ((Item_field *)item)->field)
+      return 0;
+    return cleanup_processor(arg);
+  }
+  bool cleanup_excluding_const_fields_processor(void *arg)
+  { 
+    Item *item= real_item();
+    if (item && item->type() == FIELD_ITEM &&
+        ((Item_field *) item)->field && item->const_item())
+      return 0;
+    return cleanup_processor(arg);
   }
 };
 
@@ -4055,7 +4978,7 @@ class Item_direct_ref :public Item_ref
 public:
   Item_direct_ref(THD *thd, Name_resolution_context *context_arg, Item **item,
                   const char *table_name_arg,
-                  const char *field_name_arg,
+                  const LEX_CSTRING *field_name_arg,
                   bool alias_name_used_arg= FALSE):
     Item_ref(thd, context_arg, item, table_name_arg,
              field_name_arg, alias_name_used_arg)
@@ -4063,7 +4986,7 @@ public:
   /* Constructor need to process subselect with temporary tables (see Item) */
   Item_direct_ref(THD *thd, Item_direct_ref *item) : Item_ref(thd, item) {}
   Item_direct_ref(THD *thd, TABLE_LIST *view_arg, Item **item,
-                  const char *field_name_arg,
+                  const LEX_CSTRING *field_name_arg,
                   bool alias_name_used_arg= FALSE):
     Item_ref(thd, view_arg, item, field_name_arg,
              alias_name_used_arg)
@@ -4071,8 +4994,7 @@ public:
 
   bool fix_fields(THD *thd, Item **it)
   {
-    if ((!(*ref)->fixed && (*ref)->fix_fields(thd, ref)) ||
-        (*ref)->check_cols(1))
+    if ((*ref)->fix_fields_if_needed_for_scalar(thd, ref))
       return TRUE;
     return Item_ref::fix_fields(thd, it);
   }
@@ -4085,6 +5007,8 @@ public:
   bool is_null();
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   virtual Ref_Type ref_type() { return DIRECT_REF; }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_direct_ref>(thd, this); }
 };
 
 
@@ -4099,7 +5023,7 @@ class Item_direct_ref_to_ident :public Item_direct_ref
 public:
   Item_direct_ref_to_ident(THD *thd, Item_ident *item):
     Item_direct_ref(thd, item->context, (Item**)&item, item->table_name,
-                    item->field_name, FALSE)
+                    &item->field_name, FALSE)
   {
     ident= item;
     ref= (Item**)&ident;
@@ -4108,8 +5032,7 @@ public:
   bool fix_fields(THD *thd, Item **it)
   {
     DBUG_ASSERT(ident->type() == FIELD_ITEM || ident->type() == REF_ITEM);
-    if ((!ident->fixed && ident->fix_fields(thd, ref)) ||
-        ident->check_cols(1))
+    if (ident->fix_fields_if_needed_for_scalar(thd, ref))
       return TRUE;
     set_properties();
     return FALSE;
@@ -4129,7 +5052,8 @@ class Expression_cache_tracker;
   The objects of this class can store its values in an expression cache.
 */
 
-class Item_cache_wrapper :public Item_result_field
+class Item_cache_wrapper :public Item_result_field,
+                          public With_subquery_cache
 {
 private:
   /* Pointer on the cached expression */
@@ -4156,6 +5080,7 @@ public:
 
   enum Type type() const { return EXPR_CACHE_ITEM; }
   enum Type real_type() const { return orig_item->type(); }
+  bool with_subquery() const { DBUG_ASSERT(fixed); return m_with_subquery; }
 
   bool set_cache(THD *thd);
   Expression_cache_tracker* init_tracker(MEM_ROOT *mem_root);
@@ -4174,7 +5099,7 @@ public:
   bool val_bool();
   bool is_null();
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
-  bool send(Protocol *protocol, String *buffer);
+  bool send(Protocol *protocol, st_value *buffer);
   void save_org_in_field(Field *field,
                          fast_field_copier data __attribute__ ((__unused__)))
   {
@@ -4190,7 +5115,8 @@ public:
 
   virtual void print(String *str, enum_query_type query_type);
   virtual const char *full_name() const { return orig_item->full_name(); }
-  virtual void make_field(Send_field *field) { orig_item->make_field(field); }
+  virtual void make_send_field(THD *thd, Send_field *field)
+  { orig_item->make_send_field(thd, field); }
   bool eq(const Item *item, bool binary_cmp) const
   {
     Item *it= ((Item *) item)->real_item();
@@ -4201,8 +5127,7 @@ public:
     orig_item->fix_after_pullout(new_parent, &orig_item, merge);
   }
   int save_in_field(Field *to, bool no_conversions);
-  enum Item_result result_type () const { return orig_item->result_type(); }
-  enum_field_types field_type() const   { return orig_item->field_type(); }
+  const Type_handler *type_handler() const { return orig_item->type_handler(); }
   table_map used_tables() const { return orig_item->used_tables(); }
   void update_used_tables()
   {
@@ -4210,18 +5135,18 @@ public:
   }
   bool const_item() const { return orig_item->const_item(); }
   table_map not_null_tables() const { return orig_item->not_null_tables(); }
-  bool walk(Item_processor processor, bool walk_subquery, uchar *arg)
+  bool walk(Item_processor processor, bool walk_subquery, void *arg)
   {
     return orig_item->walk(processor, walk_subquery, arg) ||
       (this->*processor)(arg);
   }
-  bool enumerate_field_refs_processor(uchar *arg)
+  bool enumerate_field_refs_processor(void *arg)
   { return orig_item->enumerate_field_refs_processor(arg); }
   Item_field *field_for_view_update()
   { return orig_item->field_for_view_update(); }
 
   /* Row emulation: forwarding of ROW-related calls to orig_item */
-  uint cols()
+  uint cols() const
   { return result_type() == ROW_RESULT ? orig_item->cols() : 1; }
   Item* element_index(uint i)
   { return result_type() == ROW_RESULT ? orig_item->element_index(i) : this; }
@@ -4241,12 +5166,15 @@ public:
       orig_item->bring_value();
   }
   bool is_expensive() { return orig_item->is_expensive(); }
-  bool is_expensive_processor(uchar *arg)
+  bool is_expensive_processor(void *arg)
   { return orig_item->is_expensive_processor(arg); }
-  bool check_vcol_func_processor(uchar *arg)
+  bool check_vcol_func_processor(void *arg)
   {
-    return trace_unsupported_by_check_vcol_func_processor("cache");
+    return mark_unsupported_function("cache", arg, VCOL_IMPOSSIBLE);
   }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_wrapper>(thd, this); }
+  Item *build_clone(THD *thd) { return 0; }
 };
 
 
@@ -4284,7 +5212,7 @@ public:
   Item_direct_view_ref(THD *thd, Name_resolution_context *context_arg,
                        Item **item,
                        const char *table_name_arg,
-                       const char *field_name_arg,
+                       LEX_CSTRING *field_name_arg,
                        TABLE_LIST *view_arg):
     Item_direct_ref(thd, context_arg, item, table_name_arg, field_name_arg),
     item_equal(0), view(view_arg),
@@ -4314,18 +5242,25 @@ public:
   void update_used_tables();
   table_map not_null_tables() const;
   bool const_item() const { return used_tables() == 0; }
-  bool walk(Item_processor processor, bool walk_subquery, uchar *arg)
+  bool walk(Item_processor processor, bool walk_subquery, void *arg)
   { 
     return (*ref)->walk(processor, walk_subquery, arg) ||
            (this->*processor)(arg);
   }
-   bool view_used_tables_processor(uchar *arg) 
+  bool view_used_tables_processor(void *arg) 
   {
     TABLE_LIST *view_arg= (TABLE_LIST *) arg;
     if (view_arg == view)
       view_arg->view_used_tables|= (*ref)->used_tables();
     return 0;
   }
+  bool excl_dep_on_table(table_map tab_map);
+  bool excl_dep_on_grouping_fields(st_select_lex *sel);
+  Item *derived_field_transformer_for_having(THD *thd, uchar *arg);
+  Item *derived_field_transformer_for_where(THD *thd, uchar *arg);
+  Item *derived_grouping_field_transformer_for_where(THD *thd,
+                                                     uchar *arg);
+
   void save_val(Field *to)
   {
     if (check_null_ref())
@@ -4384,7 +5319,7 @@ public:
     }
     return Item_direct_ref::get_date(ltime, fuzzydate);
   }
-  bool send(Protocol *protocol, String *buffer);
+  bool send(Protocol *protocol, st_value *buffer);
   void save_org_in_field(Field *field,
                          fast_field_copier data __attribute__ ((__unused__)))
   {
@@ -4407,6 +5342,8 @@ public:
     item_equal= NULL;
     Item_direct_ref::cleanup();
   }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_direct_view_ref>(thd, this); }
 };
 
 
@@ -4436,7 +5373,7 @@ public:
   Item_outer_ref(THD *thd, Name_resolution_context *context_arg,
                  Item_field *outer_field_arg):
     Item_direct_ref(thd, context_arg, 0, outer_field_arg->table_name,
-                    outer_field_arg->field_name),
+                    &outer_field_arg->field_name),
     outer_ref(outer_field_arg), in_sum_func(0),
     found_in_select_list(0), found_in_group_by(0)
   {
@@ -4445,7 +5382,7 @@ public:
     fixed= 0;                     /* reset flag set in set_properties() */
   }
   Item_outer_ref(THD *thd, Name_resolution_context *context_arg, Item **item,
-                 const char *table_name_arg, const char *field_name_arg,
+                 const char *table_name_arg, LEX_CSTRING *field_name_arg,
                  bool alias_name_used_arg):
     Item_direct_ref(thd, context_arg, item, table_name_arg, field_name_arg,
                     alias_name_used_arg),
@@ -4463,7 +5400,7 @@ public:
   }
   table_map not_null_tables() const { return 0; }
   virtual Ref_Type ref_type() { return OUTER_REF; }
-  bool check_inner_refs_processor(uchar * arg); 
+  bool check_inner_refs_processor(void * arg); 
 };
 
 
@@ -4486,7 +5423,8 @@ protected:
 public:
   Item_ref_null_helper(THD *thd, Name_resolution_context *context_arg,
                        Item_in_subselect* master, Item **item,
-		       const char *table_name_arg, const char *field_name_arg):
+		       const char *table_name_arg,
+                       const LEX_CSTRING *field_name_arg):
     Item_ref(thd, context_arg, item, table_name_arg, field_name_arg),
     owner(master) {}
   void save_val(Field *to);
@@ -4498,6 +5436,8 @@ public:
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   virtual void print(String *str, enum_query_type query_type);
   table_map used_tables() const;
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_ref_null_helper>(thd, this); }
 };
 
 /*
@@ -4538,7 +5478,9 @@ public:
 #include "item_timefunc.h"
 #include "item_subselect.h"
 #include "item_xmlfunc.h"
+#include "item_jsonfunc.h"
 #include "item_create.h"
+#include "item_vers.h"
 #endif
 
 /**
@@ -4561,24 +5503,19 @@ public:
   from Item_).
 */
 
-class Item_copy :public Item
+class Item_copy :public Item,
+                 public Type_handler_hybrid_field_type
 {
 protected:  
 
   /**
-    Stores the type of the resulting field that would be used to store the data
+    Type_handler_hybrid_field_type is used to
+    store the type of the resulting field that would be used to store the data
     in the cache. This is to avoid calls to the original item.
   */
-  enum enum_field_types cached_field_type;
 
   /** The original item that is copied */
   Item *item;
-
-  /**
-    Stores the result type of the original item, so it can be returned
-    without calling the original item's method
-  */
-  Item_result cached_result_type;
 
   /**
     Constructor of the Item_copy class
@@ -4591,9 +5528,8 @@ protected:
     item= i;
     null_value=maybe_null=item->maybe_null;
     Type_std_attributes::set(item);
-    name=item->name;
-    cached_field_type= item->field_type();
-    cached_result_type= item->result_type();
+    name= item->name;
+    set_handler(item->type_handler());
     fixed= item->fixed;
   }
 
@@ -4611,16 +5547,18 @@ public:
   Item *get_item() { return item; }
   /** All of the subclasses should have the same type tag */
   enum Type type() const { return COPY_STR_ITEM; }
-  enum_field_types field_type() const { return cached_field_type; }
-  enum Item_result result_type () const { return cached_result_type; }
 
-  void make_field(Send_field *field) { item->make_field(field); }
+  const Type_handler *type_handler() const
+  { return Type_handler_hybrid_field_type::type_handler(); }
+
+  void make_send_field(THD *thd, Send_field *field)
+  { item->make_send_field(thd, field); }
   table_map used_tables() const { return (table_map) 1L; }
   bool const_item() const { return 0; }
   bool is_null() { return null_value; }
-  bool check_vcol_func_processor(uchar *arg) 
+  bool check_vcol_func_processor(void *arg) 
   {
-    return trace_unsupported_by_check_vcol_func_processor("copy");
+    return mark_unsupported_function("copy", arg, VCOL_IMPOSSIBLE);
   }
 
   /*  
@@ -4633,7 +5571,7 @@ public:
   virtual double val_real() = 0;
   virtual longlong val_int() = 0;
   virtual int save_in_field(Field *field, bool no_conversions) = 0;
-  bool walk(Item_processor processor, bool walk_subquery, uchar *args)
+  bool walk(Item_processor processor, bool walk_subquery, void *args)
   {
     return (item->walk(processor, walk_subquery, args)) ||
       (this->*processor)(args);
@@ -4654,8 +5592,12 @@ public:
   my_decimal *val_decimal(my_decimal *);
   double val_real();
   longlong val_int();
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  { return get_date_from_string(ltime, fuzzydate); }
   void copy();
   int save_in_field(Field *field, bool no_conversions);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_copy_string>(thd, this); }
 };
 
 
@@ -4668,17 +5610,10 @@ public:
    - cmp() method that compares the saved value with the current value of the
      source item, and if they were not equal saves item's value into the saved
      value.
-*/
 
-/*
-  Cached_item_XXX objects are not exactly caches. They do the following:
-
-  Each Cached_item_XXX object has
-   - its source item
-   - saved value of the source item
-   - cmp() method that compares the saved value with the current value of the
-     source item, and if they were not equal saves item's value into the saved
-     value.
+  TODO: add here:
+   - a way to save the new value w/o comparison
+   - a way to do less/equal/greater comparison
 */
 
 class Cached_item :public Sql_alloc
@@ -4686,48 +5621,75 @@ class Cached_item :public Sql_alloc
 public:
   bool null_value;
   Cached_item() :null_value(0) {}
+  /*
+    Compare the cached value with the source value. If not equal, copy
+    the source value to the cache.
+    @return
+      true  - Not equal
+      false - Equal
+  */
   virtual bool cmp(void)=0;
+
+  /* Compare the cached value with the source value, without copying */
+  virtual int  cmp_read_only()=0;
+
   virtual ~Cached_item(); /*line -e1509 */
 };
 
-class Cached_item_str :public Cached_item
+class Cached_item_item : public Cached_item
 {
+protected:
   Item *item;
+
+  Cached_item_item(Item *arg) : item(arg) {}
+public:
+  void fetch_value_from(Item *new_item)
+  {
+    Item *save= item;
+    item= new_item;
+    cmp();
+    item= save;
+  }
+};
+
+class Cached_item_str :public Cached_item_item
+{
   uint32 value_max_length;
   String value,tmp_value;
 public:
   Cached_item_str(THD *thd, Item *arg);
   bool cmp(void);
+  int  cmp_read_only();
   ~Cached_item_str();                           // Deallocate String:s
 };
 
 
-class Cached_item_real :public Cached_item
+class Cached_item_real :public Cached_item_item
 {
-  Item *item;
   double value;
 public:
-  Cached_item_real(Item *item_par) :item(item_par),value(0.0) {}
+  Cached_item_real(Item *item_par) :Cached_item_item(item_par),value(0.0) {}
   bool cmp(void);
+  int  cmp_read_only();
 };
 
-class Cached_item_int :public Cached_item
+class Cached_item_int :public Cached_item_item
 {
-  Item *item;
   longlong value;
 public:
-  Cached_item_int(Item *item_par) :item(item_par),value(0) {}
+  Cached_item_int(Item *item_par) :Cached_item_item(item_par),value(0) {}
   bool cmp(void);
+  int  cmp_read_only();
 };
 
 
-class Cached_item_decimal :public Cached_item
+class Cached_item_decimal :public Cached_item_item
 {
-  Item *item;
   my_decimal value;
 public:
   Cached_item_decimal(Item *item_par);
   bool cmp(void);
+  int  cmp_read_only();
 };
 
 class Cached_item_field :public Cached_item
@@ -4737,39 +5699,64 @@ class Cached_item_field :public Cached_item
   uint length;
 
 public:
-  Cached_item_field(Field *arg_field) : field(arg_field)
+  Cached_item_field(THD *thd, Field *arg_field): field(arg_field)
   {
     field= arg_field;
     /* TODO: take the memory allocation below out of the constructor. */
-    buff= (uchar*) sql_calloc(length=field->pack_length());
+    buff= (uchar*) thd_calloc(thd, length= field->pack_length());
   }
   bool cmp(void);
+  int  cmp_read_only();
 };
 
 class Item_default_value : public Item_field
 {
+  void calculate();
 public:
   Item *arg;
   Item_default_value(THD *thd, Name_resolution_context *context_arg)
     :Item_field(thd, context_arg, (const char *)NULL, (const char *)NULL,
-               (const char *)NULL),
+                &null_clex_str),
      arg(NULL) {}
   Item_default_value(THD *thd, Name_resolution_context *context_arg, Item *a)
     :Item_field(thd, context_arg, (const char *)NULL, (const char *)NULL,
-                (const char *)NULL),
+                &null_clex_str),
      arg(a) {}
+  Item_default_value(THD *thd, Name_resolution_context *context_arg, Field *a)
+    :Item_field(thd, context_arg, (const char *)NULL, (const char *)NULL,
+                &null_clex_str),
+     arg(NULL) {}
   enum Type type() const { return DEFAULT_VALUE_ITEM; }
   bool eq(const Item *item, bool binary_cmp) const;
   bool fix_fields(THD *, Item **);
-  virtual void print(String *str, enum_query_type query_type);
+  void print(String *str, enum_query_type query_type);
+  String *val_str(String *str);
+  double val_real();
+  longlong val_int();
+  my_decimal *val_decimal(my_decimal *decimal_value);
+  bool get_date(MYSQL_TIME *ltime,ulonglong fuzzydate);
+  bool send(Protocol *protocol, st_value *buffer);
   int save_in_field(Field *field_arg, bool no_conversions);
-  table_map used_tables() const { return (table_map)0L; }
-
+  bool save_in_param(THD *thd, Item_param *param)
+  {
+    // It should not be possible to have "EXECUTE .. USING DEFAULT(a)"
+    DBUG_ASSERT(arg == NULL);
+    param->set_default();
+    return false;
+  }
+  table_map used_tables() const;
+  virtual void update_used_tables()
+  {
+    if (field && field->default_value)
+      field->default_value->expr->update_used_tables();
+  }
   Field *get_tmp_table_field() { return 0; }
   Item *get_tmp_table_item(THD *thd) { return this; }
   Item_field *field_for_view_update() { return 0; }
+  bool update_vcol_processor(void *arg) { return 0; }
+  bool check_func_default_processor(void *arg) { return true; }
 
-  bool walk(Item_processor processor, bool walk_subquery, uchar *args)
+  bool walk(Item_processor processor, bool walk_subquery, void *args)
   {
     return (arg && arg->walk(processor, walk_subquery, args)) ||
       (this->*processor)(args);
@@ -4777,6 +5764,37 @@ public:
 
   Item *transform(THD *thd, Item_transformer transformer, uchar *args);
 };
+
+/**
+  This class is used as bulk parameter INGNORE representation.
+
+  It just do nothing when assigned to a field
+
+*/
+
+class Item_ignore_value : public Item_default_value
+{
+public:
+  Item_ignore_value(THD *thd, Name_resolution_context *context_arg)
+    :Item_default_value(thd, context_arg)
+  {};
+
+  void print(String *str, enum_query_type query_type);
+  int save_in_field(Field *field_arg, bool no_conversions);
+  bool save_in_param(THD *thd, Item_param *param)
+  {
+    param->set_ignore();
+    return false;
+  }
+
+  String *val_str(String *str);
+  double val_real();
+  longlong val_int();
+  my_decimal *val_decimal(my_decimal *decimal_value);
+  bool get_date(MYSQL_TIME *ltime,ulonglong fuzzydate);
+  bool send(Protocol *protocol, st_value *buffer);
+};
+
 
 /*
   Item_insert_value -- an implementation of VALUES() function.
@@ -4794,7 +5812,7 @@ public:
   Item *arg;
   Item_insert_value(THD *thd, Name_resolution_context *context_arg, Item *a)
     :Item_field(thd, context_arg, (const char *)NULL, (const char *)NULL,
-               (const char *)NULL),
+                &null_clex_str),
      arg(a) {}
   bool eq(const Item *item, bool binary_cmp) const;
   bool fix_fields(THD *, Item **);
@@ -4812,15 +5830,16 @@ public:
 
   Item_field *field_for_view_update() { return 0; }
 
-  bool walk(Item_processor processor, bool walk_subquery, uchar *args)
+  bool walk(Item_processor processor, bool walk_subquery, void *args)
   {
     return arg->walk(processor, walk_subquery, args) ||
 	    (this->*processor)(args);
   }
-  bool check_partition_func_processor(uchar *int_arg) {return TRUE;}
-  bool check_vcol_func_processor(uchar *arg_arg)
+  bool check_partition_func_processor(void *int_arg) {return TRUE;}
+  bool update_vcol_processor(void *arg) { return 0; }
+  bool check_vcol_func_processor(void *arg)
   {
-    return trace_unsupported_by_check_vcol_func_processor("values");
+    return mark_unsupported_function("value()", arg, VCOL_IMPOSSIBLE);
   }
 };
 
@@ -4854,7 +5873,7 @@ public:
 
   Item_trigger_field(THD *thd, Name_resolution_context *context_arg,
                      row_version_type row_ver_arg,
-                     const char *field_name_arg,
+                     const LEX_CSTRING *field_name_arg,
                      ulong priv, const bool ro)
     :Item_field(thd, context_arg,
                (const char *)NULL, (const char *)NULL, field_name_arg),
@@ -4907,10 +5926,7 @@ private:
   */
   bool read_only;
 public:
-  bool check_vcol_func_processor(uchar *arg)
-  {
-    return trace_unsupported_by_check_vcol_func_processor("trigger");
-  }
+  bool check_vcol_func_processor(void *arg);
 };
 
 
@@ -4921,7 +5937,8 @@ public:
   for any value.
 */
 
-class Item_cache: public Item_basic_constant
+class Item_cache: public Item_basic_constant,
+                  public Type_handler_hybrid_field_type
 {
 protected:
   Item *example;
@@ -4931,7 +5948,6 @@ protected:
     by IN->EXISTS transformation.
   */  
   Field *cached_field;
-  enum enum_field_types cached_field_type;
   /*
     TRUE <=> cache holds value of the last stored item (i.e actual value).
     store() stores item to be cached and sets this flag to FALSE.
@@ -4943,18 +5959,19 @@ protected:
 public:
   Item_cache(THD *thd):
     Item_basic_constant(thd),
+    Type_handler_hybrid_field_type(&type_handler_string),
     example(0), cached_field(0),
-    cached_field_type(MYSQL_TYPE_STRING),
     value_cached(0)
   {
     fixed= 1;
     maybe_null= 1;
     null_value= 1;
   }
-  Item_cache(THD *thd, enum_field_types field_type_arg):
+protected:
+  Item_cache(THD *thd, const Type_handler *handler):
     Item_basic_constant(thd),
+    Type_handler_hybrid_field_type(handler),
     example(0), cached_field(0),
-    cached_field_type(field_type_arg),
     value_cached(0)
   {
     fixed= 1;
@@ -4962,6 +5979,7 @@ public:
     null_value= 1;
   }
 
+public:
   virtual bool allocate(THD *thd, uint i) { return 0; }
   virtual bool setup(THD *thd, Item *item)
   {
@@ -4972,12 +5990,13 @@ public:
     return 0;
   };
   enum Type type() const { return CACHE_ITEM; }
-  enum_field_types field_type() const { return cached_field_type; }
-  static Item_cache* get_cache(THD *thd, const Item *item);
-  static Item_cache* get_cache(THD *thd, const Item* item, const Item_result type);
+
+  const Type_handler *type_handler() const
+  { return Type_handler_hybrid_field_type::type_handler(); }
+
   virtual void keep_array() {}
   virtual void print(String *str, enum_query_type query_type);
-  bool eq_def(Field *field) 
+  bool eq_def(const Field *field) 
   { 
     return cached_field ? cached_field->eq_def (field) : FALSE;
   }
@@ -4985,9 +6004,26 @@ public:
   {
     return this == item;
   }
-  bool check_vcol_func_processor(uchar *arg) 
+  bool check_vcol_func_processor(void *arg) 
   {
-    return trace_unsupported_by_check_vcol_func_processor("cache");
+    if (example)
+    {
+      Item::vcol_func_processor_result *res= (Item::vcol_func_processor_result*)arg;
+      example->check_vcol_func_processor(arg);
+      /*
+        Item_cache of a non-deterministic function requires re-fixing
+        even if the function itself doesn't (e.g. CURRENT_TIMESTAMP)
+      */
+      if (res->errors & VCOL_NOT_STRICTLY_DETERMINISTIC)
+        res->errors|= VCOL_SESSION_FUNC;
+      return false;
+    }
+    return mark_unsupported_function("cache", arg, VCOL_IMPOSSIBLE);
+  }
+  void cleanup()
+  {
+    clear();
+    Item_basic_constant::cleanup();
   }
   /**
      Check if saved item has a non-NULL value.
@@ -5000,9 +6036,10 @@ public:
   }
 
   virtual void store(Item *item);
+  virtual Item *get_item() { return example; }
   virtual bool cache_value()= 0;
   bool basic_const_item() const
-  { return MY_TEST(example && example->basic_const_item()); }
+  { return example && example->basic_const_item(); }
   virtual void clear() { null_value= TRUE; value_cached= FALSE; }
   bool is_null() { return !has_value(); }
   virtual bool is_expensive()
@@ -5011,7 +6048,7 @@ public:
       return false;
     return example->is_expensive();
   }
-  bool is_expensive_processor(uchar *arg)
+  bool is_expensive_processor(void *arg)
   {
     DBUG_ASSERT(example);
     if (value_cached)
@@ -5019,19 +6056,27 @@ public:
     return example->is_expensive_processor(arg);
   }
   virtual void set_null();
-  bool walk(Item_processor processor, bool walk_subquery, uchar *arg)
+  bool walk(Item_processor processor, bool walk_subquery, void *arg)
   {
     if (example && example->walk(processor, walk_subquery, arg))
       return TRUE;
     return (this->*processor)(arg);
   }
   virtual Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs);
-  void split_sum_func2_example(THD *thd, Item **ref_pointer_array,
+  void split_sum_func2_example(THD *thd,  Ref_ptr_array ref_pointer_array,
                                List<Item> &fields, uint flags)
   {
     example->split_sum_func2(thd, ref_pointer_array, fields, &example, flags);
   }
   Item *get_example() const { return example; }
+
+  virtual Item *convert_to_basic_const_item(THD *thd) { return 0; };
+  Item *derived_field_transformer_for_having(THD *thd, uchar *arg)
+  { return convert_to_basic_const_item(thd); }
+  Item *derived_field_transformer_for_where(THD *thd, uchar *arg)
+  { return convert_to_basic_const_item(thd); }
+  Item *derived_grouping_field_transformer_for_where(THD *thd, uchar *arg)
+  { return convert_to_basic_const_item(thd); }
 };
 
 
@@ -5040,25 +6085,39 @@ class Item_cache_int: public Item_cache
 protected:
   longlong value;
 public:
-  Item_cache_int(THD *thd): Item_cache(thd, MYSQL_TYPE_LONGLONG),
+  Item_cache_int(THD *thd): Item_cache(thd, &type_handler_longlong),
     value(0) {}
-  Item_cache_int(THD *thd, enum_field_types field_type_arg):
-    Item_cache(thd, field_type_arg), value(0) {}
+  Item_cache_int(THD *thd, const Type_handler *handler):
+    Item_cache(thd, handler), value(0) {}
 
   double val_real();
   longlong val_int();
   String* val_str(String *str);
   my_decimal *val_decimal(my_decimal *);
-  enum Item_result result_type() const { return INT_RESULT; }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  { return get_date_from_int(ltime, fuzzydate); }
   bool cache_value();
   int save_in_field(Field *field, bool no_conversions);
+  Item *convert_to_basic_const_item(THD *thd);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_int>(thd, this); }
+};
+
+
+class Item_cache_year: public Item_cache_int
+{
+public:
+  Item_cache_year(THD *thd): Item_cache_int(thd, &type_handler_year) { }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  { return get_date_from_year(ltime, fuzzydate); }
 };
 
 
 class Item_cache_temporal: public Item_cache_int
 {
+protected:
+  Item_cache_temporal(THD *thd, const Type_handler *handler);
 public:
-  Item_cache_temporal(THD *thd, enum_field_types field_type_arg);
   String* val_str(String *str);
   my_decimal *val_decimal(my_decimal *);
   longlong val_int();
@@ -5068,7 +6127,6 @@ public:
   bool cache_value();
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   int save_in_field(Field *field, bool no_conversions);
-  Item_result cmp_type() const { return TIME_RESULT; }
   void store_packed(longlong val_arg, Item *example);
   /*
     Having a clone_item method tells optimizer that this object
@@ -5076,6 +6134,42 @@ public:
     Important when storing packed datetime values.
   */
   Item *clone_item(THD *thd);
+  Item *convert_to_basic_const_item(THD *thd);
+  virtual Item *make_literal(THD *) =0;
+};
+
+
+class Item_cache_time: public Item_cache_temporal
+{
+public:
+  Item_cache_time(THD *thd)
+   :Item_cache_temporal(thd, &type_handler_time2) { }
+  bool cache_value();
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_time>(thd, this); }
+  Item *make_literal(THD *);
+};
+
+
+class Item_cache_datetime: public Item_cache_temporal
+{
+public:
+  Item_cache_datetime(THD *thd)
+   :Item_cache_temporal(thd, &type_handler_datetime2) { }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_datetime>(thd, this); }
+  Item *make_literal(THD *);
+};
+
+
+class Item_cache_date: public Item_cache_temporal
+{
+public:
+  Item_cache_date(THD *thd)
+   :Item_cache_temporal(thd, &type_handler_newdate) { }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_date>(thd, this); }
+  Item *make_literal(THD *);
 };
 
 
@@ -5083,15 +6177,19 @@ class Item_cache_real: public Item_cache
 {
   double value;
 public:
-  Item_cache_real(THD *thd): Item_cache(thd, MYSQL_TYPE_DOUBLE),
+  Item_cache_real(THD *thd): Item_cache(thd, &type_handler_double),
     value(0) {}
 
   double val_real();
   longlong val_int();
   String* val_str(String *str);
   my_decimal *val_decimal(my_decimal *);
-  enum Item_result result_type() const { return REAL_RESULT; }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  { return get_date_from_real(ltime, fuzzydate); }
   bool cache_value();
+  Item *convert_to_basic_const_item(THD *thd);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_real>(thd, this); }
 };
 
 
@@ -5100,14 +6198,18 @@ class Item_cache_decimal: public Item_cache
 protected:
   my_decimal decimal_value;
 public:
-  Item_cache_decimal(THD *thd): Item_cache(thd, MYSQL_TYPE_NEWDECIMAL) {}
+  Item_cache_decimal(THD *thd): Item_cache(thd, &type_handler_newdecimal) {}
 
   double val_real();
   longlong val_int();
   String* val_str(String *str);
   my_decimal *val_decimal(my_decimal *);
-  enum Item_result result_type() const { return DECIMAL_RESULT; }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  { return get_date_from_decimal(ltime, fuzzydate); }
   bool cache_value();
+  Item *convert_to_basic_const_item(THD *thd);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_decimal>(thd, this); }
 };
 
 
@@ -5119,9 +6221,9 @@ class Item_cache_str: public Item_cache
   
 public:
   Item_cache_str(THD *thd, const Item *item):
-    Item_cache(thd, item->field_type()), value(0),
+    Item_cache(thd, item->type_handler()), value(0),
     is_varbinary(item->type() == FIELD_ITEM &&
-                 cached_field_type == MYSQL_TYPE_VARCHAR &&
+                 Item_cache_str::field_type() == MYSQL_TYPE_VARCHAR &&
                  !((const Item_field *) item)->field->has_charset())
   {
     collation.set(const_cast<DTCollation&>(item->collation));
@@ -5130,10 +6232,14 @@ public:
   longlong val_int();
   String* val_str(String *);
   my_decimal *val_decimal(my_decimal *);
-  enum Item_result result_type() const { return STRING_RESULT; }
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  { return get_date_from_string(ltime, fuzzydate); }
   CHARSET_INFO *charset() const { return value->charset(); };
   int save_in_field(Field *field, bool no_conversions);
   bool cache_value();
+  Item *convert_to_basic_const_item(THD *thd);
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_str>(thd, this); }
 };
 
 
@@ -5157,6 +6263,8 @@ public:
     */
     return Item::safe_charset_converter(thd, tocs);
   }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_str_for_nullif>(thd, this); }
 };
 
 
@@ -5182,9 +6290,9 @@ public:
   bool setup(THD *thd, Item *item);
   void store(Item *item);
   void illegal_method_call(const char *);
-  void make_field(Send_field *)
+  void make_send_field(THD *thd, Send_field *)
   {
-    illegal_method_call((const char*)"make_field");
+    illegal_method_call((const char*)"make_send_field");
   };
   double val_real()
   {
@@ -5206,10 +6314,13 @@ public:
     illegal_method_call((const char*)"val_decimal");
     return 0;
   };
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
+  {
+    illegal_method_call((const char*)"val_decimal");
+    return true;
+  }
 
-  enum Item_result result_type() const { return ROW_RESULT; }
-  
-  uint cols() { return item_count; }
+  uint cols() const { return item_count; }
   Item *element_index(uint i) { return values[i]; }
   Item **addr(uint i) { return (Item **) (values + i); }
   bool check_cols(uint c);
@@ -5228,6 +6339,8 @@ public:
   }
   bool cache_value();
   virtual void set_null();
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_cache_row>(thd, this); }
 };
 
 
@@ -5238,32 +6351,69 @@ public:
   Item_type_holder do not need cleanup() because its time of live limited by
   single SP/PS execution.
 */
-class Item_type_holder: public Item
+class Item_type_holder: public Item,
+                        public Type_handler_hybrid_field_type,
+                        public Type_geometry_attributes
 {
 protected:
   TYPELIB *enum_set_typelib;
-  enum_field_types fld_type;
-  Field::geometry_type geometry_type;
-
-  void get_full_info(Item *item);
-
-  /* It is used to count decimal precision in join_types */
-  int prev_decimal_int_part;
 public:
-  Item_type_holder(THD*, Item*);
+  Item_type_holder(THD *thd, Item *item)
+   :Item(thd, item),
+    Type_handler_hybrid_field_type(item->real_type_handler()),
+    enum_set_typelib(0)
+  {
+    DBUG_ASSERT(item->fixed);
+    maybe_null= item->maybe_null;
+  }
+  Item_type_holder(THD *thd,
+                   Item *item,
+                   const Type_handler *handler,
+                   const Type_all_attributes *attr,
+                   bool maybe_null_arg)
+   :Item(thd),
+    Type_handler_hybrid_field_type(handler),
+    Type_geometry_attributes(handler, attr),
+    enum_set_typelib(attr->get_typelib())
+  {
+    name= item->name;
+    Type_std_attributes::set(*attr);
+    maybe_null= maybe_null_arg;
+  }
 
-  Item_result result_type() const;
-  enum_field_types field_type() const { return fld_type; };
+  const Type_handler *type_handler() const
+  {
+    return Type_handler_hybrid_field_type::type_handler()->
+             type_handler_for_item_field();
+  }
+  const Type_handler *real_type_handler() const
+  {
+    return Type_handler_hybrid_field_type::type_handler();
+  }
+
   enum Type type() const { return TYPE_HOLDER; }
+  TYPELIB *get_typelib() const { return enum_set_typelib; }
   double val_real();
   longlong val_int();
   my_decimal *val_decimal(my_decimal *);
   String *val_str(String*);
-  bool join_types(THD *thd, Item *);
-  Field *make_field_by_type(TABLE *table);
-  static uint32 display_length(Item *item);
-  static enum_field_types get_real_type(Item *);
-  Field::geometry_type get_geometry_type() const { return geometry_type; };
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
+  Field *create_tmp_field(bool group, TABLE *table)
+  {
+    return Item_type_holder::real_type_handler()->
+           make_and_init_table_field(&name, Record_addr(maybe_null),
+                                     *this, table);
+  }
+  Field::geometry_type get_geometry_type() const
+  {
+    return Type_geometry_attributes::get_geometry_type();
+  }
+  void set_geometry_type(uint type)
+  {
+    Type_geometry_attributes::set_geometry_type(type);
+  }
+  Item* get_copy(THD *thd) { return 0; }
+
 };
 
 
@@ -5365,5 +6515,27 @@ public:
   }
   void close() {}
 };
+
+
+/*
+  It's used in ::fix_fields() methods of LIKE and JSON_SEARCH
+  functions to handle the ESCAPE parameter.
+  This parameter is quite non-standard so the specific function.
+*/
+bool fix_escape_item(THD *thd, Item *escape_item, String *tmp_str,
+                     bool escape_used_in_parsing, CHARSET_INFO *cmp_cs,
+                     int *escape);
+
+inline bool Virtual_column_info::is_equal(const Virtual_column_info* vcol) const
+{
+  return field_type == vcol->get_real_type()
+      && stored_in_db == vcol->is_stored()
+      && expr->eq(vcol->expr, true);
+}
+
+inline void Virtual_column_info::print(String* str)
+{
+  expr->print_for_table_def(str);
+}
 
 #endif /* SQL_ITEM_INCLUDED */

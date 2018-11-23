@@ -15,6 +15,18 @@
 
 -- source include/have_innodb.inc
 
+call mtr.add_suppression("InnoDB: Operating system error number .* in a file operation.");
+call mtr.add_suppression("InnoDB: The error means the system cannot find the path specified.");
+call mtr.add_suppression("InnoDB: If you are installing InnoDB, remember that you must create directories yourself, InnoDB does not create them.");
+call mtr.add_suppression("InnoDB: Cannot open datafile for read-only: .*");
+call mtr.add_suppression("InnoDB: Ignoring tablespace .* because it could not be opened.");
+call mtr.add_suppression("InnoDB: Tablespace for table .* is set as discarded.");
+call mtr.add_suppression("InnoDB: Cannot calculate statistics for table .*");
+call mtr.add_suppression("InnoDB: Page 0 at offset 0 looks corrupted in file");
+call mtr.add_suppression("InnoDB: Page for tablespace ");
+call mtr.add_suppression("InnoDB: Invalid FSP_SPACE_FLAGS=");
+FLUSH TABLES;
+
 let MYSQLD_DATADIR =`SELECT @@datadir`;
 let $innodb_file_per_table = `SELECT @@innodb_file_per_table`;
 let $pathfix=/: '.*test_wl5522.*t1.ibd'/: 'test_wl5522\\t1.ibd'/;
@@ -1445,8 +1457,7 @@ call mtr.add_suppression("but tablespace with that id or name does not exist");
 call mtr.add_suppression("Failed to find tablespace for table '\"test_wl5522\".\"t1\"' in the cache");
 call mtr.add_suppression("Could not find a valid tablespace file for 'test_wl5522.*t1'");
 call mtr.add_suppression("while reading index meta-data, expected to read 44 bytes but read only 0 bytes");
-call mtr.add_suppression("Page for tablespace.*that index is not found from configuration file");
-call mtr.add_suppression("Invalid FSP_SPACE_FLAGS=0x0");
+call mtr.add_suppression("Index for table 't1' is corrupt; try to repair it");
 --enable_query_log
 
 #cleanup

@@ -1,6 +1,6 @@
 '\" t
 .\"
-.TH "\FBMYSQL\-TEST\-RUN\" "1" "14/12/2015" "MariaDB 10\&.1" "MariaDB Database System"
+.TH "\FBMYSQL\-TEST\-RUN\" "1" "9 May 2017" "MariaDB 10\&.3" "MariaDB Database System"
 .\" -----------------------------------------------------------------
 .\" * set default formatting
 .\" -----------------------------------------------------------------
@@ -276,7 +276,7 @@ T}:T{
 Setting of a timeout in minutes or seconds, corresponding to command
                 line option
                 \fB\-\-\fR\fB\fIname\fR\fR\fB\-timeout\fR\&.
-                Avaliable timeout names are TESTCASE,
+                Available timeout names are TESTCASE,
                 SUITE (both in minutes) and
                 START, SHUTDOWN
                 (both in seconds)\&. These variables are supported from
@@ -1350,7 +1350,7 @@ for a description\&.
 .\" noreorder option: mysql-test-run.pl
 \fB\-\-noreorder\fR
 .sp
-Do not reorder tests to reduce number of restarts, but run them in exactly the order given\&. If a whole suite is to be run, the tests are run in alphabetical order, though similiar combinations will be grouped together\&. If more than one suite is listed, the tests are run one suite at a time, in the order listed\&.
+Do not reorder tests to reduce number of restarts, but run them in exactly the order given\&. If a whole suite is to be run, the tests are run in alphabetical order, though similar combinations will be grouped together\&. If more than one suite is listed, the tests are run one suite at a time, in the order listed\&.
 .RE
 .sp
 .RS 4
@@ -1938,7 +1938,7 @@ Run stress test, providing options to mysql\-stress\-test\&.pl\&. Options are se
 \fB\-\-suite[s]=\fR\fB\fIsuite_name...\fR\fR
 .sp
 Comma separated list of suite names to run. The default is: "main-,archive-,binlog-,csv-,federated-,funcs_1-,funcs_2-,handler-,heap-,innodb-,innodb_fts-,
-innodb_zip-,maria-,multi_source-,optimizer_unfixed_bugs-,parts-,percona-,perfschema-,
+innodb_zip-,maria-,multi_source-,optimizer_unfixed_bugs-,parts-,perfschema-,
 plugins-,roles-,rpl-,sys_vars-,unit-,vcol-"\&.
 .RE
 .sp

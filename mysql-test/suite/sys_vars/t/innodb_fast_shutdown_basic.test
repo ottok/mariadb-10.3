@@ -5,7 +5,7 @@
 # Access Type: Dynamic                                                        #
 # Data Type: numeric                                                          #
 # Default Value: 1                                                            #
-# Valid Values: 0,1,2                                                           #
+# Valid Values: 0,1,2,3                                                       #
 #                                                                             #
 #                                                                             #
 # Creation Date: 2008-02-20                                                   #
@@ -81,6 +81,8 @@ SELECT @@global.innodb_fast_shutdown;
 SET @@global.innodb_fast_shutdown = 2;
 SELECT @@global.innodb_fast_shutdown;
 
+SET @@global.innodb_fast_shutdown = 3;
+SELECT @@global.innodb_fast_shutdown;
 
 --echo '#--------------------FN_DYNVARS_042_04-------------------------#'
 ###########################################################################
@@ -116,7 +118,15 @@ SELECT @@global.innodb_fast_shutdown;
 --Error ER_WRONG_TYPE_FOR_VAR
 SET @@global.innodb_fast_shutdown = "0";
 SELECT @@global.innodb_fast_shutdown;
-
+--Error ER_WRONG_TYPE_FOR_VAR
+SET @@global.innodb_fast_shutdown = 1.1;
+SELECT @@global.innodb_fast_shutdown;
+--Error ER_WRONG_TYPE_FOR_VAR
+SET @@global.innodb_fast_shutdown = ' ';
+SELECT @@global.innodb_fast_shutdown;
+--Error ER_WRONG_TYPE_FOR_VAR
+SET @@global.innodb_fast_shutdown = " ";
+SELECT @@global.innodb_fast_shutdown;
 
 --echo '#-------------------FN_DYNVARS_042_05----------------------------#'
 ###########################################################################
@@ -137,9 +147,11 @@ SET @@local.innodb_fast_shutdown = 0;
 #     Check if the value in SESSION Table contains variable value       #
 #########################################################################
 
+--disable_warnings
 SELECT count(VARIABLE_VALUE) AS res_is_0
 FROM INFORMATION_SCHEMA.SESSION_VARIABLES
 WHERE VARIABLE_NAME='innodb_fast_shutdown';
+--enable_warnings
 
 
 --echo '#----------------------FN_DYNVARS_042_07------------------------#'
@@ -147,9 +159,11 @@ WHERE VARIABLE_NAME='innodb_fast_shutdown';
 #      Check if the value in GLOBAL Table matches value in variable     #
 #########################################################################
 
+--disable_warnings
 SELECT @@global.innodb_fast_shutdown =
 VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_VARIABLES
 WHERE VARIABLE_NAME='innodb_fast_shutdown';
+--enable_warnings
 
 
 --echo '#---------------------FN_DYNVARS_042_08-------------------------#'

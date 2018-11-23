@@ -89,7 +89,6 @@ class ha_federated: public handler
   */
   DYNAMIC_ARRAY results;
   bool position_called, table_will_be_deleted;
-  uint fetch_num; // stores the fetch num
   MYSQL_ROW_OFFSET current_position;  // Current position used by ::position()
   int remote_error_number;
   char remote_error_buf[FEDERATED_QUERY_BUFFER_SIZE];
@@ -210,7 +209,7 @@ public:
   void start_bulk_insert(ha_rows rows, uint flags);
   int end_bulk_insert();
   int write_row(uchar *buf);
-  int update_row(const uchar *old_data, uchar *new_data);
+  int update_row(const uchar *old_data, const uchar *new_data);
   int delete_row(const uchar *buf);
   int index_init(uint keynr, bool sorted);
   ha_rows estimate_rows_upper_bound();

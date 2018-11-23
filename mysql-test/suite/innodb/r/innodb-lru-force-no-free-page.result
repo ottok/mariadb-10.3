@@ -7,4 +7,4 @@ INSERT INTO t1 VALUES (repeat('abcdefghijklmnopqrstuvwxyz',200));
 COMMIT;
 SET debug_dbug = @saved_debug;
 DROP TABLE t1;
-FOUND /InnoDB: Difficult to find free blocks / in mysqld.1.err
+FOUND 1 /InnoDB: Difficult to find free blocks / in mysqld.1.err

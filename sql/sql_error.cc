@@ -41,7 +41,7 @@ This file contains the implementation of error and warnings related
 
 ***********************************************************************/
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_error.h"
@@ -172,70 +172,6 @@ This file contains the implementation of error and warnings related
     See WL#2111 (Stored Procedures: Implement GET DIAGNOSTICS)
 */
 
-Sql_condition::Sql_condition()
- : Sql_alloc(),
-   m_class_origin((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_subclass_origin((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_constraint_catalog((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_constraint_schema((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_constraint_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_catalog_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_schema_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_table_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_column_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_cursor_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_message_text(),
-   m_sql_errno(0),
-   m_level(Sql_condition::WARN_LEVEL_ERROR),
-   m_mem_root(NULL)
-{
-  memset(m_returned_sqlstate, 0, sizeof(m_returned_sqlstate));
-}
-
-void Sql_condition::init(MEM_ROOT *mem_root)
-{
-  DBUG_ASSERT(mem_root != NULL);
-  DBUG_ASSERT(m_mem_root == NULL);
-  m_mem_root= mem_root;
-}
-
-void Sql_condition::clear()
-{
-  m_class_origin.length(0);
-  m_subclass_origin.length(0);
-  m_constraint_catalog.length(0);
-  m_constraint_schema.length(0);
-  m_constraint_name.length(0);
-  m_catalog_name.length(0);
-  m_schema_name.length(0);
-  m_table_name.length(0);
-  m_column_name.length(0);
-  m_cursor_name.length(0);
-  m_message_text.length(0);
-  m_sql_errno= 0;
-  m_level= Sql_condition::WARN_LEVEL_ERROR;
-}
-
-Sql_condition::Sql_condition(MEM_ROOT *mem_root)
- : Sql_alloc(),
-   m_class_origin((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_subclass_origin((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_constraint_catalog((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_constraint_schema((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_constraint_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_catalog_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_schema_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_table_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_column_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_cursor_name((const char*) NULL, 0, & my_charset_utf8_bin),
-   m_message_text(),
-   m_sql_errno(0),
-   m_level(Sql_condition::WARN_LEVEL_ERROR),
-   m_mem_root(mem_root)
-{
-  DBUG_ASSERT(mem_root != NULL);
-  memset(m_returned_sqlstate, 0, sizeof(m_returned_sqlstate));
-}
 
 static void copy_string(MEM_ROOT *mem_root, String* dst, const String* src)
 {
@@ -270,21 +206,6 @@ Sql_condition::copy_opt_attributes(const Sql_condition *cond)
   copy_string(m_mem_root, & m_cursor_name, & cond->m_cursor_name);
 }
 
-void
-Sql_condition::set(uint sql_errno, const char* sqlstate,
-                 Sql_condition::enum_warning_level level, const char* msg)
-{
-  DBUG_ASSERT(sql_errno != 0);
-  DBUG_ASSERT(sqlstate != NULL);
-  DBUG_ASSERT(msg != NULL);
-
-  m_sql_errno= sql_errno;
-  memcpy(m_returned_sqlstate, sqlstate, SQLSTATE_LENGTH);
-  m_returned_sqlstate[SQLSTATE_LENGTH]= '\0';
-
-  set_builtin_message_text(msg);
-  m_level= level;
-}
 
 void
 Sql_condition::set_builtin_message_text(const char* str)
@@ -312,15 +233,48 @@ Sql_condition::get_message_octet_length() const
   return m_message_text.length();
 }
 
-void
-Sql_condition::set_sqlstate(const char* sqlstate)
+
+void Sql_state_errno_level::assign_defaults(const Sql_state_errno *from)
 {
-  memcpy(m_returned_sqlstate, sqlstate, SQLSTATE_LENGTH);
-  m_returned_sqlstate[SQLSTATE_LENGTH]= '\0';
+  DBUG_ASSERT(from);
+  int sqlerrno= from->get_sql_errno();
+  /*
+    SIGNAL is restricted in sql_yacc.yy to only signal SQLSTATE conditions.
+  */
+  DBUG_ASSERT(from->has_sql_state());
+  set_sqlstate(from);
+  /* SQLSTATE class "00": illegal, rejected in the parser. */
+  DBUG_ASSERT(m_sqlstate[0] != '0' || get_sqlstate()[1] != '0');
+
+  if (Sql_state::is_warning())        /* SQLSTATE class "01": warning. */
+  {
+    m_level= Sql_condition::WARN_LEVEL_WARN;
+    m_sql_errno= sqlerrno ? sqlerrno : ER_SIGNAL_WARN;
+  }
+  else if (Sql_state::is_not_found()) /* SQLSTATE class "02": not found. */
+  {
+    m_level= Sql_condition::WARN_LEVEL_ERROR;
+    m_sql_errno= sqlerrno ? sqlerrno : ER_SIGNAL_NOT_FOUND;
+  }
+  else                               /* other SQLSTATE classes : error. */
+  {
+    m_level= Sql_condition::WARN_LEVEL_ERROR;
+    m_sql_errno= sqlerrno ? sqlerrno : ER_SIGNAL_EXCEPTION;
+  }
 }
 
+
+void Sql_condition::assign_defaults(THD *thd, const Sql_state_errno *from)
+{
+  if (from)
+    Sql_state_errno_level::assign_defaults(from);
+  if (!get_message_text())
+    set_builtin_message_text(ER(get_sql_errno()));
+}
+
+
 Diagnostics_area::Diagnostics_area(bool initialize)
-  : m_main_wi(0, false, initialize)
+  : is_bulk_execution(0), m_main_wi(0, false, initialize)
 {
   push_warning_info(&m_main_wi);
 
@@ -330,7 +284,8 @@ Diagnostics_area::Diagnostics_area(bool initialize)
 Diagnostics_area::Diagnostics_area(ulonglong warning_info_id,
                                    bool allow_unlimited_warnings,
                                    bool initialize)
-  : m_main_wi(warning_info_id, allow_unlimited_warnings, initialize)
+  : is_bulk_execution(0),
+  m_main_wi(warning_info_id, allow_unlimited_warnings, initialize)
 {
   push_warning_info(&m_main_wi);
 
@@ -347,11 +302,13 @@ void
 Diagnostics_area::reset_diagnostics_area()
 {
   DBUG_ENTER("reset_diagnostics_area");
+  m_skip_flush= FALSE;
 #ifdef DBUG_OFF
   m_can_overwrite_status= FALSE;
   /** Don't take chances in production */
   m_message[0]= '\0';
-  m_sql_errno= 0;
+  Sql_state_errno::clear();
+  Sql_user_condition_identity::clear();
   m_affected_rows= 0;
   m_last_insert_id= 0;
   m_statement_warn_count= 0;
@@ -375,22 +332,33 @@ Diagnostics_area::set_ok_status(ulonglong affected_rows,
                                 const char *message)
 {
   DBUG_ENTER("set_ok_status");
-  DBUG_ASSERT(! is_set());
+  DBUG_ASSERT(!is_set() || (m_status == DA_OK_BULK && is_bulk_op()));
   /*
     In production, refuse to overwrite an error or a custom response
     with an OK packet.
   */
-  if (is_error() || is_disabled())
+  if (unlikely(is_error() || is_disabled()))
     return;
-
-  m_statement_warn_count= current_statement_warn_count();
-  m_affected_rows= affected_rows;
+  /*
+    When running a bulk operation, m_status will be DA_OK for the first
+    operation and set to DA_OK_BULK for all following operations.
+  */
+  if (m_status == DA_OK_BULK)
+  {
+    m_statement_warn_count+= current_statement_warn_count();
+    m_affected_rows+= affected_rows;
+  }
+  else
+  {
+    m_statement_warn_count= current_statement_warn_count();
+    m_affected_rows= affected_rows;
+    m_status= (is_bulk_op() ? DA_OK_BULK : DA_OK);
+  }
   m_last_insert_id= last_insert_id;
   if (message)
     strmake_buf(m_message, message);
   else
     m_message[0]= '\0';
-  m_status= DA_OK;
   DBUG_VOID_RETURN;
 }
 
@@ -409,7 +377,7 @@ Diagnostics_area::set_eof_status(THD *thd)
     In production, refuse to overwrite an error or a custom response
     with an EOF packet.
   */
-  if (is_error() || is_disabled())
+  if (unlikely(is_error() || is_disabled()))
     return;
 
   /*
@@ -439,6 +407,7 @@ Diagnostics_area::set_error_status(uint sql_errno)
   set_error_status(sql_errno,
                    ER(sql_errno),
                    mysql_errno_to_sqlstate(sql_errno),
+                   Sql_user_condition_identity(),
                    NULL);
 }
 
@@ -452,6 +421,7 @@ Diagnostics_area::set_error_status(uint sql_errno)
   @param sql_errno        SQL-condition error number
   @param message          SQL-condition message
   @param sqlstate         SQL-condition state
+  @param ucid             User defined condition identity
   @param error_condition  SQL-condition object representing the error state
 
   @note Note, that error_condition may be NULL. It happens if a) OOM error is
@@ -462,6 +432,7 @@ void
 Diagnostics_area::set_error_status(uint sql_errno,
                                    const char *message,
                                    const char *sqlstate,
+                                   const Sql_user_condition_identity &ucid,
                                    const Sql_condition *error_condition)
 {
   DBUG_ENTER("set_error_status");
@@ -488,9 +459,8 @@ Diagnostics_area::set_error_status(uint sql_errno,
     return;
 #endif
 
-  m_sql_errno= sql_errno;
-  memcpy(m_sqlstate, sqlstate, SQLSTATE_LENGTH);
-  m_sqlstate[SQLSTATE_LENGTH]= '\0';
+  Sql_state_errno::set(sql_errno, sqlstate);
+  Sql_user_condition_identity::set(ucid);
   strmake_buf(m_message, message);
 
   get_warning_info()->set_error_condition(error_condition);
@@ -536,7 +506,7 @@ void Warning_info::init()
 {
   /* Initialize sub structures */
   DBUG_ASSERT(initialized == 0);
-  init_sql_alloc(&m_warn_root, WARN_ALLOC_BLOCK_SIZE,
+  init_sql_alloc(&m_warn_root, "Warning_info", WARN_ALLOC_BLOCK_SIZE,
                  WARN_ALLOC_PREALLOC_SIZE, MYF(MY_THREAD_SPECIFIC));
   initialized= 1;
 }
@@ -553,8 +523,7 @@ Warning_info::~Warning_info()
 }
 
 
-bool Warning_info::has_sql_condition(const char *message_str,
-                                     ulong message_length) const
+bool Warning_info::has_sql_condition(const char *message_str, size_t message_length) const
 {
   Diagnostics_area::Sql_condition_iterator it(m_warn_list);
   const Sql_condition *err;
@@ -682,8 +651,7 @@ void Warning_info::reserve_space(THD *thd, uint count)
 }
 
 Sql_condition *Warning_info::push_warning(THD *thd,
-                                          uint sql_errno, const char* sqlstate,
-                                          Sql_condition::enum_warning_level level,
+                                          const Sql_condition_identity *value,
                                           const char *msg)
 {
   Sql_condition *cond= NULL;
@@ -693,14 +661,11 @@ Sql_condition *Warning_info::push_warning(THD *thd,
     if (m_allow_unlimited_warnings ||
         m_warn_list.elements() < thd->variables.max_error_count)
     {
-      cond= new (& m_warn_root) Sql_condition(& m_warn_root);
+      cond= new (& m_warn_root) Sql_condition(& m_warn_root, *value, msg);
       if (cond)
-      {
-        cond->set(sql_errno, sqlstate, level, msg);
         m_warn_list.push_back(cond);
-      }
     }
-    m_warn_count[(uint) level]++;
+    m_warn_count[(uint) value->get_level()]++;
   }
 
   m_current_statement_warn_count++;
@@ -708,13 +673,11 @@ Sql_condition *Warning_info::push_warning(THD *thd,
 }
 
 
-Sql_condition *Warning_info::push_warning(THD *thd, const Sql_condition *sql_condition)
+Sql_condition *Warning_info::push_warning(THD *thd,
+                                          const Sql_condition *sql_condition)
 {
-  Sql_condition *new_condition= push_warning(thd,
-                                           sql_condition->get_sql_errno(),
-                                           sql_condition->get_sqlstate(),
-                                           sql_condition->get_level(),
-                                           sql_condition->get_message_text());
+  Sql_condition *new_condition= push_warning(thd, sql_condition,
+                                             sql_condition->get_message_text());
 
   if (new_condition)
     new_condition->copy_opt_attributes(sql_condition);
@@ -805,12 +768,12 @@ void push_warning_printf(THD *thd, Sql_condition::enum_warning_level level,
     TRUE  Error sending data to client
 */
 
-const LEX_STRING warning_level_names[]=
+const LEX_CSTRING warning_level_names[]=
 {
-  { C_STRING_WITH_LEN("Note") },
-  { C_STRING_WITH_LEN("Warning") },
-  { C_STRING_WITH_LEN("Error") },
-  { C_STRING_WITH_LEN("?") }
+  { STRING_WITH_LEN("Note") },
+  { STRING_WITH_LEN("Warning") },
+  { STRING_WITH_LEN("Error") },
+  { STRING_WITH_LEN("?") }
 };
 
 bool mysqld_show_warnings(THD *thd, ulong levels_to_show)
@@ -954,11 +917,11 @@ char *err_conv(char *buff, uint to_length, const char *from,
    length of converted string
 */
 
-uint32 convert_error_message(char *to, uint32 to_length, CHARSET_INFO *to_cs,
-                             const char *from, uint32 from_length,
+size_t convert_error_message(char *to, size_t to_length, CHARSET_INFO *to_cs,
+                             const char *from, size_t from_length,
                              CHARSET_INFO *from_cs, uint *errors)
 {
-  int         cnvres;
+  int  cnvres;
   my_wc_t     wc;
   const uchar *from_end= (const uchar*) from+from_length;
   char *to_start= to;
@@ -966,7 +929,7 @@ uint32 convert_error_message(char *to, uint32 to_length, CHARSET_INFO *to_cs,
   my_charset_conv_mb_wc mb_wc= from_cs->cset->mb_wc;
   my_charset_conv_wc_mb wc_mb;
   uint error_count= 0;
-  uint length;
+  size_t length;
 
   DBUG_ASSERT(to_length > 0);
   /* Make room for the null terminator. */
@@ -1005,7 +968,7 @@ uint32 convert_error_message(char *to, uint32 to_length, CHARSET_INFO *to_cs,
       length= (wc <= 0xFFFF) ? 6/* '\1234' format*/ : 9 /* '\+123456' format*/;
       if ((uchar*)(to + length) >= to_end)
         break;
-      cnvres= my_snprintf(to, 9,
+      cnvres= (int)my_snprintf(to, 9,
                           (wc <= 0xFFFF) ? "\\%04X" : "\\+%06X", (uint) wc);
       to+= cnvres;
     }
@@ -1015,7 +978,7 @@ uint32 convert_error_message(char *to, uint32 to_length, CHARSET_INFO *to_cs,
 
   *to= 0;
   *errors= error_count;
-  return (uint32) (to - to_start);
+  return (size_t) (to - to_start);
 }
 
 
@@ -1030,7 +993,7 @@ uint32 convert_error_message(char *to, uint32 to_length, CHARSET_INFO *to_cs,
   @retval false if it's bad.
 */
 
-bool is_sqlstate_valid(const LEX_STRING *sqlstate)
+bool is_sqlstate_valid(const LEX_CSTRING *sqlstate)
 {
   if (sqlstate->length != 5)
     return false;

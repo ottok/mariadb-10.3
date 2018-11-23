@@ -34,8 +34,8 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program; if not, write to the Free Software Foundation, Inc., 59 Temple
-Place, Suite 330, Boston, MA 02111-1307 USA
+this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin St, Fifth Floor, Boston, MA 02111-1301 USA
 
 *******************************************************/
 #define MYSQL_CLIENT
@@ -48,12 +48,15 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include <limits>
 #include "common.h"
 #include "xtrabackup.h"
+#include "srv0srv.h"
 #include "mysql_version.h"
 #include "backup_copy.h"
 #include "backup_mysql.h"
 #include "mysqld.h"
 #include "encryption_plugin.h"
 #include <sstream>
+#include <sql_error.h>
+#include <ut0ut.h>
 
 
 char *tool_name;
@@ -116,6 +119,7 @@ xb_mysql_connect()
 		mysql_options(connection, MYSQL_PLUGIN_DIR, xb_plugin_dir);
 	}
 	mysql_options(connection, MYSQL_OPT_PROTOCOL, &opt_protocol);
+	mysql_options(connection,MYSQL_SET_CHARSET_NAME, "utf8");
 
 	msg_ts("Connecting to MySQL server host: %s, user: %s, password: %s, "
 	       "port: %s, socket: %s\n", opt_host ? opt_host : "localhost",
@@ -183,6 +187,7 @@ xb_mysql_query(MYSQL *connection, const char *query, bool use_result,
 
 		if (!use_result) {
 			mysql_free_result(mysql_result);
+			mysql_result = NULL;
 		}
 	}
 
@@ -494,13 +499,13 @@ get_mysql_vars(MYSQL *connection)
 	}
 
 	if (innodb_log_files_in_group_var) {
-		innobase_log_files_in_group = strtol(
+		srv_n_log_files = strtol(
 			innodb_log_files_in_group_var, &endptr, 10);
 		ut_ad(*endptr == 0);
 	}
 
 	if (innodb_log_file_size_var) {
-		innobase_log_file_size = strtoll(
+		srv_log_file_size = strtoll(
 			innodb_log_file_size_var, &endptr, 10);
 		ut_ad(*endptr == 0);
 	}
@@ -579,7 +584,6 @@ bool
 select_incremental_lsn_from_history(lsn_t *incremental_lsn)
 {
 	MYSQL_RES *mysql_result;
-	MYSQL_ROW row;
 	char query[1000];
 	char buf[100];
 
@@ -587,7 +591,7 @@ select_incremental_lsn_from_history(lsn_t *incremental_lsn)
 		mysql_real_escape_string(mysql_connection, buf,
 				opt_incremental_history_name,
 				(unsigned long)strlen(opt_incremental_history_name));
-		ut_snprintf(query, sizeof(query),
+		snprintf(query, sizeof(query),
 			"SELECT innodb_to_lsn "
 			"FROM PERCONA_SCHEMA.xtrabackup_history "
 			"WHERE name = '%s' "
@@ -600,7 +604,7 @@ select_incremental_lsn_from_history(lsn_t *incremental_lsn)
 		mysql_real_escape_string(mysql_connection, buf,
 				opt_incremental_history_uuid,
 				(unsigned long)strlen(opt_incremental_history_uuid));
-		ut_snprintf(query, sizeof(query),
+		snprintf(query, sizeof(query),
 			"SELECT innodb_to_lsn "
 			"FROM PERCONA_SCHEMA.xtrabackup_history "
 			"WHERE uuid = '%s' "
@@ -612,27 +616,27 @@ select_incremental_lsn_from_history(lsn_t *incremental_lsn)
 	mysql_result = xb_mysql_query(mysql_connection, query, true);
 
 	ut_ad(mysql_num_fields(mysql_result) == 1);
-	if (!(row = mysql_fetch_row(mysql_result))) {
+	const MYSQL_ROW row = mysql_fetch_row(mysql_result);
+	if (row) {
+		*incremental_lsn = strtoull(row[0], NULL, 10);
+		msg("Found and using lsn: " LSN_PF " for %s %s\n",
+		    *incremental_lsn,
+		    opt_incremental_history_uuid ? "uuid" : "name",
+		    opt_incremental_history_uuid ?
+		    opt_incremental_history_uuid :
+		    opt_incremental_history_name);
+	} else {
 		msg("Error while attempting to find history record "
 			"for %s %s\n",
 			opt_incremental_history_uuid ? "uuid" : "name",
 			opt_incremental_history_uuid ?
 		    		opt_incremental_history_uuid :
 		    		opt_incremental_history_name);
-		return(false);
 	}
-
-	*incremental_lsn = strtoull(row[0], NULL, 10);
 
 	mysql_free_result(mysql_result);
 
-	msg("Found and using lsn: " LSN_PF " for %s %s\n", *incremental_lsn,
-		opt_incremental_history_uuid ? "uuid" : "name",
-		opt_incremental_history_uuid ?
-	    		opt_incremental_history_uuid :
-	    		opt_incremental_history_name);
-
-	return(true);
+	return(row != NULL);
 }
 
 static
@@ -719,16 +723,14 @@ static
 bool
 have_queries_to_wait_for(MYSQL *connection, uint threshold)
 {
-	MYSQL_RES *result;
-	MYSQL_ROW row;
-	bool all_queries;
+	MYSQL_RES *result = xb_mysql_query(connection, "SHOW FULL PROCESSLIST",
+					   true);
+	const bool all_queries = (opt_lock_wait_query_type == QUERY_TYPE_ALL);
+	bool have_to_wait = false;
 
-	result = xb_mysql_query(connection, "SHOW FULL PROCESSLIST", true);
-
-	all_queries = (opt_lock_wait_query_type == QUERY_TYPE_ALL);
-	while ((row = mysql_fetch_row(result)) != NULL) {
+	while (MYSQL_ROW row = mysql_fetch_row(result)) {
 		const char	*info		= row[7];
-		int		duration	= atoi(row[5]);
+		int		duration	= row[5] ? atoi(row[5]) : 0;
 		char		*id		= row[0];
 
 		if (info != NULL
@@ -737,28 +739,27 @@ have_queries_to_wait_for(MYSQL *connection, uint threshold)
 		    	|| is_update_query(info))) {
 			msg_ts("Waiting for query %s (duration %d sec): %s",
 			       id, duration, info);
-			return(true);
+			have_to_wait = true;
+			break;
 		}
 	}
 
-	return(false);
+	mysql_free_result(result);
+	return(have_to_wait);
 }
 
 static
 void
 kill_long_queries(MYSQL *connection, time_t timeout)
 {
-	MYSQL_RES *result;
-	MYSQL_ROW row;
-	bool all_queries;
 	char kill_stmt[100];
 
-	result = xb_mysql_query(connection, "SHOW FULL PROCESSLIST", true);
-
-	all_queries = (opt_kill_long_query_type == QUERY_TYPE_ALL);
-	while ((row = mysql_fetch_row(result)) != NULL) {
+	MYSQL_RES *result = xb_mysql_query(connection, "SHOW FULL PROCESSLIST",
+					   true);
+	const bool all_queries = (opt_kill_long_query_type == QUERY_TYPE_ALL);
+	while (MYSQL_ROW row = mysql_fetch_row(result)) {
 		const char	*info		= row[7];
-		long long		duration	= atoll(row[5]);
+		long long		duration	= row[5]? atoll(row[5]) : 0;
 		char		*id		= row[0];
 
 		if (info != NULL &&
@@ -767,11 +768,13 @@ kill_long_queries(MYSQL *connection, time_t timeout)
 		    	is_select_query(info))) {
 			msg_ts("Killing query %s (duration %d sec): %s\n",
 			       id, (int)duration, info);
-			ut_snprintf(kill_stmt, sizeof(kill_stmt),
+			snprintf(kill_stmt, sizeof(kill_stmt),
 				    "KILL %s", id);
 			xb_mysql_query(connection, kill_stmt, false, false);
 		}
 	}
+
+	mysql_free_result(result);
 }
 
 static
@@ -799,7 +802,7 @@ wait_for_no_updates(MYSQL *connection, uint timeout, uint threshold)
 
 static
 os_thread_ret_t
-kill_query_thread(
+DECLARE_THREAD(kill_query_thread)(
 /*===============*/
 	void *arg __attribute__((unused)))
 {
@@ -841,7 +844,7 @@ stop_thread:
 
 	os_event_set(kill_query_thread_stopped);
 
-	os_thread_exit(NULL);
+	os_thread_exit();
 	OS_THREAD_DUMMY_RETURN;
 }
 
@@ -850,9 +853,9 @@ static
 void
 start_query_killer()
 {
-	kill_query_thread_stop		= os_event_create();
-	kill_query_thread_started	= os_event_create();
-	kill_query_thread_stopped	= os_event_create();
+	kill_query_thread_stop		= os_event_create(0);
+	kill_query_thread_started	= os_event_create(0);
+	kill_query_thread_stopped	= os_event_create(0);
 
 	os_thread_create(kill_query_thread, NULL, &kill_query_thread_id);
 
@@ -865,6 +868,84 @@ stop_query_killer()
 {
 	os_event_set(kill_query_thread_stop);
 	os_event_wait_time(kill_query_thread_stopped, 60000);
+}
+
+
+/*
+Killing connections that wait for MDL lock.
+If lock-ddl-per-table is used, there can be some DDL statements
+
+FLUSH TABLES would hang infinitely, if DDL statements are waiting for
+MDL lock, which mariabackup currently holds. Therefore we start killing
+those  statements from a dedicated thread, until FLUSH TABLES WITH READ LOCK
+succeeds.
+*/
+
+static os_event_t mdl_killer_stop_event;
+static os_event_t mdl_killer_finished_event;
+
+static
+os_thread_ret_t
+DECLARE_THREAD(kill_mdl_waiters_thread(void *))
+{
+	MYSQL	*mysql;
+	if ((mysql = xb_mysql_connect()) == NULL) {
+		msg("Error: kill mdl waiters thread failed to connect\n");
+		goto stop_thread;
+	}
+
+	for(;;){
+		if (os_event_wait_time(mdl_killer_stop_event, 1000) == 0)
+			break;
+
+		MYSQL_RES *result = xb_mysql_query(mysql,
+			"SELECT ID, COMMAND, INFO FROM INFORMATION_SCHEMA.PROCESSLIST "
+			" WHERE State='Waiting for table metadata lock'",
+			true, true);
+		while (MYSQL_ROW row = mysql_fetch_row(result))
+		{
+			char query[64];
+
+			if (row[1] && !strcmp(row[1], "Killed"))
+				continue;
+
+			msg_ts("Killing MDL waiting %s ('%s') on connection %s\n",
+				row[1], row[2], row[0]);
+			snprintf(query, sizeof(query), "KILL QUERY %s", row[0]);
+			if (mysql_query(mysql, query) && (mysql_errno(mysql) != ER_NO_SUCH_THREAD)) {
+				msg("Error: failed to execute query %s: %s\n", query,mysql_error(mysql));
+				exit(EXIT_FAILURE);
+			}
+		}
+		mysql_free_result(result);
+	}
+
+	mysql_close(mysql);
+
+stop_thread:
+	msg_ts("Kill mdl waiters thread stopped\n");
+	os_event_set(mdl_killer_finished_event);
+	os_thread_exit();
+	return os_thread_ret_t(0);
+}
+
+
+static void start_mdl_waiters_killer()
+{
+	mdl_killer_stop_event = os_event_create(0);
+	mdl_killer_finished_event = os_event_create(0);
+	os_thread_create(kill_mdl_waiters_thread, 0, 0);
+}
+
+
+/* Tell MDL killer to stop and finish for its completion*/
+static void stop_mdl_waiters_killer()
+{
+	os_event_set(mdl_killer_stop_event);
+	os_event_wait(mdl_killer_finished_event);
+
+	os_event_destroy(mdl_killer_stop_event);
+	os_event_destroy(mdl_killer_finished_event);
 }
 
 /*********************************************************************//**
@@ -887,6 +968,10 @@ lock_tables(MYSQL *connection)
 		msg_ts("Executing LOCK TABLES FOR BACKUP...\n");
 		xb_mysql_query(connection, "LOCK TABLES FOR BACKUP", false);
 		return(true);
+	}
+
+	if (opt_lock_ddl_per_table) {
+		start_mdl_waiters_killer();
 	}
 
 	if (!opt_lock_wait_timeout && !opt_kill_long_queries_timeout) {
@@ -928,6 +1013,10 @@ lock_tables(MYSQL *connection)
 	}
 
 	xb_mysql_query(connection, "FLUSH TABLES WITH READ LOCK", false);
+
+	if (opt_lock_ddl_per_table) {
+		stop_mdl_waiters_killer();
+	}
 
 	if (opt_kill_long_queries_timeout) {
 		stop_query_killer();
@@ -1287,8 +1376,8 @@ write_current_binlog_file(MYSQL *connection)
 			goto cleanup;
 		}
 
-		ut_snprintf(filepath, sizeof(filepath), "%s%c%s",
-				log_bin_dir, FN_LIBCHAR, log_bin_file);
+		snprintf(filepath, sizeof(filepath), "%s%c%s",
+			 log_bin_dir, FN_LIBCHAR, log_bin_file);
 		result = copy_file(ds_data, filepath, log_bin_file, 0);
 	}
 
@@ -1368,17 +1457,27 @@ cleanup:
 	return(result);
 }
 
-static string escape_and_quote(MYSQL *mysql,const char *str)
+struct escape_and_quote
 {
-	if (!str)
-		return "NULL";
-	size_t len = strlen(str);
-	char* escaped = (char *)alloca(2 * len + 3);
-	escaped[0] = '\'';
-	size_t new_len = mysql_real_escape_string(mysql, escaped+1, str, len);
-	escaped[new_len + 1] = '\'';
-	escaped[new_len + 2] = 0;
-	return string(escaped);
+	escape_and_quote(MYSQL *mysql, const char *str)
+		: mysql(mysql), str(str) {}
+	MYSQL * const mysql;
+	const char * const str;
+};
+
+static
+std::ostream&
+operator<<(std::ostream& s, const escape_and_quote& eq)
+{
+	if (!eq.str)
+		return s << "NULL";
+	s << '\'';
+	size_t len = strlen(eq.str);
+	char* escaped = (char *)alloca(2 * len + 1);
+	len = mysql_real_escape_string(eq.mysql, escaped, eq.str, (ulong)len);
+	s << std::string(escaped, len);
+	s << '\'';
+	return s;
 }
 
 /*********************************************************************//**
@@ -1387,7 +1486,7 @@ PERCONA_SCHEMA.xtrabackup_history and writes a new history record to the
 table containing all the history info particular to the just completed
 backup. */
 bool
-write_xtrabackup_info(MYSQL *connection)
+write_xtrabackup_info(MYSQL *connection, const char * filename, bool history)
 {
 
 	char *uuid = NULL;
@@ -1395,11 +1494,8 @@ write_xtrabackup_info(MYSQL *connection)
 	char buf_start_time[100];
 	char buf_end_time[100];
 	tm tm;
-	ostringstream oss;
+	std::ostringstream oss;
 	const char *xb_stream_name[] = {"file", "tar", "xbstream"};
-
-
-	ut_ad(xtrabackup_stream_fmt < 3);
 
 	uuid = read_mysql_one_value(connection, "SELECT UUID()");
 	server_version = read_mysql_one_value(connection, "SELECT VERSION()");
@@ -1418,7 +1514,7 @@ write_xtrabackup_info(MYSQL *connection)
 		|| xtrabackup_databases_exclude
 		);
 
-	backup_file_printf(XTRABACKUP_INFO,
+	backup_file_printf(filename,
 		"uuid = %s\n"
 		"name = %s\n"
 		"tool_name = %s\n"
@@ -1455,7 +1551,7 @@ write_xtrabackup_info(MYSQL *connection)
 		xb_stream_name[xtrabackup_stream_fmt], /* format */
 		xtrabackup_compress ? "compressed" : "N"); /* compressed */
 
-	if (!opt_history) {
+	if (!history) {
 		goto cleanup;
 	}
 
@@ -1566,28 +1662,21 @@ bool write_backup_config_file()
 		"# The MySQL server\n"
 		"[mysqld]\n"
 		"innodb_checksum_algorithm=%s\n"
-		"innodb_log_checksum_algorithm=%s\n"
 		"innodb_data_file_path=%s\n"
 		"innodb_log_files_in_group=%lu\n"
-		"innodb_log_file_size=%lld\n"
+		"innodb_log_file_size=%llu\n"
 		"innodb_page_size=%lu\n"
-		"innodb_log_block_size=%lu\n"
 		"innodb_undo_directory=%s\n"
 		"innodb_undo_tablespaces=%lu\n"
 		"%s%s\n"
-		"%s%s\n"
 		"%s\n",
 		innodb_checksum_algorithm_names[srv_checksum_algorithm],
-		innodb_checksum_algorithm_names[srv_log_checksum_algorithm],
 		make_local_paths(innobase_data_file_path).c_str(),
 		srv_n_log_files,
-		innobase_log_file_size,
+		srv_log_file_size,
 		srv_page_size,
-		srv_log_block_size,
 		srv_undo_dir,
 		srv_undo_tablespaces,
-		innobase_doublewrite_file ? "innodb_doublewrite_file=" : "",
-		innobase_doublewrite_file ? innobase_doublewrite_file : "",
 		innobase_buffer_pool_filename ?
 			"innodb_buffer_pool_filename=" : "",
 		innobase_buffer_pool_filename ?
@@ -1611,8 +1700,8 @@ char *make_argv(char *buf, size_t len, int argc, char **argv)
 		if (strncmp(*argv, "--password", strlen("--password")) == 0) {
 			arg = "--password=...";
 		}
-		left-= ut_snprintf(buf + len - left, left,
-			"%s%c", arg, argc > 1 ? ' ' : 0);
+		left-= snprintf(buf + len - left, left,
+				"%s%c", arg, argc > 1 ? ' ' : 0);
 		++argv; --argc;
 	}
 
@@ -1668,3 +1757,65 @@ backup_cleanup()
 		mysql_close(mysql_connection);
 	}
 }
+
+
+static MYSQL *mdl_con = NULL;
+
+std::map<ulint, std::string> spaceid_to_tablename;
+
+void
+mdl_lock_init()
+{
+  mdl_con = xb_mysql_connect();
+  if (!mdl_con)
+  {
+    msg("FATAL: cannot create connection for MDL locks");
+    exit(1);
+  }
+  const char *query =
+    "SELECT NAME, SPACE FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE NAME LIKE '%%/%%'";
+
+  MYSQL_RES *mysql_result = xb_mysql_query(mdl_con, query, true, true);
+  while (MYSQL_ROW row = mysql_fetch_row(mysql_result)) {
+    int err;
+    ulint id = (ulint)my_strtoll10(row[1], 0, &err);
+    spaceid_to_tablename[id] = ut_get_name(0, row[0]);
+  }
+  mysql_free_result(mysql_result);
+
+  xb_mysql_query(mdl_con, "BEGIN", false, true);
+}
+
+void
+mdl_lock_table(ulint space_id)
+{
+  if (space_id == 0)
+    return;
+
+  std::string full_table_name = spaceid_to_tablename[space_id];
+
+  DBUG_EXECUTE_IF("rename_during_mdl_lock_table",
+    if (full_table_name == "`test`.`t1`")
+      xb_mysql_query(mysql_connection, "RENAME TABLE test.t1 to test.t2", false, true);
+  );
+
+  std::ostringstream lock_query;
+  lock_query << "SELECT 1 FROM " << full_table_name  << " LIMIT 0";
+  msg_ts("Locking MDL for %s\n", full_table_name.c_str());
+  if (mysql_query(mdl_con, lock_query.str().c_str())) {
+      msg_ts("Warning : locking MDL failed for space id %zu, name %s\n", space_id, full_table_name.c_str());
+  } else {
+      MYSQL_RES *r = mysql_store_result(mdl_con);
+      mysql_free_result(r);
+  }
+}
+
+void
+mdl_unlock_all()
+{
+  msg_ts("Unlocking MDL for all tables\n");
+  xb_mysql_query(mdl_con, "COMMIT", false, true);
+  mysql_close(mdl_con);
+  spaceid_to_tablename.clear();
+}
+

@@ -393,6 +393,11 @@ DECLARE_MYSQL_SYSVAR_SIMPLE(name, unsigned long long) = { \
   PLUGIN_VAR_LONGLONG | PLUGIN_VAR_UNSIGNED | ((opt) & PLUGIN_VAR_MASK), \
   #name, comment, check, update, &varname, def, min, max, blk }
 
+#define MYSQL_SYSVAR_UINT64_T(name, varname, opt, comment, check, update, def, min, max, blk) \
+DECLARE_MYSQL_SYSVAR_SIMPLE(name, uint64_t) = { \
+  PLUGIN_VAR_LONGLONG | PLUGIN_VAR_UNSIGNED | ((opt) & PLUGIN_VAR_MASK), \
+  #name, comment, check, update, &varname, def, min, max, blk }
+
 #ifdef _WIN64
 #define MYSQL_SYSVAR_SIZE_T(name, varname, opt, comment, check, update, def, min, max, blk) \
 DECLARE_MYSQL_SYSVAR_SIMPLE(name, size_t) = { \
@@ -644,7 +649,6 @@ void **thd_ha_data(const MYSQL_THD thd, const struct handlerton *hton);
 void thd_storage_lock_wait(MYSQL_THD thd, long long value);
 int thd_tx_isolation(const MYSQL_THD thd);
 int thd_tx_is_read_only(const MYSQL_THD thd);
-int thd_rpl_is_parallel(const MYSQL_THD thd);
 /**
   Create a temporary file.
 

@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 /* Page write filters implementation */
 
+#include <my_global.h>
 #include <my_base.h>
 #include "common.h"
 #include "write_filt.h"
@@ -68,15 +69,15 @@ wf_incremental_init(xb_write_filt_ctxt_t *ctxt, char *dst_name,
 		    xb_fil_cur_t *cursor)
 {
 	char				meta_name[FN_REFLEN];
-	xb_delta_info_t			info;
 	xb_wf_incremental_ctxt_t	*cp =
 		&(ctxt->u.wf_incremental_ctxt);
 
 	ctxt->cursor = cursor;
 
 	/* allocate buffer for incremental backup (4096 pages) */
-	cp->delta_buf_size = (cursor->page_size / 4) * cursor->page_size;
-	cp->delta_buf = (unsigned char *)os_mem_alloc_large(&cp->delta_buf_size, false);
+	cp->delta_buf_size = (cursor->page_size.physical() / 4)
+                * cursor->page_size.physical();
+	cp->delta_buf = (unsigned char *)os_mem_alloc_large(&cp->delta_buf_size);
 
 	if (!cp->delta_buf) {
 		msg("[%02u] mariabackup: Error: "
@@ -88,9 +89,7 @@ wf_incremental_init(xb_write_filt_ctxt_t *ctxt, char *dst_name,
 	/* write delta meta info */
 	snprintf(meta_name, sizeof(meta_name), "%s%s", dst_name,
 		 XB_DELTA_INFO_SUFFIX);
-	info.page_size = cursor->page_size;
-	info.zip_size = cursor->zip_size;
-	info.space_id = cursor->space_id;
+	const xb_delta_info_t	info(cursor->page_size, cursor->space_id);
 	if (!xb_write_delta_metadata(meta_name, &info)) {
 		msg("[%02u] mariabackup: Error: "
 		    "failed to write meta info for %s\n",
@@ -117,8 +116,9 @@ wf_incremental_process(xb_write_filt_ctxt_t *ctxt, ds_file_t *dstfile)
 {
 	ulint				i;
 	xb_fil_cur_t			*cursor = ctxt->cursor;
-	ulint				page_size = cursor->page_size;
 	byte				*page;
+	const ulint			page_size
+		= cursor->page_size.physical();
 	xb_wf_incremental_ctxt_t	*cp = &(ctxt->u.wf_incremental_ctxt);
 
 	for (i = 0, page = cursor->buf; i < cursor->buf_npages;
@@ -163,7 +163,8 @@ static my_bool
 wf_incremental_finalize(xb_write_filt_ctxt_t *ctxt, ds_file_t *dstfile)
 {
 	xb_fil_cur_t			*cursor = ctxt->cursor;
-	ulint				page_size = cursor->page_size;
+	const ulint			page_size
+		= cursor->page_size.physical();
 	xb_wf_incremental_ctxt_t	*cp = &(ctxt->u.wf_incremental_ctxt);
 
 	if (cp->npages != page_size / 4) {

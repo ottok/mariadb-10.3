@@ -26,7 +26,11 @@ Created 04/01/2015 Jan Lindström
 #ifndef fil0crypt_h
 #define fil0crypt_h
 
-#include "os0sync.h"
+#ifndef UNIV_INNOCHECKSUM
+#include "os0event.h"
+#include "my_crypt.h"
+#include "fil0fil.h"
+#endif /*! UNIV_INNOCHECKSUM */
 
 /**
 * Magic pattern in start of crypt data on page 0
@@ -70,12 +74,6 @@ struct key_struct
 
 /** is encryption enabled */
 extern ulong	srv_encrypt_tables;
-
-#ifndef UNIV_INNOCHECKSUM
-#ifdef UNIV_PFS_MUTEX
-extern mysql_pfs_key_t fil_crypt_data_mutex_key;
-#endif
-#endif /* !UNIV_INNOCHECKSUM */
 
 /** Mutex helper for crypt_data->scheme
 @param[in, out]	schme	encryption scheme
@@ -126,8 +124,7 @@ struct fil_space_crypt_t : st_encryption_scheme
 	{
 		key_id = new_key_id;
 		my_random_bytes(iv, sizeof(iv));
-		mutex_create(fil_crypt_data_mutex_key,
-			&mutex, SYNC_NO_ORDER_CHECK);
+		mutex_create(LATCH_ID_FIL_CRYPT_DATA_MUTEX, &mutex);
 		locker = crypt_data_scheme_locker;
 		type = new_type;
 
@@ -184,9 +181,10 @@ struct fil_space_crypt_t : st_encryption_scheme
 	}
 
 	/** Write crypt data to a page (0)
-	@param[in,out]	page0		Page 0 where to write
-	@param[in,out]	mtr		Minitransaction */
-	void write_page0(byte* page0, mtr_t* mtr);
+	@param[in]	space	tablespace
+	@param[in,out]	page0	first page of the tablespace
+	@param[in,out]	mtr	mini-transaction */
+	void write_page0(const fil_space_t* space, byte* page0, mtr_t* mtr);
 
 	uint min_key_version; // min key version for this space
 	ulint page0_offset;   // byte offset on page 0 for crypt data
@@ -211,7 +209,7 @@ struct fil_space_crypt_status_t {
 	uint  min_key_version;   /*!< min key version */
 	uint  current_key_version;/*!< current key version */
 	uint  keyserver_requests;/*!< no of key requests to key server */
-	ulint key_id;            /*!< current key_id */
+	uint key_id;            /*!< current key_id */
 	bool rotating;           /*!< is key rotation ongoing */
 	bool flushing;           /*!< is flush at end of rotation ongoing */
 	ulint rotate_next_page_number; /*!< next page if key rotating */
@@ -251,7 +249,7 @@ UNIV_INTERN
 void
 fil_space_crypt_cleanup();
 
-/******************************************************************
+/**
 Create a fil_space_crypt_t object
 @param[in]	encrypt_mode	FIL_ENCRYPTION_DEFAULT or
 				FIL_ENCRYPTION_ON or
@@ -276,21 +274,17 @@ fil_space_merge_crypt_data(
 	fil_space_crypt_t* dst,
 	const fil_space_crypt_t* src);
 
-/******************************************************************
-Read crypt data from a page (0)
-@param[in]	space		space_id
-@param[in]	page		Page 0
-@param[in]	offset		Offset to crypt data
-@return crypt data from page 0 or NULL. */
+/** Initialize encryption parameters from a tablespace header page.
+@param[in]	page_size	page size of the tablespace
+@param[in]	page		first page of the tablespace
+@return crypt data from page 0
+@retval	NULL	if not present or not valid */
 UNIV_INTERN
 fil_space_crypt_t*
-fil_space_read_crypt_data(
-	ulint		space,
-	const byte*	page,
-	ulint		offset)
-	MY_ATTRIBUTE((warn_unused_result));
+fil_space_read_crypt_data(const page_size_t& page_size, const byte* page)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
-/******************************************************************
+/**
 Free a crypt data object
 @param[in,out] crypt_data	crypt data to be freed */
 UNIV_INTERN
@@ -302,7 +296,6 @@ fil_space_destroy_crypt_data(
 Parse a MLOG_FILE_WRITE_CRYPT_DATA log entry
 @param[in]	ptr		Log entry start
 @param[in]	end_ptr		Log entry end
-@param[in]	block		buffer block
 @param[out]	err		DB_SUCCESS or DB_DECRYPTION_FAILED
 @return position on log buffer */
 UNIV_INTERN
@@ -310,34 +303,31 @@ byte*
 fil_parse_write_crypt_data(
 	byte*			ptr,
 	const byte*		end_ptr,
-	const buf_block_t*	block,
 	dberr_t*		err)
 	MY_ATTRIBUTE((warn_unused_result));
 
-/******************************************************************
-Encrypt a buffer
+/** Encrypt a buffer.
 @param[in,out]		crypt_data	Crypt data
 @param[in]		space		space_id
 @param[in]		offset		Page offset
 @param[in]		lsn		Log sequence number
 @param[in]		src_frame	Page to encrypt
-@param[in]		zip_size	Compressed size or 0
+@param[in]		page_size	Page size
 @param[in,out]		dst_frame	Output buffer
 @return encrypted buffer or NULL */
-UNIV_INTERN
 byte*
 fil_encrypt_buf(
-	fil_space_crypt_t* crypt_data,
-	ulint		space,
-	ulint		offset,
-	lsn_t		lsn,
-	const byte*	src_frame,
-	ulint		zip_size,
-	byte*		dst_frame)
+	fil_space_crypt_t*	crypt_data,
+	ulint			space,
+	ulint			offset,
+	lsn_t			lsn,
+	const byte*		src_frame,
+	const page_size_t&	page_size,
+	byte*			dst_frame)
 	MY_ATTRIBUTE((warn_unused_result));
 
-/******************************************************************
-Encrypt a page
+/**
+Encrypt a page.
 
 @param[in]		space		Tablespace
 @param[in]		offset		Page offset
@@ -355,8 +345,8 @@ fil_space_encrypt(
 	byte*		dst_frame)
 	MY_ATTRIBUTE((warn_unused_result));
 
-/******************************************************************
-Decrypt a page
+/**
+Decrypt a page.
 @param[in,out]	crypt_data		crypt_data
 @param[in]	tmp_frame		Temporary buffer
 @param[in]	page_size		Page size
@@ -368,7 +358,7 @@ bool
 fil_space_decrypt(
 	fil_space_crypt_t*	crypt_data,
 	byte*			tmp_frame,
-	ulint			page_size,
+	const page_size_t&	page_size,
 	byte*			src_frame,
 	dberr_t*		err);
 
@@ -376,7 +366,6 @@ fil_space_decrypt(
 Decrypt a page
 @param[in]	space			Tablespace
 @param[in]	tmp_frame		Temporary buffer used for decrypting
-@param[in]	page_size		Page size
 @param[in,out]	src_frame		Page to decrypt
 @param[out]	decrypted		true if page was decrypted
 @return decrypted page, or original not encrypted page if decryption is
@@ -392,46 +381,16 @@ fil_space_decrypt(
 
 /******************************************************************
 Calculate post encryption checksum
-@param[in]	zip_size	zip_size or 0
+@param[in]	page_size	page size
 @param[in]	dst_frame	Block where checksum is calculated
 @return page checksum or BUF_NO_CHECKSUM_MAGIC
 not needed. */
 UNIV_INTERN
-ulint
+uint32_t
 fil_crypt_calculate_checksum(
-	ulint		zip_size,
-	const byte*	dst_frame)
+	const page_size_t&	page_size,
+	const byte*		dst_frame)
 	MY_ATTRIBUTE((warn_unused_result));
-
-#endif /* UNIV_INNOCHECKSUM */
-
-/*********************************************************************
-Verify that post encryption checksum match calculated checksum.
-This function should be called only if tablespace contains crypt_data
-metadata (this is strong indication that tablespace is encrypted).
-Function also verifies that traditional checksum does not match
-calculated checksum as if it does page could be valid unencrypted,
-encrypted, or corrupted.
-
-@param[in]	page		Page to verify
-@param[in]	zip_size	zip size
-@param[in]	space		Tablespace
-@param[in]	pageno		Page no
-@return true if page is encrypted AND OK, false otherwise */
-UNIV_INTERN
-bool
-fil_space_verify_crypt_checksum(
-	byte* 			page,
-	ulint			zip_size,
-#ifndef UNIV_INNOCHECKSUM
-	const fil_space_t*	space,
-#else
-	const void*		space,
-#endif
-	ulint			pageno)
-	MY_ATTRIBUTE((warn_unused_result));
-
-#ifndef UNIV_INNOCHECKSUM
 
 /*********************************************************************
 Adjust thread count for key rotation
@@ -504,7 +463,7 @@ void
 fil_crypt_total_stat(
 	fil_crypt_stat_t *stat);
 
-/*********************************************************************
+/**
 Get scrub status for a space (used by information_schema)
 
 @param[in]	space		Tablespace
@@ -513,12 +472,32 @@ return 0 if data found */
 UNIV_INTERN
 void
 fil_space_get_scrub_status(
-	const fil_space_t*			space,
-	struct fil_space_scrub_status_t*	status);
+	const fil_space_t*		space,
+	fil_space_scrub_status_t*	status);
 
-#ifndef UNIV_NONINL
 #include "fil0crypt.ic"
-#endif
-
 #endif /* !UNIV_INNOCHECKSUM */
+
+/**
+Verify that post encryption checksum match calculated checksum.
+This function should be called only if tablespace contains crypt_data
+metadata (this is strong indication that tablespace is encrypted).
+Function also verifies that traditional checksum does not match
+calculated checksum as if it does page could be valid unencrypted,
+encrypted, or corrupted.
+
+@param[in,out]	page		page frame (checksum is temporarily modified)
+@param[in]	page_size	page size
+@param[in]	space		tablespace identifier
+@param[in]	offset		page number
+@return true if page is encrypted AND OK, false otherwise */
+UNIV_INTERN
+bool
+fil_space_verify_crypt_checksum(
+	byte* 			page,
+	const page_size_t&	page_size,
+	ulint			space,
+	ulint			offset)
+	MY_ATTRIBUTE((warn_unused_result));
+
 #endif /* fil0crypt_h */

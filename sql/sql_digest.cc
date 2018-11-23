@@ -18,9 +18,9 @@
   This code needs extra visibility in the lexer structures
 */
 
-#include "my_global.h"
+#include "mariadb.h"
 #include "my_md5.h"
-#include "mysqld_error.h"
+#include "unireg.h"
 
 #include "sql_string.h"
 #include "sql_class.h"
@@ -31,13 +31,8 @@
 
 #include "sql_get_diagnostics.h"
 
-#ifdef NEVER
-#include "my_sys.h"
-#include "sql_signal.h"
-#endif
-
 /* Generated code */
-#include "sql_yacc.h"
+#include "sql_yacc.hh"
 #define LEX_TOKEN_WITH_DEFINITION
 #include "lex_token.h"
 
@@ -154,7 +149,7 @@ inline void store_token_identifier(sql_digest_storage* digest_storage,
     /* Write the string data */
     if (id_length > 0)
       memcpy((char *)(dest + 4), id_name, id_length);
-    digest_storage->m_byte_count+= bytes_needed;
+    digest_storage->m_byte_count+= (uint)bytes_needed;
   }
   else
   {
@@ -572,7 +567,7 @@ sql_digest_state* digest_add_token(sql_digest_state *state,
     case IDENT_QUOTED:
     {
       YYSTYPE *lex_token= yylval;
-      char *yytext= lex_token->lex_str.str;
+      const char *yytext= lex_token->lex_str.str;
       size_t yylen= lex_token->lex_str.length;
 
       /*

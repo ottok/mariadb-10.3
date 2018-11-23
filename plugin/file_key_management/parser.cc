@@ -69,6 +69,7 @@ Example:
 openssl enc -aes-256-cbc -md sha1 -k "secret" -in keys.txt -out keys.enc
 ***********************************************************************/
 
+#include <my_global.h>
 #include "parser.h"
 #include <m_string.h>
 #include <mysys_err.h>
@@ -230,9 +231,9 @@ bool Parser::parse_file(std::map<uint,keyentry> *keys, const char *secret)
   return 0;
 }
 
-void Parser::report_error(const char *reason, uint position)
+void Parser::report_error(const char *reason, size_t position)
 {
-  my_printf_error(EE_READ, "%s at %s line %u, column %u",
+  my_printf_error(EE_READ, "%s at %s line %u, column %zu",
     ME_ERROR_LOG, reason, filename, line_number, position + 1);
 }
 

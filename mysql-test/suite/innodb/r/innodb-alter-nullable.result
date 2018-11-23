@@ -23,6 +23,8 @@ info: Records: 0  Duplicates: 0  Warnings: 0
 ALTER TABLE t MODIFY c2 INT NOT NULL;
 affected rows: 0
 info: Records: 0  Duplicates: 0  Warnings: 0
+connect  con1,localhost,root,,;
+connection con1;
 SET SQL_MODE='STRICT_ALL_TABLES';
 UPDATE t SET c2=NULL;
 ERROR 23000: Column 'c2' cannot be null
@@ -31,7 +33,9 @@ c1	c2	c3
 1	2	3
 4	5	6
 7	8	9
+connection default;
 ALTER TABLE t MODIFY c2 INT, ALGORITHM=INPLACE;
+connection con1;
 BEGIN;
 UPDATE t SET c2=NULL;
 SELECT * FROM t;
@@ -45,11 +49,13 @@ c1	c2	c3
 1	2	3
 4	5	6
 7	8	9
+disconnect con1;
+connection default;
 ALTER TABLE t MODIFY c2 INT NULL, ALGORITHM=INPLACE;
 SELECT * FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES
 WHERE NAME='test/t';
-TABLE_ID	NAME	FLAG	N_COLS	SPACE	FILE_FORMAT	ROW_FORMAT	ZIP_PAGE_SIZE
-#	test/t	1	6	#	Antelope	Compact	0
+TABLE_ID	NAME	FLAG	N_COLS	SPACE	ROW_FORMAT	ZIP_PAGE_SIZE	SPACE_TYPE
+#	test/t	33	6	#	Dynamic	0	Single
 DROP TABLE t;
 CREATE TABLE t1(c1 INT) ENGINE=InnoDB;
 ALTER TABLE t1 ADD CONSTRAINT UNIQUE KEY i1(c1);

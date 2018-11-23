@@ -1,14 +1,12 @@
 -- source include/innodb_page_size.inc
 -- source include/have_file_key_management_plugin.inc
 
-SET @saved_file_format = @@global.innodb_file_format;
 SET @saved_file_per_table = @@global.innodb_file_per_table;
 SET @saved_checksum_algorithm = @@global.innodb_checksum_algorithm;
 SET @saved_encrypt_tables = @@global.innodb_encrypt_tables;
 SET @saved_encryption_threads = @@global.innodb_encryption_threads;
 SET @saved_encryption_key_id = @@global.innodb_default_encryption_key_id;
 
-SET GLOBAL innodb_file_format = `Barracuda`;
 SET GLOBAL innodb_file_per_table = ON;
 SET GLOBAL innodb_encrypt_tables = ON;
 SET GLOBAL innodb_encryption_threads = 4;
@@ -115,7 +113,6 @@ eval DROP TABLE tce_$checksum, tc_$checksum, te_$checksum,
 t_$checksum, tpe_$checksum, tp_$checksum;
 }
 
-SET GLOBAL innodb_file_format = @saved_file_format;
 SET GLOBAL innodb_file_per_table = @saved_file_per_table;
 SET GLOBAL innodb_checksum_algorithm = @saved_checksum_algorithm;
 SET GLOBAL innodb_encrypt_tables = @saved_encrypt_tables;

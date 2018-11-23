@@ -951,7 +951,7 @@ Returns:    TRUE if the path is not excluded
 static BOOL
 test_incexc(char *path, patstr *ip, patstr *ep)
 {
-int plen = strlen(path);
+int plen = (int)strlen(path);
 
 for (; ep != NULL; ep = ep->next)
   {
@@ -2249,7 +2249,7 @@ if (isdirectory(pathname))
     while ((nextfile = readdirectory(dir)) != NULL)
       {
       int frc;
-      int fnlength = strlen(pathname) + strlen(nextfile) + 2;
+      size_t fnlength = strlen(pathname) + strlen(nextfile) + 2;
       if (fnlength > 2048)
         {
         fprintf(stderr, "pcre2grep: recursive filename is too long\n");
@@ -2509,7 +2509,7 @@ compile_pattern(patstr *p, int options, int popts, int fromfile,
 char buffer[PATBUFSIZE];
 const char *error;
 char *ps = p->string;
-int patlen = strlen(ps);
+int patlen = (int)strlen(ps);
 int errptr;
 
 if (p->compiled != NULL) return TRUE;

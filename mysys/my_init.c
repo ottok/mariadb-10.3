@@ -105,6 +105,10 @@ my_bool my_init(void)
   if (my_thread_global_init())
     return 1;
 
+#if defined(SAFEMALLOC) && !defined(DBUG_OFF)
+  dbug_sanity= sf_sanity;
+#endif
+
   /* $HOME is needed early to parse configuration files located in ~/ */
   if ((home_dir= getenv("HOME")) != 0)
     home_dir= intern_filename(home_dir_buff, home_dir);
@@ -117,6 +121,9 @@ my_bool my_init(void)
     DBUG_PRINT("exit", ("home: '%s'", home_dir));
 #ifdef __WIN__
     win32_init_tcp_ip();
+#endif
+#ifdef CHECK_UNLIKELY
+    init_my_likely();
 #endif
     DBUG_RETURN(0);
   }
@@ -151,17 +158,36 @@ void my_end(int infoflag)
   }
 
   if ((infoflag & MY_CHECK_ERROR) || print_info)
+  {                                     /* Test if some file is left open */
+    char ebuff[512];
+    uint i, open_files, open_streams;
 
-  {					/* Test if some file is left open */
-    if (my_file_opened | my_stream_opened)
+    for (open_streams= open_files= i= 0 ; i < my_file_limit ; i++)
     {
-      char ebuff[512];
+      if (my_file_info[i].type == UNOPEN)
+        continue;
+      if (my_file_info[i].type == STREAM_BY_FOPEN ||
+          my_file_info[i].type == STREAM_BY_FDOPEN)
+        open_streams++;
+      else
+        open_files++;
+
+#ifdef EXTRA_DEBUG
+      fprintf(stderr, EE(EE_FILE_NOT_CLOSED), my_file_info[i].name, i);
+      fputc('\n', stderr);
+#endif
+    }
+    if (open_files || open_streams)
+    {
       my_snprintf(ebuff, sizeof(ebuff), EE(EE_OPEN_WARNING),
-                  my_file_opened, my_stream_opened);
+                  open_files, open_streams);
       my_message_stderr(EE_OPEN_WARNING, ebuff, ME_BELL);
       DBUG_PRINT("error", ("%s", ebuff));
-      my_print_open_files();
     }
+
+#ifdef CHECK_UNLIKELY
+    end_my_likely(info_file);
+#endif
   }
   free_charsets();
   my_error_unregister_all();
@@ -229,7 +255,7 @@ Voluntary context switches %ld, Involuntary context switches %ld\n",
   my_init_done= my_thr_key_mysys_exists= 0;
 } /* my_end */
 
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
 /* Dummy tag function for debugging */
 
 void my_debug_put_break_here(void)
@@ -253,8 +279,6 @@ void my_parameter_handler(const wchar_t * expression, const wchar_t * function,
                           const wchar_t * file, unsigned int line,
                           uintptr_t pReserved)
 {
-  DBUG_PRINT("my",("Expression: %s  function: %s  file: %s, line: %d",
-		   expression, function, file, line));
   __debugbreak();
 }
 

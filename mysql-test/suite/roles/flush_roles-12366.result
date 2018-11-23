@@ -236,6 +236,7 @@ GRANT operations_vn TO operations_cluster;
 GRANT operations_tw TO operations_cluster;
 GRANT operations_my TO operations_cluster;
 GRANT operations_th TO operations_cluster;
+connect con1,localhost,u,,;
 SHOW DATABASES;
 Database
 information_schema
@@ -357,7 +358,9 @@ COUNT(1)
 SELECT COUNT(1) FROM oms_live_th.d;
 COUNT(1)
 0
+connect con2,localhost,root,,;
 FLUSH PRIVILEGES;
+connect con3,localhost,u,,;
 SHOW DATABASES;
 Database
 information_schema
@@ -479,6 +482,7 @@ COUNT(1)
 SELECT COUNT(1) FROM oms_live_th.d;
 COUNT(1)
 0
+connect con4,localhost,root,,;
 DROP DATABASE bob_live_sg;
 DROP DATABASE oms_live_sg;
 DROP DATABASE bob_live_ph;

@@ -1,4 +1,4 @@
-/* Copyright (C) 2008-2015 Kentoku Shiba
+/* Copyright (C) 2008-2017 Kentoku Shiba
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -11,10 +11,12 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
+  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #define MYSQL_SERVER 1
+#include <my_global.h>
 #include "mysql_version.h"
+#include "spd_environ.h"
 #if MYSQL_VERSION_ID < 50500
 #include "mysql_priv.h"
 #include <mysql/plugin.h>
@@ -86,6 +88,17 @@ static int spider_direct_aggregate(THD *thd, SHOW_VAR *var, char *buff)
   DBUG_RETURN(error_num);
 }
 
+static int spider_parallel_search(THD *thd, SHOW_VAR *var, char *buff)
+{
+  int error_num = 0;
+  SPIDER_TRX *trx;
+  DBUG_ENTER("spider_parallel_search");
+  var->type = SHOW_LONGLONG;
+  if ((trx = spider_get_trx(thd, TRUE, &error_num)))
+    var->value = (char *) &trx->parallel_search_count;
+  DBUG_RETURN(error_num);
+}
+
 #if defined(HS_HAS_SQLCOM) && defined(HAVE_HANDLERSOCKET)
 static int spider_hs_result_free(THD *thd, SHOW_VAR *var, char *buff)
 {
@@ -119,11 +132,15 @@ struct st_mysql_show_var spider_status_variables[] =
     (char *) &spider_direct_order_limit, SHOW_SIMPLE_FUNC},
   {"Spider_direct_aggregate",
     (char *) &spider_direct_aggregate, SHOW_SIMPLE_FUNC},
+  {"Spider_parallel_search",
+    (char *) &spider_parallel_search, SHOW_SIMPLE_FUNC},
 #else
   {"Spider_direct_order_limit",
     (char *) &spider_direct_order_limit, SHOW_FUNC},
   {"Spider_direct_aggregate",
     (char *) &spider_direct_aggregate, SHOW_FUNC},
+  {"Spider_parallel_search",
+    (char *) &spider_parallel_search, SHOW_FUNC},
 #endif
 #if defined(HS_HAS_SQLCOM) && defined(HAVE_HANDLERSOCKET)
 #ifdef SPIDER_HAS_SHOW_SIMPLE_FUNC
@@ -405,6 +422,29 @@ uint spider_param_force_commit(
 ) {
   DBUG_ENTER("spider_param_force_commit");
   DBUG_RETURN(THDVAR(thd, force_commit));
+}
+
+/*
+  0: register all XA transaction
+  1: register only write XA transaction
+ */
+static MYSQL_THDVAR_UINT(
+  xa_register_mode, /* name */
+  PLUGIN_VAR_RQCMDARG, /* opt */
+  "Mode of XA transaction register into system table", /* comment */
+  NULL, /* check */
+  NULL, /* update */
+  1, /* def */
+  0, /* min */
+  1, /* max */
+  0 /* blk */
+);
+
+uint spider_param_xa_register_mode(
+  THD *thd
+) {
+  DBUG_ENTER("spider_param_xa_register_mode");
+  DBUG_RETURN(THDVAR(thd, xa_register_mode));
 }
 
 /*
@@ -889,26 +929,6 @@ bool spider_param_sync_autocommit(
 }
 
 /*
-  FALSE: no sync
-  TRUE:  sync
- */
-static MYSQL_THDVAR_BOOL(
-  sync_time_zone, /* name */
-  PLUGIN_VAR_OPCMDARG, /* opt */
-  "Sync time_zone", /* comment */
-  NULL, /* check */
-  NULL, /* update */
-  FALSE /* def */
-);
-
-bool spider_param_sync_time_zone(
-  THD *thd
-) {
-  DBUG_ENTER("spider_param_sync_time_zone");
-  DBUG_RETURN(THDVAR(thd, sync_time_zone));
-}
-
-/*
   FALSE: not use
   TRUE:  use
  */
@@ -929,19 +949,23 @@ bool spider_param_use_default_database(
 }
 
 /*
-  FALSE: sql_log_off = 0
-  TRUE:  sql_log_off = 1
- */
-static MYSQL_THDVAR_BOOL(
-  internal_sql_log_off, /* name */
-  PLUGIN_VAR_OPCMDARG, /* opt */
-  "Sync sql_log_off", /* comment */
-  NULL, /* check */
-  NULL, /* update */
-  TRUE /* def */
+-1 :don't know or does not matter; don't send 'SET SQL_LOG_OFF' statement
+ 0 :do send 'SET SQL_LOG_OFF 0' statement to data nodes
+ 1 :do send 'SET SQL_LOG_OFF 1' statement to data nodes
+*/
+static MYSQL_THDVAR_INT(
+  internal_sql_log_off,                                  /* name */
+  PLUGIN_VAR_RQCMDARG,                                   /* opt */
+  "Manage SQL_LOG_OFF mode statement to the data nodes", /* comment */
+  NULL,                                                  /* check */
+  NULL,                                                  /* update */
+  -1,                                                    /* default */
+  -1,                                                    /* min */
+  1,                                                     /* max */
+  0                                                      /* blk */
 );
 
-bool spider_param_internal_sql_log_off(
+int spider_param_internal_sql_log_off(
   THD *thd
 ) {
   DBUG_ENTER("spider_param_internal_sql_log_off");
@@ -1665,7 +1689,8 @@ double spider_param_crd_weight(
 /*
  -1 :use table parameter
   0 :Background confirmation is disabled
-  1 :Background confirmation is enabled
+  1 :Background confirmation is enabled (create thread per table/partition)
+  2 :Background confirmation is enabled (use static threads)
  */
 static MYSQL_THDVAR_INT(
   crd_bg_mode, /* name */
@@ -1675,7 +1700,7 @@ static MYSQL_THDVAR_INT(
   NULL, /* update */
   -1, /* def */
   -1, /* min */
-  1, /* max */
+  2, /* max */
   0 /* blk */
 );
 
@@ -1776,7 +1801,8 @@ int spider_param_sts_sync(
 /*
  -1 :use table parameter
   0 :Background confirmation is disabled
-  1 :Background confirmation is enabled
+  1 :Background confirmation is enabled (create thread per table/partition)
+  2 :Background confirmation is enabled (use static threads)
  */
 static MYSQL_THDVAR_INT(
   sts_bg_mode, /* name */
@@ -1786,7 +1812,7 @@ static MYSQL_THDVAR_INT(
   NULL, /* update */
   -1, /* def */
   -1, /* min */
-  1, /* max */
+  2, /* max */
   0 /* blk */
 );
 
@@ -2182,15 +2208,15 @@ char *spider_param_remote_time_zone()
 
 static int spider_remote_sql_log_off;
 /*
- -1 :don't set
-  0 :sql_log_off = 0
-  1 :sql_log_off = 1
+ -1 :don't know the value on all data nodes, or does not matter
+  0 :sql_log_off = 0 on all data nodes
+  1 :sql_log_off = 1 on all data nodes
  */
 static MYSQL_SYSVAR_INT(
   remote_sql_log_off,
   spider_remote_sql_log_off,
   PLUGIN_VAR_RQCMDARG,
-  "Set sql_log_off mode at connecting for improvement performance of connection if you know",
+  "Set SQL_LOG_OFF mode on connecting for improved performance of connection, if you know",
   NULL,
   NULL,
   -1,
@@ -2701,6 +2727,34 @@ int spider_param_skip_default_condition(
 
 /*
  -1 :use table parameter
+  0 :not skip
+  1 :skip parallel search if query is not SELECT statement
+  2 :skip parallel search if query has SQL_NO_CACHE
+  3 :1+2
+ */
+static MYSQL_THDVAR_INT(
+  skip_parallel_search, /* name */
+  PLUGIN_VAR_RQCMDARG, /* opt */
+  "Skip parallel search by specific conditions", /* comment */
+  NULL, /* check */
+  NULL, /* update */
+  -1, /* def */
+  -1, /* min */
+  3, /* max */
+  0 /* blk */
+);
+
+int spider_param_skip_parallel_search(
+  THD *thd,
+  int skip_parallel_search
+) {
+  DBUG_ENTER("spider_param_skip_parallel_search");
+  DBUG_RETURN(THDVAR(thd, skip_parallel_search) == -1 ?
+    skip_parallel_search : THDVAR(thd, skip_parallel_search));
+}
+
+/*
+ -1 :use table parameter
   0 :not send directly
   1-:send directly
  */
@@ -2824,6 +2878,66 @@ my_bool spider_param_general_log()
 {
   DBUG_ENTER("spider_param_general_log");
   DBUG_RETURN(spider_general_log);
+}
+
+/*
+  FALSE: no pushdown hints
+  TRUE:  pushdown hints
+ */
+static MYSQL_THDVAR_BOOL(
+  index_hint_pushdown, /* name */
+  PLUGIN_VAR_OPCMDARG, /* opt */
+  "switch to control if push down index hint, like force_index", /* comment */
+  NULL, /* check */
+  NULL, /* update */
+  FALSE /* def */
+);
+
+my_bool spider_param_index_hint_pushdown(
+  THD *thd
+) {
+  DBUG_ENTER("spider_param_index_hint_pushdown");
+  DBUG_RETURN(THDVAR(thd, index_hint_pushdown));
+}
+
+static uint spider_max_connections;
+static MYSQL_SYSVAR_UINT(
+  max_connections,
+  spider_max_connections,
+  PLUGIN_VAR_RQCMDARG,
+  "the values, as the max conncetion from spider to remote mysql. Default 0, mean unlimit the connections",
+  NULL,
+  NULL,
+  0, /* def */
+  0, /* min */
+  99999, /* max */
+  0 /* blk */
+);
+
+uint spider_param_max_connections()
+{
+  DBUG_ENTER("spider_param_max_connections");
+  DBUG_RETURN(spider_max_connections);
+}
+
+static uint spider_conn_wait_timeout;
+static MYSQL_SYSVAR_UINT(
+  conn_wait_timeout,
+  spider_conn_wait_timeout,
+  PLUGIN_VAR_RQCMDARG,
+  "the values, as the max waiting time when spider get a remote conn",
+  NULL,
+  NULL,
+  10, /* def */
+  0, /* min */
+  1000, /* max */
+  0 /* blk */
+);
+
+uint spider_param_conn_wait_timeout()
+{
+  DBUG_ENTER("spider_param_conn_wait_timeout");
+  DBUG_RETURN(spider_conn_wait_timeout);
 }
 
 static uint spider_log_result_errors;
@@ -3009,6 +3123,162 @@ int spider_param_bka_table_name_type(
     bka_table_name_type : THDVAR(thd, bka_table_name_type));
 }
 
+static int spider_store_last_sts;
+/*
+ -1 : use table parameter
+  0 : do not store
+  1 : do store
+ */
+static MYSQL_SYSVAR_INT(
+  store_last_sts,
+  spider_store_last_sts,
+  PLUGIN_VAR_RQCMDARG,
+  "Store last sts result into system table",
+  NULL,
+  NULL,
+  -1,
+  -1,
+  1,
+  0
+);
+
+int spider_param_store_last_sts(
+  int store_last_sts
+) {
+  DBUG_ENTER("spider_param_store_last_sts");
+  DBUG_RETURN(spider_store_last_sts == -1 ?
+    store_last_sts : spider_store_last_sts);
+}
+
+static int spider_store_last_crd;
+/*
+ -1 : use table parameter
+  0 : do not store
+  1 : do store
+ */
+static MYSQL_SYSVAR_INT(
+  store_last_crd,
+  spider_store_last_crd,
+  PLUGIN_VAR_RQCMDARG,
+  "Store last crd result into system table",
+  NULL,
+  NULL,
+  -1,
+  -1,
+  1,
+  0
+);
+
+int spider_param_store_last_crd(
+  int store_last_crd
+) {
+  DBUG_ENTER("spider_param_store_last_crd");
+  DBUG_RETURN(spider_store_last_crd == -1 ?
+    store_last_crd : spider_store_last_crd);
+}
+
+static int spider_load_sts_at_startup;
+/*
+ -1 : use table parameter
+  0 : do not load
+  1 : do load
+ */
+static MYSQL_SYSVAR_INT(
+  load_sts_at_startup,
+  spider_load_sts_at_startup,
+  PLUGIN_VAR_RQCMDARG,
+  "Load sts from system table at startup",
+  NULL,
+  NULL,
+  -1,
+  -1,
+  1,
+  0
+);
+
+int spider_param_load_sts_at_startup(
+  int load_sts_at_startup
+) {
+  DBUG_ENTER("spider_param_load_sts_at_startup");
+  DBUG_RETURN(spider_load_sts_at_startup == -1 ?
+    load_sts_at_startup : spider_load_sts_at_startup);
+}
+
+static int spider_load_crd_at_startup;
+/*
+ -1 : use table parameter
+  0 : do not load
+  1 : do load
+ */
+static MYSQL_SYSVAR_INT(
+  load_crd_at_startup,
+  spider_load_crd_at_startup,
+  PLUGIN_VAR_RQCMDARG,
+  "Load crd from system table at startup",
+  NULL,
+  NULL,
+  -1,
+  -1,
+  1,
+  0
+);
+
+int spider_param_load_crd_at_startup(
+  int load_crd_at_startup
+) {
+  DBUG_ENTER("spider_param_load_crd_at_startup");
+  DBUG_RETURN(spider_load_crd_at_startup == -1 ?
+    load_crd_at_startup : spider_load_crd_at_startup);
+}
+
+#ifndef WITHOUT_SPIDER_BG_SEARCH
+static uint spider_table_sts_thread_count;
+/*
+  1-: thread count
+ */
+static MYSQL_SYSVAR_UINT(
+  table_sts_thread_count,
+  spider_table_sts_thread_count,
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
+  "Static thread count of table sts",
+  NULL,
+  NULL,
+  10,
+  1,
+  4294967295U,
+  0
+);
+
+uint spider_param_table_sts_thread_count()
+{
+  DBUG_ENTER("spider_param_table_sts_thread_count");
+  DBUG_RETURN(spider_table_sts_thread_count);
+}
+
+static uint spider_table_crd_thread_count;
+/*
+  1-: thread count
+ */
+static MYSQL_SYSVAR_UINT(
+  table_crd_thread_count,
+  spider_table_crd_thread_count,
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
+  "Static thread count of table crd",
+  NULL,
+  NULL,
+  10,
+  1,
+  4294967295U,
+  0
+);
+
+uint spider_param_table_crd_thread_count()
+{
+  DBUG_ENTER("spider_param_table_crd_thread_count");
+  DBUG_RETURN(spider_table_crd_thread_count);
+}
+#endif
+
 static struct st_mysql_storage_engine spider_storage_engine =
 { MYSQL_HANDLERTON_INTERFACE_VERSION };
 
@@ -3023,6 +3293,7 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
   MYSQL_SYSVAR(internal_xa),
   MYSQL_SYSVAR(internal_xa_snapshot),
   MYSQL_SYSVAR(force_commit),
+  MYSQL_SYSVAR(xa_register_mode),
   MYSQL_SYSVAR(internal_offset),
   MYSQL_SYSVAR(internal_limit),
   MYSQL_SYSVAR(split_read),
@@ -3041,7 +3312,6 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
   MYSQL_SYSVAR(block_size),
   MYSQL_SYSVAR(selupd_lock_mode),
   MYSQL_SYSVAR(sync_autocommit),
-  MYSQL_SYSVAR(sync_time_zone),
   MYSQL_SYSVAR(use_default_database),
   MYSQL_SYSVAR(internal_sql_log_off),
   MYSQL_SYSVAR(bulk_size),
@@ -3074,6 +3344,8 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   MYSQL_SYSVAR(crd_sync),
 #endif
+  MYSQL_SYSVAR(store_last_crd),
+  MYSQL_SYSVAR(load_crd_at_startup),
   MYSQL_SYSVAR(crd_type),
   MYSQL_SYSVAR(crd_weight),
 #ifndef WITHOUT_SPIDER_BG_SEARCH
@@ -3084,6 +3356,8 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   MYSQL_SYSVAR(sts_sync),
 #endif
+  MYSQL_SYSVAR(store_last_sts),
+  MYSQL_SYSVAR(load_sts_at_startup),
 #ifndef WITHOUT_SPIDER_BG_SEARCH
   MYSQL_SYSVAR(sts_bg_mode),
 #endif
@@ -3125,6 +3399,7 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
   MYSQL_SYSVAR(error_read_mode),
   MYSQL_SYSVAR(error_write_mode),
   MYSQL_SYSVAR(skip_default_condition),
+  MYSQL_SYSVAR(skip_parallel_search),
   MYSQL_SYSVAR(direct_order_limit),
   MYSQL_SYSVAR(read_only_mode),
 #ifdef HA_CAN_BULK_ACCESS
@@ -3135,6 +3410,9 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
   MYSQL_SYSVAR(udf_ds_use_real_table),
 #endif
   MYSQL_SYSVAR(general_log),
+  MYSQL_SYSVAR(index_hint_pushdown),
+  MYSQL_SYSVAR(max_connections),
+  MYSQL_SYSVAR(conn_wait_timeout),
   MYSQL_SYSVAR(log_result_errors),
   MYSQL_SYSVAR(log_result_error_with_sql),
   MYSQL_SYSVAR(version),
@@ -3144,6 +3422,10 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
   MYSQL_SYSVAR(delete_all_rows_type),
   MYSQL_SYSVAR(bka_table_name_type),
   MYSQL_SYSVAR(connect_error_interval),
+#ifndef WITHOUT_SPIDER_BG_SEARCH
+  MYSQL_SYSVAR(table_sts_thread_count),
+  MYSQL_SYSVAR(table_crd_thread_count),
+#endif
   NULL
 };
 
@@ -3183,7 +3465,7 @@ maria_declare_plugin(spider)
   spider_status_variables,
   spider_system_variables,
   SPIDER_DETAIL_VERSION,
-  MariaDB_PLUGIN_MATURITY_GAMMA
+  MariaDB_PLUGIN_MATURITY_STABLE
 },
 spider_i_s_alloc_mem_maria
 maria_declare_plugin_end;

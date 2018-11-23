@@ -92,7 +92,7 @@ echo
 #   - INFO must contain the corresponding SHOW/SELECT PROCESSLIST
 #
 # 1. Just dump what we get
---replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS>
 SHOW FULL PROCESSLIST;
@@ -135,14 +135,8 @@ echo
 # Ensure that the information about an inactive connection is correct.
 #--------------------------------------------------------------------------
 ;
-echo
-# ----- establish connection con1 (user = test_user) -----
-;
 connect (con1,localhost,test_user,ddictpass,information_schema);
 #
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 # We have now a second connection.
 # First working phase for the new connection is with Command = 'Connect'.
@@ -165,7 +159,7 @@ let $wait_condition= SELECT COUNT(*) = 1 FROM INFORMATION_SCHEMA.PROCESSLIST
                      WHERE COMMAND = 'Sleep' AND USER = 'test_user';
 --source include/wait_condition.inc
 # 1. Just dump what we get
---replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 7 <STATE> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 7 <STATE> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME>
 SHOW FULL PROCESSLIST;
@@ -206,11 +200,8 @@ echo
 # because he has not the PROCESS privilege.
 #----------------------------------------------------------------------------
 ;
-echo
-# ----- switch to connection con1 (user = test_user) -----
-;
 connection con1;
---replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME>
 SHOW FULL PROCESSLIST;
@@ -220,13 +211,7 @@ echo
 # Ensure that the user test_user sees all connections with his username.
 #----------------------------------------------------------------------------
 ;
-echo
------ establish connection con2 (user = test_user) ------
-;
 connect (con2,localhost,test_user,ddictpass,information_schema);
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 # If the testing box is under heavy load we might see within some of the
 # next queries connection
@@ -239,19 +224,13 @@ echo
 let $wait_condition= SELECT COUNT(*) = 2 FROM INFORMATION_SCHEMA.PROCESSLIST
         WHERE USER = 'test_user' AND COMMAND = 'Sleep' AND STATE = '';
 --source include/wait_condition.inc
-echo
-# ----- switch to connection con2 (user = test_user) -----
-;
 connection con2;
 # Just dump what we get
---replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME>
 SHOW FULL PROCESSLIST;
 #
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 # Pull the ID of con2, we will need it later
 SELECT ID INTO @test_user_con2_id FROM INFORMATION_SCHEMA.PROCESSLIST
@@ -262,9 +241,6 @@ WHERE ID <> @test_user_con1_id
 echo
 # Ensure we get correct information about a connection during work
 #----------------------------------------------------------------------------
-;
-echo
-# ----- switch to connection con2 (user = test_user) -----
 ;
 connection con2;
 # "Organise" a long running command to be observed by the root user.
@@ -283,9 +259,6 @@ SELECT sleep(10), 17;
 send;
 eval $sleep_command;
 #
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 echo
 # Poll till connection con2 is in state 'User sleep'.
@@ -304,7 +277,7 @@ WHERE ID = @test_user_con2_id AND Command IN('Query','Execute')
   AND State = 'User sleep' AND INFO IS NOT NULL ;
 --source include/wait_condition.inc
 # 1. Just dump what we get
---replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME>
 SHOW FULL PROCESSLIST;
@@ -324,17 +297,11 @@ let $wait_timeout= 10;
 let $wait_condition= SELECT COUNT(*) = 1 FROM INFORMATION_SCHEMA.PROCESSLIST
     WHERE ID = @test_user_con2_id AND INFO IS NOT NULL AND TIME > @time;
 --source include/wait_condition.inc
-echo
-# ----- switch to connection con2 (user = testuser) -----
-;
 connection con2;
 echo
 # Pull("reap") the result set from the statement executed with "send".
 ;
 reap;
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 echo
 # Poll till all connections of 'test_user' are in a state with COMMAND = 'Sleep'
@@ -352,9 +319,6 @@ echo
 ;
 LOCK TABLE test.t1 WRITE;
 #
-echo
-# ----- switch to connection con2 (user = test_user) -----
-;
 connection con2;
 echo
 # Send a statement to the server, but do not wait till the result
@@ -362,9 +326,6 @@ echo
 ;
 send
 SELECT COUNT(*) FROM test.t1;
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 echo
 # Poll till INFO is no more NULL and State = 'Waiting for table metadata lock'.
@@ -375,13 +336,10 @@ let $wait_condition= SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST
 #
 # Expect to see the state 'Waiting for table metadata lock' for the third
 # connection because the SELECT collides with the WRITE TABLE LOCK.
---replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 6 <TIME> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 UNLOCK TABLES;
 #
-echo
-# ----- switch to connection con2 (user = test_user) -----
-;
 connection con2;
 echo
 # Pull("reap") the result set from the statement executed with "send".
@@ -395,15 +353,9 @@ echo
 ;
 # We do not want to waste runtime, therefore we run the following test based
 # on "Lock collision" and not with some "sleep(10)".
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 LOCK TABLE test.t1 WRITE;
 #
-echo
-# ----- switch to connection con2 (user = test_user) -----
-;
 connection con2;
 echo
 # Send a long (~20 KB code) statement to the server, but do not wait
@@ -417,9 +369,6 @@ let $my_statement =
 SELECT count(*),'$string' AS "Long string" FROM test.t1;
 send;
 eval $my_statement;
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
 echo
 # Poll till INFO is no more NULL and State = 'Waiting for table metadata lock'.
@@ -434,16 +383,13 @@ echo
 # SHOW FULL PROCESSLIST                          Complete statement
 # SHOW PROCESSLIST                               statement truncated after 100 char
 ;
---replace_column 1 <ID> 3 <HOST_NAME> 5 <COMMAND> 6 <TIME> 7 <STATE> 9 <TIME_MS> 13 <MEMORY> 14 <ROWS> 15 <QUERY_ID> 17 <TID>
+--replace_column 1 <ID> 3 <HOST_NAME> 5 <COMMAND> 6 <TIME> 7 <STATE> 9 <TIME_MS> 13 <MEMORY> 14 <MAX_MEMORY> 15 <ROWS> 16 <QUERY_ID> 18 <TID>
 SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 5 <COMMAND> 6 <TIME> 7 <STATE>
 SHOW FULL PROCESSLIST;
 --replace_column 1 <ID> 3 <HOST_NAME> 5 <COMMAND> 6 <TIME> 7 <STATE>
 SHOW PROCESSLIST;
 UNLOCK TABLES;
-echo
-# ----- switch to connection con2 (user = test_user) -----
-;
 connection con2;
 echo
 # Pull("reap") the result set from the monster statement executed with "send".
@@ -452,13 +398,7 @@ reap;
 
 
 # Cleanup
-echo
-# ----- switch to connection default (user = root) -----
-;
 connection default;
-echo
------ disconnect con1 and con2 -----
-;
 disconnect con1;
 disconnect con2;
 DROP USER test_user@'localhost';

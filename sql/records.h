@@ -25,6 +25,11 @@ struct TABLE;
 class THD;
 class SQL_SELECT;
 class Copy_field;
+class SORT_INFO;
+
+struct READ_RECORD;
+
+void end_read_record(READ_RECORD *info);
 
 /**
   A context for reading through a single table using a chosen access method:
@@ -50,7 +55,7 @@ struct READ_RECORD
   //handler *file;
   TABLE **forms;                                /* head and ref forms */
   Unlock_row_func unlock_row;
-  Read_func read_record;
+  Read_func read_record_func;
   THD *thd;
   SQL_SELECT *select;
   uint cache_records;
@@ -60,8 +65,12 @@ struct READ_RECORD
   uchar *record;
   uchar *rec_buf;                /* to read field values  after filesort */
   uchar	*cache,*cache_pos,*cache_end,*read_positions;
+  struct st_sort_addon_field *addon_field;     /* Pointer to the fields info */
   struct st_io_cache *io_cache;
-  bool print_error, ignore_not_found_rows;
+  bool print_error;
+  void    (*unpack)(struct st_sort_addon_field *, uchar *, uchar *);
+
+  int read_record() { return read_record_func(this); }
 
   /* 
     SJ-Materialization runtime may need to read fields from the materialized
@@ -70,15 +79,16 @@ struct READ_RECORD
   Copy_field *copy_field;
   Copy_field *copy_field_end;
 public:
-  READ_RECORD() {}
+  READ_RECORD() : table(NULL), cache(NULL) {}
+  ~READ_RECORD() { end_read_record(this); }
 };
 
 bool init_read_record(READ_RECORD *info, THD *thd, TABLE *reg_form,
-		      SQL_SELECT *select, int use_record_cache,
+		      SQL_SELECT *select, SORT_INFO *sort,
+                      int use_record_cache,
                       bool print_errors, bool disable_rr_cache);
 bool init_read_record_idx(READ_RECORD *info, THD *thd, TABLE *table,
                           bool print_error, uint idx, bool reverse);
-void end_read_record(READ_RECORD *info);
 
 void rr_unlock_row(st_join_table *tab);
 
