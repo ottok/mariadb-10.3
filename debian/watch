@@ -2,7 +2,7 @@ version=3
 opts=\
 pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/-(rc|beta)/$1/,pasv \
-ftp://ftp.osuosl.org/pub/mariadb/mariadb-10.1.([\d\.]*(?:-beta|-rc)?)/source/mariadb-([\d\.]*(?:-beta|-rc)?).tar.gz \
+ftp://ftp.osuosl.org/pub/mariadb/mariadb-10.3.([\d\.]*(?:-beta|-rc)?)/source/mariadb-([\d\.]*(?:-beta|-rc)?).tar.gz \
 
 # Added string "-10.1." in path as MariaDB has release series 10.0 and 10.1 in
 # parallel, and we want uscan to check for updates only in the 10.1-series.
