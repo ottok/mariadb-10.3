@@ -3,10 +3,8 @@ Forwarded: https://github.com/MariaDB/server/pull/918#discussion_r231432905
 Author: Samuel Thibault <samuel.thibault@ens-lyon.org>
 Last-Update: 2018-11-06
 
-Index: mariadb-10.1-10.1.35/cmake/os/GNU.cmake
-===================================================================
 --- /dev/null
-+++ mariadb-10.1-10.1.35/cmake/os/GNU.cmake
++++ b/cmake/os/GNU.cmake
 @@ -0,0 +1,33 @@
 +
 +# Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.

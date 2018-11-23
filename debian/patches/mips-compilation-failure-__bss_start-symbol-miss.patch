@@ -18,11 +18,9 @@ and will correctly detect if __bss_start will be available or not.
  configure.cmake     | 3 +++
  3 files changed, 7 insertions(+), 2 deletions(-)
 
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 53d67813b5c..b6300d28b2d 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -318,6 +318,8 @@ ELSE()
+@@ -306,6 +306,8 @@ ELSE()
    SET(DEFAULT_TMPDIR "\"${TMPDIR}\"")
  ENDIF()
  
@@ -31,7 +29,7 @@ index 53d67813b5c..b6300d28b2d 100644
  # Run platform tests
  INCLUDE(configure.cmake)
  
-@@ -350,8 +352,6 @@ CHECK_JEMALLOC()
+@@ -337,8 +339,6 @@ SET(MALLOC_LIBRARY "system")
  
  CHECK_PCRE()
  
@@ -40,26 +38,23 @@ index 53d67813b5c..b6300d28b2d 100644
  IF(CMAKE_CROSSCOMPILING)
    SET(IMPORT_EXECUTABLES "IMPORTFILE-NOTFOUND" CACHE FILEPATH "Path to import_executables.cmake from a native build")
    INCLUDE(${IMPORT_EXECUTABLES})
-diff --git a/cmake/systemd.cmake b/cmake/systemd.cmake
-index 692d4df9f26..61ff6e8812b 100644
 --- a/cmake/systemd.cmake
 +++ b/cmake/systemd.cmake
-@@ -15,6 +15,8 @@
- 
- INCLUDE(FindPkgConfig)
- # http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
-+INCLUDE(CheckFunctionExists)
-+INCLUDE(CheckIncludeFiles)
- 
- MACRO(CHECK_SYSTEMD)
+@@ -17,6 +17,9 @@ MACRO(CHECK_SYSTEMD)
    IF(UNIX)
-diff --git a/configure.cmake b/configure.cmake
-index b036d457294..b2d8fbcdb9e 100644
+     INCLUDE(FindPkgConfig)
+     # http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
++    INCLUDE(CheckFunctionExists)
++    INCLUDE(CheckIncludeFiles)
++
+     SET(WITH_SYSTEMD "auto" CACHE STRING "Enable systemd scripts and notification support")
+     IF(WITH_SYSTEMD STREQUAL "yes" OR WITH_SYSTEMD STREQUAL "auto")
+       IF(PKG_CONFIG_FOUND)
 --- a/configure.cmake
 +++ b/configure.cmake
-@@ -130,6 +130,9 @@ IF(UNIX)
+@@ -139,6 +139,9 @@ IF(UNIX)
  
-   LIST(APPEND CMAKE_REQUIRED_LIBRARIES
+   SET(CMAKE_REQUIRED_LIBRARIES 
      ${LIBM} ${LIBNSL} ${LIBBIND} ${LIBCRYPT} ${LIBSOCKET} ${LIBDL} ${CMAKE_THREAD_LIBS_INIT} ${LIBRT} ${LIBEXECINFO})
 +  IF (HAVE_SYSTEMD)
 +    LIST(APPEND CMAKE_REQUIRED_LIBRARIES -lsystemd)
@@ -67,6 +62,3 @@ index b036d457294..b2d8fbcdb9e 100644
    # Need explicit pthread for gcc -fsanitize=address
    IF(CMAKE_USE_PTHREADS_INIT AND CMAKE_C_FLAGS MATCHES "-fsanitize=")
      SET(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} pthread)
--- 
-2.19.2
-
