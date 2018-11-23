@@ -1,12 +1,5 @@
-libmariadbclient-rename.patch
-scripts__mysql_create_system_tables__no_test.patch
-scripts__mysqld_safe.sh__signals.patch
-scripts__mysql_install_db.sh__no_test.patch
-mysql-test__db_test.patch
 disable-test-disks.patch
-replace_dash_with_bash_mbug675185.patch
 extend_default_test_timeout_for_tokudb.patch
-remove_rename_mariadb-server_files_in.patch
 innodb_simulate_comp_test_speedup.patch
 mysqld_multi_confd.patch
 mysqld_multi.server_lsb-header.patch
@@ -16,7 +9,6 @@ mips-machine.patch
 hurd_socket.patch
 armhf_mroonga_storage_fail.patch
 c11_atomics.patch
-remove-systemd-obsolete-target.patch
 kFreeBSD-gettid.patch
 mips-innobase-atomic.patch
 mytop-merge_src:mytop_improvements.patch
