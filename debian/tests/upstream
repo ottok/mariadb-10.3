@@ -21,6 +21,11 @@ echo "using vardir: $WORKDIR/var"
 echo "using tmpdir: $WORKDIR/tmp"
 
 echo "Setting up skip-tests-list"
+
+# Use original unstable-tests list as base to also skip all tests upstream
+# considers unstable
+cp /usr/share/mysql/mysql-test/unstable-tests $SKIP_TEST_LST
+
 cat > $SKIP_TEST_LST << EOF
 binlog.binlog_server_start_options : Requires writable /usr
 main.ctype_uca : Requires writable /usr
