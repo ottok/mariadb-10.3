@@ -1,8 +1,17 @@
-mariadb-10.1 (1:10.1.37-2) UNRELEASED; urgency=medium
+mariadb-10.1 (1:10.1.37-2) unstable; urgency=low
 
-  * New changelog entry
+  [ Samuel Thibault ]
+  * Do not depend on libsystemd-dev on non-Linux
+  * On non-Linux, do not install files not built there
+  * Add hurd cmake configuration (Closes: #912902)
 
- -- Otto Kekäläinen <otto@debian.org>  Mon, 05 Nov 2018 00:22:38 +0200
+  [ Otto Kekäläinen ]
+  * Add Gitlab-CI definition file that can test each commit to this repository
+  * Utilize upstream unstable-tests list in tests/upstream mysql-test-run.
+    This will make ci.debian.net pass as it will correctly ignore tests.
+  * Disable test unit.pcre_test on s390x that was failing in stretch-security
+
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 01 Dec 2018 18:17:18 +0200
 
 mariadb-10.1 (1:10.1.37-1) unstable; urgency=high
 
