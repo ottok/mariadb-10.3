@@ -1,3 +1,9 @@
+mariadb-10.1 (1:10.1.37-3) UNRELEASED; urgency=low
+
+  * New changelog entry
+
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 02 Dec 2018 00:06:10 +0200
+
 mariadb-10.1 (1:10.1.37-2) unstable; urgency=low
 
   [ Samuel Thibault ]
