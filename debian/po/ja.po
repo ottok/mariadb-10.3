@@ -37,10 +37,6 @@ msgstr "古いデータディレクトリは、新しい場所に保存されま
 #. Type: note
 #. Description
 #: ../mariadb-server-10.1.templates:2001
-#| msgid ""
-#| "A file named /var/lib/mysql/debian-*.flag exists on this system. The "
-#| "number indicated a database binary format version that cannot "
-#| "automatically be upgraded (or downgraded)."
 msgid ""
 "A file named /var/lib/mysql/debian-*.flag exists on this system. The number "
 "indicates a database binary format version that cannot automatically be "
