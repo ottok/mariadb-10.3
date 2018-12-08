@@ -1,8 +1,13 @@
-mariadb-10.1 (1:10.1.37-3) UNRELEASED; urgency=low
+mariadb-10.1 (1:10.1.37-3) unstable; urgency=low
 
-  * New changelog entry
+  [ Otto Kekäläinen ]
+  * Update translation templates
+  * Fix typo in commit 33d853128 so skip list is not reset when adding lines
 
- -- Otto Kekäläinen <otto@debian.org>  Sun, 02 Dec 2018 00:06:10 +0200
+  [ Vicențiu Ciorbaru ]
+  * Fix mips compilation failure (__bss_start symbol missing)
+
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 08 Dec 2018 18:50:43 +0200
 
 mariadb-10.1 (1:10.1.37-2) unstable; urgency=low
 
