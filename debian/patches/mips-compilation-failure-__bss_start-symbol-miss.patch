@@ -1,0 +1,72 @@
+From 8c1608a68c57c98cdd695996d44663faca01ddd3 Mon Sep 17 00:00:00 2001
+From: Vicentiu Ciorbaru <vicentiu@debian>
+Date: Wed, 28 Nov 2018 18:01:04 +0200
+Subject: [PATCH] Fix mips compilation failure (__bss_start symbol missing)
+
+__bss_start symbol fails to link if -lsystemd is used. There is no
+obvious reason why this happens but the code using it is only relevant
+when doing a crash report and it is covered through a separate print
+statement anyway (used to print THD->query()).
+
+To fix the compilation problem, just check if we will link with systemd
+before checking __bss_start symbol, and add -lsystemd as a required library.
+This will reproduce the compilation environment used for the final binary
+and will correctly detect if __bss_start will be available or not.
+---
+ CMakeLists.txt      | 4 ++--
+ cmake/systemd.cmake | 2 ++
+ configure.cmake     | 3 +++
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 53d67813b5c..b6300d28b2d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -318,6 +318,8 @@ ELSE()
+   SET(DEFAULT_TMPDIR "\"${TMPDIR}\"")
+ ENDIF()
+ 
++CHECK_SYSTEMD()
++
+ # Run platform tests
+ INCLUDE(configure.cmake)
+ 
+@@ -350,8 +352,6 @@ CHECK_JEMALLOC()
+ 
+ CHECK_PCRE()
+ 
+-CHECK_SYSTEMD()
+-
+ IF(CMAKE_CROSSCOMPILING)
+   SET(IMPORT_EXECUTABLES "IMPORTFILE-NOTFOUND" CACHE FILEPATH "Path to import_executables.cmake from a native build")
+   INCLUDE(${IMPORT_EXECUTABLES})
+diff --git a/cmake/systemd.cmake b/cmake/systemd.cmake
+index 692d4df9f26..61ff6e8812b 100644
+--- a/cmake/systemd.cmake
++++ b/cmake/systemd.cmake
+@@ -15,6 +15,8 @@
+ 
+ INCLUDE(FindPkgConfig)
+ # http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
++INCLUDE(CheckFunctionExists)
++INCLUDE(CheckIncludeFiles)
+ 
+ MACRO(CHECK_SYSTEMD)
+   IF(UNIX)
+diff --git a/configure.cmake b/configure.cmake
+index b036d457294..b2d8fbcdb9e 100644
+--- a/configure.cmake
++++ b/configure.cmake
+@@ -130,6 +130,9 @@ IF(UNIX)
+ 
+   LIST(APPEND CMAKE_REQUIRED_LIBRARIES
+     ${LIBM} ${LIBNSL} ${LIBBIND} ${LIBCRYPT} ${LIBSOCKET} ${LIBDL} ${CMAKE_THREAD_LIBS_INIT} ${LIBRT} ${LIBEXECINFO})
++  IF (HAVE_SYSTEMD)
++    LIST(APPEND CMAKE_REQUIRED_LIBRARIES -lsystemd)
++  ENDIF()
+   # Need explicit pthread for gcc -fsanitize=address
+   IF(CMAKE_USE_PTHREADS_INIT AND CMAKE_C_FLAGS MATCHES "-fsanitize=")
+     SET(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} pthread)
+-- 
+2.19.2
+
