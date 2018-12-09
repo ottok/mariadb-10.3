@@ -78,7 +78,7 @@ override_dh_auto_configure:
 	dh_testdir
 
 	mkdir -p $(BUILDDIR) && cd $(BUILDDIR) && \
-	sh -c  'PATH=$${MYSQL_BUILD_PATH:-"/usr/local/bin:/usr/bin:/bin"} \
+	sh -c  'PATH=$${MYSQL_BUILD_PATH:-"/usr/lib/ccache:/usr/local/bin:/usr/bin:/bin"} \
 	    	CC=${CC} \
 	    	CXX=${CXX} \
 	    cmake -DCMAKE_INSTALL_PREFIX=/usr \
