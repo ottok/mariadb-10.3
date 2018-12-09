@@ -190,6 +190,6 @@ override_dh_installcron-arch:
 	dh_installcron --name mysql-server
 
 %:
-	dh $@ --parallel --with systemd --fail-missing
+	dh $@ --parallel --with systemd --list-missing
 
 # vim: ts=8
