@@ -38,6 +38,10 @@ else
     TESTSUITE_FAIL_CMD:=exit 1
 endif
 
+ifeq (32,$(DEB_HOST_ARCH_BITS))
+    CMAKEFLAGS += -DWITHOUT_ROCKSDB=true
+endif
+
 # Skip TokuDB if arch is not amd64 (also disable for kfreebsd-amd64 as it FTBFS)
 # Skipped on the x32 ABI too; untested, but unlikely to work given i386 is not
 # supported.
