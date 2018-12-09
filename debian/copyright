@@ -193,11 +193,6 @@ Files:
  libmysqld/resource.h
  mysql-test/*
  support-files/binary-configure.sh
- support-files/my-huge.cnf.sh
- support-files/my-innodb-heavy-4G.cnf.sh
- support-files/my-large.cnf.sh
- support-files/my-medium.cnf.sh
- support-files/my-small.cnf.sh
  support-files/mysqld_multi.server.sh
  support-files/mysql-log-rotate.sh
  support-files/mysql.server-sys5.sh
@@ -218,17 +213,14 @@ License: GPL-2
 Files: BUILD/*
  client/*
  client/echo.c
- client/get_password.c
  cmake/*
  dbug/dbug_add_tags.pl
  extra/*
  include/*
- libmysql/*
  libmysqld/*
  libservices/*
  mysql-test/include/have_perfschema.inc
  mysql-test/lib/mtr_cases.pm
- mysql-test/lib/mtr_gcov.pl
  mysql-test/lib/mtr_gprof.pl
  mysql-test/lib/mtr_io.pl
  mysql-test/lib/mtr_match.pm
@@ -445,27 +437,16 @@ Copyright:
  2004-2008 MySQL AB & MySQL Finland AB & TCX DataKonsult AB
 License: GPL-2
 
-Files: storage/xtradb/*
-Copyright:
-  1994-2014 Oracle and/or its affiliate
-  2011-2013 Orcale Corpn
-  1994-2013 Innobase Oy
-  2008-2009 Google Inc
-  2009-2010,2012 Facebook Inc
-  2009-2012 Percona Inc
-  2013, 2014, SkySQL Ab
-License: GPL-2
-
-Files: storage/innobase/ut/ut0crc32.cc storage/xtradb/ut/ut0crc32.cc
+Files: storage/innobase/ut/ut0crc32.cc
 Copyright: 2009, 2010 Facebook, Inc.
            2011 Oracle and/or its affiliates.
 License: GPL-2 and BSD-2-clause
 
-Files: storage/innobase/COPYING.Google storage/xtradb/COPYING.Google
+Files: storage/innobase/COPYING.Google
 Copyright: 2008 Google Inc
 License: BSD-3-clause
 
-Files: storage/innobase/COPYING.Percona storage/xtradb/COPYING.Percona
+Files: storage/innobase/COPYING.Percona
 Copyright: 2008-2009 Percona Inc
 License: BSD-3-clause
 
@@ -497,12 +478,10 @@ Files: client/completion_hash.h
  mysql-test/lib/My/ConfigFactory.pm
  mysql-test/mysql-stress-test.pl
  BUILD/*.sh
- BUILD/compile-amd64-debug-max-no-ndb
  BUILD/compile-solaris-amd64
  BUILD/compile-amd64-valgrind-max
  BUILD/compile-pentium64-max
  BUILD/compile-pentium64
- BUILD/compile-pentium-valgrind-max-no-ndb
  scripts/mysqlhotcopy.sh
  scripts/mysqld_multi.sh
  mysql-test/mysql-stress-test.pl
@@ -572,13 +551,11 @@ Files: scripts/mysqld_safe.sh
 Copyright: 1996 Abandoned TCX DataKonsult AB & Monty Program KB & Detron HB
 License: public-domain
 
-Files: sql/sql_yacc.cc sql/sql_yacc.h storage/xtradb/fts/fts0pars.cc
- storage/xtradb/include/fts0pars.h
+Files: sql/sql_yacc.cc
 Copyright: 1984,1989-1990,2000-2011 Free Software Foundation, Inc.
 License: GPL-3+-with-bison-exception
 
-Files: storage/innobase/include/pars0grm.h storage/xtradb/include/pars0grm.h
- storage/xtradb/pars/pars0grm.cc storage/innobase/pars/pars0grm.cc
+Files: storage/innobase/include/pars0grm.h storage/innobase/pars/pars0grm.cc
 Copyright: 1995-2009 Innobase Oy.
  1984,1989-1990,2000-2004 Free Software Foundation Inc.
 License: GPL-2+-with-bison-exception
@@ -706,13 +683,6 @@ Copyright: 1997-2016 University of Cambridge
            2003-2014 Google Inc
            2009-2016 Zoltan Herczeg
 License: BSD-3-clause
-
-Files: plugin/semisync/*
-Copyright:
- 2007 Google Inc
- 1995-2008 MySQL AB
- 2008-2010 Sun Microsystems Inc
-License: GPL-2
 
 Files: */CMakeLists.txt
 Copyright:
