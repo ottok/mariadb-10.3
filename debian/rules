@@ -83,7 +83,6 @@ override_dh_auto_configure:
 	    	CXX=${CXX} \
 	    cmake -DCMAKE_INSTALL_PREFIX=/usr \
 	    $(CMAKEFLAGS) \
-	    -DWITH_SSL=bundled \
 	    -DCOMPILATION_COMMENT="$(DEB_VENDOR) $(RELEASE)" \
 	    -DMYSQL_SERVER_SUFFIX="-$(DEB_VERSION_REVISION)" \
 	    -DSYSTEM_TYPE="debian-$(DEB_HOST_GNU_SYSTEM)" \
@@ -93,6 +92,7 @@ override_dh_auto_configure:
 	    -DINSTALL_PLUGINDIR=lib/$(DEB_HOST_MULTIARCH)/mariadb19/plugin \
 	    -DINSTALL_MYSQLTESTDIR=share/mysql/mysql-test \
 	    -DPLUGIN_AUTH_SOCKET=STATIC \
+	    -DPLUGIN_AWS_KEY_MANAGEMENT=NO \
 	    -DDEB=$(DEB_VENDOR) ..'
 
 # This is needed, otherwise 'make test' will run before binaries have been built
