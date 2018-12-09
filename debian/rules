@@ -60,8 +60,8 @@ override_dh_auto_clean:
 	rm -rf mysql-test/var
 	rm -f storage/mroonga/mysql-test/mroonga/storage/r/information_schema_plugins.result
 	rm -f storage/mroonga/mysql-test/mroonga/storage/r/variable_version.result
-	rm -f debian/mariadb-server-10.1.mariadb.service
-	rm -f debian/mariadb-server-10.1.mariadb@.service
+	rm -f debian/mariadb-server-10.3.mariadb.service
+	rm -f debian/mariadb-server-10.3.mariadb@.service
 	rm -rf $(BUILDDIR)
 
 	[ ! -f debian/mysql-test-unstable-tests.orig ] || \
@@ -116,8 +116,8 @@ override_dh_auto_install:
 
 ifneq (,$(filter linux,$(DEB_HOST_ARCH_OS)))
 	# Copy systemd files to a location available for dh_installinit
-	cp $(BUILDDIR)/support-files/mariadb.service debian/mariadb-server-10.1.mariadb.service
-	cp $(BUILDDIR)/support-files/mariadb@.service debian/mariadb-server-10.1.mariadb@.service
+	cp $(BUILDDIR)/support-files/mariadb.service debian/mariadb-server-10.3.mariadb.service
+	cp $(BUILDDIR)/support-files/mariadb@.service debian/mariadb-server-10.3.mariadb@.service
 endif
 
 	# make install
@@ -152,7 +152,7 @@ endif
 
 	# nm numeric soft is not enough, therefore extra sort in command
 	# to satisfy Debian reproducible build requirements
-	nm --defined-only $(BUILDDIR)/sql/mysqld | LC_ALL=C sort | gzip -n -9 > $(TMP)/usr/share/doc/mariadb-server-10.1/mysqld.sym.gz
+	nm --defined-only $(BUILDDIR)/sql/mysqld | LC_ALL=C sort | gzip -n -9 > $(TMP)/usr/share/doc/mariadb-server-10.3/mysqld.sym.gz
 
 	# rename and install AppArmor profile
 	install -D -m 644 debian/apparmor-profile $(TMP)/etc/apparmor.d/usr.sbin.mysqld
