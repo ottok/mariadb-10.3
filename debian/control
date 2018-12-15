@@ -115,18 +115,18 @@ Description: MariaDB database client library
 Package: libmariadbclient18
 Section: libs
 Architecture: any
-Depends: mysql-common,
-         ${misc:Depends},
-         ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
-Multi-Arch: same
-Description: MariaDB database client library
+Depends: libmariadb3 (= ${binary:Version}),
+         ${misc:Depends}
+Replaces: libmariadbclient18
+Provides: libmariadbclient18
+Description: Virtual package to satisfy external libmariadbclient18 depends
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
  language in the world. The main goals of MariaDB are speed, robustness and
  ease of use.
  .
- This package includes the client library.
+ This package provides compatibility symlinks for binaries that expect to find
+ libmariadbclient.so.18 will automatically use libmariadb.so.3 instead.
 
 Package: libmariadbd19
 Architecture: any
@@ -135,8 +135,10 @@ Depends: ${misc:Depends},
          ${shlibs:Depends}
 Multi-Arch: same
 Breaks: libmariadbd-dev (<< ${source:Version}),
+        libmariadbd18,
         libmysqld-dev
 Replaces: libmariadbd-dev (<< ${source:Version}),
+          libmariadbd18,
           libmysqld-dev
 Description: MariaDB embedded database, shared library
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
@@ -151,7 +153,7 @@ Architecture: any
 Multi-Arch: same
 Section: libdevel
 Pre-Depends: ${misc:Pre-Depends}
-Depends: libmariadbclient-dev (= ${binary:Version}),
+Depends: libmariadb-dev (= ${binary:Version}),
          libmariadbd19 (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
@@ -187,12 +189,16 @@ Conflicts: mysql-client-5.5,
            virtual-mysql-client-core
 Breaks: mariadb-client-10.0 (<< 10.0.24-6~),
         mariadb-client-core-10.0,
+        mariadb-client-core-10.1,
+        mariadb-client-core-10.2,
         mariadb-client-core-5.5,
         mysql-client-core-5.5,
         mysql-client-core-5.6,
         mysql-client-core-5.7
 Replaces: mariadb-client-10.0 (<< 10.0.24-6~),
           mariadb-client-core-10.0,
+          mariadb-client-core-10.1,
+          mariadb-client-core-10.2,
           mariadb-client-core-5.5,
           mysql-client-core-5.5,
           mysql-client-core-5.6,
@@ -210,9 +216,8 @@ Description: MariaDB database core client binaries
 Package: mariadb-client-10.3
 Architecture: any
 Depends: debianutils (>=1.6),
-         mariadb-client-core-10.3 (>= ${source:Version}),
          libconfig-inifiles-perl,
-         mariadb-client-core-10.1 (>= ${source:Version}),
+         mariadb-client-core-10.3 (>= ${source:Version}),
          ${misc:Depends},
          ${perl:Depends},
          ${shlibs:Depends}
@@ -222,12 +227,16 @@ Conflicts: mysql-client-core-5.5,
            mytop,
            virtual-mysql-client
 Breaks: mariadb-client-10.0,
+        mariadb-client-10.1,
+        mariadb-client-10.2,
         mariadb-client-5.5,
         mariadb-server-10.0 (<< 10.0.13-1~),
         mysql-client-5.5,
         mysql-client-5.6,
         mysql-client-5.7
 Replaces: mariadb-client-10.0,
+          mariadb-client-10.1,
+          mariadb-client-10.2,
           mariadb-client-5.5,
           mariadb-server-10.0 (<< 10.0.13-1~),
           mysql-client-5.5,
@@ -261,6 +270,8 @@ Conflicts: mariadb-galera-server-5.5,
 Breaks: mariadb-client-10.1,
         mariadb-server-10.1,
         mariadb-server-core-10.0,
+        mariadb-server-core-10.1,
+        mariadb-server-core-10.2,
         mariadb-server-core-5.5,
         mysql-client-5.5,
         mysql-client-5.6,
@@ -270,6 +281,8 @@ Breaks: mariadb-client-10.1,
 Replaces: mariadb-client-10.1,
           mariadb-server-10.1,
           mariadb-server-core-10.0,
+          mariadb-server-core-10.1,
+          mariadb-server-core-10.2,
           mariadb-server-core-5.5,
           mysql-client-5.5,
           mysql-client-5.6,
@@ -324,6 +337,8 @@ Breaks: cqrlog (<< 1.9.0-5~),
         mariadb-galera-server-10.0,
         mariadb-galera-server-5.5,
         mariadb-server-10.0,
+        mariadb-server-10.1,
+        mariadb-server-10.2,
         mariadb-server-5.5,
         mariadb-tokudb-engine-10.0,
         mariadb-tokudb-engine-10.1,
@@ -336,6 +351,8 @@ Replaces: mariadb-galera-server,
           mariadb-galera-server-10.0,
           mariadb-galera-server-5.5,
           mariadb-server-10.0,
+          mariadb-server-10.1,
+          mariadb-server-10.2,
           mariadb-server-5.5,
           mariadb-tokudb-engine-10.0,
           mariadb-tokudb-engine-10.1,
@@ -360,7 +377,7 @@ Depends: mariadb-server-10.3 (>= ${source:Version}),
          ${misc:Depends}
 Description: MariaDB database server (metapackage depending on the latest version)
  This is an empty package that depends on the current "best" version of
- mariadb-server (currently mariadb-server-10.0), as determined by the MariaDB
+ mariadb-server (currently mariadb-server-10.3), as determined by the MariaDB
  maintainers. Install this package if in doubt about which MariaDB
  version you need. That will install the version recommended by the
  package maintainers.
@@ -376,7 +393,7 @@ Depends: mariadb-client-10.3 (>= ${source:Version}),
          ${misc:Depends}
 Description: MariaDB database client (metapackage depending on the latest version)
  This is an empty package that depends on the current "best" version of
- mariadb-client (currently mariadb-client-10.0), as determined by the MariaDB
+ mariadb-client (currently mariadb-client-10.3), as determined by the MariaDB
  maintainers.  Install this package if in doubt about which MariaDB version
  you want, as this is the one considered to be in the best shape.
 
@@ -546,8 +563,7 @@ Description: CrackLib Password Validation Plugin for MariaDB
 
 Package: mariadb-test
 Architecture: any
-Depends: libmariadbclient18 (= ${binary:Version}),
-         mariadb-client-10.3 (= ${binary:Version}),
+Depends: mariadb-client-10.3 (= ${binary:Version}),
          mariadb-server-10.3 (= ${binary:Version}),
          mariadb-test-data (= ${source:Version}),
          virtual-mysql-testsuite,
