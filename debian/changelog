@@ -1,8 +1,10 @@
-mariadb-10.3 (1:10.3.11-1) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.11-1~exp1) experimental; urgency=low
 
-  * Open new entry
+  * Import to Debian latest major release of MariaDB (Closes: #867892)
+  * Packaging carries on all impromevements done on to the latest MariaDB
+    10.1.x packages in Debian unstable up until Dec 15th 2018.
 
- -- Otto Kekäläinen <otto@debian.org>  Sat, 24 Nov 2018 19:46:57 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 15 Dec 2018 19:20:12 +0200
 
 mariadb-10.1 (1:10.1.37-3) unstable; urgency=low
 
