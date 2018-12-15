@@ -3,4 +3,4 @@ mariadb-server-10.3: command-with-path-in-maintainer-script postinst:140 /bin/ec
 # OK, path /usr/sbin/invoke-rc.d is only used in check, executes are run without the path
 # False positive: unfortified calls have already been fully validated at compile-time
 # See full research at https://jira.mariadb.org/browse/MDEV-8377
-mariadb-server-10.3: hardening-no-fortify-functions usr/lib/*/mariadb18/plugin/auth_pam.so
+mariadb-server-10.3: hardening-no-fortify-functions usr/lib/*/mariadb19/plugin/auth_pam.so

@@ -1,2 +1,0 @@
-# OK as the MariaDB package is not anyway allowed to use MySQL name
-libmariadbd18: package-name-doesnt-match-sonames libmysqld18

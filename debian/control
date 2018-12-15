@@ -152,7 +152,7 @@ Multi-Arch: same
 Section: libdevel
 Pre-Depends: ${misc:Pre-Depends}
 Depends: libmariadbclient-dev (= ${binary:Version}),
-         libmariadbd18 (= ${binary:Version}),
+         libmariadbd19 (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
 Breaks: libmysqld-dev

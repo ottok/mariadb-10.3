@@ -1,2 +1,2 @@
 etc/mysql/conf.d/connect.cnf
-usr/lib/*/mariadb18/plugin/ha_connect.so
+usr/lib/*/mariadb19/plugin/ha_connect.so

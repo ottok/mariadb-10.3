@@ -86,7 +86,7 @@ override_dh_auto_configure:
 	    -DCMAKE_SYSTEM_PROCESSOR=$(DEB_HOST_ARCH) \
 	    -DBUILD_CONFIG=mysql_release \
 	    -DINSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) \
-	    -DINSTALL_PLUGINDIR=lib/$(DEB_HOST_MULTIARCH)/mariadb18/plugin \
+	    -DINSTALL_PLUGINDIR=lib/$(DEB_HOST_MULTIARCH)/mariadb19/plugin \
 	    -DINSTALL_MYSQLTESTDIR=share/mysql/mysql-test \
 	    -DPLUGIN_AUTH_SOCKET=STATIC \
 	    -DDEB=$(DEB_VENDOR) ..'
@@ -129,20 +129,20 @@ endif
 	rm -rf $(TMP)/usr/share/mysql/mysql-test/plugin/tokudb/tokudb/t/*.py
 
 	# Remove test plugins
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/adt_null.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/auth_0x0100.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/auth_test_plugin.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/daemon_example.ini
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/debug_key_management.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/dialog_examples.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/example_key_management.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/ha_example.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/ha_test_sql_discovery.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/libdaemon_example.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/mypluglib.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/qa_auth_client.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/qa_auth_interface.so
-	rm -f $(TMP)/usr/lib/*/mariadb18/plugin/qa_auth_server.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/adt_null.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/auth_0x0100.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/auth_test_plugin.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/daemon_example.ini
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/debug_key_management.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/dialog_examples.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/example_key_management.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/ha_example.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/ha_test_sql_discovery.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/libdaemon_example.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/mypluglib.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_client.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_interface.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_server.so
 
 	# Delete useless systemd files introduced in upstream commit
 	# https://github.com/MariaDB/server/commit/7bbc6c14d1e8fcf1f4737e0a5fcf6237fe18bd23

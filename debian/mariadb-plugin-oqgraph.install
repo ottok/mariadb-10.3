@@ -1,2 +1,2 @@
 etc/mysql/conf.d/oqgraph.cnf etc/mysql/mariadb.conf.d
-usr/lib/*/mariadb18/plugin/ha_oqgraph.so
+usr/lib/*/mariadb19/plugin/ha_oqgraph.so
