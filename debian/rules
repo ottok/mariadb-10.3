@@ -77,6 +77,13 @@ override_dh_auto_configure:
 	@echo "RULES.$@"
 	dh_testdir
 
+	# Versioned symbols are only available on Linux.
+	# Remove symbols file on kFreeBSD builds so that
+	# dpkg-gensymbols will not fail the build.
+ifneq (,$(filter $(DEB_HOST_ARCH), kfreebsd-i386 kfreebsd-amd64))
+	rm debian/libmariadb3.symbols
+endif
+
 	mkdir -p $(BUILDDIR) && cd $(BUILDDIR) && \
 	sh -c  'PATH=$${MYSQL_BUILD_PATH:-"/usr/lib/ccache:/usr/local/bin:/usr/bin:/bin"} \
 	    	CC=${CC} \
@@ -147,6 +154,7 @@ endif
 	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_client.so
 	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_interface.so
 	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_server.so
+	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/test_versioning.so
 
 	# Delete useless systemd files introduced in upstream commit
 	# https://github.com/MariaDB/server/commit/7bbc6c14d1e8fcf1f4737e0a5fcf6237fe18bd23
@@ -189,6 +197,10 @@ override_dh_installinit-arch:
 override_dh_installcron-arch:
 	dh_installcron --name mysql-server
 
+# If a file is not supposed to be included anywhere, add it to the not-installed
+# file and document the reason. Note that dh_install supports the above mentioned
+# white list file only starting from Debian Stretch and Ubuntu Xenial.
+# To find more, grep build logs for 'but is not installed to anywhere'.
 %:
 	dh $@ --parallel --with systemd --list-missing
 
