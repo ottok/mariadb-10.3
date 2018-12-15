@@ -16,7 +16,7 @@
 
 /* Write some debug info */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_test.h"
@@ -73,22 +73,22 @@ print_where(COND *cond,const char *info, enum_query_type query_type)
   DBUG_UNLOCK_FILE;
 }
 
+#ifdef EXTRA_DEBUG
 	/* This is for debugging purposes */
-
-
 static my_bool print_cached_tables_callback(TDC_element *element,
                                             void *arg __attribute__((unused)))
 {
   TABLE *entry;
 
   mysql_mutex_lock(&element->LOCK_table_share);
-  TDC_element::All_share_tables_list::Iterator it(element->all_tables);
+  All_share_tables_list::Iterator it(element->all_tables);
   while ((entry= it++))
   {
     THD *in_use= entry->in_use;
-    printf("%-14.14s %-32s%6ld%8ld%6d  %s\n",
-           entry->s->db.str, entry->s->table_name.str, element->version,
-           in_use ? in_use->thread_id : 0,
+    printf("%-14.14s %-32s%6lu%8ld%6d  %s\n",
+           entry->s->db.str, entry->s->table_name.str,
+           (ulong) element->version,
+           in_use ? (long) in_use->thread_id : (long) 0,
            entry->db_stat ? 1 : 0,
            in_use ? lock_descriptions[(int)entry->reginfo.lock_type] :
                     "Not in use");
@@ -107,11 +107,13 @@ static void print_cached_tables(void)
 
   tdc_iterate(0, (my_hash_walk_action) print_cached_tables_callback, NULL, true);
 
-  printf("\nCurrent refresh version: %ld\n", tdc_refresh_version());
+  printf("\nCurrent refresh version: %ld\n",
+         (long) tdc_refresh_version());
   fflush(stdout);
   /* purecov: end */
   return;
 }
+#endif
 
 
 void TEST_filesort(SORT_FIELD *sortorder,uint s_length)
@@ -135,7 +137,8 @@ void TEST_filesort(SORT_FIELD *sortorder,uint s_length)
 	out.append(*sortorder->field->table_name);
 	out.append('.');
       }
-      out.append(sortorder->field->field_name ? sortorder->field->field_name:
+      out.append(sortorder->field->field_name.str ?
+                 sortorder->field->field_name.str :
 		 "tmp_table_column");
     }
     else
@@ -171,7 +174,7 @@ TEST_join(JOIN *join)
       in order not to garble the tabular output below.
     */
     String ref_key_parts[MAX_TABLES];
-    int tables_in_range= jt_range->end - jt_range->start;
+    int tables_in_range= (int)(jt_range->end - jt_range->start);
     for (i= 0; i < tables_in_range; i++)
     {
       JOIN_TAB *tab= jt_range->start + i;
@@ -236,11 +239,11 @@ static void print_keyuse(KEYUSE *keyuse)
   keyuse->val->print(&str, QT_ORDINARY);
   str.append('\0');
   if (keyuse->is_for_hash_join())
-    fieldname= keyuse->table->field[keyuse->keypart]->field_name;
+    fieldname= keyuse->table->field[keyuse->keypart]->field_name.str;
   else if (keyuse->keypart == FT_KEYPART)
     fieldname= "FT_KEYPART";
   else
-    fieldname= key_info->key_part[keyuse->keypart].field->field_name;
+    fieldname= key_info->key_part[keyuse->keypart].field->field_name.str;
   ll2str(keyuse->used_tables, buf2, 16, 0); 
   fprintf(DBUG_FILE, "KEYUSE: %s.%s=%s  optimize: %u  used_tables: %s "
           "ref_table_rows: %lu  keypart_map: %0lx\n",
@@ -385,10 +388,10 @@ void print_sjm(SJ_MATERIALIZATION_INFO *sjm)
 /*
   Debugging help: force List<...>::elem function not be removed as unused.
 */
-Item* (List<Item>:: *dbug_list_item_elem_ptr)(int)= &List<Item>::elem;
-Item_equal* (List<Item_equal>:: *dbug_list_item_equal_elem_ptr)(int)=
+Item* (List<Item>:: *dbug_list_item_elem_ptr)(uint)= &List<Item>::elem;
+Item_equal* (List<Item_equal>:: *dbug_list_item_equal_elem_ptr)(uint)=
   &List<Item_equal>::elem;
-TABLE_LIST* (List<TABLE_LIST>:: *dbug_list_table_list_elem_ptr)(int) =
+TABLE_LIST* (List<TABLE_LIST>:: *dbug_list_table_list_elem_ptr)(uint) =
   &List<TABLE_LIST>::elem;
 
 #endif
@@ -432,7 +435,7 @@ static void push_locks_into_array(DYNAMIC_ARRAY *ar, THR_LOCK_DATA *data,
     if (table && table->s->tmp_table == NO_TMP_TABLE)
     {
       TABLE_LOCK_INFO table_lock_info;
-      table_lock_info.thread_id= table->in_use->thread_id;
+      table_lock_info.thread_id= (ulong)table->in_use->thread_id;
       memcpy(table_lock_info.table_name, table->s->table_cache_key.str,
 	     table->s->table_cache_key.length);
       table_lock_info.table_name[strlen(table_lock_info.table_name)]='.';
@@ -560,15 +563,17 @@ void mysql_print_status()
 {
   char current_dir[FN_REFLEN];
   STATUS_VAR tmp;
+  uint count;
 
-  calc_sum_of_all_status(&tmp);
+  count= calc_sum_of_all_status(&tmp);
   printf("\nStatus information:\n\n");
   (void) my_getwd(current_dir, sizeof(current_dir),MYF(0));
   printf("Current dir: %s\n", current_dir);
-  printf("Running threads: %d  Stack size: %ld\n", thread_count,
+  printf("Running threads: %d  Cached threads: %lu  Stack size: %ld\n",
+         count, cached_thread_count,
 	 (long) my_thread_stack_size);
+#ifdef EXTRA_DEBUG
   thr_print_locks();				// Write some debug info
-#ifndef DBUG_OFF
   print_cached_tables();
 #endif
   /* Print key cache status */
@@ -613,29 +618,35 @@ Next alarm time: %lu\n",
   display_table_locks();
 #ifdef HAVE_MALLINFO
   struct mallinfo info= mallinfo();
+  char llbuff[10][22];
   printf("\nMemory status:\n\
-Non-mmapped space allocated from system: %d\n\
-Number of free chunks:			 %d\n\
-Number of fastbin blocks:		 %d\n\
-Number of mmapped regions:		 %d\n\
-Space in mmapped regions:		 %d\n\
-Maximum total allocated space:		 %d\n\
-Space available in freed fastbin blocks: %d\n\
-Total allocated space:			 %d\n\
-Total free space:			 %d\n\
-Top-most, releasable space:		 %d\n\
-Estimated memory (with thread stack):    %ld\n",
-	 (int) info.arena	,
-	 (int) info.ordblks,
-	 (int) info.smblks,
-	 (int) info.hblks,
-	 (int) info.hblkhd,
-	 (int) info.usmblks,
-	 (int) info.fsmblks,
-	 (int) info.uordblks,
-	 (int) info.fordblks,
-	 (int) info.keepcost,
-	 (long) (thread_count * my_thread_stack_size + info.hblkhd + info.arena));
+Non-mmapped space allocated from system: %s\n\
+Number of free chunks:                   %lu\n\
+Number of fastbin blocks:                %lu\n\
+Number of mmapped regions:               %lu\n\
+Space in mmapped regions:                %s\n\
+Maximum total allocated space:           %s\n\
+Space available in freed fastbin blocks: %s\n\
+Total allocated space:                   %s\n\
+Total free space:                        %s\n\
+Top-most, releasable space:              %s\n\
+Estimated memory (with thread stack):    %s\n\
+Global memory allocated by server:       %s\n\
+Memory allocated by threads:             %s\n",
+	 llstr(info.arena,   llbuff[0]),
+	 (ulong) info.ordblks,
+	 (ulong) info.smblks,
+	 (ulong) info.hblks,
+	 llstr(info.hblkhd,   llbuff[1]),
+	 llstr(info.usmblks,  llbuff[2]),
+	 llstr(info.fsmblks,  llbuff[3]),
+	 llstr(info.uordblks, llbuff[4]),
+	 llstr(info.fordblks, llbuff[5]),
+	 llstr(info.keepcost, llbuff[6]),
+	 llstr((count + cached_thread_count)* my_thread_stack_size + info.hblkhd + info.arena, llbuff[7]),
+         llstr(tmp.global_memory_used, llbuff[8]),
+         llstr(tmp.local_memory_used, llbuff[9]));
+
 #endif
 
 #ifdef HAVE_EVENT_SCHEDULER

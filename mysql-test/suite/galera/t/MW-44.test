@@ -8,11 +8,13 @@
 --connection node_1
 TRUNCATE TABLE mysql.general_log;
 
+--sleep 1
 --connection node_2
 --let $wait_condition = SELECT COUNT(*) = 0 FROM mysql.general_log;
 --source include/wait_condition.inc
 TRUNCATE TABLE mysql.general_log;
 
+--sleep 1
 --connection node_1
 --let $wait_condition = SELECT COUNT(*) = 0 FROM mysql.general_log;
 --source include/wait_condition.inc

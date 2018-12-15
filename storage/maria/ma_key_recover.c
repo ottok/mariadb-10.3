@@ -933,8 +933,6 @@ err:
      @retval 1      Error
 */
 
-long my_counter= 0;
-
 uint _ma_apply_redo_index(MARIA_HA *info,
                           LSN lsn, const uchar *header, uint head_length)
 {
@@ -946,7 +944,7 @@ uint _ma_apply_redo_index(MARIA_HA *info,
   uint page_offset= 0, org_page_length;
   uint page_length, keypage_header, keynr;
   uint max_page_size= share->max_index_block_size;
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   uint new_page_length= 0;
 #endif
   int result;
@@ -1110,7 +1108,7 @@ uint _ma_apply_redo_index(MARIA_HA *info,
       DBUG_PRINT("redo", ("org_page_length: %u  new_page_length: %u",
                           uint2korr(header), uint2korr(header+2)));
       DBUG_ASSERT(uint2korr(header) == page_length);
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
       new_page_length= MY_MIN(uint2korr(header+2), max_page_size);
 #endif
       header+= 4;

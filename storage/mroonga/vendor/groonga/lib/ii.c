@@ -575,7 +575,7 @@ chunk_free(grn_ctx *ctx, grn_ii *ii,
   }
   */
   grn_io_win iw, iw_;
-  grn_ii_ginfo *ginfo;
+  grn_ii_ginfo *ginfo= 0;
   uint32_t seg, m, *gseg;
   seg = offset >> GRN_II_N_CHUNK_VARIATION;
   if (size > S_CHUNK) {

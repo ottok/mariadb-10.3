@@ -307,11 +307,11 @@ SELECT @@global.sql_mode;
 SET @@global.sql_mode = 500000;
 SELECT @@global.sql_mode;
 
-SET @@global.sql_mode = 4294967295;
+SET @@global.sql_mode = 17179869183;
 SELECT @@global.sql_mode;
 
 --Error ER_WRONG_VALUE_FOR_VAR
-SET @@global.sql_mode = 4294967296;
+SET @@global.sql_mode = 17179869184;
 
 # use of decimal values
 
@@ -335,11 +335,6 @@ SELECT @@global.sql_mode;
 
 
 SET sql_mode = 'ANSI';
-
---Error ER_PARSE_ERROR
-SET session.sql_mode = 'ANSI';
---Error ER_PARSE_ERROR
-SET global.sql_mode = 'ANSI';
 
 SET session sql_mode = 1;
 SELECT @@sql_mode;

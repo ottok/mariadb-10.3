@@ -59,7 +59,7 @@ USED_MEM* my_once_root_block=0;			/* pointer to first block */
 uint	  my_once_extra=ONCE_ALLOC_INIT;	/* Memory to alloc / block */
 
 	/* from my_largepage.c */
-#ifdef HAVE_LARGE_PAGES
+#ifdef HAVE_LINUX_LARGE_PAGES
 my_bool my_use_large_pages= 0;
 uint    my_large_page_size= 0;
 #endif
@@ -99,3 +99,10 @@ my_bool my_disable_async_io=0;
 my_bool my_disable_flush_key_blocks=0;
 my_bool my_disable_symlinks=0;
 my_bool my_disable_copystat_in_redel=0;
+
+/* Typelib by all clients */
+const char *sql_protocol_names_lib[] =
+{ "TCP", "SOCKET", "PIPE", "MEMORY", NullS };
+
+TYPELIB sql_protocol_typelib ={ array_elements(sql_protocol_names_lib) - 1, "",
+                                sql_protocol_names_lib, NULL };

@@ -1,6 +1,9 @@
 SET(TOKUDB_VERSION 5.6.41-84.1)
 # PerconaFT only supports x86-64 and cmake-2.8.9+
-IF(CMAKE_VERSION VERSION_LESS "2.8.9")
+IF(WIN32)
+  # tokudb never worked there
+  RETURN()
+ELSEIF(CMAKE_VERSION VERSION_LESS "2.8.9")
   MESSAGE(STATUS "CMake 2.8.9 or higher is required by TokuDB")
 ELSEIF(NOT HAVE_DLOPEN)
   MESSAGE(STATUS "dlopen is required by TokuDB")
@@ -34,14 +37,45 @@ SET(TOKUDB_SOURCES
     tokudb_sysvars.cc
     tokudb_thread.cc
     tokudb_dir_cmd.cc)
-MYSQL_ADD_PLUGIN(tokudb ${TOKUDB_SOURCES} STORAGE_ENGINE MODULE_ONLY)
+MYSQL_ADD_PLUGIN(tokudb ${TOKUDB_SOURCES} STORAGE_ENGINE MODULE_ONLY
+                 COMPONENT tokudb-engine CONFIG ${CMAKE_CURRENT_BINARY_DIR}/tokudb.cnf)
 
 IF(NOT TARGET tokudb)
   RETURN()
 ENDIF()
 
+INCLUDE(jemalloc)
+CHECK_JEMALLOC()
+
 IF(NOT LIBJEMALLOC)
   MESSAGE(WARNING "TokuDB is enabled, but jemalloc is not. This configuration is not supported")
+ELSEIF(LIBJEMALLOC STREQUAL jemalloc)
+  FIND_LIBRARY(LIBJEMALLOC_SO jemalloc)
+  IF(NOT LIBJEMALLOC_SO)
+    MESSAGE(FATAL_ERROR "jemalloc is present, but cannot be found?")
+  ENDIF()
+  GET_FILENAME_COMPONENT(LIBJEMALLOC_PATH ${LIBJEMALLOC_SO} REALPATH CACHE)
+ENDIF()
+
+IF(LIBJEMALLOC_PATH AND (RPM OR DEB))
+  UNSET(LIBJEMALLOC)
+  GET_DIRECTORY_PROPERTY(V DIRECTORY ${CMAKE_SOURCE_DIR} DEFINITION CPACK_RPM_tokudb-engine_PACKAGE_REQUIRES)
+  SET(CPACK_RPM_tokudb-engine_PACKAGE_REQUIRES "${V} jemalloc" PARENT_SCOPE)
+  SET(systemd_env "Environment=\"LD_PRELOAD=${LIBJEMALLOC_PATH}\"") #"
+  SET(cnf_malloc_lib "malloc-lib=${LIBJEMALLOC_PATH}")
+ELSEIF(LIBJEMALLOC_PATH)
+  SET(systemd_env "#Environment=\"LD_PRELOAD=${LIBJEMALLOC_PATH}\"") #"
+  SET(cnf_malloc_lib "#malloc-lib=${LIBJEMALLOC_PATH}")
+ELSE()
+  SET(systemd_env "#Environment=\"LD_PRELOAD=/path/to/libjemalloc.so\"") #"
+  SET(cnf_malloc_lib "#malloc-lib=/path/to/libjemalloc.so")
+ENDIF()
+CONFIGURE_FILE(tokudb.cnf.in tokudb.cnf @ONLY)
+CONFIGURE_FILE(tokudb.conf.in tokudb.conf @ONLY)
+IF(INSTALL_SYSCONFDIR)
+  INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/tokudb.conf
+          DESTINATION ${INSTALL_SYSCONFDIR}/systemd/system/mariadb.service.d/
+          COMPONENT tokudb-engine)
 ENDIF()
 
 MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-shadow")
@@ -49,7 +83,6 @@ MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-vla" DEBUG)
 MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-implicit-fallthrough")
 
 ############################################
-SET(TOKUDB_DEB_FILES "usr/lib/mysql/plugin/ha_tokudb.so\netc/mysql/conf.d/tokudb.cnf\nusr/bin/tokuftdump" PARENT_SCOPE)
 MARK_AS_ADVANCED(BUILDNAME)
 MARK_AS_ADVANCED(BUILD_TESTING)
 MARK_AS_ADVANCED(CMAKE_TOKUDB_REVISION)
@@ -121,14 +154,7 @@ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}/${TOKU_FT_DIR_NAME}/buildheader)
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}/${TOKU_FT_DIR_NAME}/portability)
 
 TARGET_LINK_LIBRARIES(tokudb tokufractaltree_static tokuportability_static
-                      ${ZLIB_LIBRARY} stdc++)
+                      ${ZLIB_LIBRARY} ${LIBJEMALLOC} stdc++)
 
 SET(CMAKE_MODULE_LINKER_FLAGS_RELEASE "${CMAKE_MODULE_LINKER_FLAGS_RELEASE} -flto -fuse-linker-plugin")
 SET(CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO} -flto -fuse-linker-plugin")
-
-SET(CPACK_RPM_server_PACKAGE_OBSOLETES
-  "${CPACK_RPM_server_PACKAGE_OBSOLETES} MariaDB-tokudb-engine < 10.0.5" PARENT_SCOPE)
-
-IF (INSTALL_SYSCONF2DIR)
-  INSTALL(FILES tokudb.cnf DESTINATION ${INSTALL_SYSCONF2DIR} COMPONENT Server)
-ENDIF(INSTALL_SYSCONF2DIR)

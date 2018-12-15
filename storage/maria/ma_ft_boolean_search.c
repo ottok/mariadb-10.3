@@ -163,7 +163,7 @@ static int FTB_WORD_cmp_list(CHARSET_INFO *cs, FTB_WORD **a, FTB_WORD **b)
 {
   /* ORDER BY word, ndepth */
   int i= ha_compare_text(cs, (uchar*) (*a)->word + 1,(*a)->len - 1,
-                             (uchar*) (*b)->word + 1,(*b)->len - 1, 0, 0);
+                             (uchar*) (*b)->word + 1,(*b)->len - 1, 0);
   if (!i)
     i=CMP_NUM((*a)->ndepth, (*b)->ndepth);
   return i;
@@ -413,7 +413,7 @@ static int _ft2_search_no_lock(FTB *ftb, FTB_WORD *ftbw, my_bool init_search)
                        extra-1,
                        (uchar*) ftbw->word+1,
                        ftbw->len-1,
-                       (my_bool) (ftbw->flags & FTB_FLAG_TRUNC), 0);
+                       (my_bool) (ftbw->flags & FTB_FLAG_TRUNC));
   }
 
   if (r) /* not found */
@@ -574,7 +574,7 @@ FT_INFO * maria_ft_init_boolean_search(MARIA_HA *info, uint keynr,
   bzero(& ftb->no_dupes, sizeof(TREE));
   ftb->last_word= 0;
 
-  init_alloc_root(&ftb->mem_root, 1024, 1024, 0);
+  init_alloc_root(&ftb->mem_root, "fulltext", 1024, 1024, 0);
   ftb->queue.max_elements= 0;
   if (!(ftbe=(FTB_EXPR *)alloc_root(&ftb->mem_root, sizeof(FTB_EXPR))))
     goto err;
@@ -905,7 +905,7 @@ static int ftb_find_relevance_add_word(MYSQL_FTPARSER_PARAM *param,
     ftbw= ftb->list[c];
     if (ha_compare_text(ftb->charset, (uchar*)word, len,
                         (uchar*)ftbw->word+1, ftbw->len-1,
-                        (my_bool)(ftbw->flags&FTB_FLAG_TRUNC), 0) < 0)
+                        (my_bool)(ftbw->flags&FTB_FLAG_TRUNC)) < 0)
       b= c;
     else
       a= c;
@@ -932,7 +932,7 @@ static int ftb_find_relevance_add_word(MYSQL_FTPARSER_PARAM *param,
     ftbw= ftb->list[c];
     if (ha_compare_text(ftb->charset, (uchar*)word, len,
                         (uchar*)ftbw->word + 1,ftbw->len - 1,
-                        (my_bool)(ftbw->flags & FTB_FLAG_TRUNC), 0))
+                        (my_bool)(ftbw->flags & FTB_FLAG_TRUNC)))
     {
       if (ftb->with_scan & FTB_FLAG_TRUNC)
         continue;
@@ -1036,7 +1036,7 @@ void maria_ft_boolean_close_search(FT_INFO *ftb)
 {
   if (is_tree_inited(& ftb->no_dupes))
   {
-    delete_tree(& ftb->no_dupes);
+    delete_tree(&ftb->no_dupes, 0);
   }
   free_root(& ftb->mem_root, MYF(0));
   my_free(ftb);

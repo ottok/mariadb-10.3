@@ -75,7 +75,8 @@ eval SHOW COLUMNS FROM information_schema.$is_table;
 SELECT constraint_catalog, constraint_schema, constraint_name, table_catalog,
        table_schema, table_name, column_name
 FROM information_schema.key_column_usage
-WHERE constraint_catalog IS NOT NULL OR table_catalog IS NOT NULL;
+WHERE constraint_catalog IS NOT NULL OR table_catalog IS NOT NULL
+ORDER BY BINARY table_schema, BINARY table_name, BINARY column_name, BINARY constraint_name;
 
 
 --echo ########################################################################################
@@ -125,18 +126,15 @@ ORDER BY constraint_catalog, constraint_schema, constraint_name,
 # show view of user root
 eval $select;
 
---echo # Establish connection testuser1 (user=testuser1)
 --replace_result $MASTER_MYPORT MYSQL_PORT $MASTER_MYSOCK MYSQL_SOCK
 connect (testuser1, localhost, testuser1, , db_datadict);
 eval $select;
 
---echo # Establish connection testuser2 (user=testuser2)
 --replace_result $MASTER_MYPORT MYSQL_PORT $MASTER_MYSOCK MYSQL_SOCK
 connect (testuser2, localhost, testuser2, , db_datadict);
 eval $select;
 
 # Cleanup
---echo # Switch to connection default and close connections testuser1, testuser2
 connection default;
 disconnect testuser1;
 disconnect testuser2;
@@ -235,12 +233,6 @@ eval $my_select;
 ALTER TABLE db_datadict.t1_my_tablex ADD UNIQUE my_idx (f4,first_col);
 eval $my_select;
 #
-# Check DROP COLUMN
-eval $my_select;
-ALTER TABLE db_datadict.t1_my_tablex
-DROP COLUMN first_col;
-eval $my_select;
-#
 # Check impact of DROP TABLE
 SELECT table_name, column_name
 FROM information_schema.key_column_usage
@@ -331,7 +323,7 @@ if (!$mysql_errno)
 INSERT INTO information_schema.key_column_usage
 SELECT * FROM information_schema.key_column_usage;
 
---error ER_DBACCESS_DENIED_ERROR
+--error ER_DBACCESS_DENIED_ERROR,ER_NON_UPDATABLE_TABLE
 UPDATE information_schema.key_column_usage
 SET  table_name = 'db1' WHERE constraint_name = 'primary';
 

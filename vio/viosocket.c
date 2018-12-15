@@ -28,6 +28,7 @@
 #ifdef __WIN__
   #include <winsock2.h>
   #include <MSWSock.h>
+  #include <mstcpip.h>
   #pragma comment(lib, "ws2_32.lib")
 #endif
 #include "my_context.h"
@@ -82,6 +83,16 @@ int vio_errno(Vio *vio __attribute__((unused)))
   return socket_errno;
 }
 
+static int vio_set_linger(my_socket s, unsigned short timeout_sec)
+{
+  struct linger s_linger;
+  int ret;
+  s_linger.l_onoff = 1;
+  s_linger.l_linger = timeout_sec;
+  ret = setsockopt(s, SOL_SOCKET, SO_LINGER, (const char *)&s_linger, (int)sizeof(s_linger));
+  return ret;
+}
+
 
 /**
   Attempt to wait for an I/O event on a socket.
@@ -114,6 +125,7 @@ int vio_socket_io_wait(Vio *vio, enum enum_vio_io_event event)
   case  0:
     /* The wait timed out. */
     ret= -1;
+    vio_set_linger(vio->mysql_socket.fd, 0);
     break;
   default:
     /* A positive value indicates an I/O event. */
@@ -145,9 +157,9 @@ size_t vio_read(Vio *vio, uchar *buf, size_t size)
   ssize_t ret;
   int flags= 0;
   DBUG_ENTER("vio_read");
-  DBUG_PRINT("enter", ("sd: %d  buf: %p  size: %d",
-                       mysql_socket_getfd(vio->mysql_socket), buf,
-                       (int) size));
+  DBUG_PRINT("enter", ("sd: %d  buf: %p  size: %zu",
+                       (int)mysql_socket_getfd(vio->mysql_socket), buf,
+                       size));
 
   /* Ensure nobody uses vio_read_buff and vio_read simultaneously. */
   DBUG_ASSERT(vio->read_end == vio->read_pos);
@@ -212,9 +224,9 @@ size_t vio_read_buff(Vio *vio, uchar* buf, size_t size)
   size_t rc;
 #define VIO_UNBUFFERED_READ_MIN_SIZE 2048
   DBUG_ENTER("vio_read_buff");
-  DBUG_PRINT("enter", ("sd: %d  buf: %p  size: %d",
-                       mysql_socket_getfd(vio->mysql_socket),
-                       buf, (int) size));
+  DBUG_PRINT("enter", ("sd: %d  buf: %p  size:%zu",
+                       (int)mysql_socket_getfd(vio->mysql_socket),
+                       buf, size));
 
   if (vio->read_pos < vio->read_end)
   {
@@ -259,9 +271,9 @@ size_t vio_write(Vio *vio, const uchar* buf, size_t size)
   ssize_t ret;
   int flags= 0;
   DBUG_ENTER("vio_write");
-  DBUG_PRINT("enter", ("sd: %d  buf: %p  size: %d",
-                       mysql_socket_getfd(vio->mysql_socket), buf,
-                       (int) size));
+  DBUG_PRINT("enter", ("sd: %d  buf: %p  size: %zu",
+                       (int)mysql_socket_getfd(vio->mysql_socket), buf,
+                       size));
 
   /* If timeout is enabled, do not block. */
   if (vio->write_timeout >= 0)
@@ -305,59 +317,12 @@ size_t vio_write(Vio *vio, const uchar* buf, size_t size)
   DBUG_RETURN(ret);
 }
 
-#ifdef _WIN32
-static void CALLBACK cancel_io_apc(ULONG_PTR data)
-{
-  CancelIo((HANDLE)data);
-}
-
-/*
-  Cancel IO on Windows.
-
-  On XP, issue CancelIo as asynchronous procedure call to the thread
-  that started IO. On Vista+, simpler cancelation is done with
-  CancelIoEx.
-*/
-
-int cancel_io(HANDLE handle, DWORD thread_id)
-{
-  static BOOL (WINAPI  *fp_CancelIoEx) (HANDLE, OVERLAPPED *);
-  static volatile int first_time= 1;
-  int rc;
-  HANDLE thread_handle;
-
-  if (first_time)
-  {
-    /* Try to load CancelIoEx using GetProcAddress */
-    InterlockedCompareExchangePointer((volatile void *)&fp_CancelIoEx,
-      GetProcAddress(GetModuleHandle("kernel32"), "CancelIoEx"), NULL);
-    first_time =0;
-  }
-
-  if (fp_CancelIoEx)
-  {
-    return fp_CancelIoEx(handle, NULL)? 0 :-1;
-  }
-
-  thread_handle= OpenThread(THREAD_SET_CONTEXT, FALSE, thread_id);
-  if (thread_handle)
-  {
-    rc= QueueUserAPC(cancel_io_apc, thread_handle, (ULONG_PTR)handle);
-    CloseHandle(thread_handle);
-  }
-  return rc;
-
-}
-#endif
-
-
 int vio_socket_shutdown(Vio *vio, int how)
 {
   int ret= shutdown(mysql_socket_getfd(vio->mysql_socket), how);
 #ifdef  _WIN32
   /* Cancel possible IO in progress (shutdown does not do that on Windows). */
-  (void) cancel_io((HANDLE) mysql_socket_getfd(vio->mysql_socket),
-                   vio->thread_id);
+  (void) CancelIoEx((HANDLE)mysql_socket_getfd(vio->mysql_socket), NULL);
 #endif
   return ret;
 }
@@ -446,43 +411,6 @@ int vio_socket_timeout(Vio *vio,
 {
   int ret= 0;
   DBUG_ENTER("vio_socket_timeout");
-
-#if defined(_WIN32)
-  {
-    int optname;
-    DWORD timeout= 0;
-    const char *optval= (const char *) &timeout;
-
-    /*
-      The default socket timeout value is zero, which means an infinite
-      timeout. Values less than 500 milliseconds are interpreted to be of
-      500 milliseconds. Hence, the VIO behavior for zero timeout, which is
-      intended to cause the send or receive operation to fail immediately
-      if no data is available, is not supported on WIN32 and neither is
-      necessary as it's not possible to set the VIO timeout value to zero.
-
-      Assert that the VIO timeout is either positive or set to infinite.
-    */
-    DBUG_ASSERT(which || vio->read_timeout);
-    DBUG_ASSERT(!which || vio->write_timeout);
-
-    if (which)
-    {
-      optname= SO_SNDTIMEO;
-      if (vio->write_timeout > 0)
-        timeout= vio->write_timeout;
-    }
-    else
-    {
-      optname= SO_RCVTIMEO;
-      if (vio->read_timeout > 0)
-        timeout= vio->read_timeout;
-    }
-
-    ret= mysql_socket_setsockopt(vio->mysql_socket, SOL_SOCKET, optname,
-	                             optval, sizeof(timeout));
-  }
-#else
   /*
     The MSG_DONTWAIT trick is not used with SSL sockets as the send and
     receive I/O operations are wrapped through SSL-specific functions
@@ -503,7 +431,6 @@ int vio_socket_timeout(Vio *vio,
     if (new_mode != old_mode)
       ret= vio_blocking(vio, new_mode, &not_used);
   }
-#endif
 
   DBUG_RETURN(ret);
 }
@@ -556,7 +483,7 @@ int vio_keepalive(Vio* vio, my_bool set_keep_alive)
   uint opt = 0;
   DBUG_ENTER("vio_keepalive");
   DBUG_PRINT("enter", ("sd: %d  set_keep_alive: %d",
-                       mysql_socket_getfd(vio->mysql_socket),
+                       (int)mysql_socket_getfd(vio->mysql_socket),
                        (int)set_keep_alive));
 
   if (vio->type != VIO_TYPE_NAMEDPIPE && vio->type != VIO_TYPE_SHARED_MEMORY)
@@ -567,6 +494,63 @@ int vio_keepalive(Vio* vio, my_bool set_keep_alive)
 	                            (char *)&opt, sizeof(opt));
   }
   DBUG_RETURN(r);
+}
+
+/*
+  Set socket options for keepalive e.g., TCP_KEEPCNT, TCP_KEEPIDLE/TCP_KEEPALIVE, TCP_KEEPINTVL
+*/
+int vio_set_keepalive_options(Vio* vio, const struct vio_keepalive_opts *opts)
+{
+#if defined _WIN32
+  struct tcp_keepalive s;
+  DWORD  nbytes;
+
+  if (vio->type == VIO_TYPE_NAMEDPIPE || vio->type == VIO_TYPE_SHARED_MEMORY)
+    return 0;
+
+  if (!opts->idle && !opts->interval)
+    return 0;
+
+  s.onoff= 1;
+  s.keepalivetime= opts->idle? opts->idle * 1000 : 7200;
+  s.keepaliveinterval= opts->interval?opts->interval * 1000 : 1;
+
+  return WSAIoctl(vio->mysql_socket.fd, SIO_KEEPALIVE_VALS, (LPVOID) &s, sizeof(s),
+           NULL, 0, &nbytes, NULL, NULL);
+
+#elif defined (TCP_KEEPIDLE) || defined (TCP_KEEPALIVE)
+
+  int ret= 0;
+  if (opts->idle)
+  {
+#ifdef TCP_KEEPIDLE // Linux only
+    ret= mysql_socket_setsockopt(vio->mysql_socket, IPPROTO_TCP, TCP_KEEPIDLE, (char *)&opts->idle, sizeof(opts->idle));
+#elif defined (TCP_KEEPALIVE)
+    ret= mysql_socket_setsockopt(vio->mysql_socket, IPPROTO_TCP, TCP_KEEPALIVE, (char *)&opts->idle, sizeof(opts->idle));
+#endif
+    if(ret)
+      return ret;
+  }
+
+#ifdef TCP_KEEPCNT // Linux only
+  if(opts->probes)
+  {
+    ret= mysql_socket_setsockopt(vio->mysql_socket, IPPROTO_TCP, TCP_KEEPCNT, (char *)&opts->probes, sizeof(opts->probes));
+    if(ret)
+      return ret;
+  }
+#endif
+
+#ifdef TCP_KEEPINTVL  // Linux only
+  if(opts->interval)
+  {
+    ret= mysql_socket_setsockopt(vio->mysql_socket, IPPROTO_TCP, TCP_KEEPINTVL, (char *)&opts->interval, sizeof(opts->interval));
+  }
+#endif
+  return ret;
+#else /*TCP_KEEPIDLE || TCP_KEEPALIVE */
+  return -1; 
+#endif
 }
 
 
@@ -610,7 +594,7 @@ int vio_close(Vio *vio)
 {
   int r=0;
   DBUG_ENTER("vio_close");
-  DBUG_PRINT("enter", ("sd: %d", mysql_socket_getfd(vio->mysql_socket)));
+  DBUG_PRINT("enter", ("sd: %d", (int)mysql_socket_getfd(vio->mysql_socket)));
 
   if (vio->type != VIO_CLOSED)
   {
@@ -619,8 +603,6 @@ int vio_close(Vio *vio)
       vio->type == VIO_TYPE_SSL);
 
     DBUG_ASSERT(mysql_socket_getfd(vio->mysql_socket) >= 0);
-    if (mysql_socket_shutdown(vio->mysql_socket, SHUT_RDWR))
-      r= -1;
     if (mysql_socket_close(vio->mysql_socket))
       r= -1;
   }
@@ -671,18 +653,15 @@ my_socket vio_fd(Vio* vio)
   @param src_length [in] length of the src.
   @param dst        [out] a buffer to store normalized IP address
                           (sockaddr_storage).
-  @param dst_length [out] actual length of the normalized IP address.
+  @param dst_length [out] optional - actual length of the normalized IP address.
 */
 
-static void vio_get_normalized_ip(const struct sockaddr *src,
-                                  int src_length,
-                                  struct sockaddr *dst,
-                                  int *dst_length)
+void vio_get_normalized_ip(const struct sockaddr *src, size_t src_length,
+                                  struct sockaddr *dst)
 {
   switch (src->sa_family) {
   case AF_INET:
     memcpy(dst, src, src_length);
-    *dst_length= src_length;
     break;
 
 #ifdef HAVE_IPV6
@@ -701,9 +680,7 @@ static void vio_get_normalized_ip(const struct sockaddr *src,
         be converted to the IPv4 form.
       */
 
-      *dst_length= sizeof (struct sockaddr_in);
-
-      memset(dst_ip4, 0, *dst_length);
+      memset(dst_ip4, 0, sizeof (struct sockaddr_in));
       dst_ip4->sin_family= AF_INET;
       dst_ip4->sin_port= src_addr6->sin6_port;
 
@@ -717,9 +694,7 @@ static void vio_get_normalized_ip(const struct sockaddr *src,
     else
     {
       /* This is a "native" IPv6 address. */
-
       memcpy(dst, src, src_length);
-      *dst_length= src_length;
     }
 
     break;
@@ -750,17 +725,15 @@ static void vio_get_normalized_ip(const struct sockaddr *src,
   @retval FALSE on success.
 */
 
-my_bool vio_get_normalized_ip_string(const struct sockaddr *addr,
-                                     int addr_length,
+my_bool vio_get_normalized_ip_string(const struct sockaddr *addr, size_t addr_length,
                                      char *ip_string,
                                      size_t ip_string_size)
 {
   struct sockaddr_storage norm_addr_storage;
   struct sockaddr *norm_addr= (struct sockaddr *) &norm_addr_storage;
-  int norm_addr_length;
   int err_code;
 
-  vio_get_normalized_ip(addr, addr_length, norm_addr, &norm_addr_length);
+  vio_get_normalized_ip(addr, addr_length, norm_addr);
 
   err_code= vio_getnameinfo(norm_addr, ip_string, ip_string_size, NULL, 0,
                             NI_NUMERICHOST);
@@ -799,9 +772,7 @@ my_bool vio_peer_addr(Vio *vio, char *ip_buffer, uint16 *port,
       address.
     */
     struct in_addr *ip4= &((struct sockaddr_in *) &(vio->remote))->sin_addr;
-
     vio->remote.ss_family= AF_INET;
-    vio->addrLen= sizeof (struct sockaddr_in);
 
     ip4->s_addr= htonl(INADDR_LOOPBACK);
 
@@ -818,7 +789,6 @@ my_bool vio_peer_addr(Vio *vio, char *ip_buffer, uint16 *port,
     struct sockaddr_storage addr_storage;
     struct sockaddr *addr= (struct sockaddr *) &addr_storage;
     size_socket addr_length= sizeof (addr_storage);
-
     /* Get sockaddr by socked fd. */
 
     err_code= mysql_socket_getpeername(vio->mysql_socket, addr, &addr_length);
@@ -832,7 +802,7 @@ my_bool vio_peer_addr(Vio *vio, char *ip_buffer, uint16 *port,
     /* Normalize IP address. */
 
     vio_get_normalized_ip(addr, addr_length,
-                          (struct sockaddr *) &vio->remote, &vio->addrLen);
+                          (struct sockaddr *) &vio->remote);
 
     /* Get IP address & port number. */
 
@@ -873,7 +843,7 @@ static my_bool socket_peek_read(Vio *vio, uint *bytes)
 {
   my_socket sd= mysql_socket_getfd(vio->mysql_socket);
 #if defined(_WIN32)
-  int len;
+  u_long len;
   if (ioctlsocket(sd, FIONREAD, &len))
     return TRUE;
   *bytes= len;
@@ -1343,7 +1313,7 @@ int vio_getnameinfo(const struct sockaddr *sa,
   }
 
   return getnameinfo(sa, sa_length,
-                     hostname, hostname_size,
-                     port, port_size,
+                     hostname, (uint)hostname_size,
+                     port, (uint)port_size,
                      flags);
 }

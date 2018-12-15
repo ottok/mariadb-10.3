@@ -82,16 +82,19 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
 
 int copy_event_to_schema_table(THD *thd, TABLE *sch_table, TABLE *event_table);
 
-bool append_identifier(THD *thd, String *packet, const char *name,
-		       uint length);
+bool append_identifier(THD *thd, String *packet, const char *name, size_t length);
+static inline bool append_identifier(THD *thd, String *packet, const LEX_CSTRING *name)
+{
+  return append_identifier(thd, packet, name->str, name->length);
+}
 void mysqld_list_fields(THD *thd,TABLE_LIST *table, const char *wild);
 int mysqld_dump_create_info(THD *thd, TABLE_LIST *table_list, int fd);
 bool mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
                                    List<Item> *field_list, String *buffer);
 bool mysqld_show_create(THD *thd, TABLE_LIST *table_list);
 void mysqld_show_create_db_get_fields(THD *thd, List<Item> *field_list);
-bool mysqld_show_create_db(THD *thd, LEX_STRING *db_name,
-                           LEX_STRING *orig_db_name,
+bool mysqld_show_create_db(THD *thd, LEX_CSTRING *db_name,
+                           LEX_CSTRING *orig_db_name,
                            const DDL_options_st &options);
 
 void mysqld_list_processes(THD *thd,const char *user,bool verbose);
@@ -103,8 +106,8 @@ bool mysqld_show_contributors(THD *thd);
 bool mysqld_show_privileges(THD *thd);
 char *make_backup_log_name(char *buff, const char *name, const char* log_ext);
 uint calc_sum_of_all_status(STATUS_VAR *to);
-void append_definer(THD *thd, String *buffer, const LEX_STRING *definer_user,
-                    const LEX_STRING *definer_host);
+bool append_definer(THD *thd, String *buffer, const LEX_CSTRING *definer_user,
+                    const LEX_CSTRING *definer_host);
 int add_status_vars(SHOW_VAR *list);
 void remove_status_vars(SHOW_VAR *list);
 void init_status_vars();
@@ -118,8 +121,9 @@ bool schema_table_store_record(THD *thd, TABLE *table);
 void initialize_information_schema_acl();
 COND *make_cond_for_info_schema(THD *thd, COND *cond, TABLE_LIST *table);
 
-ST_SCHEMA_TABLE *find_schema_table(THD *thd, const char* table_name, bool *in_plugin);
-static inline ST_SCHEMA_TABLE *find_schema_table(THD *thd, const char* table_name)
+ST_SCHEMA_TABLE *find_schema_table(THD *thd, const LEX_CSTRING *table_name,
+                                   bool *in_plugin);
+static inline ST_SCHEMA_TABLE *find_schema_table(THD *thd, const LEX_CSTRING *table_name)
 { bool unused; return find_schema_table(thd, table_name, &unused); }
 
 ST_SCHEMA_TABLE *get_schema_table(enum enum_schema_tables schema_table_idx);
@@ -131,8 +135,14 @@ bool get_schema_tables_result(JOIN *join,
 enum enum_schema_tables get_schema_table_idx(ST_SCHEMA_TABLE *schema_table);
 TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list);
 
+const char* get_one_variable(THD *thd, const SHOW_VAR *variable,
+                             enum_var_type value_type, SHOW_TYPE show_type,
+                             system_status_var *status_var,
+                             const CHARSET_INFO **charset, char *buff,
+                             size_t *length);
+
 /* These functions were under INNODB_COMPATIBILITY_HOOKS */
-int get_quote_char_for_identifier(THD *thd, const char *name, uint length);
+int get_quote_char_for_identifier(THD *thd, const char *name, size_t length);
 THD *find_thread_by_id(longlong id, bool query_id= false);
 
 class select_result_explain_buffer;
@@ -174,13 +184,13 @@ typedef struct st_lookup_field_values
     Note that this value length may exceed @c NAME_LEN.
     @sa wild_db_value
   */
-  LEX_STRING db_value;
+  LEX_CSTRING db_value;
   /**
     Value of a TABLE_NAME clause.
     Note that this value length may exceed @c NAME_LEN.
     @sa wild_table_value
   */
-  LEX_STRING table_value;
+  LEX_CSTRING table_value;
   /**
     True when @c db_value is a LIKE clause,
     false when @c db_value is an '=' clause.
@@ -192,7 +202,6 @@ typedef struct st_lookup_field_values
   */
   bool wild_table_value;
 } LOOKUP_FIELD_VALUES;  
-
 
 /*
   INFORMATION_SCHEMA: Execution plan for get_all_tables() call

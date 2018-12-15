@@ -1,4 +1,4 @@
-/* Copyright (C) 2008-2014 Kentoku Shiba
+/* Copyright (C) 2008-2017 Kentoku Shiba
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -11,7 +11,211 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
+  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+
+/*
+  Structure used to manage Spider parameter string parsing.  Types of
+  parameters include:
+    - connection strings
+    - UDF parameters
+
+  A parameter string consists of one or more parameter definitions using
+  the following syntax:
+    <parameter title> <parameter value>
+  A comma is the separator character between multiple parameter definitions.
+  Parameter titles must not be quoted.  Parameter values must be quoted with
+  single or double quotes.
+*/
+
+typedef struct st_spider_param_string_parse
+{
+  char *start_ptr;         /* Pointer to the start of the parameter string */
+  char *end_ptr;           /* Pointer to the end   of the parameter string */
+  char *start_title_ptr;   /* Pointer to the start of the current parameter
+                              title */
+  char *end_title_ptr;     /* Pointer to the end   of the current parameter
+                              title */
+  char *start_value_ptr;   /* Pointer to the start of the current parameter
+                              value */
+  char *end_value_ptr;     /* Pointer to the end   of the current parameter
+                              value */
+  int  error_num;          /* Error code of the error message to print when
+                              an error is detected */
+  uint delim_title_len;    /* Length of the paramater title's delimiter */
+  uint delim_value_len;    /* Length of the paramater value's delimiter */
+  char delim_title;        /* Current parameter title's delimiter character */
+  char delim_value;        /* Current parameter value's delimiter character */
+
+  /**
+    Initialize the parameter string parse information.
+
+    @param  param_string      Pointer to the parameter string being parsed.
+    @param  error_code        Error code of the error message to print when
+                              an error is detected.
+  */
+
+  inline void init(char *param_string, int error_code)
+  {
+    start_ptr = param_string;
+    end_ptr = start_ptr + strlen(start_ptr);
+
+    init_param_title();
+    init_param_value();
+
+    error_num = error_code;
+  }
+
+  /**
+    Initialize the current parameter title.
+  */
+
+  inline void init_param_title()
+  {
+    start_title_ptr = end_title_ptr = NULL;
+    delim_title_len = 0;
+    delim_title = '\0';
+  }
+
+  /**
+    Save pointers to the start and end positions of the current parameter
+    title in the parameter string.  Also save the parameter title's
+    delimiter character.
+
+    @param  start_value       Pointer to the start position of the current
+                              parameter title.
+    @param  end_value         Pointer to the end   position of the current
+                              parameter title.
+  */
+
+  inline void set_param_title(char *start_title, char *end_title)
+  {
+    start_title_ptr = start_title;
+    end_title_ptr = end_title;
+
+    if (*start_title == '"' ||
+        *start_title == '\'')
+    {
+      delim_title = *start_title;
+
+      if (start_title >= start_ptr && *--start_title == '\\')
+        delim_title_len = 2;
+      else
+        delim_title_len = 1;
+    }
+  }
+
+  /**
+    Initialize the current parameter value.
+  */
+
+  inline void init_param_value()
+  {
+    start_value_ptr = end_value_ptr = NULL;
+    delim_value_len = 0;
+    delim_value = '\0';
+  }
+
+  /**
+    Save pointers to the start and end positions of the current parameter
+    value in the parameter string.  Also save the parameter value's
+    delimiter character.
+
+    @param  start_value       Pointer to the start position of the current
+                              parameter value.
+    @param  end_value         Pointer to the end   position of the current
+                              parameter value.
+  */
+
+  inline void set_param_value(char *start_value, char *end_value)
+  {
+    start_value_ptr = start_value--;
+    end_value_ptr = end_value;
+
+    if (*start_value == '"' ||
+        *start_value == '\'')
+    {
+      delim_value = *start_value;
+
+      if (*--start_value == '\\')
+        delim_value_len = 2;
+      else
+        delim_value_len = 1;
+    }
+  }
+
+  /**
+    Determine whether the current parameter in the parameter string has
+    extra parameter values.
+
+    @return   0               Current parameter value in the parameter string
+                              does not have extra parameter values.
+              <> 0            Error code indicating that the current parameter
+                              value in the parameter string has extra
+                              parameter values.
+  */
+
+  inline int has_extra_parameter_values()
+  {
+    int error_num = 0;
+    DBUG_ENTER("has_extra_parameter_values");
+
+    if (end_value_ptr)
+    {
+      /* There is a current parameter value */
+      char *end_param_ptr =  end_value_ptr;
+
+      while (end_param_ptr < end_ptr &&
+        (*end_param_ptr == ' ' || *end_param_ptr == '\r' ||
+         *end_param_ptr == '\n' || *end_param_ptr == '\t'))
+        end_param_ptr++;
+
+      if (end_param_ptr < end_ptr && *end_param_ptr != '\0')
+      {
+        /* Extra values in parameter definition */
+        error_num = print_param_error();
+      }
+    }
+
+    DBUG_RETURN(error_num);
+  }
+
+  /**
+    Restore the current parameter's input delimiter characters in the
+    parameter string.  They were NULLed during parameter parsing.
+  */
+
+  inline void restore_delims()
+  {
+    char *end = end_title_ptr - 1;
+
+    switch (delim_title_len)
+    {
+    case 2:
+      *end++ = '\\';
+      /* Fall through */
+    case 1:
+      *end = delim_title;
+    }
+
+    end = end_value_ptr - 1;
+    switch (delim_value_len)
+    {
+    case 2:
+      *end++ = '\\';
+      /* Fall through */
+    case 1:
+      *end = delim_value;
+    }
+  }
+
+  /**
+    Print a parameter string error message.
+
+    @return                   Error code.
+  */
+
+  int print_param_error();
+} SPIDER_PARAM_STRING_PARSE;
 
 uchar *spider_tbl_get_key(
   SPIDER_SHARE *share,
@@ -60,7 +264,8 @@ void spider_free_tmp_share_alloc(
 
 char *spider_get_string_between_quote(
   char *ptr,
-  bool alloc
+  bool alloc,
+  SPIDER_PARAM_STRING_PARSE *param_string_parse = NULL
 );
 
 int spider_create_string_list(
@@ -68,7 +273,8 @@ int spider_create_string_list(
   uint **string_length_list,
   uint *list_length,
   char *str,
-  uint length
+  uint length,
+  SPIDER_PARAM_STRING_PARSE *param_string_parse
 );
 
 int spider_create_long_list(
@@ -77,7 +283,8 @@ int spider_create_long_list(
   char *str,
   uint length,
   long min_val,
-  long max_val
+  long max_val,
+  SPIDER_PARAM_STRING_PARSE *param_string_parse
 );
 
 int spider_create_longlong_list(
@@ -86,7 +293,8 @@ int spider_create_longlong_list(
   char *str,
   uint length,
   longlong min_val,
-  longlong max_val
+  longlong max_val,
+  SPIDER_PARAM_STRING_PARSE *param_string_parse
 );
 
 int spider_increase_string_list(
@@ -389,9 +597,18 @@ void spider_free_tmp_dbton_handler(
 TABLE_LIST *spider_get_parent_table_list(
   ha_spider *spider
 );
+List<Index_hint> *spider_get_index_hints(
+  ha_spider *spider
+  );
 
 st_select_lex *spider_get_select_lex(
   ha_spider *spider
+);
+
+void spider_get_select_limit_from_select_lex(
+  st_select_lex *select_lex,
+  longlong *select_limit,
+  longlong *offset_limit
 );
 
 void spider_get_select_limit(
@@ -420,6 +637,10 @@ void spider_next_split_read_param(
 bool spider_check_direct_order_limit(
   ha_spider *spider
 );
+
+int spider_set_direct_limit_offset(
+                                   ha_spider*		spider
+                                   );
 
 bool spider_check_index_merge(
   TABLE *table,
@@ -452,5 +673,57 @@ int spider_discover_table_structure(
   THD* thd,
   TABLE_SHARE *share,
   HA_CREATE_INFO *info
+);
+#endif
+
+#ifndef WITHOUT_SPIDER_BG_SEARCH
+int spider_create_spider_object_for_share(
+  SPIDER_TRX *trx,
+  SPIDER_SHARE *share,
+  ha_spider **spider
+);
+
+void spider_free_spider_object_for_share(
+  ha_spider **spider
+);
+
+int spider_create_sts_threads(
+  SPIDER_THREAD *spider_thread
+);
+
+void spider_free_sts_threads(
+  SPIDER_THREAD *spider_thread
+);
+
+int spider_create_crd_threads(
+  SPIDER_THREAD *spider_thread
+);
+
+void spider_free_crd_threads(
+  SPIDER_THREAD *spider_thread
+);
+
+void *spider_table_bg_sts_action(
+  void *arg
+);
+
+void *spider_table_bg_crd_action(
+  void *arg
+);
+
+void spider_table_add_share_to_sts_thread(
+  SPIDER_SHARE *share
+);
+
+void spider_table_add_share_to_crd_thread(
+  SPIDER_SHARE *share
+);
+
+void spider_table_remove_share_from_sts_thread(
+  SPIDER_SHARE *share
+);
+
+void spider_table_remove_share_from_crd_thread(
+  SPIDER_SHARE *share
 );
 #endif

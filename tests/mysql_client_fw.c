@@ -21,6 +21,7 @@
 #include <my_getopt.h>
 #include <m_string.h>
 #include <mysqld_error.h>
+#include <mysql_version.h>
 #include <sql_common.h>
 #include <mysql/client_plugin.h>
 
@@ -363,7 +364,7 @@ static MYSQL* client_connect(ulong flag, uint protocol, my_bool auto_reconnect)
     fprintf(stdout, "\n Check the connection options using --help or -?\n");
     exit(1);
   }
-  mysql->reconnect= auto_reconnect;
+  mysql_options(mysql, MYSQL_OPT_RECONNECT, &auto_reconnect);
 
   if (!opt_silent)
     fprintf(stdout, "OK");
@@ -767,7 +768,7 @@ static void do_verify_prepare_field(MYSQL_RES *result,
 {
   MYSQL_FIELD *field;
   CHARSET_INFO *cs;
-  ulonglong expected_field_length;
+  ulonglong expected_field_length= length;
 
   if (!(field= mysql_fetch_field_direct(result, no)))
   {
@@ -776,7 +777,7 @@ static void do_verify_prepare_field(MYSQL_RES *result,
   }
   cs= get_charset(field->charsetnr, 0);
   DIE_UNLESS(cs);
-  if ((expected_field_length= length * cs->mbmaxlen) > UINT_MAX32)
+  if ((expected_field_length*= cs->mbmaxlen) > UINT_MAX32)
     expected_field_length= UINT_MAX32;
   if (!opt_silent)
   {
@@ -976,7 +977,7 @@ const char *query_arg)
 
  fetch->handle= mysql_stmt_init(mysql);
 
- rc= mysql_stmt_prepare(fetch->handle, fetch->query, strlen(fetch->query));
+ rc= mysql_stmt_prepare(fetch->handle, fetch->query, (ulong)strlen(fetch->query));
  check_execute(fetch->handle, rc);
 
  /*
@@ -1086,7 +1087,7 @@ enum fetch_type fetch_type)
  for (fetch= fetch_array; fetch < fetch_array + query_count; ++fetch)
  {
    /* Init will exit(1) in case of error */
-   stmt_fetch_init(fetch, fetch - fetch_array,
+   stmt_fetch_init(fetch, (uint)(fetch - fetch_array),
    query_list[fetch - fetch_array]);
  }
 
@@ -1145,7 +1146,7 @@ static my_bool thread_query(const char *query)
 {
  MYSQL *l_mysql;
  my_bool error;
-
+ my_bool reconnect= 1;
  error= 0;
  if (!opt_silent)
  fprintf(stdout, "\n in thread_query(%s)", query);
@@ -1162,7 +1163,7 @@ static my_bool thread_query(const char *query)
    error= 1;
    goto end;
  }
- l_mysql->reconnect= 1;
+ mysql_options(l_mysql, MYSQL_OPT_RECONNECT, &reconnect);
  if (mysql_query(l_mysql, query))
  {
    fprintf(stderr, "Query failed (%s)\n", mysql_error(l_mysql));
@@ -1176,6 +1177,15 @@ static my_bool thread_query(const char *query)
 }
 
 
+static int mysql_query_or_error(MYSQL *mysql, const char *query)
+{
+  int rc= mysql_query(mysql, query);
+  if (rc)
+    fprintf(stderr, "ERROR %d: %s", mysql_errno(mysql), mysql_error(mysql));
+  return rc;
+}
+
+
 /*
   Read and parse arguments and MySQL options from my.cnf
 */
@@ -1186,19 +1196,19 @@ static char **defaults_argv;
 
 static struct my_option client_test_long_options[] =
 {
-  {"basedir", 'b', "Basedir for tests.", &opt_basedir,
-   &opt_basedir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"basedir", 'b', "Basedir for tests.",(void *)&opt_basedir,
+   (void *)&opt_basedir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"character-sets-dir", 'C',
-   "Directory for character set files.", &charsets_dir,
-   &charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+   "Directory for character set files.", (void *)&charsets_dir,
+   (void *)&charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"count", 't', "Number of times test to be executed", &opt_count_read,
    &opt_count_read, 0, GET_UINT, REQUIRED_ARG, 1, 0, 0, 0, 0, 0},
   {"database", 'D', "Database to use", &opt_db, &opt_db,
    0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"do-not-drop-database", 'd', "Do not drop database while disconnecting",
     0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"debug", '#', "Output debug log", &default_dbug_option,
-   &default_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
+  {"debug", '#', "Output debug log", (void *)&default_dbug_option,
+   (void *)&default_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
   {"help", '?', "Display this help and exit", 0, 0, 0, GET_NO_ARG, NO_ARG, 0,
    0, 0, 0, 0, 0},
   {"host", 'h', "Connect to host", &opt_host, &opt_host,
@@ -1234,8 +1244,8 @@ static struct my_option client_test_long_options[] =
   {"user", 'u', "User for login if not current user", &opt_user,
    &opt_user, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
 #endif
-  {"vardir", 'v', "Data dir for tests.", &opt_vardir,
-   &opt_vardir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"vardir", 'v', "Data dir for tests.", (void *)&opt_vardir,
+   (void *)&opt_vardir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"non-blocking-api", 'n',
    "Use the non-blocking client API for communication.",
    &non_blocking_api_enabled, &non_blocking_api_enabled, 0,

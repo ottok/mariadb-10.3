@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2014, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -27,13 +28,27 @@ Created 3/26/1996 Heikki Tuuri
 #define trx0types_h
 
 #include "ut0byte.h"
+#include "ut0mutex.h"
+#include "ut0new.h"
+
+#include <queue>
+#include <vector>
 
 /** printf(3) format used for printing DB_TRX_ID and other system fields */
-#define TRX_ID_FMT		IB_ID_FMT
+#define TRX_ID_FMT	IB_ID_FMT
 
 /** maximum length that a formatted trx_t::id could take, not including
 the terminating NUL character. */
-#define TRX_ID_MAX_LEN		17
+static const ulint TRX_ID_MAX_LEN = 17;
+
+/** Space id of the transaction system page (the system tablespace) */
+static const ulint TRX_SYS_SPACE = 0;
+
+/** Page number of the transaction system page */
+#define TRX_SYS_PAGE_NO		FSP_TRX_SYS_PAGE_NO
+
+/** Random value to check for corruption of trx_t */
+static const ulint TRX_MAGIC_N = 91118598;
 
 /** Transaction execution states when trx->state == TRX_STATE_ACTIVE */
 enum trx_que_t {
@@ -47,8 +62,12 @@ enum trx_que_t {
 /** Transaction states (trx_t::state) */
 enum trx_state_t {
 	TRX_STATE_NOT_STARTED,
+
 	TRX_STATE_ACTIVE,
-	TRX_STATE_PREPARED,			/* Support for 2PC/XA */
+
+	/** Support for 2PC/XA */
+	TRX_STATE_PREPARED,
+
 	TRX_STATE_COMMITTED_IN_MEMORY
 };
 
@@ -73,20 +92,12 @@ enum trx_dict_op_t {
 struct trx_t;
 /** The locks and state of an active transaction */
 struct trx_lock_t;
-/** Transaction system */
-struct trx_sys_t;
 /** Signal */
 struct trx_sig_t;
 /** Rollback segment */
 struct trx_rseg_t;
 /** Transaction undo log */
 struct trx_undo_t;
-/** Array of undo numbers of undo records being rolled back or purged */
-struct trx_undo_arr_t;
-/** A cell of trx_undo_arr_t */
-struct trx_undo_inf_t;
-/** The control structure used in the purge operation */
-struct trx_purge_t;
 /** Rollback command node in a query graph */
 struct roll_node_t;
 /** Commit command node in a query graph */
@@ -94,21 +105,6 @@ struct commit_node_t;
 /** SAVEPOINT command node in a query graph */
 struct trx_named_savept_t;
 /* @} */
-
-/** Rollback contexts */
-enum trx_rb_ctx {
-	RB_NONE = 0,	/*!< no rollback */
-	RB_NORMAL,	/*!< normal rollback */
-	RB_RECOVERY_PURGE_REC,
-			/*!< rolling back an incomplete transaction,
-			in crash recovery, rolling back an
-			INSERT that was performed by updating a
-			delete-marked record; if the delete-marked record
-			no longer exists in an active read view, it will
-			be purged */
-	RB_RECOVERY	/*!< rolling back an incomplete transaction,
-			in crash recovery */
-};
 
 /** Row identifier (DB_ROW_ID, DATA_ROW_ID) */
 typedef ib_id_t	row_id_t;
@@ -119,9 +115,6 @@ typedef ib_id_t	roll_ptr_t;
 /** Undo number */
 typedef ib_id_t	undo_no_t;
 
-/** Maximum transaction identifier */
-#define TRX_ID_MAX	IB_ID_MAX
-
 /** Transaction savepoint */
 struct trx_savept_t{
 	undo_no_t	least_undo_no;	/*!< least undo number to undo */
@@ -129,8 +122,6 @@ struct trx_savept_t{
 
 /** File objects */
 /* @{ */
-/** Transaction system header */
-typedef byte	trx_sysf_t;
 /** Rollback segment header */
 typedef byte	trx_rsegf_t;
 /** Undo segment header */
@@ -142,6 +133,13 @@ typedef byte	trx_upagef_t;
 
 /** Undo log record */
 typedef	byte	trx_undo_rec_t;
+
 /* @} */
 
-#endif
+typedef ib_mutex_t RsegMutex;
+typedef ib_mutex_t TrxMutex;
+typedef ib_mutex_t PQMutex;
+typedef ib_mutex_t TrxSysMutex;
+
+typedef std::vector<trx_id_t, ut_allocator<trx_id_t> >	trx_ids_t;
+#endif /* trx0types_h */

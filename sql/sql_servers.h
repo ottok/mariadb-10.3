@@ -16,7 +16,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
 
-#include "my_global.h"                  /* uint */
 #include "slave.h" // for tables_ok(), rpl_filter
 
 class THD;
@@ -28,7 +27,7 @@ typedef struct st_federated_server
 {
   const char *server_name;
   long port;
-  uint server_name_length;
+  size_t server_name_length;
   const char *db, *scheme, *username, *password, *socket, *owner, *host, *sport;
 } FOREIGN_SERVER;
 

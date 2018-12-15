@@ -105,8 +105,6 @@ void my_mutex_init()
 
 #if defined(SAFE_MUTEX_DEFINED)
   safe_mutex_global_init();
-#elif defined(MY_PTHREAD_FASTMUTEX)
-  fastmutex_global_init();
 #endif
 }
 
@@ -151,10 +149,11 @@ static inline void remove_from_active_list(safe_mutex_t *mp)
 }
 
 /*
-  We initialise the hashes for deadlock detection lazily.
-  This greatly helps with performance when lots of mutexes are initiased but
-  only a few of them are actually used (eg. XtraDB).
+  We initialize the hashes for deadlock detection lazily.
+  This greatly helps with performance when lots of mutexes are initialized but
+  only a few of them are actually used (eg. InnoDB).
 */
+
 static int safe_mutex_lazy_init_deadlock_detection(safe_mutex_t *mp)
 {
   if (!my_multi_malloc(MY_FAE | MY_WME,
@@ -241,7 +240,7 @@ int safe_mutex_lock(safe_mutex_t *mp, myf my_flags, const char *file,
   if (!mp->file)
   {
     fprintf(stderr,
-	    "safe_mutex: Trying to lock unitialized mutex at %s, line %d\n",
+	    "safe_mutex: Trying to lock uninitialized mutex at %s, line %d\n",
 	    file, line);
     fflush(stderr);
     abort();
@@ -512,7 +511,7 @@ int safe_cond_wait(pthread_cond_t *cond, safe_mutex_t *mp, const char *file,
     fprintf(stderr,
 	    "safe_mutex:  Count was %d in thread 0x%lx when locking mutex %s "
             "at %s, line %d\n",
-	    mp->count-1, my_thread_dbug_id(), mp->name, file, line);
+	    mp->count-1, (ulong) my_thread_dbug_id(), mp->name, file, line);
     fflush(stderr);
     abort();
   }
@@ -566,7 +565,7 @@ int safe_cond_timedwait(pthread_cond_t *cond, safe_mutex_t *mp,
     fprintf(stderr,
 	    "safe_mutex:  Count was %d in thread 0x%lx when locking mutex "
             "%s at %s, line %d (error: %d (%d))\n",
-	    mp->count-1, my_thread_dbug_id(), mp->name, file, line,
+	    mp->count-1, (ulong) my_thread_dbug_id(), mp->name, file, line,
             error, error);
     fflush(stderr);
     abort();
@@ -586,7 +585,7 @@ int safe_mutex_destroy(safe_mutex_t *mp, const char *file, uint line)
   if (!mp->file)
   {
     fprintf(stderr,
-	    "safe_mutex: Trying to destroy unitialized mutex at %s, line %d\n",
+	    "safe_mutex: Trying to destroy uninitialized mutex at %s, line %d\n",
 	    file, line);
     fflush(stderr);
     abort();
@@ -838,88 +837,4 @@ static void print_deadlock_warning(safe_mutex_t *new_mutex,
   DBUG_VOID_RETURN;
 }
 
-#elif defined(MY_PTHREAD_FASTMUTEX) /* !SAFE_MUTEX_DEFINED */
-
-static ulong mutex_delay(ulong delayloops)
-{
-  ulong	i;
-  volatile ulong j;
-
-  j = 0;
-
-  for (i = 0; i < delayloops * 50; i++)
-    j += i;
-
-  return(j); 
-}	
-
-#define MY_PTHREAD_FASTMUTEX_SPINS 8
-#define MY_PTHREAD_FASTMUTEX_DELAY 4
-
-static int cpu_count= 0;
-
-int my_pthread_fastmutex_init(my_pthread_fastmutex_t *mp,
-                              const pthread_mutexattr_t *attr)
-{
-  if ((cpu_count > 1) && (attr == MY_MUTEX_INIT_FAST))
-    mp->spins= MY_PTHREAD_FASTMUTEX_SPINS; 
-  else
-    mp->spins= 0;
-  mp->rng_state= 1;
-  return pthread_mutex_init(&mp->mutex, attr); 
-}
-
-/**
-  Park-Miller random number generator. A simple linear congruential
-  generator that operates in multiplicative group of integers modulo n.
-
-  x_{k+1} = (x_k g) mod n
-
-  Popular pair of parameters: n = 2^32 − 5 = 4294967291 and g = 279470273.
-  The period of the generator is about 2^31.
-  Largest value that can be returned: 2147483646 (RAND_MAX)
-
-  Reference:
-
-  S. K. Park and K. W. Miller
-  "Random number generators: good ones are hard to find"
-  Commun. ACM, October 1988, Volume 31, No 10, pages 1192-1201.
-*/
-
-static double park_rng(my_pthread_fastmutex_t *mp)
-{
-  mp->rng_state= ((my_ulonglong)mp->rng_state * 279470273U) % 4294967291U;
-  return (mp->rng_state / 2147483647.0);
-}
-
-int my_pthread_fastmutex_lock(my_pthread_fastmutex_t *mp)
-{
-  int   res;
-  uint  i;
-  uint  maxdelay= MY_PTHREAD_FASTMUTEX_DELAY;
-
-  for (i= 0; i < mp->spins; i++)
-  {
-    res= pthread_mutex_trylock(&mp->mutex);
-
-    if (res == 0)
-      return 0;
-
-    if (res != EBUSY)
-      return res;
-
-    mutex_delay(maxdelay);
-    maxdelay += park_rng(mp) * MY_PTHREAD_FASTMUTEX_DELAY + 1;
-  }
-  return pthread_mutex_lock(&mp->mutex);
-}
-
-
-void fastmutex_global_init(void)
-{
-#ifdef _SC_NPROCESSORS_CONF
-  cpu_count= sysconf(_SC_NPROCESSORS_CONF);
 #endif
-}
-
-#endif /* defined(MY_PTHREAD_FASTMUTEX) && defined(SAFE_MUTEX_DEFINED) */

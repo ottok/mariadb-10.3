@@ -55,6 +55,9 @@ extern "C" void unireg_clear(int exit_code)
   DBUG_VOID_RETURN;
 }
 
+
+static my_bool mysql_embedded_init= 0;
+
 /*
   Wrapper error handler for embedded server to call client/server error 
   handler based on whether thread is in client/server context
@@ -164,7 +167,8 @@ emb_advanced_command(MYSQL *mysql, enum enum_server_command command,
     arg_length= header_length;
   }
 
-  result= dispatch_command(command, thd, (char *) arg, arg_length);
+  result= dispatch_command(command, thd, (char *) arg, arg_length, FALSE,
+                           FALSE);
   thd->cur_data= 0;
   thd->mysys_var= NULL;
 
@@ -430,7 +434,6 @@ static void emb_free_embedded_thd(MYSQL *mysql)
   THD *thd= (THD*)mysql->thd;
   mysql_mutex_lock(&LOCK_thread_count);
   thd->clear_data_list();
-  thread_count--;
   thd->store_globals();
   thd->unlink();
   mysql_mutex_unlock(&LOCK_thread_count);
@@ -517,6 +520,8 @@ int init_embedded_server(int argc, char **argv, char **groups)
   char *fake_argv[] = { (char *)"", 0 };
   const char *fake_groups[] = { "server", "embedded", 0 };
   my_bool acl_error;
+
+  DBUG_ASSERT(mysql_embedded_init == 0);
 
   if (my_thread_init())
     return 1;
@@ -637,15 +642,20 @@ int init_embedded_server(int argc, char **argv, char **groups)
   }
 
   execute_ddl_log_recovery();
+  mysql_embedded_init= 1;
   return 0;
 }
 
 void end_embedded_server()
 {
-  my_free(copy_arguments_ptr);
-  copy_arguments_ptr=0;
-  clean_up(0);
-  clean_up_mutexes();
+  if (mysql_embedded_init)
+  {
+    my_free(copy_arguments_ptr);
+    copy_arguments_ptr=0;
+    clean_up(0);
+    clean_up_mutexes();
+    mysql_embedded_init= 0;
+  }
 }
 
 
@@ -655,7 +665,7 @@ void init_embedded_mysql(MYSQL *mysql, int client_flag)
   thd->mysql= mysql;
   mysql->server_version= server_version;
   mysql->client_flag= client_flag;
-  init_alloc_root(&mysql->field_alloc, 8192, 0, MYF(0));
+  init_alloc_root(&mysql->field_alloc, "fields", 8192, 0, MYF(0));
 }
 
 /**
@@ -671,8 +681,7 @@ void init_embedded_mysql(MYSQL *mysql, int client_flag)
 */
 void *create_embedded_thd(int client_flag)
 {
-  THD * thd= new THD;
-  thd->thread_id= thd->variables.pseudo_thread_id= thread_id++;
+  THD * thd= new THD(next_thread_id());
 
   thd->thread_stack= (char*) &thd;
   if (thd->store_globals())
@@ -693,8 +702,7 @@ void *create_embedded_thd(int client_flag)
   thd->client_capabilities= client_flag;
   thd->real_id= pthread_self();
 
-  thd->db= NULL;
-  thd->db_length= 0;
+  thd->db= null_clex_str;
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
   thd->security_ctx->db_access= DB_ACLS;
   thd->security_ctx->master_access= ~NO_ACCESS;
@@ -705,7 +713,6 @@ void *create_embedded_thd(int client_flag)
   bzero((char*) &thd->net, sizeof(thd->net));
 
   mysql_mutex_lock(&LOCK_thread_count);
-  thread_count++;
   threads.append(thd);
   mysql_mutex_unlock(&LOCK_thread_count);
   thd->mysys_var= 0;
@@ -733,7 +740,7 @@ emb_transfer_connect_attrs(MYSQL *mysql)
     ptr= buf= (uchar *) my_alloca(length + 9);
     send_client_connect_attrs(mysql, buf);
     net_field_length_ll(&ptr);
-    PSI_THREAD_CALL(set_thread_connect_attrs)((char *) ptr, length, thd->charset());
+    PSI_CALL_set_thread_connect_attrs((char *) ptr, length, thd->charset());
     my_afree(buf);
   }
 #endif
@@ -743,7 +750,7 @@ emb_transfer_connect_attrs(MYSQL *mysql)
 int check_embedded_connection(MYSQL *mysql, const char *db)
 {
   int result;
-  LEX_STRING db_str = { (char*)db, db ? strlen(db) : 0 };
+  LEX_CSTRING db_str = { db, safe_strlen(db) };
   THD *thd= (THD*)mysql->thd;
 
   /* the server does the same as the client */
@@ -974,7 +981,7 @@ int Protocol::begin_dataset()
     return 1;
   alloc= &data->alloc;
   /* Assume rowlength < 8192 */
-  init_alloc_root(alloc, 8192, 0, MYF(0));
+  init_alloc_root(alloc, "protocol", 8192, 0, MYF(0));
   alloc->min_malloc= sizeof(MYSQL_ROWS);
   return 0;
 }
@@ -1037,7 +1044,7 @@ bool Protocol::send_result_set_metadata(List<Item> *list, uint flags)
   while ((item= it++))
   {
     Send_field server_field;
-    item->make_field(&server_field);
+    item->make_send_field(thd, &server_field);
 
     /* Keep things compatible for old clients */
     if (server_field.type == MYSQL_TYPE_VARCHAR)
@@ -1047,12 +1054,14 @@ bool Protocol::send_result_set_metadata(List<Item> *list, uint flags)
                                   strlen(server_field.db_name), cs, thd_cs);
     client_field->table= dup_str_aux(field_alloc, server_field.table_name,
                                      strlen(server_field.table_name), cs, thd_cs);
-    client_field->name= dup_str_aux(field_alloc, server_field.col_name,
-                                    strlen(server_field.col_name), cs, thd_cs);
+    client_field->name= dup_str_aux(field_alloc, server_field.col_name.str,
+                                    server_field.col_name.length, cs, thd_cs);
     client_field->org_table= dup_str_aux(field_alloc, server_field.org_table_name,
                                          strlen(server_field.org_table_name), cs, thd_cs);
-    client_field->org_name= dup_str_aux(field_alloc, server_field.org_col_name,
-                                        strlen(server_field.org_col_name), cs, thd_cs);
+    client_field->org_name= dup_str_aux(field_alloc,
+                                        server_field.org_col_name.str,
+                                        server_field.org_col_name.length,
+                                        cs, thd_cs);
     if (item->charset_for_protocol() == &my_charset_bin || thd_cs == NULL)
     {
       /* No conversion */
@@ -1074,6 +1083,10 @@ bool Protocol::send_result_set_metadata(List<Item> *list, uint flags)
     client_field->type=   server_field.type;
     client_field->flags= (uint16) server_field.flags;
     client_field->decimals= server_field.decimals;
+    if (server_field.type == MYSQL_TYPE_FLOAT ||
+        server_field.type == MYSQL_TYPE_DOUBLE)
+      set_if_smaller(client_field->decimals, FLOATING_POINT_DECIMALS);
+
     client_field->db_length=		strlen(client_field->db);
     client_field->table_length=		strlen(client_field->table);
     client_field->name_length=		strlen(client_field->name);
@@ -1174,7 +1187,8 @@ bool Protocol_binary::write()
 bool
 net_send_ok(THD *thd,
             uint server_status, uint statement_warn_count,
-            ulonglong affected_rows, ulonglong id, const char *message)
+            ulonglong affected_rows, ulonglong id, const char *message,
+            bool, bool)
 {
   DBUG_ENTER("emb_net_send_ok");
   MYSQL_DATA *data;

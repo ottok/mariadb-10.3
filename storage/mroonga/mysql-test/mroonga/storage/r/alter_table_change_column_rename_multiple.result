@@ -24,7 +24,7 @@ diaries	CREATE TABLE `diaries` (
   `subject` varchar(40) DEFAULT NULL,
   PRIMARY KEY (`internal_id`)
 ) ENGINE=Mroonga DEFAULT CHARSET=utf8
-INSERT INTO diaries (subject, description)
+INSERT IGNORE INTO diaries (subject, description)
 VALUES ("groonga (1)", "starting groonga.");
 SELECT * FROM diaries;
 description	internal_id	subject

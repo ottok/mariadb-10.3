@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #ifdef USE_PRAGMA_IMPLEMENTATION
@@ -23,7 +23,7 @@
 #include "sp_head.h"
 
 static mysql_mutex_t Cversion_lock;
-static ulong volatile Cversion= 0;
+static ulong volatile Cversion= 1;
 
 
 /*
@@ -48,7 +48,7 @@ public:
     return my_hash_insert(&m_hashtable, (const uchar *)sp);
   }
 
-  inline sp_head *lookup(char *name, uint namelen)
+  inline sp_head *lookup(char *name, size_t namelen)
   {
     return (sp_head *) my_hash_search(&m_hashtable, (const uchar *)name,
                                       namelen);
@@ -167,8 +167,7 @@ void sp_cache_insert(sp_cache **cp, sp_head *sp)
   }
   /* Reading a ulong variable with no lock. */
   sp->set_sp_cache_version(Cversion);
-  DBUG_PRINT("info",("sp_cache: inserting: %.*s", (int) sp->m_qname.length,
-                     sp->m_qname.str));
+  DBUG_PRINT("info",("sp_cache: inserting: %s", ErrConvDQName(sp).ptr()));
   c->insert(sp);
   *cp= c;                                       // Update *cp if it was NULL
 }
@@ -190,12 +189,13 @@ void sp_cache_insert(sp_cache **cp, sp_head *sp)
     NULL if the routine not found.
 */
 
-sp_head *sp_cache_lookup(sp_cache **cp, sp_name *name)
+sp_head *sp_cache_lookup(sp_cache **cp, const Database_qualified_name *name)
 {
+  char buf[NAME_LEN * 2 + 2];
   sp_cache *c= *cp;
   if (! c)
     return NULL;
-  return c->lookup(name->m_qname.str, name->m_qname.length);
+  return c->lookup(buf, name->make_qname(buf, sizeof(buf)));
 }
 
 
@@ -237,7 +237,6 @@ void sp_cache_flush_obsolete(sp_cache **cp, sp_head **sp)
     *sp= NULL;
   }
 }
-
 
 /**
   Return the current global version of the cache.

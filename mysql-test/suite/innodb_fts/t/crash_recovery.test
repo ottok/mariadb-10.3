@@ -7,6 +7,7 @@
 # The embedded server tests do not support restarting.
 --source include/not_embedded.inc
 
+FLUSH TABLES;
 # Following are test for crash recovery on FTS index, the first scenario
 # is for bug Bug #14586855 INNODB: FAILING ASSERTION: (DICT_INDEX_GET_N_UNIQUE(
 # PLAN->INDEX) <= PLAN->N_EXAC
@@ -38,7 +39,17 @@ BEGIN;
 INSERT INTO articles (title,body) VALUES
         ('MySQL Tutorial','DBMS stands for DataBase ...');
 
---source include/kill_and_restart_mysqld.inc
+--echo # Make durable the AUTO_INCREMENT in the above incomplete transaction.
+--connect (flush_redo_log,localhost,root,,)
+SET GLOBAL innodb_flush_log_at_trx_commit=1;
+BEGIN;
+DELETE FROM articles LIMIT 1;
+ROLLBACK;
+--disconnect flush_redo_log
+--connection default
+
+let $shutdown_timeout=0;
+--source include/restart_mysqld.inc
 
 # This insert will re-initialize the Doc ID counter, it should not crash
 INSERT INTO articles (title,body) VALUES
@@ -67,7 +78,16 @@ BEGIN;
 INSERT INTO articles (title,body) VALUES
         ('MySQL Tutorial','DBMS stands for DataBase ...');
 
---source include/kill_and_restart_mysqld.inc
+--echo # Make durable the AUTO_INCREMENT in the above incomplete transaction.
+--connect (flush_redo_log,localhost,root,,)
+SET GLOBAL innodb_flush_log_at_trx_commit=1;
+BEGIN;
+DELETE FROM articles LIMIT 1;
+ROLLBACK;
+--disconnect flush_redo_log
+--connection default
+
+--source include/restart_mysqld.inc
 
 # This insert will re-initialize the Doc ID counter, it should not crash
 INSERT INTO articles (title,body) VALUES
@@ -103,10 +123,12 @@ INSERT INTO articles VALUES
 
 BEGIN;
 
+# Below we do not depend on the durability of the AUTO_INCREMENT sequence,
+# so we can skip the above flush_redo_log trick.
 INSERT INTO articles VALUES
         (100, 200, 'MySQL Tutorial','DBMS stands for DataBase ...');
 
---source include/kill_and_restart_mysqld.inc
+--source include/restart_mysqld.inc
 
 # This would re-initialize the FTS index and do the re-tokenization
 # of above records

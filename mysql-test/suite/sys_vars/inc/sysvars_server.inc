@@ -1,3 +1,4 @@
+--source include/have_perfschema.inc
 --source include/word_size.inc
 --vertical_results
 
@@ -18,6 +19,7 @@ select * from information_schema.system_variables
         variable_name not like 'debug%' and
         variable_name not like 'wsrep%' and
         variable_name not in (
+          'in_predicate_conversion_threshold',
           'have_openssl',
           'have_symlink',
           'hostname',
@@ -25,10 +27,12 @@ select * from information_schema.system_variables
           'lower_case_file_system',
           'lower_case_table_names',
           'open_files_limit',
+          'plugin_maturity',
           'rand_seed1',
           'rand_seed2',
           'system_time_zone',
           'version_comment',
+          'version_source_revision',
           'version_compile_machine', 'version_compile_os',
           'version_malloc_library', 'version_ssl_library', 'version'
         )
@@ -52,6 +56,7 @@ select VARIABLE_NAME, VARIABLE_SCOPE, VARIABLE_TYPE, VARIABLE_COMMENT,
           'rand_seed2',
           'system_time_zone',
           'version_comment',
+          'version_source_revision',
           'version_compile_machine', 'version_compile_os',
           'version_malloc_library', 'version_ssl_library', 'version'
         )

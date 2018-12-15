@@ -31,9 +31,18 @@
 
   GSSAPI authentication plugin, server side
 */
-#include <my_sys.h>
+
+#ifdef _WIN32
+typedef unsigned __int64 my_ulonglong;
+#else
+typedef unsigned long long my_ulonglong;
+#endif
+
+#include <stdlib.h>
 #include <mysqld_error.h>
+#include <typelib.h>
 #include <mysql/plugin_auth.h>
+#include "string.h"
 #include "server_plugin.h"
 #include "common.h"
 
@@ -47,7 +56,7 @@ static int  first_packet_len;
 */
 char *srv_principal_name;
 char *srv_keytab_path;
-char *srv_mech_name=(char *)"";
+const char *srv_mech_name="";
 unsigned long srv_mech;
 
 /**
@@ -101,7 +110,7 @@ static int initialize_plugin(void *unused)
 
   strcpy(first_packet, srv_principal_name);
   strcpy(first_packet + strlen(srv_principal_name) + 1,srv_mech_name);
-  first_packet_len = strlen(srv_principal_name) + strlen(srv_mech_name) + 2;
+  first_packet_len = (int)(strlen(srv_principal_name) + strlen(srv_mech_name) + 2);
 
   return 0;
 }
@@ -132,7 +141,7 @@ static const char* mech_names[] = {
   NULL
 };
 static TYPELIB mech_name_typelib = {
-  array_elements(mech_names) - 1,
+  3,
   "mech_name_typelib",
   mech_names,
   NULL

@@ -19,10 +19,6 @@
 #include <errno.h>
 #include "mysys_err.h"
 
-#if defined(__FreeBSD__)
-extern int getosreldate(void);
-#endif
-
 static void make_ftype(char * to,int flag);
 
 /*
@@ -65,16 +61,14 @@ FILE *my_fopen(const char *filename, int flags, myf MyFlags)
     int filedesc= my_fileno(fd);
     if ((uint)filedesc >= my_file_limit)
     {
-      thread_safe_increment(my_stream_opened,&THR_LOCK_open);
+      statistic_increment(my_stream_opened,&THR_LOCK_open);
       DBUG_RETURN(fd);				/* safeguard */
     }
-    mysql_mutex_lock(&THR_LOCK_open);
     my_file_info[filedesc].name= (char*) my_strdup(filename,MyFlags);
-    my_stream_opened++;
-    my_file_total_opened++;
+    statistic_increment(my_stream_opened, &THR_LOCK_open);
+    statistic_increment(my_file_total_opened, &THR_LOCK_open);
     my_file_info[filedesc].type= STREAM_BY_FOPEN;
-    mysql_mutex_unlock(&THR_LOCK_open);
-    DBUG_PRINT("exit",("stream: 0x%lx", (long) fd));
+    DBUG_PRINT("exit",("stream: %p", fd));
     DBUG_RETURN(fd);
   }
   else
@@ -130,52 +124,6 @@ static FILE *my_win_freopen(const char *path, const char *mode, FILE *stream)
   return stream;
 }
 
-#elif defined(__FreeBSD__)
-
-/* No close operation hook. */
-
-static int no_close(void *cookie __attribute__((unused)))
-{
-  return 0;
-}
-
-/*
-  A hack around a race condition in the implementation of freopen.
-
-  The race condition stems from the fact that the current fd of
-  the stream is closed before its number is used to duplicate the
-  new file descriptor. This defeats the desired atomicity of the
-  close and duplicate of dup2().
-
-  See PR number 79887 for reference:
-  http://www.freebsd.org/cgi/query-pr.cgi?pr=79887
-*/
-
-static FILE *my_freebsd_freopen(const char *path, const char *mode, FILE *stream)
-{
-  int old_fd;
-  FILE *result;
-
-  flockfile(stream);
-
-  old_fd= fileno(stream);
-
-  /* Use a no operation close hook to avoid having the fd closed. */
-  stream->_close= no_close;
-
-  /* Relies on the implicit dup2 to close old_fd. */
-  result= freopen(path, mode, stream);
-
-  /* If successful, the _close hook was replaced. */
-
-  if (result == NULL)
-    close(old_fd);
-  else
-    funlockfile(result);
-
-  return result;
-}
-
 #endif
 
 
@@ -199,16 +147,6 @@ FILE *my_freopen(const char *path, const char *mode, FILE *stream)
 
 #if defined(_WIN32)
   result= my_win_freopen(path, mode, stream);
-#elif defined(__FreeBSD__)
-  /*
-    XXX: Once the fix is ported to the stable releases, this should
-         be dependent upon the specific FreeBSD versions. Check at:
-         http://www.freebsd.org/cgi/query-pr.cgi?pr=79887
-  */
-  if (getosreldate() > 900027)
-    result= freopen(path, mode, stream);
-  else
-    result= my_freebsd_freopen(path, mode, stream);
 #else
   result= freopen(path, mode, stream);
 #endif
@@ -221,13 +159,22 @@ FILE *my_freopen(const char *path, const char *mode, FILE *stream)
 int my_fclose(FILE *fd, myf MyFlags)
 {
   int err,file;
+  char *name= NULL;
   DBUG_ENTER("my_fclose");
-  DBUG_PRINT("my",("stream: 0x%lx  MyFlags: %lu", (long) fd, MyFlags));
+  DBUG_PRINT("my",("stream: %p  MyFlags: %lu", fd, MyFlags));
 
-  mysql_mutex_lock(&THR_LOCK_open);
   file= my_fileno(fd);
+  if ((uint) file < my_file_limit && my_file_info[file].type != UNOPEN)
+  {
+    name= my_file_info[file].name;
+    my_file_info[file].name= NULL;
+    my_file_info[file].type= UNOPEN;
+  }
 #ifndef _WIN32
-  err= fclose(fd);
+  do
+  {
+    err= fclose(fd);
+  } while (err == -1 && errno == EINTR);
 #else
   err= my_win_fclose(fd);
 #endif
@@ -236,16 +183,15 @@ int my_fclose(FILE *fd, myf MyFlags)
     my_errno=errno;
     if (MyFlags & (MY_FAE | MY_WME))
       my_error(EE_BADCLOSE, MYF(ME_BELL+ME_WAITTANG),
-	       my_filename(file),errno);
+	       name,errno);
   }
   else
-    my_stream_opened--;
-  if ((uint) file < my_file_limit && my_file_info[file].type != UNOPEN)
+    statistic_decrement(my_stream_opened, &THR_LOCK_open);
+
+  if (name)
   {
-    my_file_info[file].type = UNOPEN;
-    my_free(my_file_info[file].name);
+    my_free(name);
   }
-  mysql_mutex_unlock(&THR_LOCK_open);
   DBUG_RETURN(err);
 } /* my_fclose */
 
@@ -275,13 +221,12 @@ FILE *my_fdopen(File Filedes, const char *name, int Flags, myf MyFlags)
   }
   else
   {
-    mysql_mutex_lock(&THR_LOCK_open);
-    my_stream_opened++;
+    statistic_increment(my_stream_opened, &THR_LOCK_open);
     if ((uint) Filedes < (uint) my_file_limit)
     {
       if (my_file_info[Filedes].type != UNOPEN)
       {
-        my_file_opened--;		/* File is opened with my_open ! */
+        statistic_decrement(my_file_opened, &THR_LOCK_open);		/* File is opened with my_open ! */
       }
       else
       {
@@ -289,10 +234,9 @@ FILE *my_fdopen(File Filedes, const char *name, int Flags, myf MyFlags)
       }
       my_file_info[Filedes].type = STREAM_BY_FDOPEN;
     }
-    mysql_mutex_unlock(&THR_LOCK_open);
   }
 
-  DBUG_PRINT("exit",("stream: 0x%lx", (long) fd));
+  DBUG_PRINT("exit",("stream: %p", fd));
   DBUG_RETURN(fd);
 } /* my_fdopen */
 
@@ -320,6 +264,8 @@ FILE *my_fdopen(File Filedes, const char *name, int Flags, myf MyFlags)
     r+ == O_RDWR  
     w+ == O_RDWR|O_TRUNC|O_CREAT  
     a+ == O_RDWR|O_APPEND|O_CREAT
+    b  == FILE_BINARY
+    e  == O_CLOEXEC
 */
 
 static void make_ftype(register char * to, register int flag)

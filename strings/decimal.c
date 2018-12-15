@@ -283,7 +283,7 @@ static dec1 *remove_leading_zeroes(const decimal_t *from, int *intg_result)
     from    number for processing
 */
 
-int decimal_actual_fraction(decimal_t *from)
+int decimal_actual_fraction(const decimal_t *from)
 {
   int frac= from->frac, i;
   dec1 *buf0= from->buf + ROUND_UP(from->intg) + ROUND_UP(frac) - 1;
@@ -457,7 +457,7 @@ static void digits_bounds(decimal_t *from, int *start_result, int *end_result)
   dec1 *end= from->buf + ROUND_UP(from->intg) + ROUND_UP(from->frac);
   dec1 *buf_end= end - 1;
 
-  /* find non-zero digit from number begining */
+  /* find non-zero digit from number beginning */
   while (buf_beg < end && *buf_beg == 0)
     buf_beg++;
 
@@ -468,7 +468,7 @@ static void digits_bounds(decimal_t *from, int *start_result, int *end_result)
     return;
   }
 
-  /* find non-zero decimal digit from number begining */
+  /* find non-zero decimal digit from number beginning */
   if (buf_beg == from->buf && from->intg)
   {
     start= DIG_PER_DEC1 - (i= ((from->intg-1) % DIG_PER_DEC1 + 1));
@@ -739,7 +739,7 @@ int decimal_shift(decimal_t *dec, int shift)
   /*
     If there are gaps then fill ren with 0.
 
-    Only one of following 'for' loops will work becouse beg <= end
+    Only one of following 'for' loops will work because beg <= end
   */
   beg= ROUND_UP(beg + 1) - 1;
   end= ROUND_UP(end) - 1;
@@ -863,7 +863,7 @@ internal_str2dec(const char *from, decimal_t *to, char **end, my_bool fixed)
         intg=intg1*DIG_PER_DEC1;
     }
   }
-  /* Error is guranteed to be set here */
+  /* Error is guaranteed to be set here */
   to->intg=intg;
   to->frac=frac;
 
@@ -1000,6 +1000,12 @@ static int ull2dec(ulonglong from, decimal_t *to)
 
   sanity(to);
 
+  if (!from)
+  {
+    decimal_make_zero(to);
+    return E_DEC_OK;
+  }
+
   for (intg1=1; from >= DIG_BASE; intg1++, from/=DIG_BASE) {}
   if (unlikely(intg1 > to->len))
   {
@@ -1007,7 +1013,7 @@ static int ull2dec(ulonglong from, decimal_t *to)
     error=E_DEC_OVERFLOW;
   }
   to->frac=0;
-  to->intg=intg1*DIG_PER_DEC1;
+  for(to->intg= (intg1-1)*DIG_PER_DEC1; from; to->intg++, from/=10) {}
 
   for (buf=to->buf+intg1; intg1; intg1--)
   {
@@ -1365,7 +1371,7 @@ int bin2decimal(const uchar *from, decimal_t *to, int precision, int scale)
       case 2: x=mi_sint2korr(from); break;
       case 3: x=mi_sint3korr(from); break;
       case 4: x=mi_sint4korr(from); break;
-      default: DBUG_ASSERT(0);
+      default: abort();
     }
     from+=i;
     *buf=x ^ mask;
@@ -1406,7 +1412,7 @@ int bin2decimal(const uchar *from, decimal_t *to, int precision, int scale)
       case 2: x=mi_sint2korr(from); break;
       case 3: x=mi_sint3korr(from); break;
       case 4: x=mi_sint4korr(from); break;
-      default: DBUG_ASSERT(0);
+      default: abort();
     }
     *buf=(x ^ mask) * powers10[DIG_PER_DEC1 - frac0x];
     if (((uint32)*buf) > DIG_MAX)
@@ -1694,7 +1700,7 @@ done:
                 scale increment for '/'
 
   NOTE
-    returned valued may be larger than the actual buffer requred
+    returned valued may be larger than the actual buffer required
     in the operation, as decimal_result_size, by design, operates on
     precision/scale values only and not on the actual decimal number
 
@@ -2245,7 +2251,7 @@ static int do_div_mod(const decimal_t *from1, const decimal_t *from2,
   */
   norm_factor=DIG_BASE/(*start2+1);
   norm2=(dec1)(norm_factor*start2[0]);
-  if (likely(len2>0))
+  if (unlikely(len2>0))
     norm2+=(dec1)(norm_factor*start2[1]/DIG_BASE);
 
   if (*start1 < *start2)
@@ -2267,7 +2273,7 @@ static int do_div_mod(const decimal_t *from1, const decimal_t *from2,
       guess=(norm_factor*x+norm_factor*y/DIG_BASE)/norm2;
       if (unlikely(guess >= DIG_BASE))
         guess=DIG_BASE-1;
-      if (likely(len2>0))
+      if (unlikely(len2>0))
       {
         /* hmm, this is a suspicious trick - I removed normalization here */
         if (start2[1]*guess > (x-guess*start2[0])*DIG_BASE+y)

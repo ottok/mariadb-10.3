@@ -271,7 +271,7 @@ namespace mrn {
       GRN_LOG(ctx_, GRN_LOG_DEBUG,
               "[mroonga][count-skip][false] no active index: <%s>:<%s>",
               *(field->table_name),
-              field->field_name);
+              field->field_name.str);
       DBUG_RETURN(false);
     }
 
@@ -288,7 +288,7 @@ namespace mrn {
                   i,
                   target_key_part_map_,
                   *(field->table_name),
-                  field->field_name);
+                  field->field_name.str);
           DBUG_RETURN(false);
         }
       }
@@ -297,7 +297,7 @@ namespace mrn {
     GRN_LOG(ctx_, GRN_LOG_DEBUG,
             "[mroonga][count-skip][false] field isn't indexed: <%s>:<%s>",
             *(field->table_name),
-            field->field_name);
+            field->field_name.str);
     DBUG_RETURN(false);
   }
 }

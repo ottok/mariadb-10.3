@@ -41,14 +41,20 @@ sub start_test {
   return "Not run for embedded server" if $::opt_embedded_server;
   return "Not configured to run ctest" unless -f "$bin/CTestTestfile.cmake";
   my ($ctest_vs)= $::opt_vs_config ? "-C ".substr($::opt_vs_config,1) : "";
-  my (@ctest_list)= `cd $bin && ctest $ctest_vs --show-only --verbose`;
+  my (@ctest_list)= `cd "$bin" && ctest $ctest_vs --show-only --verbose`;
   return "No ctest" if $?;
 
-  my ($command, %tests);
+  my ($command, %tests, $prefix);
   for (@ctest_list) {
     chomp;
-    $command= $' if /^\d+: Test command: +/;
-    $tests{$'}=$command if /^ +Test +#\d+: +/;
+    if (/^\d+: Test command: +/) {
+      $command= $';
+      $prefix= /libmariadb/ ? 'conc_' : '';
+    } elsif (/^ +Test +#\d+: +/) {
+      if ($command ne "NOT_AVAILABLE") {
+        $tests{$prefix.$'}=$command;
+      }
+    }
   }
   bless { ctests => { %tests } };
 }

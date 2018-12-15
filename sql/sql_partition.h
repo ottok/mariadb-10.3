@@ -41,6 +41,7 @@ typedef struct st_key_range key_range;
 #define HA_CAN_UPDATE_PARTITION_KEY (1 << 1)
 #define HA_CAN_PARTITION_UNIQUE (1 << 2)
 #define HA_USE_AUTO_PARTITION (1 << 3)
+#define HA_ONLY_VERS_PARTITION (1 << 4)
 
 #define NORMAL_PART_NAME 0
 #define TEMP_PART_NAME 1
@@ -56,8 +57,8 @@ typedef struct st_lock_param_type
   Alter_info *alter_info;
   TABLE *table;
   KEY *key_info_buffer;
-  const char *db;
-  const char *table_name;
+  LEX_CSTRING db;
+  LEX_CSTRING table_name;
   uchar *pack_frm_data;
   uint key_count;
   uint db_options;
@@ -86,12 +87,8 @@ bool check_reorganise_list(partition_info *new_part_info,
                            partition_info *old_part_info,
                            List<char> list_part_names);
 handler *get_ha_partition(partition_info *part_info);
-int get_parts_for_update(const uchar *old_data, uchar *new_data,
-                         const uchar *rec0, partition_info *part_info,
-                         uint32 *old_part_id, uint32 *new_part_id,
-                         longlong *func_value);
-int get_part_for_delete(const uchar *buf, const uchar *rec0,
-                        partition_info *part_info, uint32 *part_id);
+int get_part_for_buf(const uchar *buf, const uchar *rec0,
+                     partition_info *part_info, uint32 *part_id);
 void prune_partition_set(const TABLE *table, part_id_range *part_spec);
 bool check_partition_info(partition_info *part_info,handlerton **eng_type,
                           TABLE *table, handler *file, HA_CREATE_INFO *info);
@@ -128,7 +125,14 @@ uint32 get_partition_id_range_for_endpoint(partition_info *part_info,
 bool check_part_func_fields(Field **ptr, bool ok_with_charsets);
 bool field_is_partition_charset(Field *field);
 Item* convert_charset_partition_constant(Item *item, CHARSET_INFO *cs);
-void mem_alloc_error(size_t size);
+/**
+  Append all fields in read_set to string
+
+  @param[in,out] str   String to append to.
+  @param[in]     row   Row to append.
+  @param[in]     table Table containing read_set and fields for the row.
+*/
+void append_row_to_str(String &str, const uchar *row, TABLE *table);
 void truncate_partition_filename(char *path);
 
 /*
@@ -178,6 +182,10 @@ typedef struct st_partition_iter
     iterator also produce id of the partition that contains NULL value.
   */
   bool ret_null_part, ret_null_part_orig;
+  /*
+    We should return DEFAULT partition.
+  */
+  bool ret_default_part, ret_default_part_orig;
   struct st_part_num_range
   {
     uint32 start;
@@ -254,8 +262,8 @@ uint fast_alter_partition_table(THD *thd, TABLE *table,
                                 Alter_info *alter_info,
                                 HA_CREATE_INFO *create_info,
                                 TABLE_LIST *table_list,
-                                char *db,
-                                const char *table_name);
+                                const LEX_CSTRING *db,
+                                const LEX_CSTRING *table_name);
 bool set_part_state(Alter_info *alter_info, partition_info *tab_part_info,
                     enum partition_state part_state);
 uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
@@ -263,12 +271,15 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
                            Alter_table_ctx *alter_ctx,
                            bool *partition_changed,
                            bool *fast_alter_table);
-char *generate_partition_syntax(partition_info *part_info,
-                                uint *buf_length, bool use_sql_alloc,
+char *generate_partition_syntax(THD *thd, partition_info *part_info,
+                                uint *buf_length,
                                 bool show_partition_options,
                                 HA_CREATE_INFO *create_info,
-                                Alter_info *alter_info,
-                                const char *current_comment_start);
+                                Alter_info *alter_info);
+char *generate_partition_syntax_for_frm(THD *thd, partition_info *part_info,
+                                        uint *buf_length,
+                                        HA_CREATE_INFO *create_info,
+                                        Alter_info *alter_info);
 bool verify_data_with_partition(TABLE *table, TABLE *part_table,
                                 uint32 part_id);
 bool compare_partition_options(HA_CREATE_INFO *table_create_info,
@@ -285,10 +296,33 @@ int __attribute__((warn_unused_result))
   create_subpartition_name(char *out, size_t outlen, const char *in1, const
                            char *in2, const char *in3, uint name_variant);
 
-void set_field_ptr(Field **ptr, const uchar *new_buf, const uchar *old_buf);
 void set_key_field_ptr(KEY *key_info, const uchar *new_buf,
                        const uchar *old_buf);
 
-extern const LEX_STRING partition_keywords[];
+/** Set up table for creating a partition.
+Copy info from partition to the table share so the created partition
+has the correct info.
+  @param thd               THD object
+  @param share             Table share to be updated.
+  @param info              Create info to be updated.
+  @param part_elem         partition_element containing the info.
+
+  @return    status
+    @retval  TRUE  Error
+    @retval  FALSE Success
+
+  @details
+    Set up
+    1) Comment on partition
+    2) MAX_ROWS, MIN_ROWS on partition
+    3) Index file name on partition
+    4) Data file name on partition
+*/
+bool set_up_table_before_create(THD *thd,
+                                TABLE_SHARE *share,
+                                const char *partition_name_with_path,
+                                HA_CREATE_INFO *info,
+                                partition_element *part_elem);
 
 #endif /* SQL_PARTITION_INCLUDED */
+

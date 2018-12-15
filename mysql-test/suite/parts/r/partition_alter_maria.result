@@ -22,8 +22,8 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL
 ) ENGINE=Aria DEFAULT CHARSET=latin1 TRANSACTIONAL=1
-/*!50100 PARTITION BY HASH (a)
-PARTITIONS 2 */
+ PARTITION BY HASH (`a`)
+PARTITIONS 2
 drop table t1;
 #
 # MDEV-14641 Incompatible key or row definition between the MariaDB .frm file and the information in the storage engine
@@ -44,8 +44,8 @@ t1	CREATE TABLE `t1` (
   `id` int(11) DEFAULT NULL,
   `d` date DEFAULT NULL
 ) ENGINE=Aria DEFAULT CHARSET=latin1
-/*!50500 PARTITION BY RANGE  COLUMNS(d)
-(PARTITION p1 VALUES LESS THAN (MAXVALUE) ENGINE = Aria) */
+ PARTITION BY RANGE  COLUMNS(`d`)
+(PARTITION `p1` VALUES LESS THAN (MAXVALUE) ENGINE = Aria)
 ALTER TABLE t1 REORGANIZE PARTITION p1 INTO
 (
 PARTITION p2, /* Notice no values */
@@ -60,8 +60,8 @@ t1	CREATE TABLE `t1` (
   `id` int(11) DEFAULT NULL,
   `d` date DEFAULT NULL
 ) ENGINE=Aria DEFAULT CHARSET=latin1
-/*!50100 PARTITION BY LIST (id)
-(PARTITION p1 VALUES IN (1,2,3) ENGINE = Aria) */
+ PARTITION BY LIST (`id`)
+(PARTITION `p1` VALUES IN (1,2,3) ENGINE = Aria)
 ALTER TABLE t1 REORGANIZE PARTITION p1 INTO
 (
 PARTITION p2, /* Notice no values */

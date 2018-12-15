@@ -68,6 +68,7 @@ int main(int argc, char **argv)
   my_bool first_argument_uses_wildcards=0;
   char *wild;
   MYSQL mysql;
+  my_bool reconnect;
   static char **defaults_argv;
   MY_INIT(argv[0]);
   sf_leaking_memory=1; /* don't report memory leaks on early exits */
@@ -154,7 +155,8 @@ int main(int argc, char **argv)
     error= 1;
     goto error;
   }
-  mysql.reconnect= 1;
+  reconnect= 1;
+  mysql_options(&mysql, MYSQL_OPT_RECONNECT, &reconnect);
 
   switch (argc) {
   case 0:  error=list_dbs(&mysql,wild); break;
@@ -658,7 +660,7 @@ static int
 list_table_status(MYSQL *mysql,const char *db,const char *wild)
 {
   char query[NAME_LEN + 100];
-  int len;
+  size_t len;
   MYSQL_RES *result;
   MYSQL_ROW row;
 
@@ -905,7 +907,7 @@ static void print_res_header(MYSQL_RES *result)
 
 static void print_res_top(MYSQL_RES *result)
 {
-  uint i,length;
+  size_t i,length;
   MYSQL_FIELD *field;
 
   putchar('+');
@@ -913,7 +915,7 @@ static void print_res_top(MYSQL_RES *result)
   while((field = mysql_fetch_field(result)))
   {
     if ((length= strlen(field->name)) > field->max_length)
-      field->max_length=length;
+      field->max_length=(ulong)length;
     else
       length=field->max_length;
     for (i=length+2 ; i--> 0 ; )

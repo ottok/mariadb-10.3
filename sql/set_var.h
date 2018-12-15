@@ -48,6 +48,7 @@ struct sys_var_chain
 int mysql_add_sys_var_chain(sys_var *chain);
 int mysql_del_sys_var_chain(sys_var *chain);
 
+
 /**
   A class representing one system variable - that is something
   that can be accessed as @@global.variable_name or @@session.variable_name,
@@ -60,6 +61,7 @@ class sys_var: protected Value_source // for double_from_string_with_check
 public:
   sys_var *next;
   LEX_CSTRING name;
+  bool *test_load;
   enum flag_enum { GLOBAL, SESSION, ONLY_SESSION, SCOPE_MASK=1023,
                    READONLY=1024, ALLOCATED=2048, PARSE_EARLY=4096,
                    NO_SET_STATEMENT=8192, AUTO_SET=16384};
@@ -110,7 +112,7 @@ public:
   virtual sys_var_pluginvar *cast_pluginvar() { return 0; }
 
   bool check(THD *thd, set_var *var);
-  uchar *value_ptr(THD *thd, enum_var_type type, const LEX_STRING *base);
+  uchar *value_ptr(THD *thd, enum_var_type type, const LEX_CSTRING *base);
 
   /**
      Update the system variable with the default value from either
@@ -121,9 +123,9 @@ public:
   bool update(THD *thd, set_var *var);
 
   String *val_str_nolock(String *str, THD *thd, const uchar *value);
-  longlong val_int(bool *is_null, THD *thd, enum_var_type type, const LEX_STRING *base);
-  String *val_str(String *str, THD *thd, enum_var_type type, const LEX_STRING *base);
-  double val_real(bool *is_null, THD *thd, enum_var_type type, const LEX_STRING *base);
+  longlong val_int(bool *is_null, THD *thd, enum_var_type type, const LEX_CSTRING *base);
+  String *val_str(String *str, THD *thd, enum_var_type type, const LEX_CSTRING *base);
+  double val_real(bool *is_null, THD *thd, enum_var_type type, const LEX_CSTRING *base);
 
   SHOW_TYPE show_type() { return show_val_type; }
   int scope() const { return flags & SCOPE_MASK; }
@@ -156,6 +158,7 @@ public:
     case GET_BOOL:
     case GET_SET:
     case GET_FLAGSET:
+    case GET_BIT:
       return type != STRING_RESULT && type != INT_RESULT;
     case GET_DOUBLE:
       return type != INT_RESULT && type != REAL_RESULT && type != DECIMAL_RESULT;
@@ -227,8 +230,8 @@ protected:
     It must be of show_val_type type (my_bool for SHOW_MY_BOOL,
     int for SHOW_INT, longlong for SHOW_LONGLONG, etc).
   */
-  virtual uchar *session_value_ptr(THD *thd, const LEX_STRING *base);
-  virtual uchar *global_value_ptr(THD *thd, const LEX_STRING *base);
+  virtual uchar *session_value_ptr(THD *thd, const LEX_CSTRING *base);
+  virtual uchar *global_value_ptr(THD *thd, const LEX_CSTRING *base);
 
   /**
     A pointer to a storage area of the variable, to the raw data.
@@ -240,6 +243,15 @@ protected:
 
   uchar *global_var_ptr()
   { return ((uchar*)&global_system_variables) + offset; }
+
+  void *max_var_ptr()
+  {
+    return scope() == SESSION ? (((uchar*)&max_system_variables) + offset) :
+                                0;
+  }
+
+  friend class Session_sysvars_tracker;
+  friend class Session_tracker;
 };
 
 #include "sql_plugin.h"                    /* SHOW_HA_ROWS, SHOW_MY_BOOL */
@@ -281,14 +293,15 @@ public:
     longlong longlong_value;            ///< for signed integer
     double double_value;                ///< for Sys_var_double
     plugin_ref plugin;                  ///< for Sys_var_plugin
+    plugin_ref *plugins;                ///< for Sys_var_pluginlist
     Time_zone *time_zone;               ///< for Sys_var_tz
     LEX_STRING string_value;            ///< for Sys_var_charptr and others
     const void *ptr;                    ///< for Sys_var_struct
   } save_result;
-  LEX_STRING base; /**< for structured variables, like keycache_name.variable_name */
+  LEX_CSTRING base; /**< for structured variables, like keycache_name.variable_name */
 
   set_var(THD *thd, enum_var_type type_arg, sys_var *var_arg,
-          const LEX_STRING *base_name_arg, Item *value_arg);
+          const LEX_CSTRING *base_name_arg, Item *value_arg);
   virtual bool is_system() { return 1; }
   int check(THD *thd);
   int update(THD *thd);
@@ -325,10 +338,10 @@ public:
 
 class set_var_role: public set_var_base
 {
-  LEX_STRING role;
+  LEX_CSTRING role;
   ulonglong access;
 public:
-  set_var_role(LEX_STRING role_arg) : role(role_arg) {}
+  set_var_role(LEX_CSTRING role_arg) : role(role_arg) {}
   int check(THD *thd);
   int update(THD *thd);
 };
@@ -338,9 +351,9 @@ public:
 class set_var_default_role: public set_var_base
 {
   LEX_USER *user, *real_user;
-  LEX_STRING role;
+  LEX_CSTRING role;
 public:
-  set_var_default_role(LEX_USER *user_arg, LEX_STRING role_arg) :
+  set_var_default_role(LEX_USER *user_arg, LEX_CSTRING role_arg) :
     user(user_arg), role(role_arg) {}
   int check(THD *thd);
   int update(THD *thd);
@@ -385,7 +398,7 @@ extern SHOW_COMP_OPTION have_openssl;
 SHOW_VAR* enumerate_sys_vars(THD *thd, bool sorted, enum enum_var_type type);
 int fill_sysvars(THD *thd, TABLE_LIST *tables, COND *cond);
 
-sys_var *find_sys_var(THD *thd, const char *str, uint length=0);
+sys_var *find_sys_var(THD *thd, const char *str, size_t length=0);
 int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool free);
 
 #define SYSVAR_AUTOSIZE(VAR,VAL)                        \
@@ -415,18 +428,27 @@ inline bool IS_SYSVAR_AUTOSIZE(void *ptr)
 
 bool fix_delay_key_write(sys_var *self, THD *thd, enum_var_type type);
 
-ulonglong expand_sql_mode(ulonglong sql_mode);
-bool sql_mode_string_representation(THD *thd, ulonglong sql_mode, LEX_STRING *ls);
+sql_mode_t expand_sql_mode(sql_mode_t sql_mode);
+bool sql_mode_string_representation(THD *thd, sql_mode_t sql_mode,
+                                    LEX_CSTRING *ls);
 int default_regex_flags_pcre(const THD *thd);
 
-extern sys_var *Sys_autocommit_ptr;
+extern sys_var *Sys_autocommit_ptr, *Sys_last_gtid_ptr,
+  *Sys_character_set_client_ptr, *Sys_character_set_connection_ptr,
+  *Sys_character_set_results_ptr;
 
 CHARSET_INFO *get_old_charset_by_name(const char *old_name);
 
 int sys_var_init();
+uint sys_var_elements();
 int sys_var_add_options(DYNAMIC_ARRAY *long_options, int parse_flags);
 void sys_var_end(void);
 bool check_has_super(sys_var *self, THD *thd, set_var *var);
+plugin_ref *resolve_engine_list(THD *thd, const char *str_arg, size_t str_arg_len,
+                                bool error_on_unknown_engine, bool temp_copy);
+void free_engine_list(plugin_ref *list);
+plugin_ref *copy_engine_list(plugin_ref *list);
+plugin_ref *temp_copy_engine_list(THD *thd, plugin_ref *list);
+char *pretty_print_engine_list(THD *thd, plugin_ref *list);
 
 #endif
-

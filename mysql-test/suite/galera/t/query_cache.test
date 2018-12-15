@@ -339,7 +339,7 @@ drop table t1;
 --echo # On node-1
 --connection node_1
 create table t1 (a char(1) not null collate koi8r_general_ci) engine=innodb;
-insert into t1 values(_koi8r"á");
+insert into t1 values(_koi8r 0xc3);
 set CHARACTER SET koi8r;
 select * from t1;
 set CHARACTER SET cp1251_koi8;
@@ -479,6 +479,7 @@ select * from t1;
 select * from t1;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 insert delayed into t1 values (4);
 --sleep 5     # Wait for insert delayed to be executed.
 select a from t1;
@@ -505,6 +506,7 @@ show status like "Qcache_hits";
 --connection node_1
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 
 #
 # Test of min result data unit size changing
@@ -528,8 +530,9 @@ select * from t1;
 select * from t1;
 select * from t2;
 select * from t2;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 
 --echo # On node-2
 --connection node_2
@@ -537,13 +540,14 @@ select * from t1;
 select * from t1;
 select * from t2;
 select * from t2;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
 drop table t1;
 select a from t2;
 select a from t2;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 set GLOBAL query_cache_min_res_unit=default;
 show global variables like "query_cache_min_res_unit";
 
@@ -551,8 +555,9 @@ show global variables like "query_cache_min_res_unit";
 --connection node_1
 select a from t2;
 select a from t2;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 drop table t2;
 set GLOBAL query_cache_min_res_unit=default;
 show global variables like "query_cache_min_res_unit";
@@ -573,6 +578,7 @@ select "aaa" from t1;
 select "AAA" from t1;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 
 --echo # On node-2
 --connection node_2
@@ -580,6 +586,7 @@ select "aaa" from t1;
 select "AAA" from t1;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 drop table t1;
 
 #
@@ -789,9 +796,9 @@ drop table t1;
 #
 --source include/reset_query_cache.inc
 
-#
-# INTO OUTFILE/DUMPFILE test
-#
+--echo #
+--echo # INTO OUTFILE/DUMPFILE test
+--echo #
 --echo # On node-1
 --connection node_1
 create table t1 (a int) engine=innodb;
@@ -804,6 +811,7 @@ select * from t1 into outfile "query_cache.out.file";
 select * from t1 limit 1 into dumpfile "query_cache.dump.file";
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 drop table t1;
 let $datadir=`select @@datadir`;
 --remove_file $datadir/test/query_cache.dump.file
@@ -814,9 +822,9 @@ let $datadir=`select @@datadir`;
 #
 --source include/reset_query_cache.inc
 
-#
-# Test of SQL_SELECT_LIMIT
-#
+--echo #
+--echo # Test of SQL_SELECT_LIMIT
+--echo #
 --echo # On node-1
 --connection node_1
 create table t1 (a int) engine=innodb;
@@ -828,6 +836,7 @@ SET SQL_SELECT_LIMIT=1;
 select * from t1;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 SET SQL_SELECT_LIMIT=DEFAULT;
 
 --echo # On node-2
@@ -848,9 +857,9 @@ drop table t1;
 #
 --source include/reset_query_cache.inc
 
-#
-# WRITE LOCK & QC
-#
+--echo #
+--echo # WRITE LOCK & QC
+--echo #
 --echo # On node-1
 --connection node_1
 create table t1 (a int not null) engine=innodb;
@@ -862,6 +871,7 @@ select * from t1;
 select * from t2;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 lock table t1 write, t2 read;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
@@ -873,6 +883,7 @@ show status like "Qcache_hits";
 lock table v1 write;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 unlock table;
 drop view v1;
 set query_cache_wlock_invalidate=default;
@@ -896,15 +907,16 @@ show status like "Qcache_hits";
 lock table v1 write;
 show status like "Qcache_queries_in_cache";
 show status like "Qcache_hits";
+show status like "Qcache_inserts";
 unlock table;
 drop view v1;
 set query_cache_wlock_invalidate=default;
 
 drop table t1,t2;
 
-#
-# Hiding real table stored in query cache by temporary table
-#
+--echo #
+--echo # Hiding real table stored in query cache by temporary table
+--echo #
 --echo # On node-1
 --connection node_1
 create table t1 (id int primary key) engine=innodb;
@@ -937,65 +949,74 @@ drop table t1;
 --connection node_1
 SET NAMES koi8r;
 CREATE TABLE t1 (a char(1) character set koi8r) engine=innodb;
-INSERT INTO t1 VALUES (_koi8r'á'),(_koi8r'Á');
+INSERT INTO t1 VALUES (_koi8r 0xc3),(_koi8r 0xc3);
 #
 # Run select
 #
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 #
 # Change collation_connection and run the same query again
 #
 set collation_connection=koi8r_bin;
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 #
 # Now change character_set_client and run the same query again
 #
 set character_set_client=cp1251;
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 #
 # And finally change character_set_results and run the same query again
 #
 set character_set_results=cp1251;
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 SET NAMES default;
 
 --echo # On node-2
 --connection node_2
-#
-# Run select
-#
+
+--echo #
+--echo # Run select
+--echo #
+
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
 #
 # Change collation_connection and run the same query again
 #
 set collation_connection=koi8r_bin;
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 #
 # Now change character_set_client and run the same query again
 #
 set character_set_client=cp1251;
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 #
 # And finally change character_set_results and run the same query again
 #
 set character_set_results=cp1251;
 SELECT a,'Â','â'='Â' FROM t1;
-show status like "Qcache_hits";
 show status like "Qcache_queries_in_cache";
+show status like "Qcache_hits";
+show status like "Qcache_inserts";
 
 drop table t1;
 
@@ -1004,9 +1025,10 @@ drop table t1;
 #
 --source include/reset_query_cache.inc
 
-#
-# Comments before command
-#
+--echo #
+--echo # Comments before command
+--echo #
+
 --echo # On node-1
 --connection node_1
 create table t1 (a int) engine=innodb;
@@ -1033,9 +1055,10 @@ drop table t1;
 #
 --source include/reset_query_cache.inc
 
-#
-# Information schema & query cache test
-#
+--echo #
+--echo # Information schema & query cache test
+--echo #
+
 --echo # On node-1
 --connection node_1
 set session query_cache_type = 2;

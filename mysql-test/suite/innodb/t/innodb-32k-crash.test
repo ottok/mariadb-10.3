@@ -3,12 +3,7 @@
 # Embedded server does not support restarting
 --source include/not_embedded.inc
 
-call mtr.add_suppression("InnoDB: Warning: innodb_page_size has been changed from default value *");
-
 let $MYSQLD_DATADIR= `select @@datadir`;
-
-SET GLOBAL innodb_file_format = `Barracuda`;
-SET GLOBAL innodb_file_per_table = ON;
 
 CREATE TABLE t1(a blob,b blob,c blob,d blob,e blob,f blob,g blob,
                 h blob,i blob,j blob,k blob,l blob,m blob,n blob,
@@ -146,9 +141,12 @@ COMMIT;
 
 BEGIN;
 INSERT INTO t1 SELECT * from t2;
-UPDATE t1 SET a=@e,b=@e,c=@e,d=@e,e=@e;
 
---source include/kill_and_restart_mysqld.inc
+BEGIN;
+UPDATE t1 SET a=@e,b=@e,c=@e,d=@e,e=@e;
+--let $shutdown_timeout=0
+--source include/restart_mysqld.inc
+--let $shutdown_timeout=
 
 UPDATE t1 SET a=@f,b=@f,c=@f,d=@f,e=@f,f=@f,g=@f,h=@f,i=@f,j=@f,
               k=@f,l=@f,m=@f,n=@f,o=@f,p=@f,q=@f,r=@f,s=@f,t=@f,u=@f,

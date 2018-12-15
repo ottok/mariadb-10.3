@@ -13,11 +13,12 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include "my_global.h"                          // HAVE_*
+#include "mariadb.h"
 #include "sql_priv.h"
 
 #ifdef HAVE_QUERY_CACHE
 #include <mysql.h>
+#include "sql_basic_types.h"
 #include "emb_qcache.h"
 #include "embedded_priv.h"
 #include "sql_class.h"                          // THD
@@ -27,14 +28,14 @@ void Querycache_stream::store_uchar(uchar c)
   if (data_end == cur_data)
     use_next_block(TRUE);
   *(cur_data++)= c;
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   stored_size++;
 #endif
 }
 
 void Querycache_stream::store_short(ushort s)
 {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   stored_size+= 2;
 #endif
   if (data_end - cur_data > 1)
@@ -57,7 +58,7 @@ void Querycache_stream::store_short(ushort s)
 
 void Querycache_stream::store_int(uint i)
 {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   stored_size+= 4;
 #endif
   size_t rest_len= data_end - cur_data;
@@ -84,7 +85,7 @@ void Querycache_stream::store_int(uint i)
 
 void Querycache_stream::store_ll(ulonglong ll)
 {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   stored_size+= 8;
 #endif
   size_t rest_len= data_end - cur_data;
@@ -109,7 +110,7 @@ void Querycache_stream::store_ll(ulonglong ll)
 
 void Querycache_stream::store_str_only(const char *str, uint str_len)
 {
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
   stored_size+= str_len;
 #endif
   do
@@ -417,7 +418,7 @@ int emb_load_querycache_result(THD *thd, Querycache_stream *src)
 
   if (!data)
     goto err;
-  init_alloc_root(&data->alloc, 8192,0,MYF(0));
+  init_alloc_root(&data->alloc, "embedded_query_cache", 8192,0,MYF(0));
   f_alloc= &data->alloc;
 
   data->fields= src->load_int();

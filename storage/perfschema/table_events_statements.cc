@@ -253,12 +253,9 @@ void table_events_statements_common::make_row_part_1(PFS_events_statements *stat
   {
     if (cs->mbmaxlen > 1)
     {
-      int well_formed_error;
-      valid_length= cs->cset->well_formed_len(cs,
-                                              statement->m_sqltext,
-                                              statement->m_sqltext + valid_length,
-                                              valid_length,
-                                              &well_formed_error);
+      valid_length= Well_formed_prefix(cs,
+                                       statement->m_sqltext,
+                                       valid_length).length();
     }
   }
 
@@ -273,7 +270,7 @@ void table_events_statements_common::make_row_part_1(PFS_events_statements *stat
     if (chars > 3)
     {
       chars-= 3;
-      size_t bytes_offset= m_row.m_sqltext.charpos(chars, 0);
+      uint32 bytes_offset= m_row.m_sqltext.charpos(chars, 0);
       m_row.m_sqltext.length(bytes_offset);
       m_row.m_sqltext.append("...", 3);
     }

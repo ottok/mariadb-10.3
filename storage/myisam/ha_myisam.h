@@ -48,6 +48,8 @@ class ha_myisam: public handler
   char    *data_file_name, *index_file_name;
   bool can_enable_indexes;
   int repair(THD *thd, HA_CHECK &param, bool optimize);
+  void setup_vcols_for_repair(HA_CHECK *param);
+  void restore_vcos_after_repair();
 
  public:
   ha_myisam(handlerton *hton, TABLE_SHARE *table_arg);
@@ -69,7 +71,7 @@ class ha_myisam: public handler
   int open(const char *name, int mode, uint test_if_locked);
   int close(void);
   int write_row(uchar * buf);
-  int update_row(const uchar * old_data, uchar * new_data);
+  int update_row(const uchar * old_data, const uchar * new_data);
   int delete_row(const uchar * buf);
   int index_read_map(uchar *buf, const uchar *key, key_part_map keypart_map,
                      enum ha_rkey_function find_flag);
@@ -142,7 +144,7 @@ class ha_myisam: public handler
                                             Alter_inplace_info *alter_info);
   bool check_if_incompatible_data(HA_CREATE_INFO *info, uint table_changes);
 #ifdef HAVE_QUERY_CACHE
-  my_bool register_query_cache_table(THD *thd, char *table_key,
+  my_bool register_query_cache_table(THD *thd, const char *table_key,
                                      uint key_length,
                                      qc_engine_callback
                                      *engine_callback,

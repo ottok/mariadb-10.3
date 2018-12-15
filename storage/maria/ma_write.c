@@ -107,9 +107,10 @@ int maria_write(MARIA_HA *info, uchar *record)
   if (_ma_readinfo(info,F_WRLCK,1))
     DBUG_RETURN(my_errno);
 
-  if (share->base.reloc == (ha_rows) 1 &&
-      share->base.records == (ha_rows) 1 &&
-      share->state.state.records == (ha_rows) 1)
+  if ((share->state.changed & STATE_DATA_FILE_FULL) ||
+      (share->base.reloc == (ha_rows) 1 &&
+       share->base.records == (ha_rows) 1 &&
+       share->state.state.records == (ha_rows) 1))
   {						/* System file */
     my_errno=HA_ERR_RECORD_FILE_FULL;
     goto err2;
@@ -791,7 +792,7 @@ int _ma_insert(register MARIA_HA *info, MARIA_KEY *key,
   MARIA_SHARE *share= info->s;
   MARIA_KEYDEF *keyinfo= key->keyinfo;
   DBUG_ENTER("_ma_insert");
-  DBUG_PRINT("enter",("key_pos: 0x%lx", (ulong) key_pos));
+  DBUG_PRINT("enter",("key_pos:%p", key_pos));
   DBUG_EXECUTE("key", _ma_print_key(DBUG_FILE, key););
 
   /*
@@ -817,8 +818,8 @@ int _ma_insert(register MARIA_HA *info, MARIA_KEY *key,
   {
     DBUG_PRINT("test",("t_length: %d  ref_len: %d",
 		       t_length,s_temp.ref_length));
-    DBUG_PRINT("test",("n_ref_len: %d  n_length: %d  key_pos: 0x%lx",
-		       s_temp.n_ref_length, s_temp.n_length, (long) s_temp.key));
+    DBUG_PRINT("test",("n_ref_len: %d  n_length: %d  key_pos: %p",
+		       s_temp.n_ref_length, s_temp.n_length, s_temp.key));
   }
 #endif
   if (t_length > 0)
@@ -885,7 +886,7 @@ ChangeSet@1.2562, 2008-04-09 07:41:40+02:00, serg@janus.mylan +9 -0
       DBUG_ASSERT(info->ft1_to_ft2==0);
       if (alen == blen &&
           ha_compare_text(keyinfo->seg->charset, a, alen,
-                          b, blen, 0, 0) == 0)
+                          b, blen, 0) == 0)
       {
         /* Yup. converting */
         info->ft1_to_ft2=(DYNAMIC_ARRAY *)
@@ -1132,8 +1133,8 @@ uchar *_ma_find_half_pos(MARIA_KEY *key, MARIA_PAGE *ma_page,
       DBUG_RETURN(0);
   } while (page < end);
   *after_key= page;
-  DBUG_PRINT("exit",("returns: 0x%lx  page: 0x%lx  half: 0x%lx",
-                     (long) lastpos, (long) page, (long) end));
+  DBUG_PRINT("exit",("returns: %p  page: %p  half: %p",
+                     lastpos, page, end));
   DBUG_RETURN(lastpos);
 } /* _ma_find_half_pos */
 
@@ -1215,8 +1216,8 @@ static uchar *_ma_find_last_pos(MARIA_KEY *int_key, MARIA_PAGE *ma_page,
   } while (page < end);
 
   *after_key=lastpos;
-  DBUG_PRINT("exit",("returns: 0x%lx  page: 0x%lx  end: 0x%lx",
-                     (long) prevpos,(long) page,(long) end));
+  DBUG_PRINT("exit",("returns: %p  page: %p  end: %p",
+                     prevpos,page,end));
   DBUG_RETURN(prevpos);
 } /* _ma_find_last_pos */
 
@@ -1791,8 +1792,10 @@ void maria_flush_bulk_insert(MARIA_HA *info, uint inx)
   }
 }
 
-void maria_end_bulk_insert(MARIA_HA *info)
+
+int maria_end_bulk_insert(MARIA_HA *info, my_bool abort)
 {
+  int first_error= 0;
   DBUG_ENTER("maria_end_bulk_insert");
   if (info->bulk_insert)
   {
@@ -1801,15 +1804,20 @@ void maria_end_bulk_insert(MARIA_HA *info)
     {
       if (is_tree_inited(&info->bulk_insert[i]))
       {
+        int error;
         if (info->s->deleting)
           reset_free_element(&info->bulk_insert[i]);
-        delete_tree(&info->bulk_insert[i]);
+        if ((error= delete_tree(&info->bulk_insert[i], abort)))
+        {
+          first_error= first_error ? first_error : error;
+          abort= 1;
+        }
       }
     }
     my_free(info->bulk_insert);
     info->bulk_insert= 0;
   }
-  DBUG_VOID_RETURN;
+  DBUG_RETURN(first_error);
 }
 
 

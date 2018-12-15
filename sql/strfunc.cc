@@ -15,7 +15,7 @@
 
 /* Some useful string utility functions used by the MySQL server */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "strfunc.h"
@@ -45,7 +45,7 @@
 
 static const char field_separator=',';
 
-ulonglong find_set(TYPELIB *lib, const char *str, uint length, CHARSET_INFO *cs,
+ulonglong find_set(TYPELIB *lib, const char *str, size_t length, CHARSET_INFO *cs,
                    char **err_pos, uint *err_len, bool *set_warning)
 {
   CHARSET_INFO *strip= cs ? cs : &my_charset_latin1;
@@ -79,8 +79,9 @@ ulonglong find_set(TYPELIB *lib, const char *str, uint length, CHARSET_INFO *cs,
       var_len= (uint) (pos - start);
       uint find= cs ? find_type2(lib, start, var_len, cs) :
                       find_type(lib, start, var_len, (bool) 0);
-      if (!find && *err_len == 0) // report the first error with length > 0
+      if (unlikely(!find && *err_len == 0))
       {
+        // report the first error with length > 0
         *err_pos= (char*) start;
         *err_len= var_len;
         *set_warning= 1;
@@ -111,7 +112,7 @@ ulonglong find_set(TYPELIB *lib, const char *str, uint length, CHARSET_INFO *cs,
   > 0 position in TYPELIB->type_names +1
 */
 
-uint find_type(const TYPELIB *lib, const char *find, uint length,
+uint find_type(const TYPELIB *lib, const char *find, size_t length,
                bool part_match)
 {
   uint found_count=0, found_pos=0;
@@ -152,13 +153,13 @@ uint find_type(const TYPELIB *lib, const char *find, uint length,
     >0  Offset+1 in typelib for matched string
 */
 
-uint find_type2(const TYPELIB *typelib, const char *x, uint length,
+uint find_type2(const TYPELIB *typelib, const char *x, size_t length,
                 CHARSET_INFO *cs)
 {
   int pos;
   const char *j;
   DBUG_ENTER("find_type2");
-  DBUG_PRINT("enter",("x: '%.*s'  lib: 0x%lx", length, x, (long) typelib));
+  DBUG_PRINT("enter",("x: '%.*s'  lib: %p", (int)length, x, typelib));
 
   if (!typelib->count)
   {
@@ -265,8 +266,8 @@ uint check_word(TYPELIB *lib, const char *val, const char *end,
 */
 
 
-uint strconvert(CHARSET_INFO *from_cs, const char *from, uint from_length,
-                CHARSET_INFO *to_cs, char *to, uint to_length, uint *errors)
+uint strconvert(CHARSET_INFO *from_cs, const char *from, size_t from_length,
+                CHARSET_INFO *to_cs, char *to, size_t to_length, uint *errors)
 {
   int cnvres;
   my_wc_t wc;
@@ -331,26 +332,26 @@ outp:
     >=0  Ordinal position
 */
 
-int find_string_in_array(LEX_STRING * const haystack, LEX_STRING * const needle,
+int find_string_in_array(LEX_CSTRING * const haystack, LEX_CSTRING * const needle,
                          CHARSET_INFO * const cs)
 {
-  const LEX_STRING *pos;
+  const LEX_CSTRING *pos;
   for (pos= haystack; pos->str; pos++)
     if (!cs->coll->strnncollsp(cs, (uchar *) pos->str, pos->length,
-                               (uchar *) needle->str, needle->length, 0))
+                               (uchar *) needle->str, needle->length))
     {
-      return (pos - haystack);
+      return (int)(pos - haystack);
     }
   return -1;
 }
 
 
-char *set_to_string(THD *thd, LEX_STRING *result, ulonglong set,
-                    const char *lib[])
+const char *set_to_string(THD *thd, LEX_CSTRING *result, ulonglong set,
+                          const char *lib[])
 {
   char buff[STRING_BUFFER_USUAL_SIZE*8];
   String tmp(buff, sizeof(buff), &my_charset_latin1);
-  LEX_STRING unused;
+  LEX_CSTRING unused;
 
   if (!result)
     result= &unused;
@@ -376,12 +377,12 @@ char *set_to_string(THD *thd, LEX_STRING *result, ulonglong set,
   return result->str;
 }
 
-char *flagset_to_string(THD *thd, LEX_STRING *result, ulonglong set,
-                        const char *lib[])
+const char *flagset_to_string(THD *thd, LEX_CSTRING *result, ulonglong set,
+                              const char *lib[])
 {
   char buff[STRING_BUFFER_USUAL_SIZE*8];
   String tmp(buff, sizeof(buff), &my_charset_latin1);
-  LEX_STRING unused;
+  LEX_CSTRING unused;
 
   if (!result) result= &unused;
 

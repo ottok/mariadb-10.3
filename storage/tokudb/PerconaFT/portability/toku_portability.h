@@ -54,6 +54,8 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #define DEV_NULL_FILE "/dev/null"
 
+#include <my_global.h>
+
 // include here, before they get deprecated
 #include <toku_atomic.h>
 
@@ -206,6 +208,8 @@ extern void *realloc(void*, size_t)            __THROW __attribute__((__deprecat
 #    endif
 #if !defined(__APPLE__)
 // Darwin headers use these types, we should not poison them
+#undef TRUE
+#undef FALSE
 # pragma GCC poison u_int8_t
 # pragma GCC poison u_int16_t
 # pragma GCC poison u_int32_t

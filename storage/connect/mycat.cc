@@ -138,7 +138,6 @@ TABTYPE GetTypeID(const char *type)
 #endif
 #if defined(JAVA_SUPPORT)
 								 : (!stricmp(type, "JDBC"))  ? TAB_JDBC
-		             : (!stricmp(type, "MONGO")) ? TAB_MONGO
 #endif
 #if defined(JAVA_SUPPORT) || defined(CMGO_SUPPORT)
 		             : (!stricmp(type, "MONGO") && MongoEnabled()) ? TAB_MONGO
@@ -549,15 +548,6 @@ PRELDEF MYCAT::MakeTableDesc(PGLOBAL g, PTABLE tablep, LPCSTR am)
     case TAB_PIVOT: tdp= new(g) PIVOTDEF; break;
     case TAB_VIR: tdp= new(g) VIRDEF;   break;
     case TAB_JSON: tdp= new(g) JSONDEF; break;
-#if defined(MONGO_SUPPORT)
-		case TAB_MONGO:
-//		if (MongoEnabled())
-			  tdp = new(g) MGODEF;
-//		else
-//			strcpy(g->Message, "MONGO type not enabled");
-
-			break;
-#endif   // MONGO_SUPPORT
 #if defined(ZIP_SUPPORT)
 		case TAB_ZIP: tdp = new(g) ZIPDEF;   break;
 #endif   // ZIP_SUPPORT

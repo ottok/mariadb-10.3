@@ -30,7 +30,6 @@ ENDIF()
 
 INCLUDE_DIRECTORIES(
   ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/storage/xtradb/include
   ${CMAKE_SOURCE_DIR}/sql
   ${CMAKE_CURRENT_SOURCE_DIR}/quicklz
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -39,6 +38,10 @@ INCLUDE_DIRECTORIES(
 
 IF(NOT HAVE_SYSTEM_REGEX)
   INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/pcre)
+ENDIF()
+
+IF(WITH_WSREP)
+  INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/wsrep)
 ENDIF()
 
 ADD_DEFINITIONS(-UMYSQL_SERVER)
@@ -74,9 +77,9 @@ MYSQL_ADD_EXECUTABLE(mariabackup
   backup_mysql.cc
   backup_copy.cc
   encryption_plugin.cc
-  ${PROJECT_SOURCE_DIR}/libmysql/libmysql.c
   ${PROJECT_SOURCE_DIR}/sql/net_serv.cc
   ${NT_SERVICE_SOURCE}
+  ${PROJECT_SOURCE_DIR}/libmysqld/libmysql.c
   COMPONENT backup
   )
 

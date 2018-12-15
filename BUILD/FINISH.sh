@@ -32,16 +32,26 @@ then
   configure="$configure --verbose"
 fi
 
-commands="\
-/bin/rm -rf configure;
-/bin/rm -rf CMakeCache.txt CMakeFiles/
-
+commands=""
+# git clean -fdX removes all ignored (build) files
+if test -d .git
+then
+    commands="\
+git clean -fdX
+cd ./libmariadb
+git submodule update
+cd ../storage/rocksdb/rocksdb
+git submodule update
+cd ../../.."
+fi
+commands="$commands
 path=`dirname $0`
 . \"$path/autorun.sh\""
 
 if [ -z "$just_clean" ]
 then
 commands="$commands
+git submodule update
 CC=\"$CC\" CFLAGS=\"$cflags\" CXX=\"$CXX\" CXXFLAGS=\"$cxxflags\" CXXLDFLAGS=\"$CXXLDFLAGS\" $configure"
 fi
 

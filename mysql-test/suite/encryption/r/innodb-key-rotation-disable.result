@@ -2,6 +2,8 @@ SELECT NAME FROM INFORMATION_SCHEMA.INNODB_TABLESPACES_ENCRYPTION WHERE MIN_KEY_
 NAME
 SELECT NAME FROM INFORMATION_SCHEMA.INNODB_TABLESPACES_ENCRYPTION WHERE MIN_KEY_VERSION = 0;
 NAME
+SET GLOBAL innodb_file_per_table = ON;
+set global innodb_compression_algorithm = 1;
 create database enctests;
 use enctests;
 create table t1(a int not null primary key, b char(200)) engine=innodb;
@@ -54,9 +56,9 @@ NOT FOUND /secred/ in t5.ibd
 # t6 on expecting NOT FOUND
 NOT FOUND /secred/ in t6.ibd
 # t7 off expecting FOUND
-FOUND /public/ in t7.ibd
+FOUND 1 /public/ in t7.ibd
 # t8 row compressed expecting NOT FOUND
-FOUND /public/ in t8.ibd
+FOUND 1 /public/ in t8.ibd
 # t9 page compressed expecting NOT FOUND
 NOT FOUND /public/ in t9.ibd
 drop database enctests;

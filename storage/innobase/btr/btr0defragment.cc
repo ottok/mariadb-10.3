@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (C) 2013, 2014 Facebook, Inc. All Rights Reserved.
-Copyright (C) 2014, 2015, MariaDB Corporation. All Rights Reserved.
+Copyright (C) 2014, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -26,12 +26,13 @@ Modified 30/07/2014 Jan Lindström jan.lindstrom@mariadb.com
 *******************************************************/
 
 #include "btr0defragment.h"
-#ifndef UNIV_HOTBACKUP
+#include "btr0btr.h"
 #include "btr0cur.h"
 #include "btr0sea.h"
 #include "btr0pcur.h"
 #include "dict0stats.h"
 #include "dict0stats_bg.h"
+#include "dict0defrag_bg.h"
 #include "ibuf0ibuf.h"
 #include "lock0lock.h"
 #include "srv0start.h"
@@ -100,9 +101,8 @@ void
 btr_defragment_init()
 {
 	srv_defragment_interval = ut_microseconds_to_timer(
-		1000000.0 / srv_defragment_frequency);
-	mutex_create(btr_defragment_mutex_key, &btr_defragment_mutex,
-		     SYNC_ANY_LATCH);
+		(ulonglong) (1000000.0 / srv_defragment_frequency));
+	mutex_create(LATCH_ID_BTR_DEFRAGMENT_MUTEX, &btr_defragment_mutex);
 }
 
 /******************************************************************//**
@@ -111,7 +111,7 @@ void
 btr_defragment_shutdown()
 {
 	mutex_enter(&btr_defragment_mutex);
-	list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
+	std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	while(iter != btr_defragment_wq.end()) {
 		btr_defragment_item_t* item = *iter;
 		iter = btr_defragment_wq.erase(iter);
@@ -133,7 +133,7 @@ btr_defragment_find_index(
 	dict_index_t*	index)	/*!< Index to find. */
 {
 	mutex_enter(&btr_defragment_mutex);
-	for (list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
+	for (std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	     iter != btr_defragment_wq.end();
 	     ++iter) {
 		btr_defragment_item_t* item = *iter;
@@ -161,25 +161,27 @@ btr_defragment_add_index(
 	dberr_t*	err)	/*!< out: error code */
 {
 	mtr_t mtr;
-	ulint space = dict_index_get_space(index);
-	ulint zip_size = dict_table_zip_size(index->table);
-	ulint page_no = dict_index_get_page(index);
 	*err = DB_SUCCESS;
 
 	mtr_start(&mtr);
 	// Load index rood page.
-	buf_block_t* block = btr_block_get(space, zip_size, page_no, RW_NO_LATCH, index, &mtr);
+	buf_block_t* block = btr_block_get(
+		page_id_t(index->table->space->id, index->page),
+		page_size_t(index->table->space->flags),
+		RW_NO_LATCH, index, &mtr);
 	page_t* page = NULL;
 
 	if (block) {
 		page = buf_block_get_frame(block);
 	}
 
-	if (page == NULL && index->table->file_unreadable) {
+	if (page == NULL && !index->is_readable()) {
 		mtr_commit(&mtr);
 		*err = DB_DECRYPTION_FAILED;
 		return NULL;
 	}
+
+	ut_ad(page_is_root(page));
 
 	if (page_is_leaf(page)) {
 		// Index root is a leaf page, no need to defragment.
@@ -189,7 +191,7 @@ btr_defragment_add_index(
 	btr_pcur_t* pcur = btr_pcur_create_for_mysql();
 	os_event_t event = NULL;
 	if (!async) {
-		event = os_event_create();
+		event = os_event_create(0);
 	}
 	btr_pcur_open_at_index_side(true, index, BTR_SEARCH_LEAF, pcur,
 				    true, 0, &mtr);
@@ -213,7 +215,7 @@ btr_defragment_remove_table(
 	dict_table_t*	table)	/*!< Index to be removed. */
 {
 	mutex_enter(&btr_defragment_mutex);
-	for (list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
+	for (std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	     iter != btr_defragment_wq.end();
 	     ++iter) {
 		btr_defragment_item_t* item = *iter;
@@ -235,7 +237,7 @@ btr_defragment_remove_index(
 	dict_index_t*	index)	/*!< Index to be removed. */
 {
 	mutex_enter(&btr_defragment_mutex);
-	for (list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
+	for (std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	     iter != btr_defragment_wq.end();
 	     ++iter) {
 		btr_defragment_item_t* item = *iter;
@@ -264,7 +266,7 @@ btr_defragment_remove_item(
 	btr_defragment_item_t*	item) /*!< Item to be removed. */
 {
 	mutex_enter(&btr_defragment_mutex);
-	for (list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
+	for (std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	     iter != btr_defragment_wq.end();
 	     ++iter) {
 		if (item == *iter) {
@@ -293,7 +295,7 @@ btr_defragment_get_item()
 		//return nullptr;
 	}
 	mutex_enter(&btr_defragment_mutex);
-	list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
+	std::list< btr_defragment_item_t* >::iterator iter = btr_defragment_wq.begin();
 	if (iter == btr_defragment_wq.end()) {
 		iter = btr_defragment_wq.begin();
 	}
@@ -312,7 +314,7 @@ btr_defragment_save_defrag_stats_if_needed(
 	dict_index_t*	index)	/*!< in: index */
 {
 	if (srv_defragment_stats_accuracy != 0 // stats tracking disabled
-	    && dict_index_get_space(index) != 0 // do not track system tables
+	    && index->table->space->id != 0 // do not track system tables
 	    && index->stat_defrag_modified_counter
 	       >= srv_defragment_stats_accuracy) {
 		dict_stats_defrag_pool_add(index);
@@ -349,6 +351,7 @@ btr_defragment_calc_n_recs_for_size(
 	while (page_cur_get_rec(&cur) != page_get_supremum_rec(page)) {
 		rec_t* cur_rec = page_cur_get_rec(&cur);
 		offsets = rec_get_offsets(cur_rec, index, offsets,
+					  page_is_leaf(page),
 					  ULINT_UNDEFINED, &heap);
 		ulint rec_size = rec_offs_size(offsets);
 		size += rec_size;
@@ -373,7 +376,7 @@ btr_defragment_merge_pages(
 	dict_index_t*	index,		/*!< in: index tree */
 	buf_block_t*	from_block,	/*!< in: origin of merge */
 	buf_block_t*	to_block,	/*!< in: destination of merge */
-	ulint		zip_size,	/*!< in: zip size of the block */
+	const page_size_t	page_size,	/*!< in: page size of the block */
 	ulint		reserved_space,	/*!< in: space reserved for future
 					insert to avoid immediate page split */
 	ulint*		max_data_size,	/*!< in/out: max data size to
@@ -383,8 +386,7 @@ btr_defragment_merge_pages(
 {
 	page_t* from_page = buf_block_get_frame(from_block);
 	page_t* to_page = buf_block_get_frame(to_block);
-	ulint space = dict_index_get_space(index);
-	ulint level = btr_page_get_level(from_page, mtr);
+	ulint level = btr_page_get_level(from_page);
 	ulint n_recs = page_get_n_recs(from_page);
 	ulint new_data_size = page_get_data_size(to_page);
 	ulint max_ins_size =
@@ -402,8 +404,8 @@ btr_defragment_merge_pages(
 
 	// Estimate how many records can be moved from the from_page to
 	// the to_page.
-	if (zip_size) {
-		ulint page_diff = UNIV_PAGE_SIZE - *max_data_size;
+	if (page_size.is_compressed()) {
+		ulint page_diff = srv_page_size - *max_data_size;
 		max_ins_size_to_use = (max_ins_size_to_use > page_diff)
 			       ? max_ins_size_to_use - page_diff : 0;
 	}
@@ -446,7 +448,7 @@ btr_defragment_merge_pages(
 		// n_recs_to_move number of records to to_page. We try to reduce
 		// the targeted data size on the to_page by
 		// BTR_DEFRAGMENT_PAGE_REDUCTION_STEP_SIZE and try again.
-		os_atomic_increment_ulint(
+		my_atomic_addlint(
 			&btr_defragment_compression_failures, 1);
 		max_ins_size_to_use =
 			move_size > BTR_DEFRAGMENT_PAGE_REDUCTION_STEP_SIZE
@@ -471,12 +473,12 @@ btr_defragment_merge_pages(
 	// Set ibuf free bits if necessary.
 	if (!dict_index_is_clust(index)
 	    && page_is_leaf(to_page)) {
-		if (zip_size) {
+		if (page_size.is_compressed()) {
 			ibuf_reset_free_bits(to_block);
 		} else {
 			ibuf_update_free_bits_if_full(
 				to_block,
-				UNIV_PAGE_SIZE,
+				srv_page_size,
 				ULINT_UNDEFINED);
 		}
 	}
@@ -486,11 +488,12 @@ btr_defragment_merge_pages(
 		lock_update_merge_left(to_block, orig_pred,
 				       from_block);
 		btr_search_drop_page_hash_index(from_block);
-		btr_level_list_remove(space, zip_size, from_page,
-				      index, mtr);
+		btr_level_list_remove(
+			index->table->space->id,
+			page_size, from_page, index, mtr);
 		btr_node_ptr_delete(index, from_block, mtr);
-		btr_blob_dbg_remove(from_page, index,
-				    "btr_defragment_n_pages");
+		/* btr_blob_dbg_remove(from_page, index,
+		"btr_defragment_n_pages"); */
 		btr_page_free(index, from_block, mtr);
 	} else {
 		// There are still records left on the page, so
@@ -511,7 +514,7 @@ btr_defragment_merge_pages(
 				page_get_infimum_rec(from_page));
 			node_ptr = dict_index_build_node_ptr(
 				index, rec, page_get_page_no(from_page),
-				heap, level + 1);
+				heap, level);
 			btr_insert_on_non_leaf_level(0, index, level+1,
 						     node_ptr, mtr);
 		}
@@ -538,8 +541,6 @@ btr_defragment_n_pages(
 	uint		n_pages,/*!< in: number of pages to defragment */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
-	ulint		space;
-	ulint		zip_size;
 	/* We will need to load the n+1 block because if the last page is freed
 	and we need to modify the prev_page_no of that block. */
 	buf_block_t*	blocks[BTR_DEFRAGMENT_MAX_N_PAGES + 1];
@@ -550,7 +551,6 @@ btr_defragment_n_pages(
 	ulint		data_size_per_rec;
 	ulint		optimal_page_size;
 	ulint		reserved_space;
-	ulint		level;
 	ulint		max_data_size = 0;
 	uint		n_defragmented = 0;
 	uint		n_new_slots;
@@ -560,10 +560,11 @@ btr_defragment_n_pages(
 	/* It doesn't make sense to call this function with n_pages = 1. */
 	ut_ad(n_pages > 1);
 
-	ut_ad(mtr_memo_contains(mtr, dict_index_get_lock(index),
-				MTR_MEMO_X_LOCK));
-	space = dict_index_get_space(index);
-	if (space == 0) {
+	if (!page_is_leaf(block->frame)) {
+		return NULL;
+	}
+
+	if (!index->table->space || !index->table->space->id) {
 		/* Ignore space 0. */
 		return NULL;
 	}
@@ -572,13 +573,8 @@ btr_defragment_n_pages(
 		n_pages = BTR_DEFRAGMENT_MAX_N_PAGES;
 	}
 
-	zip_size = dict_table_zip_size(index->table);
 	first_page = buf_block_get_frame(block);
-	level = btr_page_get_level(first_page, mtr);
-
-	if (level != 0) {
-		return NULL;
-	}
+	const page_size_t page_size(index->table->space->flags);
 
 	/* 1. Load the pages and calculate the total data size. */
 	blocks[0] = block;
@@ -592,12 +588,14 @@ btr_defragment_n_pages(
 			end_of_index = TRUE;
 			break;
 		}
-		blocks[i] = btr_block_get(space, zip_size, page_no,
+
+		blocks[i] = btr_block_get(page_id_t(index->table->space->id,
+						    page_no), page_size,
 					  RW_X_LATCH, index, mtr);
 	}
 
 	if (n_pages == 1) {
-		if (btr_page_get_prev(first_page, mtr) == FIL_NULL) {
+		if (!page_has_prev(first_page)) {
 			/* last page in the index */
 			if (dict_index_get_page(index)
 			    == page_get_page_no(first_page))
@@ -618,9 +616,9 @@ btr_defragment_n_pages(
 	optimal_page_size = page_get_free_space_of_empty(
 		page_is_comp(first_page));
 	// For compressed pages, we take compression failures into account.
-	if (zip_size) {
+	if (page_size.is_compressed()) {
 		ulint size = 0;
-		int i = 0;
+		uint i = 0;
 		// We estimate the optimal data size of the index use samples of
 		// data size. These samples are taken when pages failed to
 		// compress due to insertion on the page. We use the average
@@ -634,19 +632,19 @@ btr_defragment_n_pages(
 			size += index->stat_defrag_data_size_sample[i];
 		}
 		if (i != 0) {
-			size = size / i;
-			optimal_page_size = min(optimal_page_size, size);
+			size /= i;
+			optimal_page_size = ut_min(optimal_page_size, size);
 		}
 		max_data_size = optimal_page_size;
 	}
 
-	reserved_space = min((ulint)(optimal_page_size
+	reserved_space = ut_min((ulint)(optimal_page_size
 			      * (1 - srv_defragment_fill_factor)),
 			     (data_size_per_rec
 			      * srv_defragment_fill_factor_n_recs));
 	optimal_page_size -= reserved_space;
-	n_new_slots = (total_data_size + optimal_page_size - 1)
-		      / optimal_page_size;
+	n_new_slots = uint((total_data_size + optimal_page_size - 1)
+			   / optimal_page_size);
 	if (n_new_slots >= n_pages) {
 		/* Can't defragment. */
 		if (end_of_index)
@@ -661,7 +659,7 @@ btr_defragment_n_pages(
 	// Start from the second page.
 	for (uint i = 1; i < n_pages; i ++) {
 		buf_block_t* new_block = btr_defragment_merge_pages(
-			index, blocks[i], current_block, zip_size,
+			index, blocks[i], current_block, page_size,
 			reserved_space, &max_data_size, heap, mtr);
 		if (new_block != current_block) {
 			n_defragmented ++;
@@ -670,10 +668,10 @@ btr_defragment_n_pages(
 	}
 	mem_heap_free(heap);
 	n_defragmented ++;
-	os_atomic_increment_ulint(
+	my_atomic_addlint(
 		&btr_defragment_count, 1);
 	if (n_pages == n_defragmented) {
-		os_atomic_increment_ulint(
+		my_atomic_addlint(
 			&btr_defragment_failures, 1);
 	} else {
 		index->stat_defrag_n_pages_freed += (n_pages - n_defragmented);
@@ -744,10 +742,17 @@ DECLARE_THREAD(btr_defragment_thread)(void*)
 
 		now = ut_timer_now();
 		mtr_start(&mtr);
-		btr_pcur_restore_position(BTR_MODIFY_TREE, pcur, &mtr);
 		cursor = btr_pcur_get_btr_cur(pcur);
 		index = btr_cur_get_index(cursor);
+		index->set_modified(mtr);
+		/* To follow the latching order defined in WL#6326, acquire index->lock X-latch.
+		This entitles us to acquire page latches in any order for the index. */
+		mtr_x_lock(&index->lock, &mtr);
+		/* This will acquire index->lock SX-latch, which per WL#6363 is allowed
+		when we are already holding the X-latch. */
+		btr_pcur_restore_position(BTR_MODIFY_TREE, pcur, &mtr);
 		first_block = btr_cur_get_block(cursor);
+
 		last_block = btr_defragment_n_pages(first_block, index,
 						    srv_defragment_n_pages,
 						    &mtr);
@@ -766,17 +771,32 @@ DECLARE_THREAD(btr_defragment_thread)(void*)
 			/* Update the last_processed time of this index. */
 			item->last_processed = now;
 		} else {
+			dberr_t err = DB_SUCCESS;
 			mtr_commit(&mtr);
 			/* Reaching the end of the index. */
 			dict_stats_empty_defrag_stats(index);
-			dict_stats_save_defrag_stats(index);
-			dict_stats_save_defrag_summary(index);
+			err = dict_stats_save_defrag_stats(index);
+			if (err != DB_SUCCESS) {
+				ib::error() << "Saving defragmentation stats for table "
+					    << index->table->name
+					    << " index " << index->name()
+					    << " failed with error " << err;
+			} else {
+				err = dict_stats_save_defrag_summary(index);
+
+				if (err != DB_SUCCESS) {
+					ib::error() << "Saving defragmentation summary for table "
+					    << index->table->name
+					    << " index " << index->name()
+					    << " failed with error " << err;
+				}
+			}
+
 			btr_defragment_remove_item(item);
 		}
 	}
 
 	btr_defragment_thread_active = false;
-	os_thread_exit(NULL);
+	os_thread_exit();
 	OS_THREAD_DUMMY_RETURN;
 }
-#endif /* !UNIV_HOTBACKUP */

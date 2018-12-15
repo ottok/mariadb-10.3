@@ -42,7 +42,6 @@
 
 #include "ftdefs.h"
 #include <m_ctype.h>
-#include <stdarg.h>
 #include <my_getopt.h>
 #ifdef HAVE_SYS_VADVISE_H
 #include <sys/vadvise.h>
@@ -112,7 +111,7 @@ int chk_status(HA_CHECK *param, register MI_INFO *info)
   if (share->state.open_count != (uint) (info->s->global_changed ? 1 : 0))
   {
     /* Don't count this as a real warning, as check can correct this ! */
-    uint save=param->warning_printed;
+    my_bool save=param->warning_printed;
     mi_check_print_warning(param,
 			   share->state.open_count==1 ? 
 			   "%d client is using or hasn't closed the table properly" : 
@@ -527,7 +526,7 @@ int chk_key(HA_CHECK *param, register MI_INFO *info)
 		   (key_part_map)1, HA_READ_KEY_EXACT))
       {
 	/* Don't count this as a real warning, as myisamchk can't correct it */
-	uint save=param->warning_printed;
+	my_bool save=param->warning_printed;
         mi_check_print_warning(param, "Found row where the auto_increment "
                                "column has the value 0");
 	param->warning_printed=save;
@@ -1190,6 +1189,8 @@ int chk_data_link(HA_CHECK *param, MI_INFO *info, my_bool extend)
       DBUG_ASSERT(0);                           /* Impossible */
       break;
     } /* switch */
+    if (param->fix_record)
+      param->fix_record(info, record, -1);
     if (! got_error)
     {
       intern_record_checksum+=(ha_checksum) start_recpos;
@@ -1514,7 +1515,8 @@ int mi_repair(HA_CHECK *param, register MI_INFO *info,
   new_file= -1;
   sort_param.sort_info=&sort_info;
   param->retry_repair= 0;
-  param->warning_printed= param->error_printed= param->note_printed= 0;
+  param->warning_printed= param->note_printed= 0;
+  param->error_printed= 0;
 
   if (!(param->testflag & T_SILENT))
   {
@@ -2207,9 +2209,10 @@ int mi_repair_by_sort(HA_CHECK *param, register MI_INFO *info,
     printf("- recovering (with sort) MyISAM-table '%s'\n",name);
     printf("Data records: %s\n", llstr(start_records,llbuff));
   }
-  param->testflag|=T_REP; /* for easy checking */
+  param->testflag|=T_REP_BY_SORT; /* for easy checking */
   param->retry_repair= 0;
-  param->warning_printed= param->error_printed= param->note_printed= 0;
+  param->warning_printed= param->note_printed= 0;
+  param->error_printed= 0;
 
   if (info->s->options & (HA_OPTION_CHECKSUM | HA_OPTION_COMPRESS_RECORD))
     param->testflag|=T_CALC_CHECKSUM;
@@ -2290,7 +2293,7 @@ int mi_repair_by_sort(HA_CHECK *param, register MI_INFO *info,
     mysql_file_seek(param->read_cache.file, 0L, MY_SEEK_END, MYF(0));
 
   sort_param.wordlist=NULL;
-  init_alloc_root(&sort_param.wordroot, FTPARSER_MEMROOT_ALLOC_SIZE, 0,
+  init_alloc_root(&sort_param.wordroot, "sort", FTPARSER_MEMROOT_ALLOC_SIZE, 0,
                   MYF(param->malloc_flags));
 
   if (share->data_file_type == DYNAMIC_RECORD)
@@ -2637,7 +2640,7 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
     printf("- parallel recovering (with sort) MyISAM-table '%s'\n",name);
     printf("Data records: %s\n", llstr(start_records,llbuff));
   }
-  param->testflag|=T_REP; /* for easy checking */
+  param->testflag|=T_REP_PARALLEL; /* for easy checking */
   param->retry_repair= 0;
   param->warning_printed= 0;
   param->error_printed= 0;
@@ -2781,7 +2784,7 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
   del=info->state->del;
   param->glob_crc=0;
   /* for compressed tables */
-  max_pack_reclength= share->base.pack_reclength;
+  max_pack_reclength= MY_MAX(share->base.pack_reclength, share->vreclength);
   if (share->options & HA_OPTION_COMPRESS_RECORD)
     set_if_bigger(max_pack_reclength, share->max_pack_length);
   if (!(sort_param=(MI_SORT_PARAM *)
@@ -2868,7 +2871,8 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
       uint ft_max_word_len_for_sort=FT_MAX_WORD_LEN_FOR_SORT*
                                     sort_param[i].keyinfo->seg->charset->mbmaxlen;
       sort_param[i].key_length+=ft_max_word_len_for_sort-HA_FT_MAXBYTELEN;
-      init_alloc_root(&sort_param[i].wordroot, FTPARSER_MEMROOT_ALLOC_SIZE, 0,
+      init_alloc_root(&sort_param[i].wordroot, "sort",
+                      FTPARSER_MEMROOT_ALLOC_SIZE, 0,
                       MYF(param->malloc_flags));
     }
   }
@@ -2914,8 +2918,8 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
     */
     sort_param[i].read_cache= ((rep_quick || !i) ? param->read_cache :
                                new_data_cache);
-    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: 0x%lx",
-                                  i, (long) &sort_param[i].read_cache));
+    DBUG_PRINT("io_cache_share", ("thread: %u  read_cache: %p",
+                                  i, &sort_param[i].read_cache));
 
     /*
       two approaches: the same amount of memory for each thread
@@ -3126,6 +3130,7 @@ static int sort_key_read(MI_SORT_PARAM *sort_param, void *key)
   }
   if (info->state->records == sort_info->max_records)
   {
+    my_errno= HA_ERR_WRONG_IN_RECORD;
     mi_check_print_error(sort_info->param,
 			 "Key %d - Found too many records; Can't continue",
                          sort_param->key+1);
@@ -3270,12 +3275,9 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
       sort_param->max_pos=(sort_param->pos+=share->base.pack_reclength);
       if (*sort_param->record)
       {
-	if (sort_param->calc_checksum)
-	  param->glob_crc+= (info->checksum=
-                             (*info->s->calc_check_checksum)(info,
-                                                             sort_param->
-                                                             record));
-	DBUG_RETURN(0);
+        if (sort_param->calc_checksum)
+          info->checksum= (*info->s->calc_check_checksum)(info, sort_param->record);
+        goto finish;
       }
       if (!sort_param->fix_datafile && sort_param->master)
       {
@@ -3335,6 +3337,7 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 	  param->error_printed=1;
           param->retry_repair=1;
           param->testflag|=T_RETRY_WITHOUT_QUICK;
+          my_errno= HA_ERR_WRONG_IN_RECORD;
 	  DBUG_RETURN(1);	/* Something wrong with data */
 	}
 	b_type=_mi_get_block_info(&block_info,-1,pos);
@@ -3557,7 +3560,7 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 	if (sort_param->calc_checksum)
 	  info->checksum= (*info->s->calc_check_checksum)(info,
                                                           sort_param->record);
-	if ((param->testflag & (T_EXTEND | T_REP)) || searching)
+	if ((param->testflag & (T_EXTEND | T_REP_ANY)) || searching)
 	{
 	  if (_mi_rec_check(info, sort_param->record, sort_param->rec_buff,
                             sort_param->find_length,
@@ -3570,9 +3573,7 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 	    goto try_next;
 	  }
 	}
-	if (sort_param->calc_checksum)
-	  param->glob_crc+= info->checksum;
-	DBUG_RETURN(0);
+        goto finish;
       }
       if (!searching)
         mi_check_print_info(param,"Key %d - Found wrong stored record at %s",
@@ -3595,6 +3596,7 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 	param->error_printed=1;
         param->retry_repair=1;
         param->testflag|=T_RETRY_WITHOUT_QUICK;
+        my_errno= HA_ERR_WRONG_IN_RECORD;
 	DBUG_RETURN(1);		/* Something wrong with data */
       }
       sort_param->start_recpos=sort_param->pos;
@@ -3641,11 +3643,8 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
 			 block_info.rec_len);
       info->packed_length=block_info.rec_len;
       if (sort_param->calc_checksum)
-	param->glob_crc+= (info->checksum=
-                           (*info->s->calc_check_checksum)(info,
-                                                           sort_param->
-                                                           record));
-      DBUG_RETURN(0);
+	info->checksum= (*info->s->calc_check_checksum)(info, sort_param->record);
+      goto finish;
     }
     default:
       DBUG_ASSERT(0);                           /* Impossible */
@@ -3653,6 +3652,14 @@ static int sort_get_next_record(MI_SORT_PARAM *sort_param)
   }
   DBUG_ASSERT(0);                               /* Impossible */
   DBUG_RETURN(1);                               /* Impossible */
+finish:
+  if (sort_param->calc_checksum)
+    param->glob_crc+= info->checksum;
+  if (param->fix_record)
+    param->fix_record(info, sort_param->record,
+                      param->testflag & T_REP_BY_SORT ? (int)sort_param->key
+                                                      : -1);
+  DBUG_RETURN(0);
 }
 
 
@@ -3941,7 +3948,7 @@ static int sort_ft_key_write(MI_SORT_PARAM *sort_param, const void *a)
 
   if (ha_compare_text(sort_param->seg->charset,
                       ((uchar *)a)+1,a_len-1,
-                      (uchar*) ft_buf->lastkey+1,val_off-1, 0, 0)==0)
+                      (uchar*) ft_buf->lastkey+1,val_off-1, 0)==0)
   {
     if (!ft_buf->buf) /* store in second-level tree */
     {
@@ -3963,7 +3970,7 @@ static int sort_ft_key_write(MI_SORT_PARAM *sort_param, const void *a)
       key_block++;
     sort_info->key_block=key_block;
     sort_param->keyinfo=& sort_info->info->s->ft2_keyinfo;
-    ft_buf->count=((uchar*) ft_buf->buf - p)/val_len;
+    ft_buf->count=(int)((uchar*) ft_buf->buf - p)/val_len;
 
     /* flushing buffer to second-level tree */
     for (error=0; !error && p < (uchar*) ft_buf->buf; p+= val_len)
@@ -4515,7 +4522,7 @@ void update_auto_increment_key(HA_CHECK *param, MI_INFO *info,
     DBUG_VOID_RETURN;
   }
   if (!(param->testflag & T_SILENT) &&
-      !(param->testflag & T_REP))
+      !(param->testflag & T_REP_ANY))
     printf("Updating MyISAM file: %s\n", param->isam_file_name);
   /*
     We have to use an allocated buffer instead of info->rec_buff as 
@@ -4790,8 +4797,7 @@ static int replace_data_file(HA_CHECK *param, MI_INFO *info, File new_file)
   */
   if (info->s->file_map)
   {
-    (void) my_munmap((char*) info->s->file_map,
-                     (size_t) info->s->mmaped_length);
+    (void) my_munmap((char*) info->s->file_map, info->s->mmaped_length);
     info->s->file_map= NULL;
   }
 

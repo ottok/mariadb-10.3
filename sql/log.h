@@ -1,5 +1,5 @@
 /* Copyright (c) 2005, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, Monty Program Ab
+   Copyright (c) 2009, 2017, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@ class Relay_log_info;
 
 class Format_description_log_event;
 
+void setup_log_handling();
 bool trans_has_updated_trans_table(const THD* thd);
 bool stmt_has_updated_trans_table(const THD *thd);
 bool use_trans_cache(const THD* thd, bool is_transactional);
@@ -286,9 +287,9 @@ typedef struct st_log_info
 #define MAX_LOG_HANDLERS_NUM 3
 
 /* log event handler flags */
-#define LOG_NONE       1
-#define LOG_FILE       2
-#define LOG_TABLE      4
+#define LOG_NONE       1U
+#define LOG_FILE       2U
+#define LOG_TABLE      4U
 
 class Log_event;
 class Rows_log_event;
@@ -348,19 +349,23 @@ public:
   /* for documentation of mutexes held in various places in code */
 };
 
+/* Tell the io thread if we can delay the master info sync. */
+#define SEMI_SYNC_SLAVE_DELAY_SYNC 1
+/* Tell the io thread if the current event needs a ack. */
+#define SEMI_SYNC_NEED_ACK  2
+
 class MYSQL_QUERY_LOG: public MYSQL_LOG
 {
 public:
   MYSQL_QUERY_LOG() : last_time(0) {}
   void reopen_file();
-  bool write(time_t event_time, const char *user_host,
-             uint user_host_len, int thread_id,
-             const char *command_type, uint command_type_len,
-             const char *sql_text, uint sql_text_len);
+  bool write(time_t event_time, const char *user_host, size_t user_host_len, my_thread_id thread_id,
+             const char *command_type, size_t command_type_len,
+             const char *sql_text, size_t sql_text_len);
   bool write(THD *thd, time_t current_time,
-             const char *user_host, uint user_host_len,
+             const char *user_host, size_t user_host_len,
              ulonglong query_utime, ulonglong lock_utime, bool is_command,
-             const char *sql_text, uint sql_text_len);
+             const char *sql_text, size_t sql_text_len);
   bool open_slow_log(const char *log_name)
   {
     char buf[FN_REFLEN];
@@ -414,22 +419,28 @@ private:
   ( ((ulong)(c)>>1) == BINLOG_COOKIE_DUMMY_ID )
 
 class binlog_cache_mngr;
+class binlog_cache_data;
 struct rpl_gtid;
 struct wait_for_commit;
+
 class MYSQL_BIN_LOG: public TC_LOG, private MYSQL_LOG
 {
  private:
 #ifdef HAVE_PSI_INTERFACE
   /** The instrumentation key to use for @ LOCK_index. */
   PSI_mutex_key m_key_LOCK_index;
-  /** The instrumentation key to use for @ update_cond. */
-  PSI_cond_key m_key_update_cond;
+  /** The instrumentation key to use for @ COND_relay_log_updated */
+  PSI_cond_key m_key_relay_log_update;
+  /** The instrumentation key to use for @ COND_bin_log_updated */
+  PSI_cond_key m_key_bin_log_update;
   /** The instrumentation key to use for opening the log file. */
   PSI_file_key m_key_file_log;
   /** The instrumentation key to use for opening the log index file. */
   PSI_file_key m_key_file_log_index;
 
   PSI_file_key m_key_COND_queue_busy;
+  /** The instrumentation key to use for LOCK_binlog_end_pos. */
+  PSI_mutex_key m_key_LOCK_binlog_end_pos;
 #endif
 
   struct group_commit_entry
@@ -485,7 +496,7 @@ class MYSQL_BIN_LOG: public TC_LOG, private MYSQL_LOG
   mysql_mutex_t LOCK_binlog_end_pos;
   mysql_mutex_t LOCK_xid_list;
   mysql_cond_t  COND_xid_list;
-  mysql_cond_t update_cond;
+  mysql_cond_t  COND_relay_log_updated, COND_bin_log_updated;
   ulonglong bytes_written;
   IO_CACHE index_file;
   char index_file_name[FN_REFLEN];
@@ -585,6 +596,7 @@ public:
     ulong binlog_id;
     /* Total prepared XIDs and pending checkpoint requests in this binlog. */
     long xid_count;
+    long notify_count;
     /* For linking in requests to the binlog background thread. */
     xid_count_per_binlog *next_in_queue;
     xid_count_per_binlog();   /* Give link error if constructor used. */
@@ -594,12 +606,14 @@ public:
   mysql_cond_t COND_binlog_background_thread;
   mysql_cond_t COND_binlog_background_thread_end;
 
+  void stop_background_thread();
+
   using MYSQL_LOG::generate_name;
   using MYSQL_LOG::is_open;
 
   /* This is relay log */
   bool is_relay_log;
-  ulong signal_cnt;  // update of the counter is checked by heartbeat
+  ulong relay_signal_cnt;  // update of the counter is checked by heartbeat
   enum enum_binlog_checksum_alg checksum_alg_reset; // to contain a new value when binlog is rotated
   /*
     Holds the last seen in Relay-Log FD's checksum alg value.
@@ -662,16 +676,20 @@ public:
 
 #ifdef HAVE_PSI_INTERFACE
   void set_psi_keys(PSI_mutex_key key_LOCK_index,
-                    PSI_cond_key key_update_cond,
+                    PSI_cond_key key_relay_log_update,
+                    PSI_cond_key key_bin_log_update,
                     PSI_file_key key_file_log,
                     PSI_file_key key_file_log_index,
-                    PSI_file_key key_COND_queue_busy)
+                    PSI_file_key key_COND_queue_busy,
+                    PSI_mutex_key key_LOCK_binlog_end_pos)
   {
     m_key_LOCK_index= key_LOCK_index;
-    m_key_update_cond= key_update_cond;
+    m_key_relay_log_update=  key_relay_log_update;
+    m_key_bin_log_update=    key_bin_log_update;
     m_key_file_log= key_file_log;
     m_key_file_log_index= key_file_log_index;
     m_key_COND_queue_busy= key_COND_queue_busy;
+    m_key_LOCK_binlog_end_pos= key_LOCK_binlog_end_pos;
   }
 #endif
 
@@ -708,11 +726,56 @@ public:
     DBUG_VOID_RETURN;
   }
   void set_max_size(ulong max_size_arg);
-  void signal_update();
+
+  /* Handle signaling that relay has been updated */
+  void signal_relay_log_update()
+  {
+    mysql_mutex_assert_owner(&LOCK_log);
+    DBUG_ASSERT(is_relay_log);
+    DBUG_ENTER("MYSQL_BIN_LOG::signal_relay_log_update");
+    relay_signal_cnt++;
+    mysql_cond_broadcast(&COND_relay_log_updated);
+    DBUG_VOID_RETURN;
+  }
+  void signal_bin_log_update()
+  {
+    mysql_mutex_assert_owner(&LOCK_binlog_end_pos);
+    DBUG_ASSERT(!is_relay_log);
+    DBUG_ENTER("MYSQL_BIN_LOG::signal_bin_log_update");
+    mysql_cond_broadcast(&COND_bin_log_updated);
+    DBUG_VOID_RETURN;
+  }
+  void update_binlog_end_pos()
+  {
+    if (is_relay_log)
+      signal_relay_log_update();
+    else
+    {
+      lock_binlog_end_pos();
+      binlog_end_pos= my_b_safe_tell(&log_file);
+      signal_bin_log_update();
+      unlock_binlog_end_pos();
+    }
+  }
+  void update_binlog_end_pos(my_off_t pos)
+  {
+    mysql_mutex_assert_owner(&LOCK_log);
+    mysql_mutex_assert_not_owner(&LOCK_binlog_end_pos);
+    lock_binlog_end_pos();
+    /*
+      Note: it would make more sense to assert(pos > binlog_end_pos)
+      but there are two places triggered by mtr that has pos == binlog_end_pos
+      i didn't investigate but accepted as it should do no harm
+    */
+    DBUG_ASSERT(pos >= binlog_end_pos);
+    binlog_end_pos= pos;
+    signal_bin_log_update();
+    unlock_binlog_end_pos();
+  }
+
   void wait_for_sufficient_commits();
   void binlog_trigger_immediate_group_commit();
   void wait_for_update_relay_log(THD* thd);
-  int  wait_for_update_bin_log(THD* thd, const struct timespec * timeout);
   void init(ulong max_size);
   void init_pthread_objects();
   void cleanup();
@@ -746,8 +809,8 @@ public:
   void stop_union_events(THD *thd);
   bool is_query_in_union(THD *thd, query_id_t query_id_param);
 
-  bool write_event(Log_event *ev, IO_CACHE *file);
-  bool write_event(Log_event *ev) { return write_event(ev, &log_file); }
+  bool write_event(Log_event *ev, binlog_cache_data *data, IO_CACHE *file);
+  bool write_event(Log_event *ev) { return write_event(ev, 0, &log_file); }
 
   bool write_event_buffer(uchar* buf,uint len);
   bool append(Log_event* ev);
@@ -809,7 +872,7 @@ public:
   inline char* get_log_fname() { return log_file_name; }
   inline char* get_name() { return name; }
   inline mysql_mutex_t* get_log_lock() { return &LOCK_log; }
-  inline mysql_cond_t* get_log_cond() { return &update_cond; }
+  inline mysql_cond_t* get_bin_log_cond() { return &COND_bin_log_updated; }
   inline IO_CACHE* get_log_file() { return &log_file; }
 
   inline void lock_index() { mysql_mutex_lock(&LOCK_index);}
@@ -833,23 +896,6 @@ public:
   bool check_strict_gtid_sequence(uint32 domain_id, uint32 server_id,
                                   uint64 seq_no);
 
-
-  void update_binlog_end_pos(my_off_t pos)
-  {
-    mysql_mutex_assert_owner(&LOCK_log);
-    mysql_mutex_assert_not_owner(&LOCK_binlog_end_pos);
-    lock_binlog_end_pos();
-    /**
-     * note: it would make more sense to assert(pos > binlog_end_pos)
-     * but there are two places triggered by mtr that has pos == binlog_end_pos
-     * i didn't investigate but accepted as it should do no harm
-     */
-    DBUG_ASSERT(pos >= binlog_end_pos);
-    binlog_end_pos= pos;
-    signal_update();
-    unlock_binlog_end_pos();
-  }
-
   /**
    * used when opening new file, and binlog_end_pos moves backwards
    */
@@ -860,7 +906,7 @@ public:
     lock_binlog_end_pos();
     binlog_end_pos= pos;
     strcpy(binlog_end_pos_file, file_name);
-    signal_update();
+    signal_bin_log_update();
     unlock_binlog_end_pos();
   }
 
@@ -903,16 +949,14 @@ public:
   virtual void cleanup()= 0;
 
   virtual bool log_slow(THD *thd, my_hrtime_t current_time,
-                        const char *user_host,
-                        uint user_host_len, ulonglong query_utime,
+                        const char *user_host, size_t user_host_len, ulonglong query_utime,
                         ulonglong lock_utime, bool is_command,
-                        const char *sql_text, uint sql_text_len)= 0;
+                        const char *sql_text, size_t sql_text_len)= 0;
   virtual bool log_error(enum loglevel level, const char *format,
                          va_list args)= 0;
-  virtual bool log_general(THD *thd, my_hrtime_t event_time, const char *user_host,
-                           uint user_host_len, int thread_id,
-                           const char *command_type, uint command_type_len,
-                           const char *sql_text, uint sql_text_len,
+  virtual bool log_general(THD *thd, my_hrtime_t event_time, const char *user_host, size_t user_host_len, my_thread_id thread_id,
+                           const char *command_type, size_t command_type_len,
+                           const char *sql_text, size_t sql_text_len,
                            CHARSET_INFO *client_cs)= 0;
   virtual ~Log_event_handler() {}
 };
@@ -932,16 +976,14 @@ public:
   virtual void cleanup();
 
   virtual bool log_slow(THD *thd, my_hrtime_t current_time,
-                        const char *user_host,
-                        uint user_host_len, ulonglong query_utime,
+                        const char *user_host, size_t user_host_len, ulonglong query_utime,
                         ulonglong lock_utime, bool is_command,
-                        const char *sql_text, uint sql_text_len);
+                        const char *sql_text, size_t sql_text_len);
   virtual bool log_error(enum loglevel level, const char *format,
                          va_list args);
-  virtual bool log_general(THD *thd, my_hrtime_t event_time, const char *user_host,
-                           uint user_host_len, int thread_id,
-                           const char *command_type, uint command_type_len,
-                           const char *sql_text, uint sql_text_len,
+  virtual bool log_general(THD *thd, my_hrtime_t event_time, const char *user_host, size_t user_host_len, my_thread_id thread_id,
+                           const char *command_type, size_t command_type_len,
+                           const char *sql_text, size_t sql_text_len,
                            CHARSET_INFO *client_cs);
 
   int activate_log(THD *thd, uint log_type);
@@ -964,16 +1006,14 @@ public:
   virtual void cleanup();
 
   virtual bool log_slow(THD *thd, my_hrtime_t current_time,
-                        const char *user_host,
-                        uint user_host_len, ulonglong query_utime,
+                        const char *user_host, size_t user_host_len, ulonglong query_utime,
                         ulonglong lock_utime, bool is_command,
-                        const char *sql_text, uint sql_text_len);
+                        const char *sql_text, size_t sql_text_len);
   virtual bool log_error(enum loglevel level, const char *format,
                          va_list args);
-  virtual bool log_general(THD *thd, my_hrtime_t event_time, const char *user_host,
-                           uint user_host_len, int thread_id,
-                           const char *command_type, uint command_type_len,
-                           const char *sql_text, uint sql_text_len,
+  virtual bool log_general(THD *thd, my_hrtime_t event_time, const char *user_host, size_t user_host_len, my_thread_id thread_id,
+                           const char *command_type, size_t command_type_len,
+                           const char *sql_text, size_t sql_text_len,
                            CHARSET_INFO *client_cs);
   void flush();
   void init_pthread_objects();
@@ -1019,7 +1059,6 @@ public:
   */
   void init_base();
   void init_log_tables();
-  bool flush_logs(THD *thd);
   bool flush_slow_log();
   bool flush_general_log();
   /* Perform basic logger cleanup. this will leave e.g. error log open. */
@@ -1028,12 +1067,12 @@ public:
   void cleanup_end();
   bool error_log_print(enum loglevel level, const char *format,
                       va_list args);
-  bool slow_log_print(THD *thd, const char *query, uint query_length,
+  bool slow_log_print(THD *thd, const char *query, size_t query_length,
                       ulonglong current_utime);
   bool general_log_print(THD *thd,enum enum_server_command command,
                          const char *format, va_list args);
   bool general_log_write(THD *thd, enum enum_server_command command,
-                         const char *query, uint query_length);
+                         const char *query, size_t query_length);
 
   /* we use this function to setup all enabled log event handlers */
   int set_handlers(ulonglong error_log_printer,
@@ -1072,6 +1111,7 @@ int vprint_msg_to_log(enum loglevel level, const char *format, va_list args);
 void sql_print_error(const char *format, ...);
 void sql_print_warning(const char *format, ...);
 void sql_print_information(const char *format, ...);
+void sql_print_information_v(const char *format, va_list ap);
 typedef void (*sql_print_message_func)(const char *format, ...);
 extern sql_print_message_func sql_print_message_handlers[];
 
@@ -1085,7 +1125,7 @@ bool general_log_print(THD *thd, enum enum_server_command command,
                        const char *format,...);
 
 bool general_log_write(THD *thd, enum enum_server_command command,
-                       const char *query, uint query_length);
+                       const char *query, size_t query_length);
 
 void binlog_report_wait_for(THD *thd, THD *other_thd);
 void sql_perror(const char *message);
@@ -1098,6 +1138,7 @@ void make_default_log_name(char **out, const char* log_ext, bool once);
 void binlog_reset_cache(THD *thd);
 
 extern MYSQL_PLUGIN_IMPORT MYSQL_BIN_LOG mysql_bin_log;
+extern handlerton *binlog_hton;
 extern LOGGER logger;
 
 extern const char *log_bin_index;

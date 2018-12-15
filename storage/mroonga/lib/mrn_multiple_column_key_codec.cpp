@@ -521,6 +521,9 @@ namespace mrn {
       *data_type = TYPE_BYTE_SEQUENCE;
       *data_size = key_part->length;
       break;
+    case MYSQL_TYPE_VARCHAR_COMPRESSED:
+    case MYSQL_TYPE_BLOB_COMPRESSED:
+      DBUG_ASSERT(0);
 #ifdef MRN_HAVE_MYSQL_TYPE_JSON
     case MYSQL_TYPE_JSON:
       // TODO
@@ -623,9 +626,10 @@ namespace mrn {
     long long int long_long_value;
     mrn_byte_order_network_to_host(&long_long_value, grn_key, grn_key_size);
     int max_bit = (grn_key_size * 8 - 1);
-    *((long long int *)mysql_key) =
+    long_long_value =
       long_long_value ^ (((long_long_value ^ (1LL << max_bit)) >> max_bit) |
                          (1LL << max_bit));
+    memcpy(mysql_key, &long_long_value, sizeof(long_long_value));
     DBUG_VOID_RETURN;
   }
 

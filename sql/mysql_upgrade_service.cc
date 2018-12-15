@@ -20,8 +20,8 @@
 */
 
 #define DONT_DEFINE_VOID
+#include "mariadb.h"
 #include <process.h>
-#include <my_global.h>
 #include <my_getopt.h>
 #include <my_sys.h>
 #include <m_string.h>
@@ -51,7 +51,7 @@ static char *opt_service;
 static SC_HANDLE service;
 static SC_HANDLE scm;
 HANDLE mysqld_process; // mysqld.exe started for upgrade
-DWORD initial_service_state= -1; // initial state of the service
+DWORD initial_service_state= UINT_MAX; // initial state of the service
 HANDLE logfile_handle;
 
 /*
@@ -126,7 +126,7 @@ static void die(const char *fmt, ...)
     Stop service that we started, if it was not initally running at
     program start.
   */
-  if (initial_service_state != -1 && initial_service_state != SERVICE_RUNNING)
+  if (initial_service_state != UINT_MAX && initial_service_state != SERVICE_RUNNING)
   {
     SERVICE_STATUS service_status;
     ControlService(service, SERVICE_CONTROL_STOP, &service_status);
@@ -149,7 +149,7 @@ static void die(const char *fmt, ...)
 #define WRITE_LOG(fmt,...) {\
   char log_buf[1024]; \
   snprintf(log_buf,sizeof(log_buf), fmt, __VA_ARGS__);\
-  WriteFile(logfile_handle,log_buf, strlen(log_buf), 0 , 0);\
+  WriteFile(logfile_handle,log_buf, (DWORD)strlen(log_buf), 0 , 0);\
 }
 
 /*
@@ -262,7 +262,7 @@ void stop_mysqld_service()
       Remeber initial state of the service, we will restore it on
       exit.
     */
-    if(initial_service_state == -1)
+    if(initial_service_state == UINT_MAX)
       initial_service_state= ssp.dwCurrentState;
 
     switch(ssp.dwCurrentState)

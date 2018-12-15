@@ -227,7 +227,7 @@ private:
   QUERY_PROFILE(PROFILING *profiling_arg, const char *status_arg);
   ~QUERY_PROFILE();
 
-  void set_query_source(char *query_source_arg, uint query_length_arg);
+  void set_query_source(char *query_source_arg, size_t query_length_arg);
 
   /* Add a profile status change to the current profile. */
   void new_status(const char *status_arg,
@@ -275,7 +275,7 @@ public:
 
     This must be called exactly once per descrete statement.
   */
-  void set_query_source(char *query_source_arg, uint query_length_arg)
+  void set_query_source(char *query_source_arg, size_t query_length_arg)
   {
     if (unlikely(current))
       current->set_query_source(query_source_arg, query_length_arg);
@@ -287,7 +287,7 @@ public:
 
     @param  initial_state  (optional) name of period before first state change
   */
-  void start_new_query(const char *initial_state= "starting")
+  void start_new_query(const char *initial_state= "Starting")
   {
     DBUG_ASSERT(!current);
     if (unlikely(enabled))
@@ -324,6 +324,7 @@ public:
   /* ... from INFORMATION_SCHEMA.PROFILING ... */
   int fill_statistics_info(THD *thd, TABLE_LIST *tables, Item *cond);
   void reset();
+  void restart();
 };
 
 #  endif /* ENABLED_PROFILING */

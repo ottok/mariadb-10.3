@@ -7,8 +7,8 @@ INSERT INTO t1 VALUES('MySQL has now support', 'for full-text search'),
 ANALYZE TABLE t1;
 SHOW INDEX FROM t1;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment
-t1	1	a	1	a	NULL	5	NULL	NULL	YES	FULLTEXT		
-t1	1	a	2	b	NULL	5	NULL	NULL	YES	FULLTEXT		
+t1	1	a	1	a	NULL	NULL	NULL	NULL	YES	FULLTEXT		
+t1	1	a	2	b	NULL	NULL	NULL	NULL	YES	FULLTEXT		
 select * from t1 where MATCH(a,b) AGAINST ("collections");
 a	b
 Full-text indexes	are called collections
@@ -56,7 +56,7 @@ Only MyISAM tables	support collections
 MySQL has now support	for full-text search
 Full-text search in MySQL	implements vector space model
 select * from t1 where MATCH(a,b) AGAINST ("indexes" IN BOOLEAN MODE WITH QUERY EXPANSION);
-ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'QUERY EXPANSION)' at line 1
+ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'WITH QUERY EXPANSION)' at line 1
 explain select * from t1 where MATCH(a,b) AGAINST ("collections");
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	SIMPLE	t1	fulltext	a	a	0		1	Using where
@@ -234,12 +234,12 @@ id
 show keys from t2;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment
 t2	1	tig	1	ticket	A	3	NULL	NULL	YES	BTREE		
-t2	1	tix	1	inhalt	NULL	3	NULL	NULL	YES	FULLTEXT		
+t2	1	tix	1	inhalt	NULL	NULL	NULL	NULL	YES	FULLTEXT		
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
   `ticket` int(11) DEFAULT NULL,
-  `inhalt` text,
+  `inhalt` text DEFAULT NULL,
   KEY `tig` (`ticket`),
   FULLTEXT KEY `tix` (`inhalt`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -277,8 +277,6 @@ PRIMARY KEY  (id),
 KEY ind5 (title)
 ) ENGINE = InnoDB;
 CREATE FULLTEXT INDEX ft1 ON t1(title);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 insert into t1 (title) values ('this is a test');
 select * from t1 where match title against ('test' in boolean mode);
 id	title

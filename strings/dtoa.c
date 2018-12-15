@@ -91,7 +91,7 @@ size_t my_fcvt(double x, int precision, char *to, my_bool *error)
   int decpt, sign, len, i;
   char *res, *src, *end, *dst= to;
   char buf[DTOA_BUFF_SIZE];
-  DBUG_ASSERT(precision >= 0 && precision < NOT_FIXED_DEC && to != NULL);
+  DBUG_ASSERT(precision >= 0 && precision < DECIMAL_NOT_SPECIFIED && to != NULL);
   
   res= dtoa(x, 5, precision, &decpt, &sign, &end, buf, sizeof(buf));
 
@@ -106,7 +106,7 @@ size_t my_fcvt(double x, int precision, char *to, my_bool *error)
   }
 
   src= res;
-  len= end - src;
+  len= (int)(end - src);
 
   if (sign)
     *dst++= '-';
@@ -238,7 +238,7 @@ size_t my_gcvt(double x, my_gcvt_arg_type type, int width, char *to,
     *error= FALSE;
 
   src= res;
-  len= end - res;
+  len= (int)(end - res);
 
   /*
     Number of digits in the exponent from the 'e' conversion.
@@ -269,7 +269,7 @@ size_t my_gcvt(double x, my_gcvt_arg_type type, int width, char *to,
     Assume that we don't have enough space to place all significant digits in
     the 'f' format. We have to choose between the 'e' format and the 'f' one
     to keep as many significant digits as possible.
-    Let E and F be the lengths of decimal representaion in the 'e' and 'f'
+    Let E and F be the lengths of decimal representation in the 'e' and 'f'
     formats, respectively. We want to use the 'f' format if, and only if F <= E.
     Consider the following cases:
     1. decpt <= 0.
@@ -330,7 +330,7 @@ size_t my_gcvt(double x, my_gcvt_arg_type type, int width, char *to,
       dtoa_free(res, buf, sizeof(buf));
       res= dtoa(x, 5, width - decpt, &decpt, &sign, &end, buf, sizeof(buf));
       src= res;
-      len= end - res;
+      len= (int)(end - res);
     }
 
     if (len == 0)
@@ -396,7 +396,7 @@ size_t my_gcvt(double x, my_gcvt_arg_type type, int width, char *to,
       dtoa_free(res, buf, sizeof(buf));
       res= dtoa(x, 4, width, &decpt, &sign, &end, buf, sizeof(buf));
       src= res;
-      len= end - res;
+      len= (int)(end - res);
       if (--decpt < 0)
         decpt= -decpt;
     }
@@ -1290,7 +1290,7 @@ static double ratio(Bigint *a, Bigint *b)
   dval(&db)= b2d(b, &kb);
   k= ka - kb + 32*(a->wds - b->wds);
   if (k > 0)
-    word0(&da)+= k*Exp_msk1;
+    word0(&da)+= (ULong)(k*Exp_msk1 * 1.0);
   else
   {
     k= -k;

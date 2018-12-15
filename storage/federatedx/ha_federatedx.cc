@@ -318,6 +318,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "sql_servers.h"
 #include "sql_analyse.h"                        // append_escaped()
 #include "sql_show.h"                           // append_identifier()
+#include "tztime.h"                             // my_tz_find()
 
 #ifdef I_AM_PARANOID
 #define MIN_PORT 1023
@@ -337,9 +338,10 @@ static const int bulk_padding= 64;              // bytes "overhead" in packet
 
 /* Variables used when chopping off trailing characters */
 static const uint sizeof_trailing_comma= sizeof(", ") - 1;
-static const uint sizeof_trailing_closeparen= sizeof(") ") - 1;
 static const uint sizeof_trailing_and= sizeof(" AND ") - 1;
 static const uint sizeof_trailing_where= sizeof(" WHERE ") - 1;
+
+static Time_zone *UTC= 0;
 
 /* Static declaration for handerton */
 static handler *federatedx_create_handler(handlerton *hton,
@@ -483,7 +485,7 @@ int federatedx_done(void *p)
         in sql_show.cc except that quoting always occurs.
 */
 
-bool append_ident(String *string, const char *name, uint length,
+bool append_ident(String *string, const char *name, size_t length,
                   const char quote_char)
 {
   bool result;
@@ -500,8 +502,7 @@ bool append_ident(String *string, const char *name, uint length,
     for (name_end= name+length; name < name_end; name+= clen)
     {
       uchar c= *(uchar *) name;
-      if (!(clen= my_mbcharlen(system_charset_info, c)))
-        clen= 1;
+      clen= my_charlen_fix(system_charset_info, name, name_end);
       if (clen == 1 && c == (uchar) quote_char &&
           (result= string->append(&quote_char, 1, system_charset_info)))
         goto err;
@@ -522,7 +523,7 @@ static int parse_url_error(FEDERATEDX_SHARE *share, TABLE_SHARE *table_s,
                            int error_num)
 {
   char buf[FEDERATEDX_QUERY_BUFFER_SIZE];
-  int buf_len;
+  size_t buf_len;
   DBUG_ENTER("ha_federatedx parse_url_error");
 
   buf_len= MY_MIN(table_s->connect_string.length,
@@ -555,8 +556,8 @@ int get_connection(MEM_ROOT *mem_root, FEDERATEDX_SHARE *share)
     error_num=1;
     goto error;
   }
-  DBUG_PRINT("info", ("get_server_by_name returned server at %lx",
-                      (long unsigned int) server));
+  DBUG_PRINT("info", ("get_server_by_name returned server at %p",
+                      server));
 
   /*
     Most of these should never be empty strings, error handling will
@@ -657,15 +658,15 @@ static int parse_url(MEM_ROOT *mem_root, FEDERATEDX_SHARE *share,
 
   share->port= 0;
   share->socket= 0;
-  DBUG_PRINT("info", ("share at %lx", (long unsigned int) share));
+  DBUG_PRINT("info", ("share at %p", share));
   DBUG_PRINT("info", ("Length: %u", (uint) table_s->connect_string.length));
   DBUG_PRINT("info", ("String: '%.*s'", (int) table_s->connect_string.length,
                       table_s->connect_string.str));
   share->connection_string= strmake_root(mem_root, table_s->connect_string.str,
                                        table_s->connect_string.length);
 
-  DBUG_PRINT("info",("parse_url alloced share->connection_string %lx",
-                     (long unsigned int) share->connection_string));
+  DBUG_PRINT("info",("parse_url alloced share->connection_string %p",
+                     share->connection_string));
 
   DBUG_PRINT("info",("share->connection_string: %s",share->connection_string));
   /*
@@ -678,9 +679,9 @@ static int parse_url(MEM_ROOT *mem_root, FEDERATEDX_SHARE *share,
 
     DBUG_PRINT("info",
                ("share->connection_string: %s  internal format "
-                "share->connection_string: %lx",
+                "share->connection_string: %p",
                 share->connection_string,
-                (ulong) share->connection_string));
+                share->connection_string));
 
     /* ok, so we do a little parsing, but not completely! */
     share->parsed= FALSE;
@@ -733,8 +734,8 @@ static int parse_url(MEM_ROOT *mem_root, FEDERATEDX_SHARE *share,
     // Add a null for later termination of table name
     share->connection_string[table_s->connect_string.length]= 0;
     share->scheme= share->connection_string;
-    DBUG_PRINT("info",("parse_url alloced share->scheme: %lx",
-                       (ulong) share->scheme));
+    DBUG_PRINT("info",("parse_url alloced share->scheme: %p",
+                       share->scheme));
 
     /*
       Remove addition of null terminator and store length
@@ -862,8 +863,10 @@ uint ha_federatedx::convert_row_to_internal_format(uchar *record,
   Field **field;
   int column= 0;
   my_bitmap_map *old_map= dbug_tmp_use_all_columns(table, table->write_set);
+  Time_zone *saved_time_zone= table->in_use->variables.time_zone;
   DBUG_ENTER("ha_federatedx::convert_row_to_internal_format");
 
+  table->in_use->variables.time_zone= UTC;
   lengths= io->fetch_lengths(result);
 
   for (field= table->field; *field; field++, column++)
@@ -887,6 +890,7 @@ uint ha_federatedx::convert_row_to_internal_format(uchar *record,
     }
     (*field)->move_field_offset(-old_ptr);
   }
+  table->in_use->variables.time_zone= saved_time_zone;
   dbug_tmp_restore_column_map(table->write_set, old_map);
   DBUG_RETURN(0);
 }
@@ -894,8 +898,8 @@ uint ha_federatedx::convert_row_to_internal_format(uchar *record,
 static bool emit_key_part_name(String *to, KEY_PART_INFO *part)
 {
   DBUG_ENTER("emit_key_part_name");
-  if (append_ident(to, part->field->field_name, 
-                   strlen(part->field->field_name), ident_quote_char))
+  if (append_ident(to, part->field->field_name.str,
+                   part->field->field_name.length, ident_quote_char))
     DBUG_RETURN(1);                           // Out of memory
   DBUG_RETURN(0);
 }
@@ -1215,6 +1219,7 @@ bool ha_federatedx::create_where_from_key(String *to,
   char tmpbuff[FEDERATEDX_QUERY_BUFFER_SIZE];
   String tmp(tmpbuff, sizeof(tmpbuff), system_charset_info);
   const key_range *ranges[2]= { start_key, end_key };
+  Time_zone *saved_time_zone= table->in_use->variables.time_zone;
   my_bitmap_map *old_map;
   DBUG_ENTER("ha_federatedx::create_where_from_key");
 
@@ -1222,6 +1227,7 @@ bool ha_federatedx::create_where_from_key(String *to,
   if (start_key == NULL && end_key == NULL)
     DBUG_RETURN(1);
 
+  table->in_use->variables.time_zone= UTC;
   old_map= dbug_tmp_use_all_columns(table, table->write_set);
   for (uint i= 0; i <= 1; i++)
   {
@@ -1399,6 +1405,7 @@ prepare_for_next_key_part:
     }
   }
   dbug_tmp_restore_column_map(table->write_set, old_map);
+  table->in_use->variables.time_zone= saved_time_zone;
 
   if (both_not_null)
     if (tmp.append(STRING_WITH_LEN(") ")))
@@ -1414,6 +1421,7 @@ prepare_for_next_key_part:
 
 err:
   dbug_tmp_restore_column_map(table->write_set, old_map);
+  table->in_use->variables.time_zone= saved_time_zone;
   DBUG_RETURN(1);
 }
 
@@ -1522,7 +1530,7 @@ static FEDERATEDX_SERVER *get_server(FEDERATEDX_SHARE *share, TABLE *table)
 
   mysql_mutex_assert_owner(&federatedx_mutex);
 
-  init_alloc_root(&mem_root, 4096, 4096, MYF(0));
+  init_alloc_root(&mem_root, "federated", 4096, 4096, MYF(0));
 
   fill_server(&mem_root, &tmp_server, share, table ? table->s->table_charset : 0);
 
@@ -1580,12 +1588,18 @@ static FEDERATEDX_SHARE *get_share(const char *table_name, TABLE *table)
   query.length(0);
 
   bzero(&tmp_share, sizeof(tmp_share));
-  init_alloc_root(&mem_root, 256, 0, MYF(0));
+  init_alloc_root(&mem_root, "federated", 256, 0, MYF(0));
 
   mysql_mutex_lock(&federatedx_mutex);
 
+  if (unlikely(!UTC))
+  {
+    String tz_00_name(STRING_WITH_LEN("+00:00"), &my_charset_bin);
+    UTC= my_tz_find(current_thd, &tz_00_name);
+  }
+
   tmp_share.share_key= table_name;
-  tmp_share.share_key_length= strlen(table_name);
+  tmp_share.share_key_length= (int)strlen(table_name);
   if (parse_url(&mem_root, &tmp_share, table->s, 0))
     goto error;
 
@@ -1599,8 +1613,8 @@ static FEDERATEDX_SHARE *get_share(const char *table_name, TABLE *table)
     query.append(STRING_WITH_LEN("SELECT "));
     for (field= table->field; *field; field++)
     {
-      append_ident(&query, (*field)->field_name, 
-                   strlen((*field)->field_name), ident_quote_char);
+      append_ident(&query, (*field)->field_name.str,
+                   (*field)->field_name.length, ident_quote_char);
       query.append(STRING_WITH_LEN(", "));
     }
     /* chops off trailing comma */
@@ -1608,7 +1622,7 @@ static FEDERATEDX_SHARE *get_share(const char *table_name, TABLE *table)
 
     query.append(STRING_WITH_LEN(" FROM "));
 
-    append_ident(&query, tmp_share.table_name, 
+    append_ident(&query, tmp_share.table_name,
                  tmp_share.table_name_length, ident_quote_char);
 
     if (!(share= (FEDERATEDX_SHARE *) memdup_root(&mem_root, (char*)&tmp_share, sizeof(*share))) ||
@@ -1770,7 +1784,7 @@ int ha_federatedx::open(const char *name, int mode, uint test_if_locked)
     DBUG_RETURN(error);
   }
 
-  ref_length= io->get_ref_length();
+  ref_length= (uint)io->get_ref_length();
 
   txn->release(&io);
 
@@ -1790,7 +1804,7 @@ public:
 
 public:
   bool handle_condition(THD *thd, uint sql_errno, const char* sqlstate,
-                        Sql_condition::enum_warning_level level,
+                        Sql_condition::enum_warning_level *level,
                         const char* msg, Sql_condition ** cond_hdl)
   {
     return sql_errno >= ER_ABORTING_CONNECTION &&
@@ -1904,7 +1918,7 @@ bool ha_federatedx::append_stmt_insert(String *query)
     insert_string.append(STRING_WITH_LEN("INSERT IGNORE INTO "));
   else
     insert_string.append(STRING_WITH_LEN("INSERT INTO "));
-  append_ident(&insert_string, share->table_name, share->table_name_length, 
+  append_ident(&insert_string, share->table_name, share->table_name_length,
                ident_quote_char);
   tmp_length= insert_string.length();
   insert_string.append(STRING_WITH_LEN(" ("));
@@ -1918,8 +1932,8 @@ bool ha_federatedx::append_stmt_insert(String *query)
     if (bitmap_is_set(table->write_set, (*field)->field_index))
     {
       /* append the field name */
-      append_ident(&insert_string, (*field)->field_name, 
-                   strlen((*field)->field_name), ident_quote_char);
+      append_ident(&insert_string, (*field)->field_name.str,
+                   (*field)->field_name.length, ident_quote_char);
 
       /* append commas between both fields and fieldnames */
       /*
@@ -1980,9 +1994,11 @@ int ha_federatedx::write_row(uchar *buf)
   String insert_field_value_string(insert_field_value_buffer,
                                    sizeof(insert_field_value_buffer),
                                    &my_charset_bin);
+  Time_zone *saved_time_zone= table->in_use->variables.time_zone;
   my_bitmap_map *old_map= dbug_tmp_use_all_columns(table, table->read_set);
   DBUG_ENTER("ha_federatedx::write_row");
 
+  table->in_use->variables.time_zone= UTC;
   values_string.length(0);
   insert_field_value_string.length(0);
 
@@ -2035,6 +2051,7 @@ int ha_federatedx::write_row(uchar *buf)
     }
   }
   dbug_tmp_restore_column_map(table->read_set, old_map);
+  table->in_use->variables.time_zone= saved_time_zone;
 
   /*
     if there were no fields, we don't want to add a closing paren
@@ -2216,7 +2233,7 @@ int ha_federatedx::optimize(THD* thd, HA_CHECK_OPT* check_opt)
 
   query.set_charset(system_charset_info);
   query.append(STRING_WITH_LEN("OPTIMIZE TABLE "));
-  append_ident(&query, share->table_name, share->table_name_length, 
+  append_ident(&query, share->table_name, share->table_name_length,
                ident_quote_char);
 
   DBUG_ASSERT(txn == get_txn(thd));
@@ -2242,7 +2259,7 @@ int ha_federatedx::repair(THD* thd, HA_CHECK_OPT* check_opt)
 
   query.set_charset(system_charset_info);
   query.append(STRING_WITH_LEN("REPAIR TABLE "));
-  append_ident(&query, share->table_name, share->table_name_length, 
+  append_ident(&query, share->table_name, share->table_name_length,
                ident_quote_char);
   if (check_opt->flags & T_QUICK)
     query.append(STRING_WITH_LEN(" QUICK"));
@@ -2280,7 +2297,7 @@ int ha_federatedx::repair(THD* thd, HA_CHECK_OPT* check_opt)
   Called from sql_select.cc, sql_acl.cc, sql_update.cc, and sql_insert.cc.
 */
 
-int ha_federatedx::update_row(const uchar *old_data, uchar *new_data)
+int ha_federatedx::update_row(const uchar *old_data, const uchar *new_data)
 {
   /*
     This used to control how the query was built. If there was a
@@ -2342,12 +2359,14 @@ int ha_federatedx::update_row(const uchar *old_data, uchar *new_data)
     field=oldvalue
   */
 
+  Time_zone *saved_time_zone= table->in_use->variables.time_zone;
+  table->in_use->variables.time_zone= UTC;
   for (Field **field= table->field; *field; field++)
   {
     if (bitmap_is_set(table->write_set, (*field)->field_index))
     {
-      uint field_name_length= strlen((*field)->field_name);
-      append_ident(&update_string, (*field)->field_name, field_name_length,
+      append_ident(&update_string, (*field)->field_name.str,
+                   (*field)->field_name.length,
                    ident_quote_char);
       update_string.append(STRING_WITH_LEN(" = "));
 
@@ -2372,8 +2391,8 @@ int ha_federatedx::update_row(const uchar *old_data, uchar *new_data)
 
     if (bitmap_is_set(table->read_set, (*field)->field_index))
     {
-      uint field_name_length= strlen((*field)->field_name);
-      append_ident(&where_string, (*field)->field_name, field_name_length,
+      append_ident(&where_string, (*field)->field_name.str,
+                   (*field)->field_name.length,
                    ident_quote_char);
       if (field_in_record_is_null(table, *field, (char*) old_data))
         where_string.append(STRING_WITH_LEN(" IS NULL "));
@@ -2393,6 +2412,7 @@ int ha_federatedx::update_row(const uchar *old_data, uchar *new_data)
       where_string.append(STRING_WITH_LEN(" AND "));
     }
   }
+  table->in_use->variables.time_zone= saved_time_zone;
 
   /* Remove last ', '. This works as there must be at least on updated field */
   update_string.length(update_string.length() - sizeof_trailing_comma);
@@ -2453,14 +2473,16 @@ int ha_federatedx::delete_row(const uchar *buf)
                share->table_name_length, ident_quote_char);
   delete_string.append(STRING_WITH_LEN(" WHERE "));
 
+  Time_zone *saved_time_zone= table->in_use->variables.time_zone;
+  table->in_use->variables.time_zone= UTC;
   for (Field **field= table->field; *field; field++)
   {
     Field *cur_field= *field;
     found++;
     if (bitmap_is_set(table->read_set, cur_field->field_index))
     {
-      append_ident(&delete_string, (*field)->field_name,
-                   strlen((*field)->field_name), ident_quote_char);
+      append_ident(&delete_string, (*field)->field_name.str,
+                   (*field)->field_name.length, ident_quote_char);
       data_string.length(0);
       if (cur_field->is_null())
       {
@@ -2480,6 +2502,7 @@ int ha_federatedx::delete_row(const uchar *buf)
       delete_string.append(STRING_WITH_LEN(" AND "));
     }
   }
+  table->in_use->variables.time_zone= saved_time_zone;
 
   // Remove trailing AND
   delete_string.length(delete_string.length() - sizeof_trailing_and);
@@ -3068,7 +3091,7 @@ int ha_federatedx::info(uint flag)
       stats.block_size= 4096;
 
     if ((*iop)->table_metadata(&stats, share->table_name,
-                               share->table_name_length, flag))
+                               (uint)share->table_name_length, flag))
       goto error;
   }
 
@@ -3218,7 +3241,10 @@ int ha_federatedx::delete_all_rows()
   query.length(0);
 
   query.set_charset(system_charset_info);
-  query.append(STRING_WITH_LEN("TRUNCATE "));
+  if (thd->lex->sql_command == SQLCOM_TRUNCATE)
+    query.append(STRING_WITH_LEN("TRUNCATE "));
+  else
+    query.append(STRING_WITH_LEN("DELETE FROM "));
   append_ident(&query, share->table_name, share->table_name_length,
                ident_quote_char);
 
@@ -3585,6 +3611,8 @@ int ha_federatedx::discover_assisted(handlerton *hton, THD* thd,
   MYSQL mysql;
   char buf[1024];
   String query(buf, sizeof(buf), cs);
+  static LEX_CSTRING cut_clause={STRING_WITH_LEN(" WITH SYSTEM VERSIONING")};
+  int cut_offset;
   MYSQL_RES *res;
   MYSQL_ROW rdata;
   ulong *rlen;
@@ -3595,8 +3623,7 @@ int ha_federatedx::discover_assisted(handlerton *hton, THD* thd,
 
   mysql_init(&mysql);
   mysql_options(&mysql, MYSQL_SET_CHARSET_NAME, cs->csname);
-  mysql_options(&mysql, MYSQL_OPT_USE_THREAD_SPECIFIC_MEMORY,
-                (char*) &my_true);
+  mysql_options(&mysql, MYSQL_OPT_USE_THREAD_SPECIFIC_MEMORY, (char*)&my_true);
 
   if (!mysql_real_connect(&mysql, tmp_share.hostname, tmp_share.username,
                           tmp_share.password, tmp_share.database,
@@ -3620,6 +3647,10 @@ int ha_federatedx::discover_assisted(handlerton *hton, THD* thd,
     goto err2;
 
   query.copy(rdata[1], rlen[1], cs);
+  cut_offset= (int)query.length() - (int)cut_clause.length;
+  if (cut_offset > 0 && !memcmp(query.ptr() + cut_offset,
+                                cut_clause.str, cut_clause.length))
+    query.length(cut_offset);
   query.append(STRING_WITH_LEN(" CONNECTION='"), cs);
   query.append_for_single_quote(table_s->connect_string.str,
                                 table_s->connect_string.length);

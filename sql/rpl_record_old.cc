@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "rpl_rli.h"
 #include "rpl_record_old.h"
@@ -134,7 +134,7 @@ unpack_row_old(rpl_group_info *rgi,
   {
     Field *const f= *field_ptr;
 
-    if (bitmap_is_set(cols, field_ptr -  begin_ptr))
+    if (bitmap_is_set(cols, (uint)(field_ptr -  begin_ptr)))
     {
       f->move_field_offset(offset);
       ptr= f->unpack(f->ptr, ptr, row_buffer_end, 0);
@@ -143,20 +143,20 @@ unpack_row_old(rpl_group_info *rgi,
       {
         rgi->rli->report(ERROR_LEVEL, ER_SLAVE_CORRUPT_EVENT, NULL,
                     "Could not read field `%s` of table `%s`.`%s`",
-                    f->field_name, table->s->db.str,
+                    f->field_name.str, table->s->db.str,
                     table->s->table_name.str);
         return(ER_SLAVE_CORRUPT_EVENT);
       }
     }
     else
-      bitmap_clear_bit(rw_set, field_ptr - begin_ptr);
+      bitmap_clear_bit(rw_set, (uint)(field_ptr - begin_ptr));
   }
 
   *row_end = ptr;
   if (master_reclength)
   {
     if (*field_ptr)
-      *master_reclength = (*field_ptr)->ptr - table->record[0];
+      *master_reclength = (ulong)((*field_ptr)->ptr - table->record[0]);
     else
       *master_reclength = table->s->reclength;
   }
@@ -186,7 +186,7 @@ unpack_row_old(rpl_group_info *rgi,
       rgi->rli->report(ERROR_LEVEL, ER_NO_DEFAULT_FOR_FIELD, NULL,
                   "Field `%s` of table `%s`.`%s` "
                   "has no default value and cannot be NULL",
-                  (*field_ptr)->field_name, table->s->db.str,
+                  (*field_ptr)->field_name.str, table->s->db.str,
                   table->s->table_name.str);
       error = ER_NO_DEFAULT_FOR_FIELD;
     }

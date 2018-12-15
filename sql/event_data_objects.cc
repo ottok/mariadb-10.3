@@ -15,7 +15,7 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #define MYSQL_LEX 1
-#include <my_global.h>                          /* NO_EMBEDDED_ACCESS_CHECKS */
+#include "mariadb.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_parse.h"                          // parse_sql
@@ -171,13 +171,13 @@ Event_creation_ctx::load_from_db(THD *thd,
 */
 
 bool
-Event_queue_element_for_exec::init(LEX_STRING db, LEX_STRING n)
+Event_queue_element_for_exec::init(const LEX_CSTRING *db, const LEX_CSTRING *n)
 {
-  if (!(dbname.str= my_strndup(db.str, dbname.length= db.length, MYF(MY_WME))))
+  if (!(dbname.str= my_strndup(db->str, dbname.length= db->length, MYF(MY_WME))))
     return TRUE;
-  if (!(name.str= my_strndup(n.str, name.length= n.length, MYF(MY_WME))))
+  if (!(name.str= my_strndup(n->str, name.length= n->length, MYF(MY_WME))))
   {
-    my_free(dbname.str);
+    my_free(const_cast<char*>(dbname.str));
     return TRUE;
   }
   return FALSE;
@@ -193,8 +193,8 @@ Event_queue_element_for_exec::init(LEX_STRING db, LEX_STRING n)
 
 Event_queue_element_for_exec::~Event_queue_element_for_exec()
 {
-  my_free(dbname.str);
-  my_free(name.str);
+  my_free(const_cast<char*>(dbname.str));
+  my_free(const_cast<char*>(name.str));
 }
 
 
@@ -209,7 +209,7 @@ Event_basic::Event_basic()
 {
   DBUG_ENTER("Event_basic::Event_basic");
   /* init memory root */
-  init_sql_alloc(&mem_root, 256, 512, MYF(0));
+  init_sql_alloc(&mem_root, "Event_basic", 256, 512, MYF(0));
   dbname.str= name.str= NULL;
   dbname.length= name.length= 0;
   time_zone= NULL;
@@ -233,7 +233,7 @@ Event_basic::~Event_basic()
 
 
 /*
-  Short function to load a char column into a LEX_STRING
+  Short function to load a char column into a LEX_CSTRING
 
   SYNOPSIS
     Event_basic::load_string_field()
@@ -249,7 +249,7 @@ Event_basic::load_string_fields(Field **fields, ...)
   bool ret= FALSE;
   va_list args;
   enum enum_events_table_field field_name;
-  LEX_STRING *field_value;
+  LEX_CSTRING *field_value;
 
   DBUG_ENTER("Event_basic::load_string_fields");
 
@@ -257,7 +257,7 @@ Event_basic::load_string_fields(Field **fields, ...)
   field_name= (enum enum_events_table_field) va_arg(args, int);
   while (field_name < ET_FIELD_COUNT)
   {
-    field_value= va_arg(args, LEX_STRING *);
+    field_value= va_arg(args, LEX_CSTRING *);
     if ((field_value->str= get_field(&mem_root, fields[field_name])) == NullS)
     {
       ret= TRUE;
@@ -274,9 +274,9 @@ Event_basic::load_string_fields(Field **fields, ...)
 
 
 bool
-Event_basic::load_time_zone(THD *thd, const LEX_STRING tz_name)
+Event_basic::load_time_zone(THD *thd, const LEX_CSTRING *tz_name)
 {
-  String str(tz_name.str, &my_charset_latin1);
+  String str(tz_name->str, &my_charset_latin1);
   time_zone= my_tz_find(thd, &str);
 
   return (time_zone == NULL);
@@ -391,9 +391,9 @@ Event_timed::init()
 bool
 Event_job_data::load_from_row(THD *thd, TABLE *table)
 {
-  char *ptr;
+  const char *ptr;
   size_t len;
-  LEX_STRING tz_name;
+  LEX_CSTRING tz_name;
 
   DBUG_ENTER("Event_job_data::load_from_row");
 
@@ -412,7 +412,7 @@ Event_job_data::load_from_row(THD *thd, TABLE *table)
                          ET_FIELD_COUNT))
     DBUG_RETURN(TRUE);
 
-  if (load_time_zone(thd, tz_name))
+  if (load_time_zone(thd, &tz_name))
     DBUG_RETURN(TRUE);
 
   Event_creation_ctx::load_from_db(thd, &mem_root, dbname.str, name.str, table,
@@ -431,7 +431,7 @@ Event_job_data::load_from_row(THD *thd, TABLE *table)
   definer_host.str= strmake_root(&mem_root, ptr + 1, len);
   definer_host.length= len;
 
-  sql_mode= (ulong) table->field[ET_FIELD_SQL_MODE]->val_int();
+  sql_mode= (sql_mode_t) table->field[ET_FIELD_SQL_MODE]->val_int();
 
   DBUG_RETURN(FALSE);
 }
@@ -452,9 +452,9 @@ Event_job_data::load_from_row(THD *thd, TABLE *table)
 bool
 Event_queue_element::load_from_row(THD *thd, TABLE *table)
 {
-  char *ptr;
+  const char *ptr;
   MYSQL_TIME time;
-  LEX_STRING tz_name;
+  LEX_CSTRING tz_name;
 
   DBUG_ENTER("Event_queue_element::load_from_row");
 
@@ -472,7 +472,7 @@ Event_queue_element::load_from_row(THD *thd, TABLE *table)
                          ET_FIELD_COUNT))
     DBUG_RETURN(TRUE);
 
-  if (load_time_zone(thd, tz_name))
+  if (load_time_zone(thd, &tz_name))
     DBUG_RETURN(TRUE);
 
   starts_null= table->field[ET_FIELD_STARTS]->is_null();
@@ -519,7 +519,7 @@ Event_queue_element::load_from_row(THD *thd, TABLE *table)
     int i;
     char buff[MAX_FIELD_WIDTH];
     String str(buff, sizeof(buff), &my_charset_bin);
-    LEX_STRING tmp;
+    LEX_CSTRING tmp;
 
     table->field[ET_FIELD_TRANSIENT_INTERVAL]->val_str(&str);
     if (!(tmp.length= str.length()))
@@ -561,7 +561,7 @@ Event_queue_element::load_from_row(THD *thd, TABLE *table)
   }
   if ((ptr= get_field(&mem_root, table->field[ET_FIELD_ORIGINATOR])) == NullS)
     DBUG_RETURN(TRUE);
-  originator = table->field[ET_FIELD_ORIGINATOR]->val_int(); 
+  originator = (uint32) table->field[ET_FIELD_ORIGINATOR]->val_int(); 
 
   /* ToDo : Andrey . Find a way not to allocate ptr on event_mem_root */
   if ((ptr= get_field(&mem_root,
@@ -590,7 +590,7 @@ Event_queue_element::load_from_row(THD *thd, TABLE *table)
 bool
 Event_timed::load_from_row(THD *thd, TABLE *table)
 {
-  char *ptr;
+  const char *ptr;
   size_t len;
 
   DBUG_ENTER("Event_timed::load_from_row");
@@ -637,7 +637,7 @@ Event_timed::load_from_row(THD *thd, TABLE *table)
   else
     comment.length= 0;
 
-  sql_mode= (ulong) table->field[ET_FIELD_SQL_MODE]->val_int();
+  sql_mode= (sql_mode_t) table->field[ET_FIELD_SQL_MODE]->val_int();
 
   DBUG_RETURN(FALSE);
 }
@@ -911,9 +911,9 @@ Event_queue_element::compute_next_execution_time()
 {
   my_time_t time_now;
   DBUG_ENTER("Event_queue_element::compute_next_execution_time");
-  DBUG_PRINT("enter", ("starts: %lu  ends: %lu  last_executed: %lu  this: 0x%lx",
+  DBUG_PRINT("enter", ("starts: %lu  ends: %lu  last_executed: %lu  this: %p",
                        (long) starts, (long) ends, (long) last_executed,
-                       (long) this));
+                       this));
 
   if (status != Event_parse_data::ENABLED)
   {
@@ -1196,14 +1196,14 @@ Event_timed::get_create_event(THD *thd, String *buf)
   buf->append(STRING_WITH_LEN("CREATE "));
   append_definer(thd, buf, &definer_user, &definer_host);
   buf->append(STRING_WITH_LEN("EVENT "));
-  append_identifier(thd, buf, name.str, name.length);
+  append_identifier(thd, buf, &name);
 
   if (expression)
   {
     buf->append(STRING_WITH_LEN(" ON SCHEDULE EVERY "));
     buf->append(expr_buf);
     buf->append(' ');
-    LEX_STRING *ival= &interval_type_to_name[interval];
+    LEX_CSTRING *ival= &interval_type_to_name[interval];
     buf->append(ival->str, ival->length);
 
     if (!starts_null)
@@ -1236,7 +1236,7 @@ Event_timed::get_create_event(THD *thd, String *buf)
     append_unescaped(buf, comment.str, comment.length);
   }
   buf->append(STRING_WITH_LEN(" DO "));
-  buf->append(body.str, body.length);
+  buf->append(&body);
 
   DBUG_RETURN(0);
 }
@@ -1249,7 +1249,7 @@ Event_timed::get_create_event(THD *thd, String *buf)
 bool
 Event_job_data::construct_sp_sql(THD *thd, String *sp_sql)
 {
-  LEX_STRING buffer;
+  LEX_CSTRING buffer;
   const uint STATIC_SQL_LENGTH= 44;
 
   DBUG_ENTER("Event_job_data::construct_sp_sql");
@@ -1266,15 +1266,15 @@ Event_job_data::construct_sp_sql(THD *thd, String *sp_sql)
   sp_sql->length(0);
 
 
-  sp_sql->append(C_STRING_WITH_LEN("CREATE "));
-  sp_sql->append(C_STRING_WITH_LEN("PROCEDURE "));
+  sp_sql->append(STRING_WITH_LEN("CREATE "));
+  sp_sql->append(STRING_WITH_LEN("PROCEDURE "));
   /*
     Let's use the same name as the event name to perhaps produce a
     better error message in case it is a part of some parse error.
     We're using append_identifier here to successfully parse
     events with reserved names.
   */
-  append_identifier(thd, sp_sql, name.str, name.length);
+  append_identifier(thd, sp_sql, &name);
 
   /*
     The default SQL security of a stored procedure is DEFINER. We
@@ -1282,9 +1282,13 @@ Event_job_data::construct_sp_sql(THD *thd, String *sp_sql)
     let's execute the procedure with the invoker rights to save on
     resets of security contexts.
   */
-  sp_sql->append(C_STRING_WITH_LEN("() SQL SECURITY INVOKER "));
+  sp_sql->append(STRING_WITH_LEN("() SQL SECURITY INVOKER "));
 
-  sp_sql->append(body.str, body.length);
+  if (thd->variables.sql_mode & MODE_ORACLE)
+    sp_sql->append(STRING_WITH_LEN(" AS BEGIN "));
+  sp_sql->append(&body);
+  if (thd->variables.sql_mode & MODE_ORACLE)
+    sp_sql->append(STRING_WITH_LEN("; END"));
 
   DBUG_RETURN(thd->is_fatal_error);
 }
@@ -1298,7 +1302,7 @@ Event_job_data::construct_sp_sql(THD *thd, String *sp_sql)
 bool
 Event_job_data::construct_drop_event_sql(THD *thd, String *sp_sql)
 {
-  LEX_STRING buffer;
+  LEX_CSTRING buffer;
   const uint STATIC_SQL_LENGTH= 14;
 
   DBUG_ENTER("Event_job_data::construct_drop_event_sql");
@@ -1310,10 +1314,10 @@ Event_job_data::construct_drop_event_sql(THD *thd, String *sp_sql)
   sp_sql->set(buffer.str, buffer.length, system_charset_info);
   sp_sql->length(0);
 
-  sp_sql->append(C_STRING_WITH_LEN("DROP EVENT "));
-  append_identifier(thd, sp_sql, dbname.str, dbname.length);
+  sp_sql->append(STRING_WITH_LEN("DROP EVENT "));
+  append_identifier(thd, sp_sql, &dbname);
   sp_sql->append('.');
-  append_identifier(thd, sp_sql, name.str, name.length);
+  append_identifier(thd, sp_sql, &name);
 
   DBUG_RETURN(thd->is_fatal_error);
 }
@@ -1355,7 +1359,7 @@ Event_job_data::execute(THD *thd, bool drop)
     mysql_change_db will be invoked anyway later, to activate the
     procedure database before it's executed.
   */
-  thd->set_db(dbname.str, dbname.length);
+  thd->set_db(&dbname);
 
   lex_start(thd);
 
@@ -1387,9 +1391,6 @@ Event_job_data::execute(THD *thd, bool drop)
     goto end;
   }
 
-  if (construct_sp_sql(thd, &sp_sql))
-    goto end;
-
   /*
     Set up global thread attributes to reflect the properties of
     this Event. We can simply reset these instead of usual
@@ -1400,6 +1401,9 @@ Event_job_data::execute(THD *thd, bool drop)
 
   thd->variables.sql_mode= sql_mode;
   thd->variables.time_zone= time_zone;
+
+  if (construct_sp_sql(thd, &sp_sql))
+    goto end;
 
   thd->set_query(sp_sql.c_ptr_safe(), sp_sql.length());
 
@@ -1426,7 +1430,13 @@ Event_job_data::execute(THD *thd, bool drop)
     sphead->m_flags|= sp_head::LOG_SLOW_STATEMENTS;
     sphead->m_flags|= sp_head::LOG_GENERAL_LOG;
 
-    sphead->set_info(0, 0, &thd->lex->sp_chistics, sql_mode);
+    /*
+      construct_sp_sql() + parse_sql() set suid to SP_IS_NOT_SUID,
+      because we have the security context already set to the event
+      definer here. See more comments in construct_sp_sql().
+    */
+    DBUG_ASSERT(sphead->suid() == SP_IS_NOT_SUID);
+    sphead->m_sql_mode= sql_mode;
     sphead->set_creation_ctx(creation_ctx);
     sphead->optimize();
 
@@ -1438,7 +1448,7 @@ Event_job_data::execute(THD *thd, bool drop)
   }
 
 end:
-  if (drop && !thd->is_fatal_error)
+  if (drop && likely(!thd->is_fatal_error))
   {
     /*
       We must do it here since here we're under the right authentication
@@ -1491,7 +1501,7 @@ end:
       if (sql_command_set)
         thd->lex->sql_command = SQLCOM_DROP_EVENT;
 
-      ret= Events::drop_event(thd, dbname, name, FALSE);
+      ret= Events::drop_event(thd, &dbname, &name, FALSE);
 
       if (sql_command_set)
       {
@@ -1533,9 +1543,9 @@ end:
 */
 
 bool
-event_basic_db_equal(LEX_STRING db, Event_basic *et)
+event_basic_db_equal(const LEX_CSTRING *db, Event_basic *et)
 {
-  return !sortcmp_lex_string(et->dbname, db, system_charset_info);
+  return !sortcmp_lex_string(&et->dbname, db, system_charset_info);
 }
 
 
@@ -1554,10 +1564,11 @@ event_basic_db_equal(LEX_STRING db, Event_basic *et)
 */
 
 bool
-event_basic_identifier_equal(LEX_STRING db, LEX_STRING name, Event_basic *b)
+event_basic_identifier_equal(const LEX_CSTRING *db, const LEX_CSTRING *name,
+                             Event_basic *b)
 {
-  return !sortcmp_lex_string(name, b->name, system_charset_info) &&
-         !sortcmp_lex_string(db, b->dbname, system_charset_info);
+  return !sortcmp_lex_string(name, &b->name, system_charset_info) &&
+         !sortcmp_lex_string(db, &b->dbname, system_charset_info);
 }
 
 /**

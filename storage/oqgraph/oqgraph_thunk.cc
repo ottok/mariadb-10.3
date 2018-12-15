@@ -22,13 +22,12 @@
    ======================================================================
 */
 
-#include <my_config.h>
+#define MYSQL_SERVER
+#include <my_global.h>
 #include "oqgraph_thunk.h"
 
 #include <boost/tuple/tuple.hpp>
 
-#define MYSQL_SERVER
-#include <my_global.h>
 #include "unireg.h"
 #include "sql_base.h"
 #include "table.h"
@@ -39,7 +38,6 @@
 // Allow compatibility with build for 5.5.32
 #define user_defined_key_parts key_parts
 #endif
-
 
 static int debugid = 0;
 
@@ -193,9 +191,6 @@ int oqgraph3::cursor::restore_position()
       return rc;
     }
 
-    if (table.vfield)
-      update_virtual_fields(table.in_use, &table);
-
     table.file->position(table.record[0]);
 
     while (memcmp(table.file->ref, _position.data(), table.file->ref_length))
@@ -205,9 +200,6 @@ int oqgraph3::cursor::restore_position()
         table.file->ha_index_end();
         return rc;
       }
-
-      if (table.vfield)
-        update_virtual_fields(table.in_use, &table);
 
       if ((_origid && vertex_id(_graph->_source->val_int()) != *_origid) ||
           (_destid && vertex_id(_graph->_target->val_int()) != *_destid))
@@ -230,9 +222,6 @@ int oqgraph3::cursor::restore_position()
       table.file->ha_rnd_end();
       return rc;
     }
-
-    if (table.vfield)
-      update_virtual_fields(table.in_use, &table);
   }
 
   _graph->_cursor= this;
@@ -310,8 +299,6 @@ int oqgraph3::cursor::seek_next()
     return clear_position(rc);
   }
 
-  if (table.vfield)
-    update_virtual_fields(table.in_use, &table);
   _graph->_stale= true;
 
   if ((_origid && vertex_id(_graph->_source->val_int()) != *_origid) ||
@@ -345,8 +332,6 @@ int oqgraph3::cursor::seek_prev()
     return clear_position(rc);
   }
 
-  if (table.vfield)
-    update_virtual_fields(table.in_use, &table);
   _graph->_stale= true;
 
   if ((_origid && vertex_id(_graph->_source->val_int()) != *_origid) ||
@@ -506,9 +491,6 @@ int oqgraph3::cursor::seek_to(
       table.file->ha_index_end();
       return clear_position(rc);
     }
-
-    if (table.vfield)
-      update_virtual_fields(table.in_use, &table);
 
     if ((_origid && vertex_id(_graph->_source->val_int()) != *_origid) ||
         (_destid && vertex_id(_graph->_target->val_int()) != *_destid))

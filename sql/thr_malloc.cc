@@ -17,7 +17,7 @@
 
 /* Mallocs for used in threads */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "thr_malloc.h"
@@ -27,7 +27,7 @@ extern "C" {
   void sql_alloc_error_handler(void)
   {
     THD *thd= current_thd;
-    if (thd)
+    if (likely(thd))
     {
       if (! thd->is_error())
       {
@@ -58,64 +58,16 @@ extern "C" {
   }
 }
 
-void init_sql_alloc(MEM_ROOT *mem_root, uint block_size, uint pre_alloc,
-                    myf my_flags)
+void init_sql_alloc(MEM_ROOT *mem_root,
+                    const char *area_name __attribute__((unused)),
+                    uint block_size, uint pre_alloc, myf my_flags)
 {
-  init_alloc_root(mem_root, block_size, pre_alloc, my_flags);
+  init_alloc_root(mem_root, area_name, block_size, pre_alloc, my_flags);
   mem_root->error_handler=sql_alloc_error_handler;
 }
 
 
-#ifndef MYSQL_CLIENT
-void *sql_alloc(size_t Size)
-{
-  MEM_ROOT *root= *my_pthread_getspecific_ptr(MEM_ROOT**,THR_MALLOC);
-  return alloc_root(root,Size);
-}
-#endif
-
-
-void *sql_calloc(size_t size)
-{
-  void *ptr;
-  if ((ptr=sql_alloc(size)))
-    bzero(ptr,size);
-  return ptr;
-}
-
-
-char *sql_strdup(const char *str)
-{
-  size_t len= strlen(str)+1;
-  char *pos;
-  if ((pos= (char*) sql_alloc(len)))
-    memcpy(pos,str,len);
-  return pos;
-}
-
-
-char *sql_strmake(const char *str, size_t len)
-{
-  char *pos;
-  if ((pos= (char*) sql_alloc(len+1)))
-  {
-    memcpy(pos,str,len);
-    pos[len]=0;
-  }
-  return pos;
-}
-
-
-void* sql_memdup(const void *ptr, size_t len)
-{
-  void *pos;
-  if ((pos= sql_alloc(len)))
-    memcpy(pos,ptr,len);
-  return pos;
-}
-
-
-char *sql_strmake_with_convert(const char *str, size_t arg_length,
+char *sql_strmake_with_convert(THD *thd, const char *str, size_t arg_length,
 			       CHARSET_INFO *from_cs,
 			       size_t max_res_length,
 			       CHARSET_INFO *to_cs, size_t *result_length)
@@ -125,7 +77,7 @@ char *sql_strmake_with_convert(const char *str, size_t arg_length,
   max_res_length--;				// Reserve place for end null
 
   set_if_smaller(new_length, max_res_length);
-  if (!(pos= (char*) sql_alloc(new_length+1)))
+  if (!(pos= (char*) thd->alloc(new_length + 1)))
     return pos;					// Error
 
   if ((from_cs == &my_charset_bin) || (to_cs == &my_charset_bin))

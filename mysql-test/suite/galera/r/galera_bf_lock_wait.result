@@ -9,10 +9,15 @@ update t1 set b=connection_id() where a=1;
 commit;
 END WHILE;
 END|
+connect node_1_p1, 127.0.0.1, root, , test, $NODE_MYPORT_1;
 call p1;
+connect node_1_p2, 127.0.0.1, root, , test, $NODE_MYPORT_1;
 call p1;
+connect node_2_p1, 127.0.0.1, root, , test, $NODE_MYPORT_2;
 call p1;
+connect node_2_p2, 127.0.0.1, root, , test, $NODE_MYPORT_2;
 call p1;
+connection default;
 checking error log for 'BF lock wait long' message for 10 times every 10 seconds ...
 drop table t1;
 drop procedure p1;

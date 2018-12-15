@@ -10,7 +10,7 @@ update performance_schema.setup_consumers set enabled='yes';
 CREATE TABLE t1 (a serial, b varchar(255)) ENGINE=InnoDB;
 
 BEGIN;
-let $n=10;
+let $n=247;
 --disable_query_log
 while ($n) {
 dec $n;

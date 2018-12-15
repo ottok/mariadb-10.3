@@ -305,7 +305,7 @@ my_bool my_thread_init(void)
                          STACK_DIRECTION * (long)my_thread_stack_size;
 
   mysql_mutex_lock(&THR_LOCK_threads);
-  tmp->id= ++thread_id;
+  tmp->id= tmp->dbug_id= ++thread_id;
   ++THR_thread_count;
   mysql_mutex_unlock(&THR_LOCK_threads);
   tmp->init= 1;
@@ -341,14 +341,12 @@ void my_thread_end(void)
 	  tmp, pthread_self(), tmp ? (long) tmp->id : 0L);
 #endif  
 
-#ifdef HAVE_PSI_INTERFACE
   /*
     Remove the instrumentation for this thread.
     This must be done before trashing st_my_thread_var,
     because the LF_HASH depends on it.
   */
-  PSI_THREAD_CALL(delete_current_thread)();
-#endif
+  PSI_CALL_delete_current_thread();
 
   /*
     We need to disable DBUG early for this thread to ensure that the
@@ -410,7 +408,7 @@ my_thread_id my_thread_dbug_id()
     my_thread_init().
   */
   struct st_my_thread_var *tmp= my_thread_var;
-  return tmp ? tmp->id : 0;
+  return tmp ? tmp->dbug_id : 0;
 }
 
 #ifdef DBUG_OFF

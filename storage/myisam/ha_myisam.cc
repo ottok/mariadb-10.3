@@ -21,13 +21,14 @@
 #endif
 
 #define MYSQL_SERVER 1
+#include <my_global.h>
 #include "sql_plugin.h"
+#include "myisamdef.h"
 #include "sql_priv.h"
 #include "key.h"                                // key_copy
 #include <m_ctype.h>
 #include <my_bit.h>
 #include "ha_myisam.h"
-#include "myisamdef.h"
 #include "rt_index.h"
 #include "sql_table.h"                          // tablename_to_filename
 #include "sql_class.h"                          // THD
@@ -67,7 +68,7 @@ static MYSQL_SYSVAR_ULONGLONG(max_sort_file_size, myisam_max_temp_length,
 static MYSQL_SYSVAR_SET(recover_options, myisam_recover_options,
   PLUGIN_VAR_OPCMDARG|PLUGIN_VAR_READONLY,
   "Specifies how corrupted tables should be automatically repaired",
-  NULL, NULL, 1, &myisam_recover_typelib);
+  NULL, NULL, HA_RECOVER_BACKUP|HA_RECOVER_QUICK, &myisam_recover_typelib);
 
 static MYSQL_THDVAR_ULONG(repair_threads, PLUGIN_VAR_RQCMDARG,
   "If larger than 1, when repairing a MyISAM table all indexes will be "
@@ -166,8 +167,8 @@ static void mi_check_print_msg(HA_CHECK *param,	const char* msg_type,
 		 name);
   /*
     TODO: switch from protocol to push_warning here. The main reason we didn't
-    it yet is parallel repair. Due to following trace:
-    mi_check_print_msg/push_warning/sql_alloc/my_pthread_getspecific_ptr.
+    it yet is parallel repair, which threads have no THD object accessible via
+    current_thd.
 
     Also we likely need to lock mutex here (in both cases with protocol and
     push_warning).
@@ -340,8 +341,8 @@ int table2myisam(TABLE *table_arg, MI_KEYDEF **keydef_out,
         }
       }
     }
-    DBUG_PRINT("loop", ("found: 0x%lx  recpos: %d  minpos: %d  length: %d",
-                        (long) found, recpos, minpos, length));
+    DBUG_PRINT("loop", ("found: %p  recpos: %d  minpos: %d  length: %d",
+                        found, recpos, minpos, length));
     if (recpos != minpos)
     {
       /* reserve space for null bits */
@@ -573,12 +574,14 @@ int check_definition(MI_KEYDEF *t1_keyinfo, MI_COLUMNDEF *t1_recinfo,
   DBUG_RETURN(0);
 }
 
-
 extern "C" {
 
 int killed_ptr(HA_CHECK *param)
 {
-  return thd_killed((THD*)param->thd);
+  if (likely(thd_killed((THD*)param->thd)) == 0)
+    return 0;
+  my_errno= HA_ERR_ABORTED_BY_USER;
+  return 1;
 }
 
 void mi_check_print_error(HA_CHECK *param, const char *fmt,...)
@@ -636,7 +639,7 @@ void _mi_report_crashed(MI_INFO *file, const char *message,
   char buf[1024];
   mysql_mutex_lock(&file->s->intern_lock);
   if ((cur_thd= (THD*) file->in_use.data))
-    sql_print_error("Got an error from thread_id=%lu, %s:%d", cur_thd->thread_id,
+    sql_print_error("Got an error from thread_id=%lld, %s:%d", cur_thd->thread_id,
                     sfile, sline);
   else
     sql_print_error("Got an error from unknown thread, %s:%d", sfile, sline);
@@ -660,6 +663,29 @@ my_bool mi_killed_in_mariadb(MI_INFO *info)
   return (((TABLE*) (info->external_ref))->in_use->killed != 0);
 }
 
+static int compute_vcols(MI_INFO *info, uchar *record, int keynum)
+{
+  TABLE *table= (TABLE*)(info->external_ref);
+  table->move_fields(table->field, record, table->field[0]->record_ptr());
+  if (keynum == -1) // update all vcols
+  {
+    int error= table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_READ);
+    if (table->update_virtual_fields(table->file, VCOL_UPDATE_INDEXED))
+      error= 1;
+    return error;
+  }
+  // update only one key
+  KEY *key= table->key_info + keynum;
+  KEY_PART_INFO *kp= key->key_part, *end= kp + key->ext_key_parts;
+  for (; kp < end; kp++)
+  {
+    Field *f= table->field[kp->fieldnr - 1];
+    if (f->vcol_info)
+      table->update_virtual_field(f);
+  }
+  return 0;
+}
+
 }
 
 ha_myisam::ha_myisam(handlerton *hton, TABLE_SHARE *table_arg)
@@ -667,10 +693,12 @@ ha_myisam::ha_myisam(handlerton *hton, TABLE_SHARE *table_arg)
   int_table_flags(HA_NULL_IN_KEY | HA_CAN_FULLTEXT | HA_CAN_SQL_HANDLER |
                   HA_BINLOG_ROW_CAPABLE | HA_BINLOG_STMT_CAPABLE |
                   HA_CAN_VIRTUAL_COLUMNS | HA_CAN_EXPORT |
+                  HA_REQUIRES_KEY_COLUMNS_FOR_DELETE |
                   HA_DUPLICATE_POS | HA_CAN_INDEX_BLOBS | HA_AUTO_PART_KEY |
                   HA_FILE_BASED | HA_CAN_GEOMETRY | HA_NO_TRANSACTIONS |
                   HA_CAN_INSERT_DELAYED | HA_CAN_BIT_FIELD | HA_CAN_RTREEKEYS |
-                  HA_HAS_RECORDS | HA_STATS_RECORDS_IS_EXACT | HA_CAN_REPAIR),
+                  HA_HAS_RECORDS | HA_STATS_RECORDS_IS_EXACT | HA_CAN_REPAIR |
+                  HA_CAN_TABLES_WITHOUT_ROLLBACK),
    can_enable_indexes(1)
 {}
 
@@ -758,7 +786,8 @@ int ha_myisam::open(const char *name, int mode, uint test_if_locked)
   /* Set external_ref, mainly for temporary tables */
   file->external_ref= (void*) table;            // For mi_killed()
 
-  if (!table->s->tmp_table) /* No need to perform a check for tmp table */
+  /* No need to perform a check for tmp table or if it's already checked */
+  if (!table->s->tmp_table && file->s->reopen == 1)
   {
     if ((my_errno= table2myisam(table, &keyinfo, &recinfo, &recs)))
     {
@@ -895,6 +924,40 @@ int ha_myisam::write_row(uchar *buf)
   return mi_write(file,buf);
 }
 
+void ha_myisam::setup_vcols_for_repair(HA_CHECK *param)
+{
+  DBUG_ASSERT(file->s->base.reclength <= file->s->vreclength);
+  if (!table->vfield)
+    return;
+
+  if  (file->s->base.reclength == file->s->vreclength)
+  {
+    bool indexed_vcols= false;
+    ulong new_vreclength= file->s->vreclength;
+    for (Field **vf= table->vfield; *vf; vf++)
+    {
+      uint vf_end= (*vf)->offset(table->record[0]) + (*vf)->pack_length_in_rec();
+      set_if_bigger(new_vreclength, vf_end);
+      indexed_vcols|= ((*vf)->flags & PART_KEY_FLAG) != 0;
+    }
+    if (!indexed_vcols)
+      return;
+    file->s->vreclength= new_vreclength;
+  }
+  param->fix_record= compute_vcols;
+  table->use_all_columns();
+  table->vcol_set= &table->s->all_set;
+}
+
+void ha_myisam::restore_vcos_after_repair()
+{
+  if (file->s->base.reclength < file->s->vreclength)
+  {
+    table->move_fields(table->field, table->record[0], table->field[0]->record_ptr());
+    table->default_column_bitmaps();
+  }
+}
+
 int ha_myisam::check(THD* thd, HA_CHECK_OPT* check_opt)
 {
   if (!file) return HA_ADMIN_INTERNAL_ERROR;
@@ -927,6 +990,8 @@ int ha_myisam::check(THD* thd, HA_CHECK_OPT* check_opt)
        ((param->testflag & T_FAST) && (share->state.open_count ==
 				      (uint) (share->global_changed ? 1 : 0)))))
     return HA_ADMIN_ALREADY_DONE;
+
+  setup_vcols_for_repair(param);
 
   error = chk_status(param, file);		// Not fatal
   error = chk_size(param, file);
@@ -980,6 +1045,8 @@ int ha_myisam::check(THD* thd, HA_CHECK_OPT* check_opt)
     file->update |= HA_STATE_CHANGED | HA_STATE_ROW_CHANGED;
   }
 
+  restore_vcos_after_repair();
+
   thd_proc_info(thd, old_proc_info);
   return error ? HA_ADMIN_CORRUPT : HA_ADMIN_OK;
 }
@@ -1013,6 +1080,8 @@ int ha_myisam::analyze(THD *thd, HA_CHECK_OPT* check_opt)
   if (!(share->state.changed & STATE_NOT_ANALYZED))
     return HA_ADMIN_ALREADY_DONE;
 
+  setup_vcols_for_repair(param);
+
   error = chk_key(param, file);
   if (!error)
   {
@@ -1022,6 +1091,9 @@ int ha_myisam::analyze(THD *thd, HA_CHECK_OPT* check_opt)
   }
   else if (!mi_is_crashed(file) && !thd->killed)
     mi_mark_crashed(file);
+
+  restore_vcos_after_repair();
+
   return error ? HA_ADMIN_CORRUPT : HA_ADMIN_OK;
 }
 
@@ -1044,6 +1116,9 @@ int ha_myisam::repair(THD* thd, HA_CHECK_OPT *check_opt)
   param->sort_buffer_length=  THDVAR(thd, sort_buffer_size);
   param->backup_time= check_opt->start_time;
   start_records=file->state->records;
+
+  setup_vcols_for_repair(param);
+
   while ((error=repair(thd,*param,0)) && param->retry_repair)
   {
     param->retry_repair=0;
@@ -1058,15 +1133,18 @@ int ha_myisam::repair(THD* thd, HA_CHECK_OPT *check_opt)
       continue;
     }
     param->testflag&= ~T_QUICK;
-    if ((param->testflag & T_REP_BY_SORT))
+    if ((param->testflag & (T_REP_BY_SORT | T_REP_PARALLEL)))
     {
-      param->testflag= (param->testflag & ~T_REP_BY_SORT) | T_REP;
+      param->testflag= (param->testflag & ~T_REP_ANY) | T_REP;
       sql_print_information("Retrying repair of: '%s' with keycache",
                             table->s->path.str);
       continue;
     }
     break;
   }
+
+  restore_vcos_after_repair();
+
   if (!error && start_records != file->state->records &&
       !(check_opt->flags & T_VERY_SILENT))
   {
@@ -1093,6 +1171,9 @@ int ha_myisam::optimize(THD* thd, HA_CHECK_OPT *check_opt)
                    T_REP_BY_SORT | T_STATISTICS | T_SORT_INDEX);
   param->tmpfile_createflag= O_RDWR | O_TRUNC;
   param->sort_buffer_length=  THDVAR(thd, sort_buffer_size);
+
+  setup_vcols_for_repair(param);
+
   if ((error= repair(thd,*param,1)) && param->retry_repair)
   {
     sql_print_warning("Warning: Optimize table got errno %d on %s.%s, retrying",
@@ -1100,6 +1181,9 @@ int ha_myisam::optimize(THD* thd, HA_CHECK_OPT *check_opt)
     param->testflag&= ~T_REP_BY_SORT;
     error= repair(thd,*param,1);
   }
+
+  restore_vcos_after_repair();
+
   return error;
 }
 
@@ -1124,9 +1208,6 @@ int ha_myisam::repair(THD *thd, HA_CHECK &param, bool do_optimize)
   param.out_flag= 0;
   share->state.dupp_key= MI_MAX_KEY;
   strmov(fixed_name,file->filename);
-
-  // Release latches since this can take a long time
-  ha_release_temporary_latches(thd);
 
   /*
     Don't lock tables if we have used LOCK TABLE or if we come from
@@ -1163,6 +1244,11 @@ int ha_myisam::repair(THD *thd, HA_CHECK &param, bool do_optimize)
     if (remap)
       mi_munmap_file(file);
 #endif
+    /*
+      The following is to catch errors when my_errno is no set properly
+      during repairt
+    */
+    my_errno= 0;
     if (mi_test_if_sort_rep(file,file->state->records,tmp_key_map,0) &&
 	(local_testflag & T_REP_BY_SORT))
     {
@@ -1185,8 +1271,11 @@ int ha_myisam::repair(THD *thd, HA_CHECK &param, bool do_optimize)
       }
       if (error && file->create_unique_index_by_sort && 
           share->state.dupp_key != MAX_KEY)
+      {
+        my_errno= HA_ERR_FOUND_DUPP_KEY;
         print_keydup_error(table, &table->key_info[share->state.dupp_key],
                            MYF(0));
+      }
     }
     else
     {
@@ -1513,6 +1602,9 @@ int ha_myisam::enable_indexes(uint mode)
     param->sort_buffer_length=  THDVAR(thd, sort_buffer_size);
     param->stats_method= (enum_handler_stats_method)THDVAR(thd, stats_method);
     param->tmpdir=&mysql_tmpdir_list;
+
+    setup_vcols_for_repair(param);
+
     if ((error= (repair(thd,*param,0) != HA_ADMIN_OK)) && param->retry_repair)
     {
       sql_print_warning("Warning: Enabling keys got errno %d on %s.%s, retrying",
@@ -1538,6 +1630,8 @@ int ha_myisam::enable_indexes(uint mode)
     }
     info(HA_STATUS_CONST);
     thd_proc_info(thd, save_proc_info);
+
+    restore_vcos_after_repair();
   }
   else
   {
@@ -1637,8 +1731,9 @@ void ha_myisam::start_bulk_insert(ha_rows rows, uint flags)
   which have been activated by start_bulk_insert().
 
   SYNOPSIS
-    end_bulk_insert()
-    no arguments
+    end_bulk_insert(fatal_error)
+    abort         0 normal end, store everything
+                  1 abort quickly. No need to flush/write anything. Table will be deleted
 
   RETURN
     0     OK
@@ -1647,10 +1742,20 @@ void ha_myisam::start_bulk_insert(ha_rows rows, uint flags)
 
 int ha_myisam::end_bulk_insert()
 {
+  int first_error, error;
+  my_bool abort= file->s->deleting;
   DBUG_ENTER("ha_myisam::end_bulk_insert");
-  mi_end_bulk_insert(file);
-  int err=mi_extra(file, HA_EXTRA_NO_CACHE, 0);
-  if (!err && !file->s->deleting)
+
+  if ((first_error= mi_end_bulk_insert(file, abort)))
+    abort= 1;
+
+  if ((error= mi_extra(file, HA_EXTRA_NO_CACHE, 0)))
+  {
+    first_error= first_error ? first_error : error;
+    abort= 1;
+  }
+
+  if (!abort)
   {
     if (can_enable_indexes)
     {
@@ -1661,16 +1766,17 @@ int ha_myisam::end_bulk_insert()
         setting the indexes as active and  trying to recreate them. 
      */
    
-      if (((err= enable_indexes(HA_KEY_SWITCH_NONUNIQ_SAVE)) != 0) && 
+      if (((first_error= enable_indexes(HA_KEY_SWITCH_NONUNIQ_SAVE)) != 0) && 
           table->in_use->killed)
       {
         delete_all_rows();
         /* not crashed, despite being killed during repair */
         file->s->state.changed&= ~(STATE_CRASHED|STATE_CRASHED_ON_REPAIR);
       }
-    } 
+    }
   }
-  DBUG_RETURN(err);
+  DBUG_PRINT("exit", ("first_error: %d", first_error));
+  DBUG_RETURN(first_error);
 }
 
 
@@ -1689,7 +1795,7 @@ bool ha_myisam::check_and_repair(THD *thd)
   sql_print_warning("Checking table:   '%s'",table->s->path.str);
 
   const CSET_STRING query_backup= thd->query_string;
-  thd->set_query(table->s->table_name.str,
+  thd->set_query((char*) table->s->table_name.str,
                  (uint) table->s->table_name.length, system_charset_info);
 
   if ((marked_crashed= mi_is_crashed(file)) || check(thd, &check_opt))
@@ -1727,7 +1833,7 @@ bool ha_myisam::is_crashed() const
 	  (my_disable_locking && file->s->state.open_count));
 }
 
-int ha_myisam::update_row(const uchar *old_data, uchar *new_data)
+int ha_myisam::update_row(const uchar *old_data, const uchar *new_data)
 {
   return mi_update(file,old_data,new_data);
 }
@@ -2016,7 +2122,7 @@ void ha_myisam::update_create_info(HA_CREATE_INFO *create_info)
 }
 
 
-int ha_myisam::create(const char *name, register TABLE *table_arg,
+int ha_myisam::create(const char *name, TABLE *table_arg,
 		      HA_CREATE_INFO *ha_create_info)
 {
   int error;
@@ -2028,14 +2134,14 @@ int ha_myisam::create(const char *name, register TABLE *table_arg,
   TABLE_SHARE *share= table_arg->s;
   uint options= share->db_options_in_use;
   DBUG_ENTER("ha_myisam::create");
-  for (i= 0; i < share->keys; i++)
-  {
-    if (table_arg->key_info[i].flags & HA_USES_PARSER)
-    {
+
+  for (i= 0; i < share->virtual_fields && !create_flags; i++)
+    if (table_arg->vfield[i]->flags & PART_KEY_FLAG)
       create_flags|= HA_CREATE_RELIES_ON_SQL_LAYER;
-      break;
-    }
-  }
+  for (i= 0; i < share->keys && !create_flags; i++)
+    if (table_arg->key_info[i].flags & HA_USES_PARSER)
+      create_flags|= HA_CREATE_RELIES_ON_SQL_LAYER;
+
   if ((error= table2myisam(table_arg, &keydef, &recinfo, &record_count)))
     DBUG_RETURN(error); /* purecov: inspected */
   bzero((char*) &create_info, sizeof(create_info));
@@ -2206,14 +2312,20 @@ ha_myisam::check_if_supported_inplace_alter(TABLE *new_table,
 {
   DBUG_ENTER("ha_myisam::check_if_supported_inplace_alter");
 
-  const uint readd_index= Alter_inplace_info::ADD_INDEX |
-                          Alter_inplace_info::DROP_INDEX;
-  const uint readd_unique= Alter_inplace_info::ADD_UNIQUE_INDEX |
-                           Alter_inplace_info::DROP_UNIQUE_INDEX;
-  const uint readd_pk= Alter_inplace_info::ADD_PK_INDEX |
-                       Alter_inplace_info::DROP_PK_INDEX;
+  const alter_table_operations readd_index=
+                          ALTER_ADD_NON_UNIQUE_NON_PRIM_INDEX |
+                          ALTER_DROP_NON_UNIQUE_NON_PRIM_INDEX;
+  const alter_table_operations readd_unique=
+                          ALTER_ADD_UNIQUE_INDEX |
+                          ALTER_DROP_UNIQUE_INDEX;
+  const alter_table_operations readd_pk=
+                          ALTER_ADD_PK_INDEX |
+                          ALTER_DROP_PK_INDEX;
 
-  const uint op= alter_info->handler_flags;
+  const  alter_table_operations op= alter_info->handler_flags;
+
+  if (op & ALTER_COLUMN_VCOL)
+    DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 
   /*
     ha_myisam::open() updates table->key_info->block_size to be the actual
@@ -2245,7 +2357,7 @@ ha_myisam::check_if_supported_inplace_alter(TABLE *new_table,
           old_key->flags != new_key->flags ||
           old_key->user_defined_key_parts != new_key->user_defined_key_parts ||
           old_key->algorithm != new_key->algorithm ||
-          strcmp(old_key->name, new_key->name))
+          strcmp(old_key->name.str, new_key->name.str))
         DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 
       for (uint j= 0; j < old_key->user_defined_key_parts; j++)
@@ -2508,7 +2620,7 @@ maria_declare_plugin_end;
     @retval FALSE An error occurred
 */
 
-my_bool ha_myisam::register_query_cache_table(THD *thd, char *table_name,
+my_bool ha_myisam::register_query_cache_table(THD *thd, const char *table_name,
                                               uint table_name_len,
                                               qc_engine_callback
                                               *engine_callback,

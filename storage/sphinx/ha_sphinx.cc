@@ -22,6 +22,7 @@
 #define _CRT_NONSTDC_NO_DEPRECATE 1
 #endif
 
+#include <my_global.h>
 #include <mysql_version.h>
 
 #if MYSQL_VERSION_ID>=50515
@@ -1031,7 +1032,7 @@ static bool ParseUrl ( CSphSEShare * share, TABLE * table, bool bCreate )
 
 			for ( int i=0; i<share->m_iTableFields; i++ )
 			{
-				share->m_sTableField[i] = sphDup ( table->field[i]->field_name );
+				share->m_sTableField[i] = sphDup ( table->field[i]->field_name.str );
 				share->m_eTableFieldType[i] = table->field[i]->type();
 			}
 		}
@@ -1099,7 +1100,7 @@ static bool ParseUrl ( CSphSEShare * share, TABLE * table, bool bCreate )
 
 					iPort = atoi(sPort);
 					if ( !iPort )
-						iPort = SPHINXAPI_DEFAULT_PORT;
+                                          iPort = SPHINXAPI_DEFAULT_PORT;
 				}
 			} else
 			{
@@ -1158,7 +1159,7 @@ static bool ParseUrl ( CSphSEShare * share, TABLE * table, bool bCreate )
 	if ( !bOk )
 	{
 		my_error ( bCreate ? ER_FOREIGN_DATA_STRING_INVALID_CANT_CREATE : ER_FOREIGN_DATA_STRING_INVALID,
-			MYF(0), table->s->connect_string );
+			MYF(0), table->s->connect_string.str);
 	} else
 	{
 		if ( share )
@@ -2338,7 +2339,7 @@ int ha_sphinx::write_row ( byte * )
 
 	for ( Field ** ppField = table->field; *ppField; ppField++ )
 	{
-		sQuery.append ( (*ppField)->field_name );
+		sQuery.append ( (*ppField)->field_name.str );
 		if ( ppField[1] )
 			sQuery.append ( ", " );
 	}
@@ -2464,7 +2465,7 @@ int ha_sphinx::delete_row ( const byte * )
 }
 
 
-int ha_sphinx::update_row ( const byte *, byte * )
+int ha_sphinx::update_row ( const byte *, const byte * )
 {
 	SPH_ENTER_METHOD();
 	SPH_RET ( HA_ERR_WRONG_COMMAND );
@@ -3428,7 +3429,7 @@ int ha_sphinx::create ( const char * name, TABLE * table_arg, HA_CREATE_INFO * )
 			if ( eType!=MYSQL_TYPE_TIMESTAMP && !IsIntegerFieldType(eType) && eType!=MYSQL_TYPE_VARCHAR && eType!=MYSQL_TYPE_FLOAT )
 			{
 				my_snprintf ( sError, sizeof(sError), "%s: %dth column (attribute %s) MUST be integer, bigint, timestamp, varchar, or float",
-					name, i+1, table_arg->field[i]->field_name );
+					name, i+1, table_arg->field[i]->field_name.str );
 				break;
 			}
 		}
@@ -3440,10 +3441,10 @@ int ha_sphinx::create ( const char * name, TABLE * table_arg, HA_CREATE_INFO * )
 		if (
 			table_arg->s->keys!=1 ||
 			table_arg->key_info[0].user_defined_key_parts!=1 ||
-			strcasecmp ( table_arg->key_info[0].key_part[0].field->field_name, table_arg->field[2]->field_name ) )
+			strcasecmp ( table_arg->key_info[0].key_part[0].field->field_name.str, table_arg->field[2]->field_name.str ) )
 		{
 			my_snprintf ( sError, sizeof(sError), "%s: there must be an index on '%s' column",
-				name, table_arg->field[2]->field_name );
+				name, table_arg->field[2]->field_name.str );
 			break;
 		}
 
@@ -3458,7 +3459,7 @@ int ha_sphinx::create ( const char * name, TABLE * table_arg, HA_CREATE_INFO * )
 		sError[0] = '\0';
 
 		// check that 1st column is id, is of int type, and has an index
-		if ( strcmp ( table_arg->field[0]->field_name, "id" ) )
+		if ( strcmp ( table_arg->field[0]->field_name.str, "id" ) )
 		{
 			my_snprintf ( sError, sizeof(sError), "%s: 1st column must be called 'id'", name );
 			break;
@@ -3474,7 +3475,7 @@ int ha_sphinx::create ( const char * name, TABLE * table_arg, HA_CREATE_INFO * )
 		if (
 			table_arg->s->keys!=1 ||
 			table_arg->key_info[0].user_defined_key_parts!=1 ||
-			strcasecmp ( table_arg->key_info[0].key_part[0].field->field_name, "id" ) )
+			strcasecmp ( table_arg->key_info[0].key_part[0].field->field_name.str, "id" ) )
 		{
 			my_snprintf ( sError, sizeof(sError), "%s: 'id' column must be indexed", name );
 			break;
@@ -3487,7 +3488,7 @@ int ha_sphinx::create ( const char * name, TABLE * table_arg, HA_CREATE_INFO * )
 			if ( eType!=MYSQL_TYPE_TIMESTAMP && !IsIntegerFieldType(eType) && eType!=MYSQL_TYPE_VARCHAR && eType!=MYSQL_TYPE_FLOAT )
 			{
 				my_snprintf ( sError, sizeof(sError), "%s: column %d(%s) is of unsupported type (use int/bigint/timestamp/varchar/float)",
-					name, i+1, table_arg->field[i]->field_name );
+					name, i+1, table_arg->field[i]->field_name.str );
 				break;
 			}
 		}

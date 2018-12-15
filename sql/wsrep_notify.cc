@@ -13,11 +13,11 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
+#include "mariadb.h"
 #include <mysqld.h>
 #include "wsrep_priv.h"
 #include "wsrep_utils.h"
 
-const char* wsrep_notify_cmd="";
 
 static const char* _status_str(wsrep_member_status_t status)
 {

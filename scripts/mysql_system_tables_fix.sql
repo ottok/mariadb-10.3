@@ -83,7 +83,7 @@ ALTER TABLE tables_priv
     COLLATE utf8_general_ci DEFAULT '' NOT NULL,
   MODIFY Table_priv set('Select','Insert','Update','Delete','Create',
                         'Drop','Grant','References','Index','Alter',
-                        'Create View','Show view','Trigger')
+                        'Create View','Show view','Trigger','Delete versioning rows')
     COLLATE utf8_general_ci DEFAULT '' NOT NULL,
   COMMENT='Table privileges';
 
@@ -173,6 +173,12 @@ ALTER TABLE user
   MODIFY Host char(60) NOT NULL default '',
   MODIFY User char(80) binary NOT NULL default '',
   ENGINE=MyISAM, CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin;
+
+# In MySQL 5.7.6 the Password column is removed. Recreate it to preserve the number
+# of columns MariaDB expects in the user table.
+ALTER TABLE user
+  ADD Password char(41) character set latin1 collate latin1_bin NOT NULL default '' AFTER User;
+
 ALTER TABLE user
   MODIFY Password char(41) character set latin1 collate latin1_bin NOT NULL default '',
   MODIFY Select_priv enum('N','Y') COLLATE utf8_general_ci DEFAULT 'N' NOT NULL,
@@ -451,7 +457,9 @@ ALTER TABLE proc MODIFY name char(64) DEFAULT '' NOT NULL,
                             'NO_AUTO_CREATE_USER',
                             'HIGH_NOT_PRECEDENCE',
                             'NO_ENGINE_SUBSTITUTION',
-                            'PAD_CHAR_TO_FULL_LENGTH'
+                            'PAD_CHAR_TO_FULL_LENGTH',
+                            'EMPTY_STRING_IS_NULL',
+                            'SIMULTANEOUS_ASSIGNMENT'
                             ) DEFAULT '' NOT NULL,
                  DEFAULT CHARACTER SET utf8;
 
@@ -467,6 +475,16 @@ ALTER TABLE proc ADD character_set_client
                      AFTER comment;
 ALTER TABLE proc MODIFY character_set_client
                         char(32) collate utf8_bin DEFAULT NULL;
+
+ALTER TABLE proc MODIFY type enum('FUNCTION',
+                                  'PROCEDURE',
+                                  'PACKAGE',
+                                  'PACKAGE BODY') NOT NULL;
+
+ALTER TABLE procs_priv MODIFY Routine_type enum('FUNCTION',
+                                                'PROCEDURE',
+                                                'PACKAGE',
+                                                'PACKAGE BODY') NOT NULL;
 
 SELECT CASE WHEN COUNT(*) > 0 THEN 
 CONCAT ("WARNING: NULL values of the 'character_set_client' column ('mysql.proc' table) have been updated with a default value (", @@character_set_client, "). Please verify if necessary.")
@@ -517,6 +535,10 @@ ALTER TABLE proc MODIFY body_utf8 longblob DEFAULT NULL;
 # Change comment from char(64) to text
 ALTER TABLE proc MODIFY comment
                         text collate utf8_bin NOT NULL;
+
+# MDEV-7773: Stored Aggregate Functions
+ALTER TABLE proc ADD aggregate enum('NONE', 'GROUP') DEFAULT 'NONE' NOT NULL
+                     AFTER body_utf8;
 
 #
 # EVENT privilege
@@ -571,7 +593,9 @@ ALTER TABLE event MODIFY sql_mode
                             'NO_AUTO_CREATE_USER',
                             'HIGH_NOT_PRECEDENCE',
                             'NO_ENGINE_SUBSTITUTION',
-                            'PAD_CHAR_TO_FULL_LENGTH'
+                            'PAD_CHAR_TO_FULL_LENGTH',
+                            'EMPTY_STRING_IS_NULL',
+                            'SIMULTANEOUS_ASSIGNMENT'
                             ) DEFAULT '' NOT NULL AFTER on_completion;
 ALTER TABLE event MODIFY name char(64) CHARACTER SET utf8 NOT NULL default '';
 
@@ -638,6 +662,23 @@ ALTER TABLE user MODIFY Create_tablespace_priv enum('N','Y') COLLATE utf8_genera
 
 UPDATE user SET Create_tablespace_priv = Super_priv WHERE @hadCreateTablespacePriv = 0;
 
+#
+# System versioning
+#
+
+ALTER TABLE user change Truncate_versioning_priv Delete_history_priv enum('N','Y') COLLATE utf8_general_ci NOT NULL DEFAULT 'N';
+ALTER TABLE db change Truncate_versioning_priv Delete_history_priv enum('N','Y') COLLATE utf8_general_ci NOT NULL DEFAULT 'N';
+
+SET @had_user_delete_history_priv := 0;
+SELECT @had_user_delete_history_priv :=1 FROM user WHERE Delete_history_priv LIKE '%';
+
+ALTER TABLE user add Delete_history_priv enum('N','Y') COLLATE utf8_general_ci NOT NULL DEFAULT 'N' after Create_tablespace_priv;
+ALTER TABLE user modify Delete_history_priv enum('N','Y') COLLATE utf8_general_ci NOT NULL DEFAULT 'N';
+ALTER TABLE db add Delete_history_priv enum('N','Y') COLLATE utf8_general_ci NOT NULL DEFAULT 'N' after Trigger_priv;
+ALTER TABLE db modify Delete_history_priv enum('N','Y') COLLATE utf8_general_ci NOT NULL DEFAULT 'N';
+
+UPDATE user SET Delete_history_priv = Super_priv WHERE @had_user_delete_history_priv = 0;
+
 ALTER TABLE user ADD plugin char(64) CHARACTER SET latin1 DEFAULT '' NOT NULL,
                  ADD authentication_string TEXT NOT NULL;
 ALTER TABLE user MODIFY plugin char(64) CHARACTER SET latin1 DEFAULT '' NOT NULL,
@@ -688,13 +729,13 @@ set @str=replace(@str, "innodb_index_stats", "innodb_table_stats");
 prepare stmt from @str;
 execute stmt;
 
-# update timestamp fields in the innodb stat tables
-set @str="alter table mysql.innodb_index_stats modify last_update timestamp not null default current_timestamp on update current_timestamp";
+# update table_name and timestamp fields in the innodb stat tables
+set @str="alter table mysql.innodb_index_stats modify last_update timestamp not null default current_timestamp on update current_timestamp, modify table_name varchar(199)";
 set @str=if(@have_innodb <> 0, @str, "set @dummy = 0");
 prepare stmt from @str;
 execute stmt;
 
-set @str="alter table mysql.innodb_table_stats modify last_update timestamp not null default current_timestamp on update current_timestamp";
+set @str="alter table mysql.innodb_table_stats modify last_update timestamp not null default current_timestamp on update current_timestamp, modify table_name varchar(199)";
 set @str=if(@have_innodb <> 0, @str, "set @dummy = 0");
 prepare stmt from @str;
 execute stmt;

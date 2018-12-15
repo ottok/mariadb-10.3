@@ -2,6 +2,7 @@
 #define STRUCTS_INCLUDED
 
 /* Copyright (c) 2000, 2010, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2017, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -28,6 +29,7 @@
 #include <mysql_com.h>                  /* USERNAME_LENGTH */
 
 struct TABLE;
+class Type_handler;
 class Field;
 class Index_statistics;
 
@@ -37,7 +39,7 @@ typedef struct st_date_time_format {
   uchar positions[8];
   char  time_separator;			/* Separator between hour and minute */
   uint flag;				/* For future */
-  LEX_STRING format;
+  LEX_CSTRING format;
 } DATE_TIME_FORMAT;
 
 
@@ -64,9 +66,11 @@ typedef struct st_keyfile_info {	/* used with ha_info() */
 
 
 typedef struct st_key_part_info {	/* Info about a key part */
-  Field *field;
-  uint	offset;				/* offset in record (from 0) */
-  uint	null_offset;			/* Offset to null_bit in record */
+  Field *field;                         /* the Field object for the indexed
+                                           prefix of the original table Field.
+                                           NOT necessarily the original Field */
+  uint  offset;                         /* Offset in record (from 0) */
+  uint  null_offset;                    /* Offset to null_bit in record */
   /* Length of key part in bytes, excluding NULL flag and length bytes */
   uint16 length;
   /* 
@@ -77,9 +81,8 @@ typedef struct st_key_part_info {	/* Info about a key part */
   */
   uint16 store_length;
   uint16 key_type;
-  /* Fieldnr begins counting from 1 */
-  uint16 fieldnr;			/* Fieldnum in UNIREG */
-  uint16 key_part_flag;			/* 0 or HA_REVERSE_SORT */
+  uint16 fieldnr;                       /* Fieldnr begins counting from 1 */
+  uint16 key_part_flag;                 /* 0 or HA_REVERSE_SORT */
   uint8 type;
   uint8 null_bit;			/* Position to null_bit */
 } KEY_PART_INFO ;
@@ -106,9 +109,9 @@ typedef struct st_key {
       pk2 is explicitly present in idx1, it is not in the extension, so
       ext_key_part_map.is_set(1) == false
   */
+  LEX_CSTRING name;
   key_part_map ext_key_part_map;
   uint  block_size;
-  uint  name_length;
   enum  ha_key_alg algorithm;
   /* 
     The flag is on if statistical data for the index prefixes
@@ -122,10 +125,9 @@ typedef struct st_key {
   union
   {
     plugin_ref parser;                  /* Fulltext [pre]parser */
-    LEX_STRING *parser_name;            /* Fulltext [pre]parser name */
+    LEX_CSTRING *parser_name;           /* Fulltext [pre]parser name */
   };
   KEY_PART_INFO *key_part;
-  char	*name;				/* Name of key */
   /* Unique name for cache;  db + \0 + table_name + \0 + key_name + \0 */
   uchar *cache_name;
   /*
@@ -150,7 +152,7 @@ typedef struct st_key {
     int  bdb_return_if_eq;
   } handler;
   TABLE *table;
-  LEX_STRING comment;
+  LEX_CSTRING comment;
   /** reference to the list of options or NULL */
   engine_option_value *option_list;
   ha_index_option_struct *option_struct;                  /* structure with parsed options */
@@ -201,24 +203,39 @@ extern const char *show_comp_option_name[];
 
 typedef int *(*update_var)(THD *, struct st_mysql_show_var *);
 
-typedef struct	st_lex_user {
-  LEX_STRING user, host, plugin, auth;
-  LEX_STRING pwtext, pwhash;
+
+struct AUTHID
+{
+  LEX_CSTRING user, host;
+  void init() { memset(this, 0, sizeof(*this)); }
+  void copy(MEM_ROOT *root, const LEX_CSTRING *usr, const LEX_CSTRING *host);
   bool is_role() const { return user.str[0] && !host.str[0]; }
-  void set_lex_string(LEX_STRING *l, char *buf)
+  void set_lex_string(LEX_CSTRING *l, char *buf)
   {
     if (is_role())
       *l= user;
     else
-      l->length= strxmov(l->str= buf, user.str, "@", host.str, NullS) - buf;
+    {
+      l->str= buf;
+      l->length= strxmov(buf, user.str, "@", host.str, NullS) - buf;
+    }
   }
+  void parse(const char *str, size_t length);
+  bool read_from_mysql_proc_row(THD *thd, TABLE *table);
+};
+
+
+struct LEX_USER: public AUTHID
+{
+  LEX_CSTRING plugin, auth;
+  LEX_CSTRING pwtext, pwhash;
   void reset_auth()
   {
     pwtext.length= pwhash.length= plugin.length= auth.length= 0;
     pwtext.str= pwhash.str= 0;
-    plugin.str= auth.str= const_cast<char*>("");
+    plugin.str= auth.str= "";
   }
-} LEX_USER;
+};
 
 /*
   This structure specifies the maximum amount of resources which
@@ -313,7 +330,7 @@ typedef struct st_user_stats
 typedef struct st_table_stats
 {
   char table[NAME_LEN * 2 + 2];  // [db] + '\0' + [table] + '\0'
-  uint table_name_length;
+  size_t table_name_length;
   ulonglong rows_read, rows_changed;
   ulonglong rows_changed_x_indexes;
   /* Stores enum db_type, but forward declarations cannot be done */
@@ -324,32 +341,32 @@ typedef struct st_index_stats
 {
   // [db] + '\0' + [table] + '\0' + [index] + '\0'
   char index[NAME_LEN * 3 + 3];
-  uint index_name_length;                       /* Length of 'index' */
+  size_t index_name_length;                       /* Length of 'index' */
   ulonglong rows_read;
 } INDEX_STATS;
 
 
 	/* Bits in form->update */
-#define REG_MAKE_DUPP		1	/* Make a copy of record when read */
-#define REG_NEW_RECORD		2	/* Write a new record if not found */
-#define REG_UPDATE		4	/* Uppdate record */
-#define REG_DELETE		8	/* Delete found record */
-#define REG_PROG		16	/* User is updating database */
-#define REG_CLEAR_AFTER_WRITE	32
-#define REG_MAY_BE_UPDATED	64
-#define REG_AUTO_UPDATE		64	/* Used in D-forms for scroll-tables */
-#define REG_OVERWRITE		128
-#define REG_SKIP_DUP		256
+#define REG_MAKE_DUPP		1U	/* Make a copy of record when read */
+#define REG_NEW_RECORD		2U	/* Write a new record if not found */
+#define REG_UPDATE		4U	/* Uppdate record */
+#define REG_DELETE		8U	/* Delete found record */
+#define REG_PROG		16U	/* User is updating database */
+#define REG_CLEAR_AFTER_WRITE	32U
+#define REG_MAY_BE_UPDATED	64U
+#define REG_AUTO_UPDATE		64U	/* Used in D-forms for scroll-tables */
+#define REG_OVERWRITE		128U
+#define REG_SKIP_DUP		256U
 
 	/* Bits in form->status */
-#define STATUS_NO_RECORD	(1+2)	/* Record isn't usably */
-#define STATUS_GARBAGE		1
-#define STATUS_NOT_FOUND	2	/* No record in database when needed */
-#define STATUS_NO_PARENT	4	/* Parent record wasn't found */
-#define STATUS_NOT_READ		8	/* Record isn't read */
-#define STATUS_UPDATED		16	/* Record is updated by formula */
-#define STATUS_NULL_ROW		32	/* table->null_row is set */
-#define STATUS_DELETED		64
+#define STATUS_NO_RECORD	(1U+2U)	/* Record isn't usable */
+#define STATUS_GARBAGE		1U
+#define STATUS_NOT_FOUND	2U	/* No record in database when needed */
+#define STATUS_NO_PARENT	4U	/* Parent record wasn't found */
+#define STATUS_NOT_READ		8U	/* Record isn't read */
+#define STATUS_UPDATED		16U	/* Record is updated by formula */
+#define STATUS_NULL_ROW		32U	/* table->null_row is set */
+#define STATUS_DELETED		64U
 
 /*
   Such interval is "discrete": it is the set of
@@ -554,6 +571,241 @@ public:
   DDL_options(Options options) { init(options); }
   DDL_options(const DDL_options_st &options)
   { DDL_options_st::operator=(options); }
+};
+
+
+struct Lex_length_and_dec_st
+{
+private:
+  const char *m_length;
+  const char *m_dec;
+public:
+  void set(const char *length, const char *dec)
+  {
+    m_length= length;
+    m_dec= dec;
+  }
+  const char *length() const { return m_length; }
+  const char *dec() const { return m_dec; }
+};
+
+
+struct Lex_field_type_st: public Lex_length_and_dec_st
+{
+private:
+  const Type_handler *m_handler;
+  void set(const Type_handler *handler, const char *length, const char *dec)
+  {
+    m_handler= handler;
+    Lex_length_and_dec_st::set(length, dec);
+  }
+public:
+  void set(const Type_handler *handler, Lex_length_and_dec_st length_and_dec)
+  {
+    m_handler= handler;
+    Lex_length_and_dec_st::operator=(length_and_dec);
+  }
+  void set(const Type_handler *handler, const char *length)
+  {
+    set(handler, length, 0);
+  }
+  void set(const Type_handler *handler)
+  {
+    set(handler, 0, 0);
+  }
+  const Type_handler *type_handler() const { return m_handler; }
+};
+
+
+struct Lex_dyncol_type_st: public Lex_length_and_dec_st
+{
+private:
+  int m_type; // enum_dynamic_column_type is not visible here, so use int
+public:
+  void set(int type, const char *length, const char *dec)
+  {
+    m_type= type;
+    Lex_length_and_dec_st::set(length, dec);
+  }
+  void set(int type, Lex_length_and_dec_st length_and_dec)
+  {
+    m_type= type;
+    Lex_length_and_dec_st::operator=(length_and_dec);
+  }
+  void set(int type, const char *length)
+  {
+    set(type, length, 0);
+  }
+  void set(int type)
+  {
+    set(type, 0, 0);
+  }
+  int dyncol_type() const { return m_type; }
+};
+
+
+struct Lex_spblock_handlers_st
+{
+public:
+  int hndlrs;
+  void init(int count) { hndlrs= count; }
+};
+
+
+struct Lex_spblock_st: public Lex_spblock_handlers_st
+{
+public:
+  int vars;
+  int conds;
+  int curs;
+  void init()
+  {
+    vars= conds= hndlrs= curs= 0;
+  }
+  void init_using_vars(uint nvars)
+  {
+    vars= nvars;
+    conds= hndlrs= curs= 0;
+  }
+  void join(const Lex_spblock_st &b1, const Lex_spblock_st &b2)
+  {
+    vars= b1.vars + b2.vars;
+    conds= b1.conds + b2.conds;
+    hndlrs= b1.hndlrs + b2.hndlrs;
+    curs= b1.curs + b2.curs;
+  }
+};
+
+
+class Lex_spblock: public Lex_spblock_st
+{
+public:
+  Lex_spblock() { init(); }
+  Lex_spblock(const Lex_spblock_handlers_st &other)
+  {
+    vars= conds= curs= 0;
+    hndlrs= other.hndlrs;
+  }
+};
+
+
+struct Lex_for_loop_bounds_st
+{
+public:
+  class sp_assignment_lex *m_index;  // The first iteration value (or cursor)
+  class sp_assignment_lex *m_target_bound; // The last iteration value
+  int8 m_direction;
+  bool m_implicit_cursor;
+  bool is_for_loop_cursor() const { return m_target_bound == NULL; }
+};
+
+
+class Lex_for_loop_bounds_intrange: public Lex_for_loop_bounds_st
+{
+public:
+  Lex_for_loop_bounds_intrange(int8 direction,
+                               class sp_assignment_lex *left_expr,
+                               class sp_assignment_lex *right_expr)
+  {
+    m_direction= direction;
+    m_index=        direction > 0 ? left_expr  : right_expr;
+    m_target_bound= direction > 0 ? right_expr : left_expr;
+    m_implicit_cursor= false;
+  }
+};
+
+
+struct Lex_for_loop_st
+{
+public:
+  class sp_variable *m_index;  // The first iteration value (or cursor)
+  class sp_variable *m_target_bound; // The last iteration value
+  int m_cursor_offset;
+  int8 m_direction;
+  bool m_implicit_cursor;
+  void init()
+  {
+    m_index= 0;
+    m_target_bound= 0;
+    m_direction= 0;
+    m_implicit_cursor= false;
+  }
+  void init(const Lex_for_loop_st &other)
+  {
+    *this= other;
+  }
+  bool is_for_loop_cursor() const { return m_target_bound == NULL; }
+  bool is_for_loop_explicit_cursor() const
+  {
+    return is_for_loop_cursor() && !m_implicit_cursor;
+  }
+};
+
+
+enum trim_spec { TRIM_LEADING, TRIM_TRAILING, TRIM_BOTH };
+
+struct Lex_trim_st
+{
+  Item *m_remove;
+  Item *m_source;
+  trim_spec m_spec;
+public:
+  void set(trim_spec spec, Item *remove, Item *source)
+  {
+    m_spec= spec;
+    m_remove= remove;
+    m_source= source;
+  }
+  void set(trim_spec spec, Item *source)
+  {
+    set(spec, NULL, source);
+  }
+  Item *make_item_func_trim_std(THD *thd) const;
+  Item *make_item_func_trim_oracle(THD *thd) const;
+  Item *make_item_func_trim(THD *thd) const;
+};
+
+
+class Lex_trim: public Lex_trim_st
+{
+public:
+  Lex_trim(trim_spec spec, Item *source) { set(spec, source); }
+};
+
+
+class Load_data_param
+{
+protected:
+  CHARSET_INFO *m_charset;   // Character set of the file
+  ulonglong m_fixed_length;  // Sum of target field lengths for fixed format
+  bool m_is_fixed_length;
+  bool m_use_blobs;
+public:
+  Load_data_param(CHARSET_INFO *cs, bool is_fixed_length):
+    m_charset(cs),
+    m_fixed_length(0),
+    m_is_fixed_length(is_fixed_length),
+    m_use_blobs(false)
+  { }
+  bool add_outvar_field(THD *thd, const Field *field);
+  bool add_outvar_user_var(THD *thd);
+  CHARSET_INFO *charset() const { return m_charset; }
+  bool is_fixed_length() const { return m_is_fixed_length; }
+  bool use_blobs() const { return m_use_blobs; }
+};
+
+
+class Load_data_outvar
+{
+public:
+  virtual ~Load_data_outvar() {}
+  virtual bool load_data_set_null(THD *thd, const Load_data_param *param)= 0;
+  virtual bool load_data_set_value(THD *thd, const char *pos, uint length,
+                                   const Load_data_param *param)= 0;
+  virtual bool load_data_set_no_data(THD *thd, const Load_data_param *param)= 0;
+  virtual void load_data_print_for_log_event(THD *thd, class String *to) const= 0;
+  virtual bool load_data_add_outvar(THD *thd, Load_data_param *param) const= 0;
+  virtual uint load_data_fixed_length() const= 0;
 };
 
 

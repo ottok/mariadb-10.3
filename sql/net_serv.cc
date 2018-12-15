@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2012, 2017, MariaDB Corporation
+   Copyright (c) 2012, 2018, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@
   embedded library
  */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include <mysql.h>
 #include <mysql_com.h>
 #include <mysqld_error.h>
@@ -45,6 +45,7 @@
 #include <violite.h>
 #include <signal.h>
 #include "probes_mysql.h"
+#include "proxy_protocol.h"
 
 #ifdef EMBEDDED_LIBRARY
 #undef MYSQL_SERVER
@@ -61,15 +62,22 @@
 #define EXTRA_DEBUG_ASSERT DBUG_ASSERT
 #else
 static void inline EXTRA_DEBUG_fprintf(...) {}
+#ifndef MYSQL_SERVER
 static int inline EXTRA_DEBUG_fflush(...) { return 0; }
-#define EXTRA_DEBUG_ASSERT(X) do {} while(0)
 #endif
+#endif /* EXTRA_DEBUG */
+
 #ifdef MYSQL_SERVER
+#include <sql_class.h>
+#include <sql_connect.h>
 #define MYSQL_SERVER_my_error my_error
 #else
 static void inline MYSQL_SERVER_my_error(...) {}
 #endif
 
+#ifndef EXTRA_DEBUG_ASSERT
+# define EXTRA_DEBUG_ASSERT(X) do {} while(0)
+#endif
 
 /*
   The following handles the differences when this is linked between the
@@ -102,26 +110,26 @@ void sql_print_error(const char *format,...);
   extern, but as it's hard to include sql_priv.h here, we have to
   live with this for a while.
 */
-extern uint test_flags;
+extern ulonglong test_flags;
 extern ulong bytes_sent, bytes_received, net_big_packet_count;
 #ifdef HAVE_QUERY_CACHE
 #define USE_QUERY_CACHE
-extern void query_cache_insert(void *thd, const char *packet, ulong length,
+extern void query_cache_insert(void *thd, const char *packet, size_t length,
                                unsigned pkt_nr);
 #endif // HAVE_QUERY_CACHE
 #define update_statistics(A) A
-extern my_bool thd_net_is_killed();
+extern my_bool thd_net_is_killed(THD *thd);
 /* Additional instrumentation hooks for the server */
 #include "mysql_com_server.h"
 #else
 #define update_statistics(A)
-#define thd_net_is_killed() 0
+#define thd_net_is_killed(A) 0
 #endif
 
-#define TEST_BLOCKING		8
-#define MAX_PACKET_LENGTH (256L*256L*256L-1)
 
-static my_bool net_write_buff(NET *, const uchar *, ulong);
+static my_bool net_write_buff(NET *, const uchar *, size_t len);
+
+my_bool net_allocate_new_packet(NET *net, void *thd, uint my_flags);
 
 /** Init with packet info. */
 
@@ -131,14 +139,12 @@ my_bool my_net_init(NET *net, Vio *vio, void *thd, uint my_flags)
   DBUG_PRINT("enter", ("my_flags: %u", my_flags));
   net->vio = vio;
   my_net_local_init(net);			/* Set some limits */
-  if (!(net->buff=(uchar*) my_malloc((size_t) net->max_packet+
-				     NET_HEADER_SIZE + COMP_HEADER_SIZE +1,
-				     MYF(MY_WME | my_flags))))
+
+  if (net_allocate_new_packet(net, thd, my_flags))
     DBUG_RETURN(1);
-  net->buff_end=net->buff+net->max_packet;
+
   net->error=0; net->return_status=0;
   net->pkt_nr=net->compress_pkt_nr=0;
-  net->write_pos=net->read_pos = net->buff;
   net->last_error[0]=0;
   net->compress=0; net->reading_or_writing=0;
   net->where_b = net->remain_in_buf=0;
@@ -164,6 +170,18 @@ my_bool my_net_init(NET *net, Vio *vio, void *thd, uint my_flags)
 #endif
     vio_fastsend(vio);
   }
+  DBUG_RETURN(0);
+}
+
+my_bool net_allocate_new_packet(NET *net, void *thd, uint my_flags)
+{
+  DBUG_ENTER("net_allocate_new_packet");
+  if (!(net->buff=(uchar*) my_malloc((size_t) net->max_packet+
+				     NET_HEADER_SIZE + COMP_HEADER_SIZE +1,
+				     MYF(MY_WME | my_flags))))
+    DBUG_RETURN(1);
+  net->buff_end=net->buff+net->max_packet;
+  net->write_pos=net->read_pos = net->buff;
   DBUG_RETURN(0);
 }
 
@@ -534,13 +552,13 @@ net_write_command(NET *net,uchar command,
 */
 
 static my_bool
-net_write_buff(NET *net, const uchar *packet, ulong len)
+net_write_buff(NET *net, const uchar *packet, size_t len)
 {
-  ulong left_length;
+  size_t left_length;
   if (net->compress && net->max_packet > MAX_PACKET_LENGTH)
-    left_length= (ulong) (MAX_PACKET_LENGTH - (net->write_pos - net->buff));
+    left_length= (MAX_PACKET_LENGTH - (net->write_pos - net->buff));
   else
-    left_length= (ulong) (net->buff_end - net->write_pos);
+    left_length= (net->buff_end - net->write_pos);
 
 #ifdef DEBUG_DATA_PACKETS
   DBUG_DUMP("data_written", packet, len);
@@ -608,7 +626,7 @@ net_real_write(NET *net,const uchar *packet, size_t len)
   query_cache_insert(net->thd, (char*) packet, len, net->pkt_nr);
 #endif
 
-  if (net->error == 2)
+  if (unlikely(net->error == 2))
     DBUG_RETURN(-1);				/* socket can't be used */
 
   net->reading_or_writing=2;
@@ -818,6 +836,70 @@ static my_bool my_net_skip_rest(NET *net, uint32 remain, thr_alarm_t *alarmed,
 
 
 /**
+  Try to parse and process proxy protocol header.
+
+  This function is called in case MySQL packet header cannot be parsed.
+  It checks if proxy header was sent, and that it was send from allowed remote
+  host, as defined by proxy-protocol-networks parameter.
+
+  If proxy header is parsed, then THD and ACL structures and changed to indicate
+  the new peer address and port.
+
+  Note, that proxy header can only be sent either when the connection is established,
+  or as the client reply packet to
+*/
+#undef IGNORE                   /* for Windows */
+typedef enum { RETRY, ABORT, IGNORE} handle_proxy_header_result;
+static handle_proxy_header_result handle_proxy_header(NET *net)
+{
+#if !defined(MYSQL_SERVER) || defined(EMBEDDED_LIBRARY)
+  return IGNORE;
+#else
+  THD *thd= (THD *)net->thd;
+
+  if (!has_proxy_protocol_header(net) || !thd ||
+      thd->get_command() != COM_CONNECT)
+    return IGNORE;
+
+  /*
+    Proxy information found in the first 4 bytes received so far.
+    Read and parse proxy header , change peer ip address and port in THD.
+  */
+  proxy_peer_info peer_info;
+
+  if (!thd->net.vio)
+  {
+    DBUG_ASSERT(0);
+    return ABORT;
+  }
+
+  if (!is_proxy_protocol_allowed((sockaddr *)&(thd->net.vio->remote)))
+  {
+     /* proxy-protocol-networks variable needs to be set to allow this remote address */
+     my_printf_error(ER_HOST_NOT_PRIVILEGED, "Proxy header is not accepted from %s",
+       MYF(0), thd->main_security_ctx.ip);
+     return ABORT;
+  }
+
+  if (parse_proxy_protocol_header(net, &peer_info))
+  {
+     /* Failed to parse proxy header*/
+     my_printf_error(ER_UNKNOWN_ERROR, "Failed to parse proxy header", MYF(0));
+     return ABORT;
+  }
+
+  if (peer_info.is_local_command)
+    /* proxy header indicates LOCAL connection, no action necessary */
+    return RETRY;
+  /* Change peer address in THD and ACL structures.*/
+  uint host_errors;
+  return (handle_proxy_header_result)thd_set_peer_addr(thd,
+                         &(peer_info.peer_addr), NULL, peer_info.port,
+                         false, &host_errors);
+#endif
+}
+
+/**
   Reads one packet to net->buff + net->where_b.
   Long packets are handled by my_net_read().
   This function reallocates the net->buff buffer if necessary.
@@ -839,6 +921,9 @@ my_real_read(NET *net, size_t *complen,
 #ifndef NO_ALARM
   ALARM alarm_buff;
 #endif
+
+retry:
+
   my_bool net_blocking=vio_is_blocking(net->vio);
   uint32 remain= (net->compress ? NET_HEADER_SIZE+COMP_HEADER_SIZE :
 		  NET_HEADER_SIZE);
@@ -881,7 +966,7 @@ my_real_read(NET *net, size_t *complen,
 	  DBUG_PRINT("info",("vio_read returned %ld  errno: %d",
 			     (long) length, vio_errno(net->vio)));
 
-          if (i== 0 && thd_net_is_killed())
+          if (i== 0 && unlikely(thd_net_is_killed((THD*) net->thd)))
           {
             DBUG_PRINT("info", ("thd is killed"));
             len= packet_error;
@@ -959,7 +1044,7 @@ my_real_read(NET *net, size_t *complen,
 #endif
       if (i == 0)
       {					/* First parts is packet length */
-	ulong helping;
+        size_t helping;
 #ifndef DEBUG_DATA_PACKETS
         DBUG_DUMP("packet_header", net->buff+net->where_b,
                   NET_HEADER_SIZE);
@@ -1070,6 +1155,17 @@ end:
 
 packets_out_of_order:
   {
+    switch (handle_proxy_header(net)) {
+    case ABORT:
+        /* error happened, message is already written. */
+        len= packet_error;
+        goto end; 
+    case RETRY:
+        goto retry;
+    case IGNORE:
+        break;
+    }
+
     DBUG_PRINT("error",
                ("Packets out of order (Found: %d, expected %u)",
                 (int) net->buff[net->where_b + 3],
@@ -1124,15 +1220,22 @@ ulong my_net_read(NET *net)
   The function returns the length of the found packet or packet_error.
   net->read_pos points to the read data.
 */
+ulong
+my_net_read_packet(NET *net, my_bool read_from_server)
+{
+  ulong reallen = 0;
+  return my_net_read_packet_reallen(net, read_from_server, &reallen); 
+}
 
 
 ulong
-my_net_read_packet(NET *net, my_bool read_from_server)
+my_net_read_packet_reallen(NET *net, my_bool read_from_server, ulong* reallen)
 {
   size_t len, complen;
 
   MYSQL_NET_READ_START();
 
+  *reallen = 0;
 #ifdef HAVE_COMPRESS
   if (!net->compress)
   {
@@ -1145,19 +1248,23 @@ my_net_read_packet(NET *net, my_bool read_from_server)
       size_t total_length= 0;
       do
       {
-	net->where_b += len;
+	net->where_b += (ulong)len;
 	total_length += len;
 	len = my_real_read(net,&complen, 0);
       } while (len == MAX_PACKET_LENGTH);
-      if (len != packet_error)
+      if (likely(len != packet_error))
 	len+= total_length;
       net->where_b = save_pos;
     }
+
     net->read_pos = net->buff + net->where_b;
-    if (len != packet_error)
+    if (likely(len != packet_error))
+    {
       net->read_pos[len]=0;		/* Safeguard for mysql_use_result */
+      *reallen = (ulong)len;
+    }
     MYSQL_NET_READ_DONE(0, len);
-    return len;
+    return (ulong)len;
 #ifdef HAVE_COMPRESS
   }
   else
@@ -1255,7 +1362,8 @@ my_net_read_packet(NET *net, my_bool read_from_server)
         MYSQL_NET_READ_DONE(1, 0);
 	return packet_error;
       }
-      buf_length+= complen;
+      buf_length+= (ulong)complen;
+      *reallen += packet_len;
     }
 
     net->read_pos=      net->buff+ first_packet_offset + NET_HEADER_SIZE;
@@ -1268,7 +1376,7 @@ my_net_read_packet(NET *net, my_bool read_from_server)
   }
 #endif /* HAVE_COMPRESS */
   MYSQL_NET_READ_DONE(0, len);
-  return len;
+  return (ulong)len;
 }
 
 

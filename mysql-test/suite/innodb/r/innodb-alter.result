@@ -1,4 +1,4 @@
-SET NAMES utf8;
+SET NAMES utf8mb4;
 CREATE TABLE t1 (
 c1 INT PRIMARY KEY, c2 INT DEFAULT 1, ct TEXT,
 INDEX(c2))
@@ -42,8 +42,8 @@ SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `c1` int(11) NOT NULL,
-  `c2` int(11) DEFAULT '1',
-  `ct` text,
+  `c2` int(11) DEFAULT 1,
+  `ct` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2` (`c2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -53,7 +53,7 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `c1` int(11) NOT NULL,
   `c2` int(11),
-  `ct` text,
+  `ct` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2` (`c2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -165,7 +165,7 @@ Table	Create Table
 t3	CREATE TABLE `t3` (
   `c1` int(11) NOT NULL,
   `c3` int(11) DEFAULT NULL,
-  `ct` text,
+  `ct` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2` (`c3`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -191,7 +191,7 @@ Table	Create Table
 t3	CREATE TABLE `t3` (
   `c1` int(11) NOT NULL,
   `1234567890123456789012345678901234567890123456789012345678901234` int(11) DEFAULT NULL,
-  `ct` text,
+  `ct` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2` (`1234567890123456789012345678901234567890123456789012345678901234`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -210,9 +210,9 @@ ALTER TABLE t3 CHANGE
 `倀倁倂倃倄倅倆倇倈倉倊個倌倍倎倏倐們倒倓倔倕倖倗倘候倚倛倜倝倞借倠倡倢倣値倥倦倧倨倩倪倫倬倭倮倯倰倱倲倳倴倵倶倷倸倹债倻值倽倾Ä`
 c3 INT;
 ALTER TABLE t3 CHANGE c3 𐌀𐌁𐌂𐌃𐌄𐌅𐌆𐌇𐌈𐌉𐌊𐌋𐌌𐌍𐌎𐌏𐌐𐌑𐌒𐌓𐌔𐌕𐌖𐌗𐌘𐌙𐌚𐌛𐌜 INT;
-ERROR HY000: Invalid utf8 character string: '\xF0\x90\x8C\x80\xF0\x90\x8C\x81\xF0\x90\x8C\x82\xF0\x90\x8C\x83'
+ERROR HY000: Invalid utf8mb4 character string: '\xF0\x90\x8C\x80\xF0\x90\x8C\x81\xF0\x90\x8C\x82\xF0\x90\x8C\x83'
 ALTER TABLE t3 CHANGE c3 😲 INT;
-ERROR HY000: Invalid utf8 character string: '\xF0\x9F\x98\xB2'
+ERROR HY000: Invalid utf8mb4 character string: '\xF0\x9F\x98\xB2'
 ALTER TABLE t3 RENAME TO t2;
 SELECT st.NAME, i.NAME
 FROM sys_tables st INNER JOIN INFORMATION_SCHEMA.INNODB_SYS_TABLES i
@@ -224,7 +224,7 @@ Table	Create Table
 t2	CREATE TABLE `t2` (
   `c1` int(11) NOT NULL,
   `c3` int(11) DEFAULT NULL,
-  `ct` text,
+  `ct` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2` (`c3`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -254,17 +254,17 @@ test/t1c3	c3	c2	0
 ALTER TABLE t1 DROP INDEX c2;
 ERROR HY000: Cannot drop index 'c2': needed in a foreign key constraint
 ALTER TABLE t1 DROP INDEX c4;
-ERROR 42000: Can't DROP 'c4'; check that column/key exists
+ERROR 42000: Can't DROP INDEX `c4`; check that it exists
 ALTER TABLE t1c DROP FOREIGN KEY c2;
-ERROR 42000: Can't DROP 'c2'; check that column/key exists
+ERROR 42000: Can't DROP FOREIGN KEY `c2`; check that it exists
 ALTER TABLE t1c DROP FOREIGN KEY t1c2, DROP FOREIGN KEY c2;
-ERROR 42000: Can't DROP 'c2'; check that column/key exists
+ERROR 42000: Can't DROP FOREIGN KEY `c2`; check that it exists
 ALTER TABLE t1c DROP FOREIGN KEY t1c2, DROP FOREIGN KEY c2, DROP INDEX c2;
-ERROR 42000: Can't DROP 'c2'; check that column/key exists
+ERROR 42000: Can't DROP FOREIGN KEY `c2`; check that it exists
 ALTER TABLE t1c DROP INDEX c2;
 ERROR HY000: Cannot drop index 'c2': needed in a foreign key constraint
 ALTER TABLE t1c DROP FOREIGN KEY ẗ1C2;
-ERROR 42000: Can't DROP 'ẗ1C2'; check that column/key exists
+ERROR 42000: Can't DROP FOREIGN KEY `ẗ1C2`; check that it exists
 SHOW CREATE TABLE t1c;
 Table	Create Table
 t1c	CREATE TABLE `t1c` (
@@ -415,12 +415,10 @@ CREATE TABLE t1o LIKE t1;
 ALTER TABLE t1 ADD FULLTEXT INDEX (ct),
 CHANGE c1 pk INT, ALTER c2 SET DEFAULT 42, RENAME TO tt,
 ALGORITHM=INPLACE, LOCK=NONE;
-ERROR 0A000: LOCK=NONE is not supported. Reason: Fulltext index creation requires a lock. Try LOCK=SHARED.
+ERROR 0A000: LOCK=NONE is not supported. Reason: Fulltext index creation requires a lock. Try LOCK=SHARED
 ALTER TABLE t1 ADD FULLTEXT INDEX (ct),
 CHANGE c1 pk INT, ALTER c2 SET DEFAULT 42, RENAME TO tt,
 ALGORITHM=INPLACE, LOCK=SHARED;
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SELECT i.NAME,i.POS,i.MTYPE,i.PRTYPE,i.LEN
 FROM INFORMATION_SCHEMA.INNODB_SYS_COLUMNS i
 INNER JOIN sys_tables st ON i.TABLE_ID=st.TABLE_ID;
@@ -435,11 +433,32 @@ SHOW CREATE TABLE tt;
 Table	Create Table
 tt	CREATE TABLE `tt` (
   `pk` int(11) NOT NULL,
-  `c2` int(11) DEFAULT '42',
-  `ct` text,
+  `c2` int(11) DEFAULT 42,
+  `ct` text DEFAULT NULL,
   PRIMARY KEY (`pk`),
   FULLTEXT KEY `ct` (`ct`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
+ALTER TABLE tt ADD COLUMN c CHAR(1) NOT NULL FIRST, LOCK=NONE;
+ERROR 0A000: LOCK=NONE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try LOCK=SHARED
+ALTER TABLE tt ADD COLUMN c CHAR(1) NOT NULL, LOCK=NONE;
+ERROR 0A000: LOCK=NONE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try LOCK=SHARED
+CREATE TABLE tu (
+pk INT PRIMARY KEY, FTS_DOC_ID BIGINT UNSIGNED NOT NULL, t TEXT,
+FULLTEXT INDEX(t)
+) ENGINE=InnoDB;
+ALTER TABLE tu ADD COLUMN c CHAR(1) NOT NULL FIRST, LOCK=NONE;
+ERROR 0A000: LOCK=NONE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try LOCK=SHARED
+ALTER TABLE tu ADD COLUMN c CHAR(1) NOT NULL, LOCK=NONE;
+DROP TABLE tu;
+CREATE TABLE tv (
+pk INT PRIMARY KEY, FTS_DOC_ID BIGINT UNSIGNED NOT NULL, t TEXT,
+UNIQUE INDEX FTS_DOC_ID_INDEX(FTS_DOC_ID),
+FULLTEXT INDEX(t)
+) ENGINE=InnoDB;
+ALTER TABLE tv ADD COLUMN c CHAR(1) NOT NULL FIRST, LOCK=NONE;
+ERROR 0A000: LOCK=NONE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try LOCK=SHARED
+ALTER TABLE tv ADD COLUMN c CHAR(1) NOT NULL, LOCK=NONE;
+DROP TABLE tv;
 ALTER TABLE t1o CHANGE c1 dB_row_Id INT, ALGORITHM=COPY;
 ERROR 42000: Incorrect column name 'dB_row_Id'
 ALTER TABLE t1o CHANGE c1 dB_row_Id INT, ALGORITHM=INPLACE;
@@ -461,30 +480,28 @@ ADD COLUMN FTS_DOC_ID BIGINT UNSIGNED NOT NULL;
 ALTER TABLE t1o ADD FULLTEXT INDEX(ct), ADD COLUMN FTS_DOC_ID INT;
 ERROR 42S21: Duplicate column name 'FTS_DOC_ID'
 ALTER TABLE t1o DROP COLUMN FTS_DOC_ID, ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY
 ALTER TABLE t1o DROP COLUMN FTS_DOC_ID, DROP INDEX ct, ALGORITHM=INPLACE;
 ALTER TABLE t1o ADD FULLTEXT INDEX(ct), ADD COLUMN cu TEXT;
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 ALTER TABLE t1o ADD FULLTEXT INDEX(cu), ADD COLUMN FTS_DOC_ID BIGINT,
 ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY
 ALTER TABLE t1o ADD FULLTEXT INDEX(cu), ADD COLUMN FTS_DOC_ID BIGINT;
 ERROR 42000: Incorrect column name 'FTS_DOC_ID'
 ALTER TABLE t1o ADD FULLTEXT INDEX(cu), ADD COLUMN FTS_DOC_ID BIGINT UNSIGNED,
 ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY
 ALTER TABLE t1o ADD FULLTEXT INDEX(cu), ADD COLUMN FTS_DOC_ID BIGINT UNSIGNED;
 ERROR 42000: Incorrect column name 'FTS_DOC_ID'
 ALTER TABLE t1o ADD FULLTEXT INDEX(cu),
 ADD COLUMN FTS_DOC_ID BIGINT UNSIGNED NOT NULL, ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY
 ALTER TABLE t1o ADD COLUMN FTS_DOC_ID BIGINT UNSIGNED NOT NULL,
 ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: InnoDB presently supports one FULLTEXT index creation at a time. Try ALGORITHM=COPY
 ALTER TABLE t1o ADD COLUMN FTS_DOC_ID BIGINT UNSIGNED NOT NULL;
 ALTER TABLE t1o DROP COLUMN FTS_DOC_ID, ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY
 ALTER TABLE t1o DROP COLUMN FTS_DOC_ID;
 ALTER TABLE t1o ADD FULLTEXT INDEX(ct), CHANGE c1 FTS_DOC_ID INT,
 ALGORITHM=COPY;
@@ -498,7 +515,7 @@ ERROR 42000: Incorrect column name 'FTS_DOC_ID'
 ALTER TABLE t1o ADD FULLTEXT INDEX(ct),
 CHANGE c1 FTS_DOC_ID BIGINT UNSIGNED NOT NULL,
 ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot change column type INPLACE. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot change column type INPLACE. Try ALGORITHM=COPY
 CREATE TABLE t1n LIKE t1o;
 ALTER TABLE t1n ADD FULLTEXT INDEX(ct);
 ALTER TABLE t1n CHANGE c1 Fts_DOC_ID INT, ALGORITHM=INPLACE;
@@ -516,8 +533,8 @@ Table	Create Table
 t1n	CREATE TABLE `t1n` (
   `c2` int(11) NOT NULL,
   `ct` int(11) DEFAULT NULL,
-  `c1` text,
-  `cu` text,
+  `c1` text DEFAULT NULL,
+  `cu` text DEFAULT NULL,
   PRIMARY KEY (`c2`),
   FULLTEXT KEY `ct` (`c1`),
   FULLTEXT KEY `ct_2` (`c1`)
@@ -529,8 +546,8 @@ Table	Create Table
 t1n	CREATE TABLE `t1n` (
   `c1` int(11) NOT NULL,
   `c2` int(11) DEFAULT NULL,
-  `ct` text,
-  `cu` text,
+  `ct` text DEFAULT NULL,
+  `cu` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   FULLTEXT KEY `ct` (`ct`),
   FULLTEXT KEY `ct_2` (`ct`)
@@ -545,8 +562,8 @@ Table	Create Table
 t1n	CREATE TABLE `t1n` (
   `c1` int(11) NOT NULL,
   `c4` int(11) DEFAULT NULL,
-  `ct` text,
-  `cu` text,
+  `ct` text DEFAULT NULL,
+  `cu` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c4` (`c4`),
   FULLTEXT KEY `ct` (`ct`),
@@ -561,8 +578,8 @@ Table	Create Table
 t1n	CREATE TABLE `t1n` (
   `c1` int(11) NOT NULL,
   `c11` int(11) DEFAULT NULL,
-  `ct` text,
-  `cu` text,
+  `ct` text DEFAULT NULL,
+  `cu` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c11` (`c11`),
   FULLTEXT KEY `ct` (`ct`),
@@ -571,14 +588,14 @@ t1n	CREATE TABLE `t1n` (
 DROP TABLE t1n;
 ALTER TABLE t1o MODIFY c1 BIGINT UNSIGNED NOT NULL, DROP INDEX ct,
 ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot change column type INPLACE. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot change column type INPLACE. Try ALGORITHM=COPY
 ALTER TABLE t1o MODIFY c1 BIGINT UNSIGNED NOT NULL, DROP INDEX ct;
 ALTER TABLE t1o CHANGE c1 FTS_DOC_ID BIGINT UNSIGNED NOT NULL,
 ALGORITHM=INPLACE;
 ALTER TABLE t1o ADD FULLTEXT INDEX(ct), ALGORITHM=INPLACE;
 ALTER TABLE t1o CHANGE FTS_DOC_ID foo_id BIGINT UNSIGNED NOT NULL,
 ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY
 SELECT sc.pos FROM information_schema.innodb_sys_columns sc
 INNER JOIN information_schema.innodb_sys_tables st
 ON sc.TABLE_ID=st.TABLE_ID
@@ -590,8 +607,8 @@ Table	Create Table
 t1o	CREATE TABLE `t1o` (
   `FTS_DOC_ID` bigint(20) unsigned NOT NULL,
   `c2` int(11) DEFAULT NULL,
-  `ct` text,
-  `cu` text,
+  `ct` text DEFAULT NULL,
+  `cu` text DEFAULT NULL,
   PRIMARY KEY (`FTS_DOC_ID`),
   FULLTEXT KEY `ct` (`ct`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
@@ -602,8 +619,8 @@ Table	Create Table
 t1o	CREATE TABLE `t1o` (
   `foo_id` bigint(20) unsigned NOT NULL,
   `c2` int(11) DEFAULT NULL,
-  `ct` text,
-  `cu` text,
+  `ct` text DEFAULT NULL,
+  `cu` text DEFAULT NULL,
   PRIMARY KEY (`foo_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 DROP TABLE t1c, t1p, sys_tables, sys_indexes, sys_foreign;
@@ -636,9 +653,6 @@ CHANGE FTS_DOC_ID foo_id BIGINT UNSIGNED NOT NULL;
 ALTER TABLE t1o ADD UNIQUE INDEX FTS_DOC_ID_INDEX(foo_id);
 ALTER TABLE t1o CHANGE foo_id FTS_DOC_ID BIGINT UNSIGNED NOT NULL,
 ADD FULLTEXT INDEX(ct);
-ALTER TABLE t1o CHANGE FTS_DOC_ID foo_id BIGINT UNSIGNED NOT NULL,
-ALGORITHM=INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Cannot drop or rename FTS_DOC_ID. Try ALGORITHM=COPY.
 DROP TABLE sys_indexes;
 CREATE TABLE sys_indexes SELECT i.* FROM INFORMATION_SCHEMA.INNODB_SYS_INDEXES i
 INNER JOIN sys_tables st ON i.TABLE_ID=st.TABLE_ID;
@@ -684,8 +698,6 @@ FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES
 WHERE name LIKE '%FTS_%' ORDER BY 1, 2;
 prefix	name
 ALTER TABLE t ADD FULLTEXT INDEX(t);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SELECT sc.pos, sc.NAME FROM information_schema.innodb_sys_columns sc
 INNER JOIN information_schema.innodb_sys_tables st
 ON sc.TABLE_ID=st.TABLE_ID
@@ -714,6 +726,7 @@ t2	CREATE TABLE `t2` (
   CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`c2`) REFERENCES `t1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 ALTER TABLE t1 CHANGE COLUMN c1 C1 INT;
+ALTER TABLE t2 CHANGE COLUMN c2 C2 INT;
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -723,24 +736,149 @@ t1	CREATE TABLE `t1` (
 SHOW CREATE TABLE t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c2` int(11) NOT NULL,
-  KEY `c2` (`c2`),
+  `C2` int(11) DEFAULT NULL,
+  KEY `c2` (`C2`),
   CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`c2`) REFERENCES `t1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
+ALTER TABLE t1 CHANGE COLUMN C1 c5 INT;
+ALTER TABLE t2 CHANGE COLUMN C2 c6 INT;
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `C1` int(11) NOT NULL,
-  PRIMARY KEY (`C1`)
+  `c5` int(11) NOT NULL,
+  PRIMARY KEY (`c5`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
 SHOW CREATE TABLE t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `c2` int(11) NOT NULL,
-  KEY `c2` (`c2`),
-  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`c2`) REFERENCES `t1` (`c1`)
+  `c6` int(11) DEFAULT NULL,
+  KEY `c2` (`c6`),
+  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`c6`) REFERENCES `t1` (`c5`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1
+SELECT C.NAME FROM INFORMATION_SCHEMA.INNODB_SYS_COLUMNS C INNER JOIN
+INFORMATION_SCHEMA.INNODB_SYS_TABLES T ON C.TABLE_ID=T.TABLE_ID
+WHERE T.NAME='test/t1';
+NAME
+c5
+SELECT F.NAME FROM INFORMATION_SCHEMA.INNODB_SYS_FIELDS F INNER JOIN
+INFORMATION_SCHEMA.INNODB_SYS_INDEXES I ON F.INDEX_ID=I.INDEX_ID INNER JOIN
+INFORMATION_SCHEMA.INNODB_SYS_TABLES T ON I.TABLE_ID=T.TABLE_ID
+WHERE T.NAME='test/t1' AND I.NAME='PRIMARY';
+NAME
+c5
+SELECT C.REF_COL_NAME, C.FOR_COL_NAME FROM INFORMATION_SCHEMA.INNODB_SYS_FOREIGN_COLS C INNER JOIN
+INFORMATION_SCHEMA.INNODB_SYS_FOREIGN F ON C.ID=F.ID
+WHERE F.FOR_NAME='test/t2';
+REF_COL_NAME	FOR_COL_NAME
+c5	c6
 DROP TABLE t2, t1;
+# virtual columns case too
+CREATE TABLE t1 (a INT, b INT GENERATED ALWAYS AS (a) VIRTUAL) ENGINE = InnoDB;
+ALTER TABLE t1 CHANGE COLUMN a A INT;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `A` int(11) DEFAULT NULL,
+  `b` int(11) GENERATED ALWAYS AS (`A`) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+SELECT C.NAME FROM INFORMATION_SCHEMA.INNODB_SYS_COLUMNS C INNER JOIN
+INFORMATION_SCHEMA.INNODB_SYS_TABLES T ON C.TABLE_ID=T.TABLE_ID
+WHERE T.NAME='test/t1';
+NAME
+a
+b
+DROP TABLE t1;
+# different FOREIGN KEY cases
+CREATE TABLE t1 (
+a INT UNIQUE KEY,
+b INT UNIQUE KEY,
+c INT UNIQUE KEY,
+d INT UNIQUE KEY
+) ENGINE=INNODB;
+CREATE TABLE t2 (
+aa INT,
+bb INT,
+cc INT,
+dd INT
+) ENGINE=INNODB;
+INSERT INTO t1 VALUES (1, 1, 1, 1);
+INSERT INTO t2 VALUES (1, 1, 1, 1);
+ALTER TABLE t1 CHANGE a A INT, ALGORITHM=INPLACE;
+ALTER TABLE t1 CHANGE c C INT, ALGORITHM=INPLACE;
+ALTER TABLE t2 CHANGE cc CC INT, ALGORITHM=INPLACE;
+ALTER TABLE t2 CHANGE dd DD INT, ALGORITHM=INPLACE;
+SET foreign_key_checks=0;
+ALTER TABLE t2
+ADD FOREIGN KEY(aa) REFERENCES t1(a),
+ADD FOREIGN KEY(bb) REFERENCES t1(b),
+ADD FOREIGN KEY(cc) REFERENCES t1(c),
+ADD FOREIGN KEY(dd) REFERENCES t1(d),
+ALGORITHM=INPLACE;
+ALTER TABLE t1 CHANGE b B INT, ALGORITHM=INPLACE;
+ALTER TABLE t2 CHANGE aa AA INT, ALGORITHM=INPLACE;
+ALTER TABLE t1 CHANGE d D INT, ALGORITHM=INPLACE;
+ALTER TABLE t2 CHANGE bb BB INT, ALGORITHM=INPLACE;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `A` int(11) DEFAULT NULL,
+  `B` int(11) DEFAULT NULL,
+  `C` int(11) DEFAULT NULL,
+  `D` int(11) DEFAULT NULL,
+  UNIQUE KEY `a` (`A`),
+  UNIQUE KEY `b` (`B`),
+  UNIQUE KEY `c` (`C`),
+  UNIQUE KEY `d` (`D`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+SHOW CREATE TABLE t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `AA` int(11) DEFAULT NULL,
+  `BB` int(11) DEFAULT NULL,
+  `CC` int(11) DEFAULT NULL,
+  `DD` int(11) DEFAULT NULL,
+  KEY `aa` (`AA`),
+  KEY `bb` (`BB`),
+  KEY `CC` (`CC`),
+  KEY `DD` (`DD`),
+  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`),
+  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`bb`) REFERENCES `t1` (`b`),
+  CONSTRAINT `t2_ibfk_3` FOREIGN KEY (`cc`) REFERENCES `t1` (`c`),
+  CONSTRAINT `t2_ibfk_4` FOREIGN KEY (`dd`) REFERENCES `t1` (`d`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+DELETE FROM t1 WHERE a=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE A=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE b=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE B=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE c=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE C=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE d=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DELETE FROM t1 WHERE D=1;
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t2`, CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`a`))
+DROP TABLE t2, t1;
+# virtual columns case too
+CREATE TABLE t1 (a INT, b INT GENERATED ALWAYS AS (a) VIRTUAL) ENGINE = InnoDB;
+ALTER TABLE t1 CHANGE COLUMN a A INT;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `A` int(11) DEFAULT NULL,
+  `b` int(11) GENERATED ALWAYS AS (`A`) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+SELECT C.NAME FROM INFORMATION_SCHEMA.INNODB_SYS_COLUMNS C INNER JOIN
+INFORMATION_SCHEMA.INNODB_SYS_TABLES T ON C.TABLE_ID=T.TABLE_ID
+WHERE T.NAME='test/t1';
+NAME
+a
+b
+DROP TABLE t1;
 #
 # BUG 20029625 - HANDLE_FATAL_SIGNAL (SIG=11) IN
 #                DICT_MEM_TABLE_COL_RENAME_LOW
@@ -872,19 +1010,39 @@ PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8
 COLLATE=utf8_unicode_ci
 ROW_FORMAT=COMPRESSED;
-Warnings:
-Warning	1478	InnoDB: ROW_FORMAT=COMPRESSED requires innodb_file_format > Antelope.
-Warning	1478	InnoDB: assuming ROW_FORMAT=COMPACT.
 ALTER TABLE notes ADD FULLTEXT INDEX index_ft_body (body(255));
-Warnings:
-Warning	1478	InnoDB: ROW_FORMAT=COMPRESSED requires innodb_file_format > Antelope.
-Warning	1478	InnoDB: assuming ROW_FORMAT=COMPACT.
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 DROP INDEX index_ft_body ON notes;
-Warnings:
-Warning	1478	InnoDB: ROW_FORMAT=COMPRESSED requires innodb_file_format > Antelope.
-Warning	1478	InnoDB: assuming ROW_FORMAT=COMPACT.
 CREATE DATABASE db2;
 RENAME TABLE db1.notes TO db2.notes;
 DROP DATABASE db1;
 DROP DATABASE db2;
+USE test;
+#
+# MDEV-14038 ALTER TABLE does not exit on error with InnoDB + bad default function
+#
+CREATE TABLE t1 (a INT NOT NULL DEFAULT 0) ENGINE=InnoDB;
+iNSERT INTO t1 VALUES (10);
+ALTER TABLE t1 ADD b TINYINT NOT NULL DEFAULT if(unix_timestamp()>1,1000,0);
+ERROR 22003: Out of range value for column 'b' at row 1
+SELECT * FROM t1;
+a
+10
+DROP TABLE t1;
+CREATE TABLE t1 (a INT NOT NULL DEFAULT 0) ENGINE=InnoDB;
+iNSERT INTO t1 VALUES (10);
+ALTER TABLE t1 ADD b DATE NOT NULL DEFAULT if(unix_timestamp()>1,TIMESTAMP'2001-01-01 10:20:30',0);
+affected rows: 0
+info: Records: 0  Duplicates: 0  Warnings: 0
+SELECT * FROM t1;
+a	b
+10	2001-01-01
+DROP TABLE t1;
+CREATE TABLE t1 (a INT NOT NULL DEFAULT 0) ENGINE=InnoDB;
+iNSERT INTO t1 VALUES (10);
+ALTER TABLE t1 ADD b TIME NOT NULL DEFAULT if(unix_timestamp()>1,TIMESTAMP'2001-01-01 10:20:30',0);
+affected rows: 0
+info: Records: 0  Duplicates: 0  Warnings: 0
+SELECT * FROM t1;
+a	b
+10	10:20:30
+DROP TABLE t1;

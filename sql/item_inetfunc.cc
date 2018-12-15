@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "item_inetfunc.h"
 
 #include "my_net.h"
@@ -149,13 +149,14 @@ longlong Item_func_inet_bool_base::val_int()
 {
   DBUG_ASSERT(fixed);
 
-  if (args[0]->result_type() != STRING_RESULT) // String argument expected
+  // String argument expected
+  if (unlikely(args[0]->result_type() != STRING_RESULT))
     return 0;
 
   String buffer;
   String *arg_str= args[0]->val_str(&buffer);
 
-  if (!arg_str) // Out-of memory happened. The error has been reported.
+  if (unlikely(!arg_str)) // Out-of memory happened. error has been reported.
     return 0;   // Or: the underlying field is NULL
 
   return calc_value(arg_str) ? 1 : 0;
@@ -175,7 +176,8 @@ String *Item_func_inet_str_base::val_str_ascii(String *buffer)
 {
   DBUG_ASSERT(fixed);
 
-  if (args[0]->result_type() != STRING_RESULT) // String argument expected
+ // String argument expected
+  if (unlikely(args[0]->result_type() != STRING_RESULT))
   {
     null_value= true;
     return NULL;
@@ -183,15 +185,17 @@ String *Item_func_inet_str_base::val_str_ascii(String *buffer)
 
   StringBuffer<STRING_BUFFER_USUAL_SIZE> tmp;
   String *arg_str= args[0]->val_str(&tmp);
-  if (!arg_str) // Out-of memory happened. The error has been reported.
-  {             // Or: the underlying field is NULL
+  if (unlikely(!arg_str))
+  {
+    // Out-of memory happened. error has been reported.
+    // Or: the underlying field is NULL
     null_value= true;
     return NULL;
   }
 
   null_value= !calc_value(arg_str, buffer);
 
-  return null_value ? NULL : buffer;
+  return unlikely(null_value) ? NULL : buffer;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -212,13 +216,13 @@ String *Item_func_inet_str_base::val_str_ascii(String *buffer)
   IPv4-part differently on different platforms.
 */
 
-static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
+static bool str_to_ipv4(const char *str, size_t str_length, in_addr *ipv4_address)
 {
   if (str_length < 7)
   {
     DBUG_PRINT("error", ("str_to_ipv4(%.*s): "
                          "invalid IPv4 address: too short.",
-                         str_length, str));
+                         (int) str_length, str));
     return false;
   }
 
@@ -226,7 +230,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
   {
     DBUG_PRINT("error", ("str_to_ipv4(%.*s): "
                          "invalid IPv4 address: too long.",
-                         str_length, str));
+                         (int) str_length, str));
     return false;
   }
 
@@ -237,7 +241,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
   int dot_count= 0;
   char c= 0;
 
-  while (((p - str) < str_length) && *p)
+  while (((p - str) < (int)str_length) && *p)
   {
     c= *p++;
 
@@ -249,7 +253,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
       {
         DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
                              "too many characters in a group.",
-                             str_length, str));
+                             (int) str_length, str));
         return false;
       }
 
@@ -259,7 +263,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
       {
         DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
                              "invalid byte value.",
-                             str_length, str));
+                             (int) str_length, str));
         return false;
       }
     }
@@ -269,7 +273,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
       {
         DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
                              "too few characters in a group.",
-                             str_length, str));
+                             (int) str_length, str));
         return false;
       }
 
@@ -282,7 +286,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
       if (dot_count > 3)
       {
         DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
-                             "too many dots.", str_length, str));
+                             "too many dots.", (int) str_length, str));
         return false;
       }
     }
@@ -290,7 +294,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
     {
       DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
                            "invalid character at pos %d.",
-                           str_length, str, (int) (p - str)));
+                           (int) str_length, str, (int) (p - str)));
       return false;
     }
   }
@@ -298,7 +302,7 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
   if (c == '.')
   {
     DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
-                         "ending at '.'.", str_length, str));
+                         "ending at '.'.", (int) str_length, str));
     return false;
   }
 
@@ -306,14 +310,14 @@ static bool str_to_ipv4(const char *str, int str_length, in_addr *ipv4_address)
   {
     DBUG_PRINT("error", ("str_to_ipv4(%.*s): invalid IPv4 address: "
                          "too few groups.",
-                         str_length, str));
+                         (int) str_length, str));
     return false;
   }
 
   ipv4_bytes[3]= (unsigned char) byte_value;
 
   DBUG_PRINT("info", ("str_to_ipv4(%.*s): valid IPv4 address: %d.%d.%d.%d",
-                      str_length, str,
+                      (int) str_length, str,
                       ipv4_bytes[0], ipv4_bytes[1],
                       ipv4_bytes[2], ipv4_bytes[3]));
   return true;
@@ -494,7 +498,7 @@ static bool str_to_ipv6(const char *str, int str_length, in6_addr *ipv6_address)
       return false;
     }
 
-    int bytes_to_move= dst - gap_ptr;
+    int bytes_to_move= (int)(dst - gap_ptr);
 
     for (int i= 1; i <= bytes_to_move; ++i)
     {

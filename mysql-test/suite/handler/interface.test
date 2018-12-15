@@ -175,22 +175,18 @@ create table t1 (c1 int);
 create table t2 (c1 int);
 insert into t1 values (1);
 insert into t2 values (2);
---echo connection: default
 handler t1 open;
 handler t1 read first;
 connect (flush,localhost,root,,);
 connection flush;
---echo connection: flush
 send flush tables;
 connect (waiter,localhost,root,,);
 connection waiter;
---echo connection: waiter 
 let $wait_condition=
   select count(*) = 1 from information_schema.processlist
   where state = "Waiting for table flush";
 --source include/wait_condition.inc
 connection default;
---echo connection: default
 handler t2 open;
 handler t2 read first;
 handler t1 read next;
@@ -210,22 +206,18 @@ disconnect flush;
 drop table if exists t1, t0;
 --enable_warnings
 create table t1 (c1 int);
---echo connection: default
 handler t1 open;
 handler t1 read first;
 connect (flush,localhost,root,,);
 connection flush;
---echo connection: flush
 send rename table t1 to t0;
 connection waiter;
---echo connection: waiter 
 let $wait_condition=
   select count(*) = 1 from information_schema.processlist
   where state = "Waiting for table metadata lock" and
         info = "rename table t1 to t0";
 --source include/wait_condition.inc
 connection default;
---echo connection: default
 --echo #
 --echo # RENAME placed two pending locks and waits.
 --echo # When HANDLER t0 OPEN does open_tables(), it calls
@@ -242,7 +234,6 @@ connection default;
 handler t0 open;
 --error 0, ER_UNKNOWN_TABLE
 handler t0 close;
---echo connection: flush
 connection flush;
 reap;
 --error ER_UNKNOWN_TABLE
@@ -307,32 +298,6 @@ handler t1 read a next;
 connect(con1,localhost,root,,);
 connect(con2,localhost,root,,);
 
-connection default;
---disable_warnings
-drop table if exists t1;
---enable_warnings
---echo # First test case which is supposed trigger the execution
---echo # path on which problem was discovered.
-create table t1 (a int not null);
-insert into t1 values (1);
-handler t1 open;
-connection con1;
-lock table t1 write;
-send alter table t1 engine=csv;
-connection con2;
-let $wait_condition=
-  select count(*) = 1 from information_schema.processlist
-  where state = "Waiting for table metadata lock" and
-        info = "alter table t1 engine=csv";
---source include/wait_condition.inc
-connection default;
---error ER_ILLEGAL_HA,ER_KEY_DOES_NOT_EXITS
-handler t1 read a next;
-handler t1 close;
-connection con1;
---reap
-unlock tables;
-drop table t1;
 --echo # Now test case which was reported originally but which no longer
 --echo # triggers execution path which has caused the problem.
 connection default;
@@ -390,3 +355,27 @@ execute stmt;
 handler v read next;
 drop view v;
 
+--echo #
+--echo # MDEV-15813 ASAN use-after-poison in hp_hashnr upon
+--echo #            HANDLER READ on a versioned HEAP table
+--echo #
+
+CREATE TABLE t1 (g GEOMETRY NOT NULL, SPATIAL gi(g));
+INSERT INTO t1 VALUES (POINT(0,0));
+HANDLER t1 OPEN AS h;
+--error ER_KEY_DOESNT_SUPPORT
+HANDLER h READ `gi`= (10);
+--error ER_KEY_DOESNT_SUPPORT
+HANDLER h READ `gi`> (10);
+HANDLER h CLOSE;
+DROP TABLE t1;
+
+CREATE TABLE t1 (w VARCHAR(100), FULLTEXT fk(w));
+INSERT INTO t1 VALUES ('one two three');
+HANDLER t1 OPEN AS h;
+--error ER_KEY_DOESNT_SUPPORT
+HANDLER h READ `fk`= (10);
+--error ER_KEY_DOESNT_SUPPORT
+HANDLER h READ `fk`> (10);
+HANDLER h CLOSE;
+DROP TABLE t1;

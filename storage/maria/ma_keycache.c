@@ -54,8 +54,8 @@ int maria_assign_to_pagecache(MARIA_HA *info,
   MARIA_SHARE* share= info->s;
   DBUG_ENTER("maria_assign_to_pagecache");
   DBUG_PRINT("enter",
-             ("old_pagecache_handle: 0x%lx  new_pagecache_handle: 0x%lx",
-             (long) share->pagecache, (long) pagecache));
+             ("old_pagecache_handle:%p  new_pagecache_handle:%p",
+             share->pagecache, pagecache));
 
   /*
     Skip operation if we didn't change key cache. This can happen if we
@@ -106,7 +106,7 @@ int maria_assign_to_pagecache(MARIA_HA *info,
 
   /* store the key cache in the global hash structure for future opens */
   if (multi_pagecache_set((uchar*) share->unique_file_name.str,
-                          share->unique_file_name.length,
+                          (uint)share->unique_file_name.length,
 			  share->pagecache))
     error= my_errno;
   mysql_mutex_unlock(&share->intern_lock);

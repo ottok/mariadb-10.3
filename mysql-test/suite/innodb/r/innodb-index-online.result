@@ -11,14 +11,19 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
 SET DEBUG_SYNC = 'RESET';
 SET DEBUG_SYNC = 'write_row_noreplace SIGNAL have_handle WAIT_FOR go_ahead';
 INSERT INTO t1 VALUES(1,2,3);
+connect  con1,localhost,root,,;
+connection con1;
 SET DEBUG_SYNC = 'now WAIT_FOR have_handle';
 SET lock_wait_timeout = 1;
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
 ERROR HY000: Lock wait timeout exceeded; try restarting transaction
 SET DEBUG_SYNC = 'now SIGNAL go_ahead';
+connection default;
 ERROR 23000: Duplicate entry '1' for key 'PRIMARY'
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -26,39 +31,49 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
+connection con1;
 SET @saved_debug_dbug = @@SESSION.debug_dbug;
 SET DEBUG_DBUG = '+d,innodb_OOM_prepare_inplace_alter';
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
-ERROR HY000: Out of memory; check if mysqld or some other process uses all available memory; if not, you may have to use 'ulimit' to allow mysqld to use more memory or you can add more swap space
+ERROR HY000: Out of memory.
 SET DEBUG_DBUG = @saved_debug_dbug;
 SET DEBUG_DBUG = '+d,innodb_OOM_inplace_alter';
 CREATE UNIQUE INDEX c2 ON t1(c2);
-ERROR HY000: Out of memory; check if mysqld or some other process uses all available memory; if not, you may have to use 'ulimit' to allow mysqld to use more memory or you can add more swap space
+ERROR HY000: Out of memory.
 SET DEBUG_DBUG = @saved_debug_dbug;
 CREATE UNIQUE INDEX c2 ON t1(c2);
 DROP INDEX c2 ON t1;
+connection default;
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `c1` int(11) NOT NULL,
   `c2` int(11) DEFAULT NULL,
-  `c3` text,
+  `c3` text DEFAULT NULL,
   PRIMARY KEY (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 STATS_PERSISTENT=0
 BEGIN;
 INSERT INTO t1 VALUES(7,4,2);
+connection con1;
 SET DEBUG_SYNC = 'row_log_apply_before SIGNAL scanned WAIT_FOR rollback_done';
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
 ERROR HY000: Lock wait timeout exceeded; try restarting transaction
+connection default;
 COMMIT;
+connection con1;
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
 ERROR 23000: Duplicate entry '4' for key 'c2'
+connection default;
 DELETE FROM t1 WHERE c1 = 7;
+connection con1;
 ALTER TABLE t1 ADD FOREIGN KEY(c2) REFERENCES t1(c2), ALGORITHM = INPLACE;
-ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Adding foreign keys needs foreign_key_checks=OFF. Try ALGORITHM=COPY.
+ERROR 0A000: ALGORITHM=INPLACE is not supported. Reason: Adding foreign keys needs foreign_key_checks=OFF. Try ALGORITHM=COPY
 ALTER TABLE t1 ADD UNIQUE INDEX(c2), LOCK = EXCLUSIVE, ALGORITHM = INPLACE;
 DROP INDEX c2 ON t1;
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
+connection default;
 SET DEBUG_SYNC = 'now WAIT_FOR scanned';
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -66,13 +81,17 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	1
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
 BEGIN;
 INSERT INTO t1 VALUES(7,4,2);
 ROLLBACK;
 SET DEBUG_SYNC = 'now SIGNAL rollback_done';
+connection con1;
 ERROR 23000: Duplicate entry '4' for key 'c2'
 SET DEBUG_SYNC = 'row_log_apply_after SIGNAL created WAIT_FOR dml_done';
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
+connection default;
 SET DEBUG_SYNC = 'now WAIT_FOR created';
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -80,8 +99,11 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
 INSERT INTO t1 VALUES(6,3,1);
 SET DEBUG_SYNC = 'now SIGNAL dml_done';
+connection con1;
 ERROR 23000: Duplicate entry for key 'c2'
 DELETE FROM t1 WHERE c1=6;
 ALTER TABLE t1 ADD UNIQUE INDEX(c2);
@@ -91,6 +113,9 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
+connection default;
 INSERT INTO t1 VALUES(6,3,1);
 ERROR 23000: Duplicate entry '3' for key 'c2'
 INSERT INTO t1 VALUES(7,4,2);
@@ -122,10 +147,12 @@ database_name	table_name	index_name	last_update	stat_name	stat_value	sample_size
 test	t1	PRIMARY	LAST_UPDATE	n_diff_pfx01	5	1	c1
 test	t1	PRIMARY	LAST_UPDATE	n_leaf_pages	1	NULL	Number of leaf pages in the index
 test	t1	PRIMARY	LAST_UPDATE	size	1	NULL	Number of pages in the index
+connection con1;
 KILL QUERY @id;
 ERROR 70100: Query execution was interrupted
 SET DEBUG_SYNC = 'row_log_apply_before SIGNAL c2d_created WAIT_FOR kill_done';
 CREATE INDEX c2d ON t1(c2);
+connection default;
 SET DEBUG_SYNC = 'now WAIT_FOR c2d_created';
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -133,8 +160,11 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	1
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
 KILL QUERY @id;
 SET DEBUG_SYNC = 'now SIGNAL kill_done';
+connection con1;
 ERROR 70100: Query execution was interrupted
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -142,6 +172,9 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
+connection default;
 CHECK TABLE t1;
 Table	Op	Msg_type	Msg_text
 test.t1	check	status	OK
@@ -155,6 +188,7 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 ANALYZE TABLE t1;
 Table	Op	Msg_type	Msg_text
 test.t1	analyze	status	OK
+connection con1;
 UPDATE t1_c2_stats SET index_name = 'c2d';
 UPDATE t1_c2_stats SET stat_value = 2 WHERE stat_name = 'n_diff_pfx01';
 INSERT INTO t1_c2_stats
@@ -176,10 +210,11 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `c1` int(11) NOT NULL,
   `c2` int(11) DEFAULT NULL,
-  `c3` text,
+  `c3` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2d` (`c2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 STATS_PERSISTENT=1
+connection default;
 SET @merge_encrypt_0=
 (SELECT variable_value FROM information_schema.global_status
 WHERE variable_name = 'innodb_encryption_n_merge_blocks_encrypted');
@@ -189,10 +224,12 @@ WHERE variable_name = 'innodb_encryption_n_merge_blocks_decrypted');
 SET @rowlog_encrypt_0=
 (SELECT variable_value FROM information_schema.global_status
 WHERE variable_name = 'innodb_encryption_n_rowlog_blocks_encrypted');
+connection con1;
 SET DEBUG_SYNC = 'row_log_apply_before SIGNAL c2e_created WAIT_FOR dml2_done';
 SET lock_wait_timeout = 10;
 ALTER TABLE t1 DROP INDEX c2d, ADD INDEX c2e(c2),
 ALGORITHM = INPLACE;
+connection default;
 INSERT INTO t1 SELECT  80 + c1, c2, c3 FROM t1;
 INSERT INTO t1 SELECT 160 + c1, c2, c3 FROM t1;
 SET DEBUG_SYNC = 'now WAIT_FOR c2e_created';
@@ -202,6 +239,8 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	1
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	0
 BEGIN;
 DELETE FROM t1;
 ROLLBACK;
@@ -240,6 +279,8 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	1
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	1
 SELECT sf.name, sf.pos FROM INFORMATION_SCHEMA.INNODB_SYS_INDEXES si
 INNER JOIN INFORMATION_SCHEMA.INNODB_SYS_FIELDS sf
 ON si.index_id = sf.index_id WHERE si.name = '?c2e';
@@ -262,13 +303,16 @@ SELECT
 sort_balance	@merge_encrypt_1>@merge_encrypt_0	@merge_decrypt_1>@merge_decrypt_0	@rowlog_encrypt_1>@rowlog_encrypt_0
 0	0	0	0
 SET DEBUG_SYNC = 'now SIGNAL dml2_done';
-ERROR HY000: Creating index 'c2e' required more than 'innodb_online_alter_log_max_size' bytes of modification log. Please try again.
+connection con1;
+ERROR HY000: Creating index 'c2e' required more than 'innodb_online_alter_log_max_size' bytes of modification log. Please try again
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
 ddl_background_drop_indexes	1
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	1
 SELECT sf.name, sf.pos FROM INFORMATION_SCHEMA.INNODB_SYS_INDEXES si
 INNER JOIN INFORMATION_SCHEMA.INNODB_SYS_FIELDS sf
 ON si.index_id = sf.index_id WHERE si.name = 'c2e';
@@ -279,6 +323,9 @@ ddl_background_drop_indexes	1
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	1
+connection default;
 ALTER TABLE t1 COMMENT 'testing if c2e will be dropped';
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -286,6 +333,8 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	1
 SET @merge_encrypt_1=
 (SELECT variable_value FROM information_schema.global_status
 WHERE variable_name = 'innodb_encryption_n_merge_blocks_encrypted');
@@ -298,8 +347,10 @@ WHERE variable_name = 'innodb_encryption_n_rowlog_blocks_encrypted');
 SET @rowlog_decrypt_1=
 (SELECT variable_value FROM information_schema.global_status
 WHERE variable_name = 'innodb_encryption_n_rowlog_blocks_decrypted');
+connection con1;
 SET DEBUG_SYNC = 'row_log_apply_before SIGNAL c2f_created WAIT_FOR dml3_done';
 ALTER TABLE t1 ADD INDEX c2f(c2);
+connection default;
 SET DEBUG_SYNC = 'now WAIT_FOR c2f_created';
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -307,6 +358,8 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	1
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	1
 BEGIN;
 INSERT INTO t1 SELECT 320 + c1, c2, c3 FROM t1 WHERE c1 > 160;
 DELETE FROM t1 WHERE c1 > 320;
@@ -329,9 +382,12 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	1
 ddl_pending_alter_table	1
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	2
 SET DEBUG_SYNC = 'now SIGNAL dml3_done';
+connection con1;
 Warnings:
-Note	1831	Duplicate index `c2f`. This is deprecated and will be disallowed in a future release.
+Note	1831	Duplicate index `c2f`. This is deprecated and will be disallowed in a future release
 ALTER TABLE t1 CHANGE c2 c22f INT;
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
@@ -339,6 +395,9 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	2
+connection default;
 SET @merge_encrypt_2=
 (SELECT variable_value FROM information_schema.global_status
 WHERE variable_name = 'innodb_encryption_n_merge_blocks_encrypted');
@@ -365,6 +424,7 @@ SELECT
 @rowlog_decrypt_2-@rowlog_decrypt_1>0 as log_decrypted;
 sort_encrypted	sort_decrypted	log_encrypted	log_decrypted
 0	0	0	0
+connection con1;
 SELECT COUNT(c22f) FROM t1;
 COUNT(c22f)
 320
@@ -377,6 +437,7 @@ UPDATE t1 SET c3 = NULL WHERE c3 = '';
 SET lock_wait_timeout = 1;
 SET DEBUG_SYNC = 'row_log_apply_before SIGNAL c3p5_created WAIT_FOR ins_done';
 ALTER TABLE t1 ADD UNIQUE INDEX c3p5(c3(5));
+connection default;
 SET DEBUG_SYNC = 'now WAIT_FOR c3p5_created';
 SELECT sf.name, sf.pos FROM INFORMATION_SCHEMA.INNODB_SYS_INDEXES si
 INNER JOIN INFORMATION_SCHEMA.INNODB_SYS_FIELDS sf
@@ -385,6 +446,7 @@ name	pos
 c3	0
 SET DEBUG_SYNC = 'ib_after_row_insert SIGNAL ins_done WAIT_FOR ddl_timed_out';
 INSERT INTO t1 VALUES(347,33101,NULL);
+connection con1;
 ERROR HY000: Lock wait timeout exceeded; try restarting transaction
 SET DEBUG_SYNC = 'now SIGNAL ddl_timed_out';
 SELECT sf.name, sf.pos FROM INFORMATION_SCHEMA.INNODB_SYS_INDEXES si
@@ -397,18 +459,24 @@ ddl_background_drop_indexes	1
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	2
+connection default;
 SELECT name, count FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE subsystem = 'ddl';
 name	count
 ddl_background_drop_indexes	1
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	2
+connection default;
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `c1` int(11) NOT NULL,
   `c22f` int(11) DEFAULT NULL,
-  `c3` text,
+  `c3` text DEFAULT NULL,
   PRIMARY KEY (`c1`),
   KEY `c2d` (`c22f`),
   KEY `c2f` (`c22f`)
@@ -420,6 +488,8 @@ ddl_background_drop_indexes	0
 ddl_background_drop_tables	0
 ddl_online_create_index	0
 ddl_pending_alter_table	0
+ddl_sort_file_alter_table	0
+ddl_log_file_alter_table	2
 ALTER TABLE t1 ADD INDEX c2h(c22f), ALGORITHM = INPLACE;
 ALTER TABLE t1 ADD INDEX c2h(c22f), ALGORITHM = COPY;
 ERROR 42000: Duplicate key name 'c2h'
@@ -432,12 +502,15 @@ DROP TABLE t1;
 CREATE TABLE t1 (c VARCHAR(64)) ENGINE=InnoDB;
 SET DEBUG_SYNC = 'row_log_apply_before SIGNAL t1u_created WAIT_FOR dup_done';
 ALTER TABLE t1 ADD UNIQUE(c);
+connection con1;
 SET DEBUG_SYNC = 'now WAIT_FOR t1u_created';
 BEGIN;
 INSERT INTO t1 VALUES('bar'),('bar');
 SET DEBUG_SYNC = 'now SIGNAL dup_done';
+connection default;
 ERROR 23000: Duplicate entry 'bar' for key 'c'
 SET DEBUG_SYNC = 'RESET';
+disconnect con1;
 CREATE TABLE t2 (c VARCHAR(64)) ENGINE=InnoDB;
 ALTER TABLE t2 ADD FOREIGN KEY (c) REFERENCES t1 (c);
 ERROR HY000: Can't create table `test`.`#sql-temporary` (errno: 150 "Foreign key constraint is incorrectly formed")

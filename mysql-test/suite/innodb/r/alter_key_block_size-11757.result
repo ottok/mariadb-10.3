@@ -1,4 +1,3 @@
-set global innodb_file_format=barracuda;
 create table t1 (
 id1 bigint(20) not null,
 id2 bigint(20) not null,
@@ -13,6 +12,10 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`id1`),
   UNIQUE KEY `id2` (`id2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8
+SET innodb_strict_mode=ON;
+alter table t1 row_format=dynamic;
+ERROR HY000: Table storage engine 'InnoDB' does not support the create option 'KEY_BLOCK_SIZE'
+SET innodb_strict_mode=OFF;
 alter table t1 row_format=dynamic;
 Warnings:
 Warning	1478	InnoDB: ignoring KEY_BLOCK_SIZE=8 unless ROW_FORMAT=COMPRESSED.
@@ -24,6 +27,7 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`id1`),
   UNIQUE KEY `id2` (`id2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC KEY_BLOCK_SIZE=8
+SET innodb_strict_mode=ON;
 alter table t1 key_block_size=0;
 show create table t1;
 Table	Create Table
@@ -44,4 +48,3 @@ t1	CREATE TABLE `t1` (
   UNIQUE KEY `id2` (`id2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC
 drop table t1;
-set global innodb_file_format=default;

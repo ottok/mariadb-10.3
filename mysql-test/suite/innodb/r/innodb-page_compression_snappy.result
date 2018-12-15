@@ -1,6 +1,4 @@
 set global innodb_compression_algorithm = snappy;
-set global innodb_file_format = `Barracuda`;
-set global innodb_file_per_table = on;
 create table innodb_normal (c1 int not null auto_increment primary key, b char(200)) engine=innodb;
 create table innodb_page_compressed1 (c1 int not null auto_increment primary key, b char(200)) engine=innodb page_compressed=1 page_compression_level=1;
 create table innodb_page_compressed2 (c1 int not null auto_increment primary key, b char(200)) engine=innodb page_compressed=1 page_compression_level=2;
@@ -39,7 +37,7 @@ select count(*) from innodb_page_compressed9;
 count(*)
 10000
 # innodb_normal expected FOUND
-FOUND /AaAaAaAa/ in innodb_normal.ibd
+FOUND 24084 /AaAaAaAa/ in innodb_normal.ibd
 # innodb_page_compressed1 page compressed expected NOT FOUND
 NOT FOUND /AaAaAaAa/ in innodb_page_compressed1.ibd
 # innodb_page_compressed2 page compressed expected NOT FOUND

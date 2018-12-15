@@ -18,6 +18,10 @@
 
 #include "sql_error.h"
 
+
+#define LAST_STMT_ID 0xFFFFFFFF
+#define STMT_ID_MASK 0x7FFFFFFF
+
 class THD;
 struct LEX;
 
@@ -68,15 +72,20 @@ private:
 
 void mysqld_stmt_prepare(THD *thd, const char *packet, uint packet_length);
 void mysqld_stmt_execute(THD *thd, char *packet, uint packet_length);
+void mysqld_stmt_execute_bulk(THD *thd, char *packet, uint packet_length);
+void mysqld_stmt_bulk_execute(THD *thd, char *packet, uint packet_length);
 void mysqld_stmt_close(THD *thd, char *packet);
 void mysql_sql_stmt_prepare(THD *thd);
 void mysql_sql_stmt_execute(THD *thd);
+void mysql_sql_stmt_execute_immediate(THD *thd);
 void mysql_sql_stmt_close(THD *thd);
 void mysqld_stmt_fetch(THD *thd, char *packet, uint packet_length);
 void mysqld_stmt_reset(THD *thd, char *packet);
 void mysql_stmt_get_longdata(THD *thd, char *pos, ulong packet_length);
 void reinit_stmt_before_use(THD *thd, LEX *lex);
 
+my_bool bulk_parameters_iterations(THD *thd);
+my_bool bulk_parameters_set(THD *thd);
 /**
   Execute a fragment of server code in an isolated context, so that
   it doesn't leave any effect on THD. THD must have no open tables.
@@ -121,6 +130,7 @@ public:
   size_t get_field_count() const { return m_column_count; }
 
   static void operator delete(void *ptr, size_t size) throw ();
+  static void operator delete(void *, MEM_ROOT *){}
 private:
   Ed_result_set(const Ed_result_set &);        /* not implemented */
   Ed_result_set &operator=(Ed_result_set &);   /* not implemented */
@@ -204,21 +214,6 @@ public:
     @retval  TRUE   failure
   */
   bool execute_direct(Server_runnable *server_runnable);
-
-  /**
-    Get the number of result set fields.
-
-    This method is valid only if we have a result:
-    execute_direct() has been called. Otherwise
-    the returned value is undefined.
-
-    @sa Documentation for C API function
-    mysql_field_count()
-  */
-  ulong get_field_count() const
-  {
-    return m_current_rset ? m_current_rset->get_field_count() : 0;
-  }
 
   /**
     Get the number of affected (deleted, updated)

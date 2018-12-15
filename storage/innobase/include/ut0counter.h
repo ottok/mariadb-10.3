@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2012, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2012, 2015, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -25,14 +25,20 @@ Counter utility class
 Created 2012/04/12 by Sunny Bains
 *******************************************************/
 
-#ifndef UT0COUNTER_H
-#define UT0COUNTER_H
+#ifndef ut0counter_h
+#define ut0counter_h
 
+#include <my_rdtsc.h>
 #include "univ.i"
-#include <string.h>
 #include "os0thread.h"
-#include "os0sync.h"
 #include "my_atomic.h"
+
+/** CPU cache line size */
+#ifdef CPU_LEVEL1_DCACHE_LINESIZE
+# define CACHE_LINE_SIZE	CPU_LEVEL1_DCACHE_LINESIZE
+#else
+# error CPU_LEVEL1_DCACHE_LINESIZE is undefined
+#endif /* CPU_LEVEL1_DCACHE_LINESIZE */
 
 /** Default number of slots to use in ib_counter_t */
 #define IB_N_SLOTS		64
@@ -41,46 +47,45 @@ Created 2012/04/12 by Sunny Bains
 template <typename Type, int N>
 struct generic_indexer_t {
         /** @return offset within m_counter */
-        size_t offset(size_t index) const UNIV_NOTHROW {
+        static size_t offset(size_t index) UNIV_NOTHROW
+	{
                 return(((index % N) + 1) * (CACHE_LINE_SIZE / sizeof(Type)));
         }
 };
 
-#ifdef HAVE_SCHED_GETCPU
-#include <utmpx.h>
-/** Use the cpu id to index into the counter array. If it fails then
-use the thread id. */
-template <typename Type, int N>
-struct get_sched_indexer_t : public generic_indexer_t<Type, N> {
-	/* @return result from sched_getcpu(), the thread id if it fails. */
-	size_t get_rnd_index() const UNIV_NOTHROW {
+/** Use the result of my_timer_cycles(), which mainly uses RDTSC for cycles,
+to index into the counter array. See the comments for my_timer_cycles() */
+template <typename Type=ulint, int N=1>
+struct counter_indexer_t : public generic_indexer_t<Type, N> {
+	/** @return result from RDTSC or similar functions. */
+	static size_t get_rnd_index() UNIV_NOTHROW
+	{
+		size_t	c = static_cast<size_t>(my_timer_cycles());
 
-		size_t	cpu = sched_getcpu();
-		if (cpu == -1) {
-			cpu = (lint) os_thread_get_curr_id();
+		if (c != 0) {
+			return(c);
+		} else {
+			/* We may go here if my_timer_cycles() returns 0,
+			so we have to have the plan B for the counter. */
+#if !defined(_WIN32)
+			return(size_t(os_thread_get_curr_id()));
+#else
+			LARGE_INTEGER cnt;
+			QueryPerformanceCounter(&cnt);
+
+			return(static_cast<size_t>(cnt.QuadPart));
+#endif /* !_WIN32 */
 		}
-
-		return(cpu);
-	}
-};
-#endif /* HAVE_SCHED_GETCPU */
-
-/** Use the thread id to index into the counter array. */
-template <typename Type, int N>
-struct thread_id_indexer_t : public generic_indexer_t<Type, N> {
-	/* @return a random number, currently we use the thread id. Where
-	thread id is represented as a pointer, it may not work as
-	effectively. */
-	size_t get_rnd_index() const UNIV_NOTHROW {
-		return((lint) os_thread_get_curr_id());
 	}
 
 	/** @return a random offset to the array */
-	size_t get_rnd_offset() const UNIV_NOTHROW
+	static size_t get_rnd_offset() UNIV_NOTHROW
 	{
 		return(generic_indexer_t<Type, N>::offset(get_rnd_index()));
 	}
 };
+
+#define	default_indexer_t	counter_indexer_t
 
 /** Class for using fuzzy counters. The counter is relaxed atomic
 so the results are not guaranteed to be 100% accurate but close
@@ -89,7 +94,7 @@ CACHE_LINE_SIZE bytes */
 template <
 	typename Type,
 	int N = IB_N_SLOTS,
-	template<typename, int> class Indexer = thread_id_indexer_t>
+	template<typename, int> class Indexer = default_indexer_t>
 struct MY_ALIGNED(CACHE_LINE_SIZE) ib_counter_t
 {
 	/** Increment the counter by 1. */
@@ -154,4 +159,4 @@ private:
 	Type		m_counter[(N + 1) * (CACHE_LINE_SIZE / sizeof(Type))];
 };
 
-#endif /* UT0COUNTER_H */
+#endif /* ut0counter_h */

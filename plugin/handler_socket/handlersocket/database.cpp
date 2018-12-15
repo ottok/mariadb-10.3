@@ -6,10 +6,7 @@
  * See COPYRIGHT.txt for details.
  */
 
-#include <my_config.h>
-
-#include <stdlib.h>
-#include <stdio.h>
+#include <my_global.h>
 #include <string.h>
 
 #include "database.hpp"
@@ -278,7 +275,7 @@ dbcontext::init_thread(const void *stack_bottom, volatile int& shutdown_flag)
   DBG_THR(fprintf(stderr, "HNDSOCK init thread\n"));
   {
     my_thread_init();
-    thd = new THD;
+    thd = new THD(0);
     thd->thread_stack = (char *)stack_bottom;
     DBG_THR(fprintf(stderr,
       "thread_stack = %p sizeof(THD)=%zu sizeof(mtx)=%zu "
@@ -300,20 +297,17 @@ dbcontext::init_thread(const void *stack_bottom, volatile int& shutdown_flag)
       #else
       thd->options |= OPTION_BIN_LOG;
       #endif
-      safeFree(thd->db);
-      thd->db = 0;
-      thd->db = my_strdup("handlersocket", MYF(0));
+      safeFree((char*) thd->db.str);
+      thd->db.str= my_strdup("handlersocket", MYF(0));
+      thd->db.length= sizeof("handlersocket")-1;
     }
     thd->variables.option_bits |= OPTION_TABLE_LOCK;
     my_pthread_setspecific_ptr(THR_THD, thd);
     DBG_THR(fprintf(stderr, "HNDSOCK x0 %p\n", thd));
   }
   {
-    pthread_mutex_lock(&LOCK_thread_count);
-    thd->thread_id = thread_id++;
-    threads.append(thd);
-    ++thread_count;
-    pthread_mutex_unlock(&LOCK_thread_count);
+    thd->thread_id = next_thread_id();
+    add_to_active_threads(thd);
   }
 
   DBG_THR(fprintf(stderr, "HNDSOCK init thread wsts\n"));
@@ -350,7 +344,6 @@ dbcontext::term_thread()
     pthread_mutex_lock(&LOCK_thread_count);
     delete thd;
     thd = 0;
-    --thread_count;
     pthread_mutex_unlock(&LOCK_thread_count);
     my_thread_end();
   }
@@ -1012,8 +1005,9 @@ dbcontext::cmd_open(dbcallback_i& cb, const cmd_open_args& arg)
     bool refresh = true;
     const thr_lock_type lock_type = for_write_flag ? TL_WRITE : TL_READ;
     #if MYSQL_VERSION_ID >= 50505
-    tables.init_one_table(arg.dbn, strlen(arg.dbn), arg.tbl, strlen(arg.tbl),
-      arg.tbl, lock_type);
+    LEX_CSTRING db_name=  { arg.dbn, strlen(arg.dbn) };
+    LEX_CSTRING tbl_name= { arg.tbl, strlen(arg.tbl) };
+    tables.init_one_table(&db_name, &tbl_name, 0, lock_type);
     tables.mdl_request.init(MDL_key::TABLE, arg.dbn, arg.tbl,
       for_write_flag ? MDL_SHARED_WRITE : MDL_SHARED_READ, MDL_TRANSACTION);
     Open_table_context ot_act(thd, 0);
@@ -1054,7 +1048,7 @@ dbcontext::cmd_open(dbcallback_i& cb, const cmd_open_args& arg)
     TABLE *const table = table_vec[tblnum].table;
     for (uint i = 0; i < table->s->keys; ++i) {
       KEY& kinfo = table->key_info[i];
-      if (strcmp(kinfo.name, idx_name_to_open) == 0) {
+      if (strcmp(kinfo.name.str, idx_name_to_open) == 0) {
 	idxnum = i;
 	break;
       }
@@ -1089,8 +1083,8 @@ dbcontext::parse_fields(TABLE *const table, const char *str,
     Field **fld = 0;
     size_t j = 0;
     for (fld = table->field; *fld; ++fld, ++j) {
-      DBG_FLD(fprintf(stderr, "f %s\n", (*fld)->field_name));
-      string_ref fn((*fld)->field_name, strlen((*fld)->field_name));
+      DBG_FLD(fprintf(stderr, "f %s\n", (*fld)->field_name.str));
+      string_ref fn((*fld)->field_name.str, (*fld)->field_name.length);
       if (fn == fldnms[i]) {
 	break;
       }
@@ -1100,7 +1094,7 @@ dbcontext::parse_fields(TABLE *const table, const char *str,
 	std::string(fldnms[i].begin(), fldnms[i].size()).c_str()));
       return false;
     }
-    DBG_FLD(fprintf(stderr, "FLD %s %zu\n", (*fld)->field_name, j));
+    DBG_FLD(fprintf(stderr, "FLD %s %zu\n", (*fld)->field_name.str, j));
     flds.push_back(j);
   }
   return true;

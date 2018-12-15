@@ -22,9 +22,10 @@
 #include <my_pthread.h>				/* because of signal()	*/
 #include <sys/stat.h>
 #include <mysql.h>
-#include <sql_common.h>
+#include <mysql_version.h>
 #include <welcome_copyright_notice.h>
 #include <my_rnd.h>
+#include <password.h>
 
 #define ADMIN_VERSION "9.1"
 #define MAX_MYSQL_VAR 512
@@ -33,9 +34,9 @@
 
 char *host= NULL, *user= 0, *opt_password= 0,
      *default_charset= (char*) MYSQL_AUTODETECT_CHARSET_NAME;
-char truncated_var_names[MAX_MYSQL_VAR][MAX_TRUNC_LENGTH];
-char ex_var_names[MAX_MYSQL_VAR][FN_REFLEN];
-ulonglong last_values[MAX_MYSQL_VAR];
+char truncated_var_names[MAX_MYSQL_VAR+100][MAX_TRUNC_LENGTH];
+char ex_var_names[MAX_MYSQL_VAR+100][FN_REFLEN];
+ulonglong last_values[MAX_MYSQL_VAR+100];
 static int interval=0;
 static my_bool option_force=0,interrupted=0,new_line=0,
                opt_compress= 0, opt_local= 0, opt_relative= 0, opt_verbose= 0,
@@ -451,7 +452,7 @@ int main(int argc,char *argv[])
           didn't signal for us to die. Otherwise, signal failure.
         */
 
-	if (mysql.net.vio == 0)
+	if (mysql.net.pvio == 0)
 	{
 	  if (option_wait && !interrupted)
 	  {
@@ -530,7 +531,8 @@ static my_bool sql_connect(MYSQL *mysql, uint wait)
     if (mysql_real_connect(mysql,host,user,opt_password,NullS,tcp_port,
 			   unix_port, CLIENT_REMEMBER_OPTIONS))
     {
-      mysql->reconnect= 1;
+      my_bool reconnect= 1;
+      mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
       if (info)
       {
 	fputs("\n",stderr);
@@ -884,7 +886,7 @@ static int execute_commands(MYSQL *mysql,int argc, char **argv)
 	return -1;
       }
 
-      DBUG_ASSERT(mysql_num_rows(res) < MAX_MYSQL_VAR);
+      DBUG_ASSERT(mysql_num_rows(res) < MAX_MYSQL_VAR+100);
 
       if (!opt_vertical)
 	print_header(res);
@@ -1179,9 +1181,9 @@ static int execute_commands(MYSQL *mysql,int argc, char **argv)
           }
         }
         if (old)
-          make_scrambled_password_323(crypted_pw, typed_password);
+          my_make_scrambled_password_323(crypted_pw, typed_password, strlen(typed_password));
         else
-          make_scrambled_password(crypted_pw, typed_password);
+          my_make_scrambled_password(crypted_pw, typed_password, strlen(typed_password));
       }
       else
 	crypted_pw[0]=0;			/* No password */
@@ -1290,7 +1292,9 @@ password_done:
       break;
     }
     case ADMIN_PING:
-      mysql->reconnect=0;	/* We want to know of reconnects */
+    {
+      my_bool reconnect= 0;
+      mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
       if (!mysql_ping(mysql))
       {
 	if (option_silent < 2)
@@ -1300,7 +1304,8 @@ password_done:
       {
 	if (mysql_errno(mysql) == CR_SERVER_GONE_ERROR)
 	{
-	  mysql->reconnect=1;
+          reconnect= 1;
+          mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
 	  if (!mysql_ping(mysql))
 	    puts("connection was down, but mysqld is now alive");
 	}
@@ -1311,8 +1316,10 @@ password_done:
 	  return -1;
 	}
       }
-      mysql->reconnect=1;	/* Automatic reconnect is default */
+      reconnect=1;	/* Automatic reconnect is default */
+      mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
       break;
+    }
     default:
       my_printf_error(0, "Unknown command: '%-.60s'", error_flags, argv[0]);
       return 1;

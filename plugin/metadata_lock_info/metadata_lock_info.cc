@@ -14,7 +14,7 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #define MYSQL_SERVER 1
-#include "my_config.h"
+#include <my_global.h>
 #include "mysql_version.h"
 #include "mysql/plugin.h"
 #include "sql_class.h"
@@ -26,6 +26,7 @@ static const LEX_STRING metadata_lock_info_lock_name[] = {
   { C_STRING_WITH_LEN("Table metadata lock") },
   { C_STRING_WITH_LEN("Stored function metadata lock") },
   { C_STRING_WITH_LEN("Stored procedure metadata lock") },
+  { C_STRING_WITH_LEN("Stored package body metadata lock") },
   { C_STRING_WITH_LEN("Trigger metadata lock") },
   { C_STRING_WITH_LEN("Event metadata lock") },
   { C_STRING_WITH_LEN("Commit lock") },
@@ -39,6 +40,7 @@ static const LEX_STRING metadata_lock_info_lock_mode[] = {
   { C_STRING_WITH_LEN("MDL_SHARED_READ") },
   { C_STRING_WITH_LEN("MDL_SHARED_WRITE") },
   { C_STRING_WITH_LEN("MDL_SHARED_UPGRADABLE") },
+  { C_STRING_WITH_LEN("MDL_SHARED_READ_ONLY") },
   { C_STRING_WITH_LEN("MDL_SHARED_NO_WRITE") },
   { C_STRING_WITH_LEN("MDL_SHARED_NO_READ_WRITE") },
   { C_STRING_WITH_LEN("MDL_EXCLUSIVE") },
@@ -52,7 +54,7 @@ static ST_FIELD_INFO i_s_metadata_lock_info_fields_info[] =
     MY_I_S_MAYBE_NULL, "lock_mode", SKIP_OPEN_TABLE},
   {"LOCK_DURATION", 30, MYSQL_TYPE_STRING, 0,
     MY_I_S_MAYBE_NULL, "lock_duration", SKIP_OPEN_TABLE},
-  {"LOCK_TYPE", 30, MYSQL_TYPE_STRING, 0,
+  {"LOCK_TYPE", 33, MYSQL_TYPE_STRING, 0,
     MY_I_S_MAYBE_NULL, "lock_type", SKIP_OPEN_TABLE},
   {"TABLE_SCHEMA", 64, MYSQL_TYPE_STRING, 0,
     MY_I_S_MAYBE_NULL, "table_schema", SKIP_OPEN_TABLE},

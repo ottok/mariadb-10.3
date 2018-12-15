@@ -24,9 +24,10 @@
 #pragma interface			/* gcc class implementation */
 #endif
 
-#include "thr_malloc.h"                         /* sql_memdup */
 #include "records.h"                            /* READ_RECORD */
 #include "queues.h"                             /* QUEUE */
+#include "filesort.h"                           /* SORT_INFO */
+
 /*
   It is necessary to include set_var.h instead of item.h because there
   are dependencies on include order for set_var.h and item.h. This
@@ -241,7 +242,7 @@ public:
     Number of children of this element in the RB-tree, plus 1 for this
     element itself.
   */
-  uint16 elements;
+  uint32 elements;
   /*
     Valid only for elements which are RB-tree roots: Number of times this
     RB-tree is referred to (it is referred by SEL_ARG::next_key_part or by
@@ -590,6 +591,17 @@ public:
     return !field->key_cmp(min_val, max_val);
   }
   SEL_ARG *clone_tree(RANGE_OPT_PARAM *param);
+};
+
+
+class SEL_ARG_IMPOSSIBLE: public SEL_ARG
+{
+public:
+  SEL_ARG_IMPOSSIBLE(Field *field)
+   :SEL_ARG(field, 0, 0)
+  {
+    type= SEL_ARG::IMPOSSIBLE;
+  }
 };
 
 
@@ -1005,7 +1017,7 @@ public:
 
     This is used by an optimization in filesort.
   */
-  virtual void add_used_key_part_to_set(MY_BITMAP *col_set)=0;
+  virtual void add_used_key_part_to_set()=0;
 };
 
 
@@ -1035,8 +1047,11 @@ bool quick_range_seq_next(range_seq_t rseq, KEY_MULTI_RANGE *range);
 class QUICK_RANGE_SELECT : public QUICK_SELECT_I
 {
 protected:
+  THD *thd;
+  bool no_alloc;
+  MEM_ROOT *parent_alloc;
+
   /* true if we enabled key only reads */
-  bool doing_key_read;
   handler *file;
 
   /* Members to deal with case when this quick select is a ROR-merged scan */
@@ -1074,6 +1089,9 @@ public:
   QUICK_RANGE_SELECT(THD *thd, TABLE *table,uint index_arg,bool no_alloc,
                      MEM_ROOT *parent_alloc, bool *create_err);
   ~QUICK_RANGE_SELECT();
+  virtual QUICK_RANGE_SELECT *clone(bool *create_error)
+    { return new QUICK_RANGE_SELECT(thd, head, index, no_alloc, parent_alloc,
+                                    create_error); }
   
   void need_sorted_output();
   int init();
@@ -1096,7 +1114,7 @@ public:
   virtual void replace_handler(handler *new_file) { file= new_file; }
   QUICK_SELECT_I *make_reverse(uint used_key_parts_arg);
 
-  virtual void add_used_key_part_to_set(MY_BITMAP *col_set);
+  virtual void add_used_key_part_to_set();
 
 private:
   /* Default copy ctor used by QUICK_SELECT_DESC */
@@ -1144,6 +1162,12 @@ public:
     :QUICK_RANGE_SELECT(thd, table, index_arg, no_alloc, parent_alloc,
     create_err)
     {};
+  virtual QUICK_RANGE_SELECT *clone(bool *create_error)
+    {
+      DBUG_ASSERT(0);
+      return new QUICK_RANGE_SELECT_GEOM(thd, head, index, no_alloc,
+                                         parent_alloc, create_error);
+    }
   virtual int get_next();
 };
 
@@ -1260,7 +1284,7 @@ public:
   /* used to get rows collected in Unique */
   READ_RECORD read_record;
 
-  virtual void add_used_key_part_to_set(MY_BITMAP *col_set);
+  virtual void add_used_key_part_to_set();
 };
 
 
@@ -1335,7 +1359,7 @@ public:
   void add_keys_and_lengths(String *key_names, String *used_lengths);
   Explain_quick_select *get_explain(MEM_ROOT *alloc);
   bool is_keys_used(const MY_BITMAP *fields);
-  void add_used_key_part_to_set(MY_BITMAP *col_set);
+  void add_used_key_part_to_set();
 #ifndef DBUG_OFF
   void dbug_dump(int indent, bool verbose);
 #endif
@@ -1415,7 +1439,7 @@ public:
   void add_keys_and_lengths(String *key_names, String *used_lengths);
   Explain_quick_select *get_explain(MEM_ROOT *alloc);
   bool is_keys_used(const MY_BITMAP *fields);
-  void add_used_key_part_to_set(MY_BITMAP *col_set);
+  void add_used_key_part_to_set();
 #ifndef DBUG_OFF
   void dbug_dump(int indent, bool verbose);
 #endif
@@ -1559,7 +1583,7 @@ public:
   bool unique_key_range() { return false; }
   int get_type() { return QS_TYPE_GROUP_MIN_MAX; }
   void add_keys_and_lengths(String *key_names, String *used_lengths);
-  void add_used_key_part_to_set(MY_BITMAP *col_set);
+  void add_used_key_part_to_set();
 #ifndef DBUG_OFF
   void dbug_dump(int indent, bool verbose);
 #endif
@@ -1573,6 +1597,8 @@ class QUICK_SELECT_DESC: public QUICK_RANGE_SELECT
 {
 public:
   QUICK_SELECT_DESC(QUICK_RANGE_SELECT *q, uint used_key_parts);
+  virtual QUICK_RANGE_SELECT *clone(bool *create_error)
+    { DBUG_ASSERT(0); return new QUICK_SELECT_DESC(this, used_key_parts); }
   int get_next();
   bool reverse_sorted() { return 1; }
   int get_type() { return QS_TYPE_RANGE_DESC; }
@@ -1640,6 +1666,38 @@ class SQL_SELECT :public Sql_alloc {
 };
 
 
+class SQL_SELECT_auto
+{
+  SQL_SELECT *select;
+public:
+  SQL_SELECT_auto(): select(NULL)
+  {}
+  ~SQL_SELECT_auto()
+  {
+    delete select;
+  }
+  SQL_SELECT_auto&
+  operator= (SQL_SELECT *_select)
+  {
+    select= _select;
+    return *this;
+  }
+  operator SQL_SELECT * () const
+  {
+    return select;
+  }
+  SQL_SELECT *
+  operator-> () const
+  {
+    return select;
+  }
+  operator bool () const
+  {
+    return select;
+  }
+};
+
+
 class FT_SELECT: public QUICK_RANGE_SELECT 
 {
 public:
@@ -1647,6 +1705,8 @@ public:
       QUICK_RANGE_SELECT (thd, table, key, 1, NULL, create_err) 
   { (void) init(); }
   ~FT_SELECT() { file->ft_end(); }
+  virtual QUICK_RANGE_SELECT *clone(bool *create_error)
+    { DBUG_ASSERT(0); return new FT_SELECT(thd, head, index, create_error); }
   int init() { return file->ft_init(); }
   int reset() { return 0; }
   int get_next() { return file->ha_ft_read(record); }
@@ -1659,9 +1719,13 @@ QUICK_RANGE_SELECT *get_quick_select_for_ref(THD *thd, TABLE *table,
                                              ha_rows records);
 SQL_SELECT *make_select(TABLE *head, table_map const_tables,
 			table_map read_tables, COND *conds,
+                        SORT_INFO* filesort,
                         bool allow_null_cond,  int *error);
 
 bool calculate_cond_selectivity_for_table(THD *thd, TABLE *table, Item **cond);
+
+bool eq_ranges_exceeds_limit(RANGE_SEQ_IF *seq, void *seq_init_param,
+                             uint limit);
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
 bool prune_partitions(THD *thd, TABLE *table, Item *pprune_cond);

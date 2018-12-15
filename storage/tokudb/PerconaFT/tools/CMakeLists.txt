@@ -12,7 +12,7 @@ foreach(tool ${tools})
         (CMAKE_CXX_FLAGS_DEBUG MATCHES " -DENABLED_DEBUG_SYNC"))
       target_link_libraries(${tool} sql)
     endif()
-    target_link_libraries(${tool} mysqlclient)
+    target_link_libraries(${tool} mysys)
   endif ()
 
   add_space_separated_property(TARGET ${tool} COMPILE_FLAGS -fvisibility=hidden)
@@ -21,5 +21,5 @@ endforeach(tool)
 # link in math.h library just for this tool.
 target_link_libraries(ftverify m)
 
-install(TARGETS tokuftdump      DESTINATION ${INSTALL_BINDIR} COMPONENT Server)
-install(TARGETS tokuft_logprint DESTINATION ${INSTALL_BINDIR} COMPONENT Server)
+install(TARGETS tokuftdump      DESTINATION ${INSTALL_BINDIR} COMPONENT tokudb-engine)
+install(TARGETS tokuft_logprint DESTINATION ${INSTALL_BINDIR} COMPONENT tokudb-engine)

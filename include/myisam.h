@@ -275,7 +275,7 @@ extern int mi_rsame(struct st_myisam_info *file,uchar *record,int inx);
 extern int mi_rsame_with_pos(struct st_myisam_info *file,uchar *record,
 			     int inx, my_off_t pos);
 extern int mi_update(struct st_myisam_info *file,const uchar *old,
-		     uchar *new_record);
+		     const uchar *new_record);
 extern int mi_write(struct st_myisam_info *file,uchar *buff);
 extern my_off_t mi_position(struct st_myisam_info *file);
 extern int mi_status(struct st_myisam_info *info, MI_ISAMINFO *x, uint flag);
@@ -373,7 +373,7 @@ typedef struct st_mi_sort_param
   int (*key_read)(struct st_mi_sort_param *,void *);
   int (*key_write)(struct st_mi_sort_param *, const void *);
   void (*lock_in_memory)(HA_CHECK *);
-  int (*write_keys)(struct st_mi_sort_param *, register uchar **,
+  int (*write_keys)(struct st_mi_sort_param *, uchar **,
                     ulonglong , struct st_buffpek *, IO_CACHE *);
   my_off_t (*read_to_buffer)(IO_CACHE *,struct st_buffpek *, uint);
   int (*write_key)(struct st_mi_sort_param *, IO_CACHE *,uchar *,
@@ -383,16 +383,15 @@ typedef struct st_mi_sort_param
 /* functions in mi_check */
 void myisamchk_init(HA_CHECK *param);
 int chk_status(HA_CHECK *param, MI_INFO *info);
-int chk_del(HA_CHECK *param, register MI_INFO *info, ulonglong test_flag);
+int chk_del(HA_CHECK *param, MI_INFO *info, ulonglong test_flag);
 int chk_size(HA_CHECK *param, MI_INFO *info);
 int chk_key(HA_CHECK *param, MI_INFO *info);
 int chk_data_link(HA_CHECK *param, MI_INFO *info, my_bool extend);
-int mi_repair(HA_CHECK *param, register MI_INFO *info,
-	      char * name, int rep_quick);
-int mi_sort_index(HA_CHECK *param, register MI_INFO *info, char * name);
-int mi_repair_by_sort(HA_CHECK *param, register MI_INFO *info,
+int mi_repair(HA_CHECK *param, MI_INFO *info, char * name, int rep_quick);
+int mi_sort_index(HA_CHECK *param, MI_INFO *info, char * name);
+int mi_repair_by_sort(HA_CHECK *param, MI_INFO *info,
 		      const char * name, int rep_quick);
-int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
+int mi_repair_parallel(HA_CHECK *param, MI_INFO *info,
 		      const char * name, int rep_quick);
 int change_to_newfile(const char * filename, const char * old_ext,
                       const char * new_ext, time_t backup_time, myf myflags);
@@ -418,7 +417,7 @@ my_bool mi_test_if_sort_rep(MI_INFO *info, ha_rows rows, ulonglong key_map,
 
 int mi_init_bulk_insert(MI_INFO *info, size_t cache_size, ha_rows rows);
 void mi_flush_bulk_insert(MI_INFO *info, uint inx);
-void mi_end_bulk_insert(MI_INFO *info);
+int mi_end_bulk_insert(MI_INFO *info, my_bool abort);
 int mi_assign_to_key_cache(MI_INFO *info, ulonglong key_map,
 			   KEY_CACHE *key_cache);
 void mi_change_key_cache(KEY_CACHE *old_key_cache,

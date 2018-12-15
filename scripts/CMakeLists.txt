@@ -96,6 +96,7 @@ INSTALL(FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/mysql_system_tables.sql 
   ${CMAKE_CURRENT_SOURCE_DIR}/mysql_system_tables_data.sql
   ${CMAKE_CURRENT_SOURCE_DIR}/mysql_performance_tables.sql
+  ${CMAKE_CURRENT_SOURCE_DIR}/mysql_test_db.sql
   ${CMAKE_CURRENT_SOURCE_DIR}/fill_help_tables.sql
   ${CMAKE_CURRENT_SOURCE_DIR}/mysql_test_data_timezone.sql
   ${CMAKE_CURRENT_SOURCE_DIR}/mysql_to_mariadb.sql
@@ -163,42 +164,6 @@ ENDIF()
 
 SET(HOSTNAME "hostname")
 SET(MYSQLD_USER "mysql")
-
-# Required for mysqlbug until autotools are deprecated, once done remove these
-# and expand default cmake variables
-SET(CC ${CMAKE_C_COMPILER})
-SET(CXX ${CMAKE_CXX_COMPILER})
-SET(SAVE_CC ${CMAKE_C_COMPILER})
-SET(SAVE_CXX ${CMAKE_CXX_COMPILER})
-SET(SAVE_CFLAGS ${CFLAGS})
-SET(SAVE_CXXFLAGS ${CXXFLAGS})
-# XXX no cmake equivalent for this, just make one up
-SET(CONFIGURE_LINE "Built using CMake")
-
-# Also required for mysqlbug, autoconf only supports --version so for now we
-# just explicitly require GNU
-EXECUTE_PROCESS(
-  COMMAND ${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ARG1} --version
-  COMMAND sed 1q
-  ERROR_QUIET
-  OUTPUT_VARIABLE CC_VERSION)
-EXECUTE_PROCESS(
-  COMMAND ${CMAKE_CXX_COMPILER} ${CMAKE_CXX_COMPILER_ARG1} --version
-  COMMAND sed 1q
-  ERROR_QUIET
-  OUTPUT_VARIABLE CXX_VERSION)
-
-CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/mysqlbug.sh
-  ${CMAKE_CURRENT_BINARY_DIR}/mysqlbug ESCAPE_QUOTES @ONLY)
-  EXECUTE_PROCESS(
-  COMMAND chmod +x ${CMAKE_CURRENT_BINARY_DIR}/mysqlbug
-  )
-
-INSTALL_SCRIPT(${CMAKE_CURRENT_BINARY_DIR}/mysqlbug
-  DESTINATION ${INSTALL_BINDIR}
-  COMPONENT Server
-  )
-
 ENDIF(UNIX)
 
 # Really ugly, one script, "mysql_install_db", needs prefix set to ".",
@@ -212,6 +177,7 @@ IF(INSTALL_LAYOUT MATCHES "STANDALONE")
   SET(scriptdir ${prefix}/${INSTALL_BINDIR})
   SET(libexecdir ${prefix}/${INSTALL_SBINDIR})
   SET(pkgdatadir ${prefix}/${INSTALL_MYSQLSHAREDIR})
+  SET(pkgplugindir ${prefix}/${INSTALL_PLUGINDIR})
   SET(localstatedir ${prefix}/data)
 ELSE()
   SET(prefix "${CMAKE_INSTALL_PREFIX}")
@@ -220,6 +186,7 @@ ELSE()
   SET(scriptdir ${INSTALL_BINDIRABS})
   SET(libexecdir ${INSTALL_SBINDIRABS})
   SET(pkgdatadir ${INSTALL_MYSQLSHAREDIRABS})
+  SET(pkgplugindir ${INSTALL_PLUGINDIRABS})
   SET(localstatedir ${MYSQL_DATADIR})
 ENDIF()
 
@@ -320,7 +287,6 @@ ELSE()
   IF (NOT WITHOUT_SERVER)
     SET(SERVER_SCRIPTS
       mysql_fix_extensions
-      mysql_zap
       mysqld_multi
       mysqld_safe
       mysqldumpslow

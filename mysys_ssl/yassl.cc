@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2015 MariaDB Corporation
+ Copyright (c) 2015, 2017, MariaDB Corporation.
 
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -28,9 +28,9 @@
 using yaSSL::yaERR_remove_state;
 using yaSSL::yaRAND_bytes;
 
-#define EVP_CIPH_ECB_MODE     0x1
-#define EVP_CIPH_CBC_MODE     0x2
-#define EVP_CIPH_NO_PADDING 0x100
+#define EVP_CIPH_ECB_MODE     0x1U
+#define EVP_CIPH_CBC_MODE     0x2U
+#define EVP_CIPH_NO_PADDING 0x100U
 
 /*
   note that TaoCrypt::AES object is not explicitly put into EVP_CIPHER_CTX.
@@ -45,7 +45,6 @@ typedef struct
   int buf_len;
   int final_used;
   uchar tao_buf[sizeof(TaoCrypt::AES)];   // TaoCrypt::AES object
-  uchar oiv[TaoCrypt::AES::BLOCK_SIZE];   // original IV
   uchar buf[TaoCrypt::AES::BLOCK_SIZE];   // last partial input block
   uchar final[TaoCrypt::AES::BLOCK_SIZE]; // last decrypted (output) block
 } EVP_CIPHER_CTX;
@@ -98,10 +97,7 @@ static int EVP_CipherInit_ex(EVP_CIPHER_CTX *ctx, const EVP_CIPHER *cipher,
                                        : TaoCrypt::DECRYPTION, cipher->mode);
   TAO(ctx)->SetKey(key, cipher->key_len);
   if (iv)
-  {
     TAO(ctx)->SetIV(iv);
-    memcpy(ctx->oiv, iv, TaoCrypt::AES::BLOCK_SIZE);
-  }
   ctx->encrypt= enc;
   ctx->key_len= cipher->key_len;
   ctx->flags|= cipher->mode == TaoCrypt::CBC ? EVP_CIPH_CBC_MODE : EVP_CIPH_ECB_MODE;

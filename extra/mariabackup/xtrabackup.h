@@ -26,26 +26,14 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include "xbstream.h"
 #include "changed_page_bitmap.h"
 
-#ifdef __WIN__
-#define XB_FILE_UNDEFINED INVALID_HANDLE_VALUE
-#else
-#define XB_FILE_UNDEFINED (-1)
-#endif
+struct xb_delta_info_t
+{
+	xb_delta_info_t(page_size_t page_size, ulint space_id)
+	: page_size(page_size), space_id(space_id) {}
 
-typedef struct {
-	ulint	page_size;
-	ulint	zip_size;
-	ulint	space_id;
-} xb_delta_info_t;
-
-/* ======== Datafiles iterator ======== */
-typedef struct {
-	fil_system_t	*system;
-	fil_space_t	*space;
-	fil_node_t	*node;
-	ibool		started;
-	os_ib_mutex_t	mutex;
-} datafiles_iter_t;
+	page_size_t	page_size;
+	ulint		space_id;
+};
 
 /* value of the --incremental option */
 extern lsn_t incremental_lsn;
@@ -56,6 +44,9 @@ extern char		*xtrabackup_incremental_basedir;
 extern char		*innobase_data_home_dir;
 extern char		*innobase_buffer_pool_filename;
 extern char		*xb_plugin_dir;
+extern char		*xb_rocksdb_datadir;
+extern my_bool	xb_backup_rocksdb;
+
 extern uint		opt_protocol;
 extern ds_ctxt_t	*ds_meta;
 extern ds_ctxt_t	*ds_data;
@@ -68,9 +59,7 @@ extern xb_page_bitmap *changed_page_bitmap;
 extern char		*xtrabackup_incremental;
 extern my_bool		xtrabackup_incremental_force_scan;
 
-extern lsn_t		metadata_from_lsn;
 extern lsn_t		metadata_to_lsn;
-extern lsn_t		metadata_last_lsn;
 
 extern xb_stream_fmt_t	xtrabackup_stream_fmt;
 extern ibool		xtrabackup_stream;
@@ -86,15 +75,11 @@ extern ibool		xtrabackup_compress;
 
 extern my_bool		xtrabackup_backup;
 extern my_bool		xtrabackup_prepare;
-extern my_bool		xtrabackup_apply_log_only;
 extern my_bool		xtrabackup_copy_back;
 extern my_bool		xtrabackup_move_back;
 extern my_bool		xtrabackup_decrypt_decompress;
 
 extern char		*innobase_data_file_path;
-extern char		*innobase_doublewrite_file;
-extern longlong		innobase_log_file_size;
-extern long		innobase_log_files_in_group;
 extern longlong		innobase_page_size;
 
 extern int		xtrabackup_parallel;
@@ -110,9 +95,7 @@ extern "C"{
 }
 #endif
 extern my_bool		xtrabackup_export;
-extern char		*xtrabackup_incremental_basedir;
 extern char		*xtrabackup_extra_lsndir;
-extern char		*xtrabackup_incremental_dir;
 extern ulint		xtrabackup_log_copy_interval;
 extern char		*xtrabackup_stream_str;
 extern long		xtrabackup_throttle;
@@ -128,6 +111,7 @@ extern my_bool		opt_noversioncheck;
 extern my_bool		opt_no_backup_locks;
 extern my_bool		opt_decompress;
 extern my_bool		opt_remove_original;
+extern my_bool		opt_lock_ddl_per_table;
 
 extern char		*opt_incremental_history_name;
 extern char		*opt_incremental_history_uuid;
@@ -138,7 +122,6 @@ extern char		*opt_host;
 extern char		*opt_defaults_group;
 extern char		*opt_socket;
 extern uint		opt_port;
-extern char		*opt_login_path;
 extern char		*opt_log_bin;
 
 extern const char 	*query_type_names[];
@@ -167,24 +150,6 @@ extern ulong opt_binlog_info;
 void xtrabackup_io_throttling(void);
 my_bool xb_write_delta_metadata(const char *filename,
 				const xb_delta_info_t *info);
-
-datafiles_iter_t *datafiles_iter_new(fil_system_t *f_system);
-fil_node_t *datafiles_iter_next(datafiles_iter_t *it);
-void datafiles_iter_free(datafiles_iter_t *it);
-
-/************************************************************************
-Initialize the tablespace memory cache and populate it by scanning for and
-opening data files */
-ulint xb_data_files_init(void);
-
-/************************************************************************
-Destroy the tablespace memory cache. */
-void xb_data_files_close(void);
-
-/***********************************************************************
-Reads the space flags from a given data file and returns the compressed
-page size, or 0 if the space is not compressed. */
-ulint xb_get_zip_size(pfs_os_file_t file);
 
 /************************************************************************
 Checks if a table specified as a name in the form "database/name" (InnoDB 5.6)
@@ -219,9 +184,6 @@ extern my_bool opt_ssl_verify_server_cert;
 #endif
 
 
-void
-xtrabackup_backup_func(void);
-
 my_bool
 xb_get_one_option(int optid,
 		  const struct my_option *opt __attribute__((unused)),
@@ -230,4 +192,8 @@ xb_get_one_option(int optid,
 const char*
 xb_get_copy_action(const char *dflt = "Copying");
 
+void mdl_lock_init();
+void mdl_lock_table(ulint space_id);
+void mdl_unlock_all();
+bool ends_with(const char *str, const char *suffix);
 #endif /* XB_XTRABACKUP_H */

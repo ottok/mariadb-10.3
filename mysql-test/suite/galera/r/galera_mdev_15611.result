@@ -1,3 +1,4 @@
+connection node_1;
 CREATE TABLE t1 (
 id int primary key
 );

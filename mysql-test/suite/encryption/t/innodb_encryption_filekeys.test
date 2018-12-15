@@ -2,17 +2,13 @@
 -- source include/have_file_key_management_plugin.inc
 
 --disable_query_log
-let $innodb_file_format_orig = `SELECT @@innodb_file_format`;
 let $encrypt_tables = `SELECT @@innodb_encrypt_tables`;
 let $threads = `SELECT @@innodb_encryption_threads`;
 let $key_id = `SELECT @@innodb_default_encryption_key_id`;
 --enable_query_log
 
---disable_warnings
-SET GLOBAL innodb_file_format = `Barracuda`;
 SET GLOBAL innodb_encrypt_tables = OFF;
 SET GLOBAL innodb_encryption_threads = 4;
---enable_warnings
 
 CREATE TABLE t1 (pk INT PRIMARY KEY AUTO_INCREMENT, c VARCHAR(256)) ENGINE=INNODB;
 SHOW CREATE TABLE t1;
@@ -131,12 +127,7 @@ drop table t1,t2,t3,t4, t5;
 
 # reset system
 --disable_query_log
---disable_warnings
-EVAL SET GLOBAL innodb_file_format = $innodb_file_format_orig;
 EVAL SET GLOBAL innodb_encrypt_tables = $encrypt_tables;
 EVAL SET GLOBAL innodb_encryption_threads = $threads;
 EVAL set GLOBAL innodb_default_encryption_key_id = $key_id;
---enable_warnings
 --enable_query_log
-
-

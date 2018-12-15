@@ -17,7 +17,7 @@
 #pragma implementation                         /* gcc class implementation */
 #endif
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_cursor.h"
@@ -53,6 +53,10 @@ public:
   virtual int open(JOIN *join __attribute__((unused)));
   virtual void fetch(ulong num_rows);
   virtual void close();
+  bool export_structure(THD *thd, Row_definition_list *defs)
+  {
+    return table->export_structure(thd, defs);
+  }
   virtual ~Materialized_cursor();
 
   void on_table_fill_finished();
@@ -68,13 +72,13 @@ public:
   create a Materialized_cursor.
 */
 
-class Select_materialize: public select_union
+class Select_materialize: public select_unit
 {
   select_result *result; /**< the result object of the caller (PS or SP) */
 public:
   Materialized_cursor *materialized_cursor;
   Select_materialize(THD *thd_arg, select_result *result_arg):
-    select_union(thd_arg), result(result_arg), materialized_cursor(0) {}
+    select_unit(thd_arg), result(result_arg), materialized_cursor(0) {}
   virtual bool send_result_set_metadata(List<Item> &list, uint flags);
   bool send_eof()
   {
@@ -87,6 +91,11 @@ public:
   {
     if (materialized_cursor)
       materialized_cursor->on_table_fill_finished();
+  }
+
+  bool view_structure_only() const
+  {
+    return result->view_structure_only();
   }
 };
 
@@ -128,7 +137,7 @@ int mysql_open_cursor(THD *thd, select_result *result,
 
   MYSQL_QUERY_EXEC_START(thd->query(),
                          thd->thread_id,
-                         (char *) (thd->db ? thd->db : ""),
+                         thd->get_db(),
                          &thd->security_ctx->priv_user[0],
                          (char *) thd->security_ctx->host_or_ip,
                          2);
@@ -277,7 +286,7 @@ int Materialized_cursor::send_result_set_metadata(
   {
     Send_field send_field;
     Item_ident *ident= static_cast<Item_ident *>(item_dst);
-    item_org->make_field(&send_field);
+    item_org->make_send_field(thd, &send_field);
 
     ident->db_name=    thd->strdup(send_field.db_name);
     ident->table_name= thd->strdup(send_field.table_name);
@@ -433,10 +442,10 @@ void Materialized_cursor::on_table_fill_finished()
 bool Select_materialize::send_result_set_metadata(List<Item> &list, uint flags)
 {
   DBUG_ASSERT(table == 0);
-  if (create_result_table(unit->thd, unit->get_unit_column_types(),
+  if (create_result_table(unit->thd, unit->get_column_types(true),
                           FALSE,
                           thd->variables.option_bits | TMP_TABLE_ALL_COLUMNS,
-                          "", FALSE, TRUE, TRUE))
+                          &empty_clex_str, FALSE, TRUE, TRUE, 0))
     return TRUE;
 
   materialized_cursor= new (&table->mem_root)

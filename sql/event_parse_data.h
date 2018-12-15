@@ -17,7 +17,7 @@
 #ifndef _EVENT_PARSE_DATA_H_
 #define _EVENT_PARSE_DATA_H_
 
-#include "sql_list.h"                           /* Sql_alloc */
+#include "sql_alloc.h"
 
 class Item;
 class THD;
@@ -66,10 +66,10 @@ public:
 
   bool body_changed;
 
-  LEX_STRING dbname;
-  LEX_STRING name;
-  LEX_STRING definer;// combination of user and host
-  LEX_STRING comment;
+  LEX_CSTRING dbname;
+  LEX_CSTRING name;
+  LEX_CSTRING definer;// combination of user and host
+  LEX_CSTRING comment;
 
   Item* item_starts;
   Item* item_ends;

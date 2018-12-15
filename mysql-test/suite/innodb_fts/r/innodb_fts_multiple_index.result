@@ -9,15 +9,13 @@ INSERT INTO t1 (a,b) VALUES
 ('How To Use MySQL Well','After you went through a ...'),
 ('Optimizing MySQL','In this tutorial we will show ...');
 ALTER TABLE t1 ADD FULLTEXT INDEX idx_1 (a);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 ALTER TABLE t1 ADD FULLTEXT INDEX idx_2 (b);
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
   `a` varchar(200) DEFAULT NULL,
-  `b` text,
+  `b` text DEFAULT NULL,
   PRIMARY KEY (`id`),
   FULLTEXT KEY `idx_1` (`a`),
   FULLTEXT KEY `idx_2` (`b`)
@@ -46,9 +44,9 @@ id	a	b
 1	MySQL Tutorial	DBMS stands for DataBase ...
 select *, MATCH(a) AGAINST("Optimizing MySQL" IN BOOLEAN MODE) as x from t1;
 id	a	b	x
-1	MySQL Tutorial	DBMS stands for DataBase ...	0.0906190574169159
-2	How To Use MySQL Well	After you went through a ...	0.0906190574169159
-3	Optimizing MySQL	In this tutorial we will show ...	0.6961383819580078
+1	MySQL Tutorial	DBMS stands for DataBase ...	0.000000001885928302414186
+2	How To Use MySQL Well	After you went through a ...	0.000000001885928302414186
+3	Optimizing MySQL	In this tutorial we will show ...	0.22764469683170319
 select *, MATCH(b) AGAINST("collections support" IN BOOLEAN MODE) as x from t1;
 id	a	b	x
 1	MySQL Tutorial	DBMS stands for DataBase ...	0
@@ -90,9 +88,9 @@ id	a	b
 1	MySQL Tutorial	DBMS stands for DataBase ...
 select *, MATCH(a) AGAINST("Optimizing MySQL" IN BOOLEAN MODE) as x from t1;
 id	a	b	x
-1	MySQL Tutorial	DBMS stands for DataBase ...	0.0906190574169159
-2	How To Use MySQL Well	After you went through a ...	0.0906190574169159
-3	Optimizing MySQL	In this tutorial we will show ...	0.6961383819580078
+1	MySQL Tutorial	DBMS stands for DataBase ...	0.000000001885928302414186
+2	How To Use MySQL Well	After you went through a ...	0.000000001885928302414186
+3	Optimizing MySQL	In this tutorial we will show ...	0.22764469683170319
 select *, MATCH(b) AGAINST("collections support" IN BOOLEAN MODE) as x from t1;
 id	a	b	x
 1	MySQL Tutorial	DBMS stands for DataBase ...	0

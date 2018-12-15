@@ -30,9 +30,8 @@ Created 2011/12/19 Inaam Rana
 #include "univ.i"
 #include "ut0byte.h"
 #include "log0log.h"
+#include "buf0types.h"
 #include "log0recv.h"
-
-#ifndef UNIV_HOTBACKUP
 
 /** Doublewrite system */
 extern buf_dblwr_t*	buf_dblwr;
@@ -44,39 +43,35 @@ is not present in the TRX_SYS page.
 @return	whether the operation succeeded
 @retval	true	if the doublewrite buffer exists or was created
 @retval	false	if the creation failed (too small first data file) */
-UNIV_INTERN
+MY_ATTRIBUTE((warn_unused_result))
 bool
-buf_dblwr_create()
-	MY_ATTRIBUTE((warn_unused_result));
+buf_dblwr_create();
 
-/****************************************************************//**
-At a database startup initializes the doublewrite buffer memory structure if
+/**
+At database startup initializes the doublewrite buffer memory structure if
 we already have a doublewrite buffer created in the data files. If we are
 upgrading to an InnoDB version which supports multiple tablespaces, then this
 function performs the necessary update operations. If we are in a crash
-recovery, this function loads the pages from double write buffer into memory. */
-void
+recovery, this function loads the pages from double write buffer into memory.
+@param[in]	file		File handle
+@param[in]	path		Path name of file
+@return DB_SUCCESS or error code */
+dberr_t
 buf_dblwr_init_or_load_pages(
-/*=========================*/
 	pfs_os_file_t	file,
-	char*		path,
-	bool		load_corrupt_pages);
+	const char*	path);
 
-/****************************************************************//**
-Process the double write buffer pages. */
+/** Process and remove the double write buffer pages for all tablespaces. */
 void
-buf_dblwr_process(void);
-/*===================*/
+buf_dblwr_process();
 
 /****************************************************************//**
 frees doublewrite buffer. */
-UNIV_INTERN
 void
-buf_dblwr_free(void);
-/*================*/
+buf_dblwr_free();
+
 /********************************************************************//**
 Updates the doublewrite buffer when an IO request is completed. */
-UNIV_INTERN
 void
 buf_dblwr_update(
 /*=============*/
@@ -86,7 +81,6 @@ buf_dblwr_update(
 Determines if a page number is located inside the doublewrite buffer.
 @return TRUE if the location is inside the two blocks of the
 doublewrite buffer */
-UNIV_INTERN
 ibool
 buf_dblwr_page_inside(
 /*==================*/
@@ -95,21 +89,26 @@ buf_dblwr_page_inside(
 Posts a buffer page for writing. If the doublewrite memory buffer is
 full, calls buf_dblwr_flush_buffered_writes and waits for for free
 space to appear. */
-UNIV_INTERN
 void
 buf_dblwr_add_to_batch(
 /*====================*/
 	buf_page_t*	bpage);	/*!< in: buffer block to write */
+
+/********************************************************************//**
+Flush a batch of writes to the datafiles that have already been
+written to the dblwr buffer on disk. */
+void
+buf_dblwr_sync_datafiles();
+
 /********************************************************************//**
 Flushes possible buffered writes from the doublewrite memory buffer to disk,
 and also wakes up the aio thread if simulated aio is used. It is very
 important to call this function after a batch of writes has been posted,
 and also when we may have to wait for a page latch! Otherwise a deadlock
 of threads can occur. */
-UNIV_INTERN
 void
-buf_dblwr_flush_buffered_writes(void);
-/*=================================*/
+buf_dblwr_flush_buffered_writes();
+
 /********************************************************************//**
 Writes a page to the doublewrite buffer on disk, sync it, then write
 the page to the datafile and sync the datafile. This function is used
@@ -118,7 +117,6 @@ flushes in the doublewrite buffer are in use we wait here for one to
 become free. We are guaranteed that a slot will become free because any
 thread that is using a slot must also release the slot before leaving
 this function. */
-UNIV_INTERN
 void
 buf_dblwr_write_single_page(
 /*========================*/
@@ -133,7 +131,7 @@ struct buf_dblwr_t{
 				doublewrite block (64 pages) */
 	ulint		block2;	/*!< page number of the second block */
 	ulint		first_free;/*!< first free position in write_buf
-				measured in units of UNIV_PAGE_SIZE */
+				measured in units of srv_page_size */
 	ulint		b_reserved;/*!< number of slots currently reserved
 				for batch flush. */
 	os_event_t	b_event;/*!< event where threads wait for a
@@ -152,7 +150,7 @@ struct buf_dblwr_t{
 				buffer. */
 	byte*		write_buf;/*!< write buffer used in writing to the
 				doublewrite buffer, aligned to an
-				address divisible by UNIV_PAGE_SIZE
+				address divisible by srv_page_size
 				(which is required by Windows aio) */
 	byte*		write_buf_unaligned;/*!< pointer to write_buf,
 				but unaligned */
@@ -160,8 +158,5 @@ struct buf_dblwr_t{
 				the buffer blocks which have been
 				cached to write_buf */
 };
-
-
-#endif /* UNIV_HOTBACKUP */
 
 #endif

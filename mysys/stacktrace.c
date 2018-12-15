@@ -38,13 +38,13 @@
 
 static char *heap_start;
 
-#ifdef HAVE_BSS_START
+#if(defined HAVE_BSS_START) && !(defined __linux__)
 extern char *__bss_start;
 #endif
 
 void my_init_stacktrace()
 {
-#ifdef HAVE_BSS_START
+#if(defined HAVE_BSS_START) && !(defined __linux__)
   heap_start = (char*) &__bss_start;
 #endif
 }
@@ -70,7 +70,7 @@ static void print_buffer(char *buffer, size_t count)
 
   @return Zero on success.
 */
-static int safe_print_str(const char *addr, int max_len)
+static int safe_print_str(const char *addr, size_t max_len)
 {
   int fd;
   pid_t tid;
@@ -147,7 +147,7 @@ static int safe_print_str(const char *addr, int max_len)
     returns 1, it does not mean 100% that the pointer is corrupted.
 */
 
-int my_safe_print_str(const char* val, int max_len)
+int my_safe_print_str(const char* val, size_t max_len)
 {
   char *heap_end;
 
@@ -178,12 +178,13 @@ int my_safe_print_str(const char* val, int max_len)
 #include <ucontext.h>
 
 void my_print_stacktrace(uchar* stack_bottom __attribute__((unused)), 
-                         ulong thread_stack __attribute__((unused)))
+                         ulong thread_stack __attribute__((unused)),
+                         my_bool silent)
 {
   if (printstack(fileno(stderr)) == -1)
     my_safe_printf_stderr("%s",
       "Error when traversing the stack, stack appears corrupt.\n");
-  else
+  else if (!silent)
     my_safe_printf_stderr("%s",
       "Please read "
       "http://dev.mysql.com/doc/refman/5.1/en/resolve-stack-dump.html\n"
@@ -260,7 +261,8 @@ static int print_with_addr_resolve(void **addrs, int n)
 }
 #endif
 
-void my_print_stacktrace(uchar* stack_bottom, ulong thread_stack)
+void my_print_stacktrace(uchar* stack_bottom, ulong thread_stack,
+                         my_bool silent __attribute__((unused)))
 {
   void *addrs[128];
   char **strings __attribute__((unused)) = NULL;
@@ -334,7 +336,8 @@ inline uint32* find_prev_pc(uint32* pc, uchar** fp)
 }
 #endif /* defined(__alpha__) && defined(__GNUC__) */
 
-void my_print_stacktrace(uchar* stack_bottom, ulong thread_stack)
+void my_print_stacktrace(uchar* stack_bottom, ulong thread_stack,
+                         my_bool silent)
 {
   uchar** UNINIT_VAR(fp);
   uint frame_count = 0, sigreturn_frame_count;
@@ -449,7 +452,8 @@ void my_print_stacktrace(uchar* stack_bottom, ulong thread_stack)
                         "Stack trace seems successful - bottom reached\n");
 
 end:
-  my_safe_printf_stderr("%s",
+  if (!silent)
+    my_safe_printf_stderr("%s",
     "Please read "
     "http://dev.mysql.com/doc/refman/5.1/en/resolve-stack-dump.html\n"
     "and follow instructions on how to resolve the stack trace.\n"
@@ -483,7 +487,18 @@ void my_write_core(int sig)
 
 #else /* __WIN__*/
 
+#ifdef _MSC_VER
+/* Silence warning in OS header dbghelp.h */
+#pragma warning(push)
+#pragma warning(disable : 4091)
+#endif
+
 #include <dbghelp.h>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #include <tlhelp32.h>
 #include <my_sys.h>
 #if _MSC_VER
@@ -599,7 +614,7 @@ static void get_symbol_path(char *path, size_t size)
 #define SYMOPT_NO_PROMPTS 0
 #endif
 
-void my_print_stacktrace(uchar* unused1, ulong unused2)
+void my_print_stacktrace(uchar* unused1, ulong unused2, my_bool silent)
 {
   HANDLE  hProcess= GetCurrentProcess();
   HANDLE  hThread= GetCurrentThread();
@@ -688,7 +703,7 @@ void my_print_stacktrace(uchar* unused1, ulong unused2)
     if(have_source)
     {
       const char *base_file_name= my_basename(line.FileName);
-      my_safe_printf_stderr("[%s:%u]",
+      my_safe_printf_stderr("[%s:%lu]",
                             base_file_name, line.LineNumber);
     }
     my_safe_printf_stderr("%s", "\n");
@@ -718,7 +733,7 @@ void my_write_core(int unused)
   if(GetModuleFileName(NULL, path, sizeof(path)))
   {
     _splitpath(path, NULL, NULL,dump_fname,NULL);
-    strncat(dump_fname, ".dmp", sizeof(dump_fname));
+    strcat_s(dump_fname, sizeof(dump_fname), ".dmp");
   }
 
   hFile= CreateFile(dump_fname, GENERIC_WRITE, 0, 0, CREATE_ALWAYS,
@@ -748,7 +763,7 @@ void my_write_core(int unused)
 }
 
 
-int my_safe_print_str(const char *val, int len)
+int my_safe_print_str(const char *val, size_t len)
 {
   __try
   {
@@ -765,7 +780,7 @@ int my_safe_print_str(const char *val, int len)
 
 size_t my_write_stderr(const void *buf, size_t count)
 {
-  return (size_t) write(fileno(stderr), buf, count);
+  return (size_t) write(fileno(stderr), buf, (uint)count);
 }
 
 

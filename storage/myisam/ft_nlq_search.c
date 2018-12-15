@@ -75,11 +75,7 @@ static int walk_and_match(FT_WORD *word, uint32 count, ALL_IN_ONE *aio)
   MI_KEYDEF    *keyinfo=info->s->keyinfo+aio->keynr;
   my_off_t     key_root;
   uint         extra= HA_FT_WLEN + info->s->rec_reflength;
-#if HA_FT_WTYPE == HA_KEYTYPE_FLOAT
   float tmp_weight;
-#else
-#error
-#endif
   DBUG_ENTER("walk_and_match");
   LINT_INIT_STRUCT(subkeys);
 
@@ -114,7 +110,7 @@ static int walk_and_match(FT_WORD *word, uint32 count, ALL_IN_ONE *aio)
 
     if (keylen &&
         ha_compare_text(aio->charset,info->lastkey+1,
-                        info->lastkey_length-extra-1, keybuff+1,keylen-1,0,0))
+                        info->lastkey_length-extra-1, keybuff+1,keylen-1,0))
      break;
 
     if (subkeys.i < 0)
@@ -134,12 +130,8 @@ static int walk_and_match(FT_WORD *word, uint32 count, ALL_IN_ONE *aio)
       r=_mi_search_first(info, keyinfo, key_root);
       goto do_skip;
     }
-#if HA_FT_WTYPE == HA_KEYTYPE_FLOAT
     /* The weight we read was actually a float */
     tmp_weight= subkeys.f;
-#else
-#error
-#endif
   /* The following should be safe, even if we compare doubles */
     if (tmp_weight==0)
       DBUG_RETURN(doc_cnt); /* stopword, doc_cnt should be 0 */
@@ -316,8 +308,8 @@ FT_INFO *ft_init_nlq_search(MI_INFO *info, uint keynr, uchar *query,
               0);
 
 err:
-  delete_tree(&aio.dtree);
-  delete_tree(&wtree);
+  delete_tree(&aio.dtree, 0);
+  delete_tree(&wtree, 0);
   info->lastpos=saved_lastpos;
   DBUG_RETURN(dlist);
 }

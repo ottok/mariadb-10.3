@@ -1,4 +1,5 @@
 /* Copyright (c) 2010, 2012, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2017, MariaDB Corporation.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -86,7 +87,7 @@
 #ifdef HAVE_PSI_TABLE_INTERFACE
   #define MYSQL_TABLE_IO_WAIT(PSI, OP, INDEX, FLAGS, PAYLOAD) \
     {                                                         \
-      if (PSI != NULL)                                        \
+      if (psi_likely(PSI != NULL))                            \
       {                                                       \
         PSI_table_locker *locker;                             \
         PSI_table_locker_state state;                         \
@@ -119,7 +120,7 @@
 #ifdef HAVE_PSI_TABLE_INTERFACE
   #define MYSQL_TABLE_LOCK_WAIT(PSI, OP, FLAGS, PAYLOAD) \
     {                                                    \
-      if (PSI != NULL)                                   \
+      if (psi_likely(PSI != NULL))                       \
       {                                                  \
         PSI_table_locker *locker;                        \
         PSI_table_locker_state state;                    \
@@ -183,9 +184,9 @@ static inline struct PSI_table_locker *
 inline_mysql_start_table_lock_wait(PSI_table_locker_state *state,
                                    struct PSI_table *psi,
                                    enum PSI_table_lock_operation op,
-                                   ulong flags, const char *src_file, int src_line)
+                                   ulong flags, const char *src_file, uint src_line)
 {
-  if (psi != NULL)
+  if (psi_likely(psi != NULL))
   {
     struct PSI_table_locker *locker;
     locker= PSI_TABLE_CALL(start_table_lock_wait)
@@ -202,7 +203,7 @@ inline_mysql_start_table_lock_wait(PSI_table_locker_state *state,
 static inline void
 inline_mysql_end_table_lock_wait(struct PSI_table_locker *locker)
 {
-  if (locker != NULL)
+  if (psi_likely(locker != NULL))
     PSI_TABLE_CALL(end_table_lock_wait)(locker);
 }
 #endif

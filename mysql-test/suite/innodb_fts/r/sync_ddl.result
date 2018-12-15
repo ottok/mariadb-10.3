@@ -3,8 +3,6 @@ id INT AUTO_INCREMENT NOT NULL PRIMARY KEY,
 value VARCHAR(1024)
 ) ENGINE=InnoDB;
 CREATE FULLTEXT INDEX idx1 ON t1(value);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SET @save_debug = @@GLOBAL.debug_dbug;
 SET GLOBAL debug_dbug = '+d,fts_instrument_sync_request,fts_instrument_sync_before_syncing,ib_trunc_sleep_before_fts_cache_clear';
 INSERT INTO t1 (value) VALUES
@@ -18,8 +16,6 @@ id INT AUTO_INCREMENT NOT NULL PRIMARY KEY,
 value VARCHAR(1024)
 ) ENGINE=InnoDB;
 CREATE FULLTEXT INDEX idx1 ON t1(value);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SET GLOBAL debug_dbug = '+d,fts_instrument_sync_request,fts_instrument_write_words_before_select_index,ib_trunc_sleep_before_fts_cache_clear';
 INSERT INTO t1 (value) VALUES
 ('By default or with the IN NATURAL LANGUAGE MODE modifier'),
@@ -39,8 +35,6 @@ CREATE TABLE t1 (
 value VARCHAR(1024)
 ) ENGINE=InnoDB;
 CREATE FULLTEXT INDEX idx1 ON t1(value);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SET GLOBAL debug_dbug = '+d,fts_instrument_sync_request,fts_instrument_msg_sync_sleep';
 INSERT INTO t1 (value) VALUES
 ('By default or with the IN NATURAL LANGUAGE MODE modifier'),
@@ -60,8 +54,6 @@ CREATE TABLE t1 (
 value VARCHAR(1024)
 ) ENGINE=InnoDB;
 CREATE FULLTEXT INDEX idx1 ON t1(value);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SET GLOBAL debug_dbug = '+d,fts_instrument_sync_request,fts_instrument_msg_sync_sleep';
 INSERT INTO t1 (value) VALUES
 ('By default or with the IN NATURAL LANGUAGE MODE modifier'),
@@ -83,8 +75,6 @@ CREATE TABLE t1 (
 value VARCHAR(1024)
 ) ENGINE=InnoDB;
 CREATE FULLTEXT INDEX idx1 ON t1(value);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SET GLOBAL debug_dbug = '+d,fts_instrument_sync_request,fts_instrument_msg_sync_sleep';
 INSERT INTO t1 (value) VALUES
 ('example, a column that uses the latin1 character'),
@@ -100,8 +90,6 @@ id1 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
 value VARCHAR(1024)
 ) ENGINE=InnoDB;
 CREATE FULLTEXT INDEX idx1 ON t1(value);
-Warnings:
-Warning	124	InnoDB rebuilding table to add column FTS_DOC_ID
 SET GLOBAL debug_dbug = '+d,fts_instrument_sync_request,fts_instrument_msg_sync_sleep';
 INSERT INTO t1 (value) VALUES
 ('example, a column that uses the latin1 character'),

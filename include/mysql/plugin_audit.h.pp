@@ -9,12 +9,12 @@ extern struct base64_service_st {
   int (*base64_decode_ptr)(const char *src, size_t src_len,
                            void *dst, const char **end_ptr, int flags);
 } *base64_service;
-int base64_needed_encoded_length(int length_of_data);
-int base64_encode_max_arg_length(void);
-int base64_needed_decoded_length(int length_of_encoded_data);
-int base64_decode_max_arg_length();
-int base64_encode(const void *src, size_t src_len, char *dst);
-int base64_decode(const char *src, size_t src_len,
+int my_base64_needed_encoded_length(int length_of_data);
+int my_base64_encode_max_arg_length(void);
+int my_base64_needed_decoded_length(int length_of_encoded_data);
+int my_base64_decode_max_arg_length();
+int my_base64_encode(const void *src, size_t src_len, char *dst);
+int my_base64_decode(const char *src, size_t src_len,
                   void *dst, const char **end_ptr, int flags);
 extern void (*debug_sync_C_callback_ptr)(void*, const char *, size_t);
 struct encryption_service_st {
@@ -167,9 +167,9 @@ int my_random_bytes(unsigned char* buf, int num);
 unsigned int my_aes_get_size(enum my_aes_mode mode, unsigned int source_length);
 unsigned int my_aes_ctx_size(enum my_aes_mode mode);
 extern struct my_print_error_service_st {
-  void(*my_error_func)(unsigned int nr, unsigned long MyFlags, ...);
-  void(*my_printf_error_func)(unsigned int nr, const char *fmt, unsigned long MyFlags,...);
-  void(*my_printv_error_func)(unsigned int error, const char *format, unsigned long MyFlags, va_list ap);
+  void (*my_error_func)(unsigned int nr, unsigned long MyFlags, ...);
+  void (*my_printf_error_func)(unsigned int nr, const char *fmt, unsigned long MyFlags,...);
+  void (*my_printv_error_func)(unsigned int error, const char *format, unsigned long MyFlags, va_list ap);
 } *my_print_error_service;
 extern void my_error(unsigned int nr, unsigned long MyFlags, ...);
 extern void my_printf_error(unsigned int my_err, const char *format, unsigned long MyFlags, ...);
@@ -270,23 +270,31 @@ struct st_mysql_lex_string
   size_t length;
 };
 typedef struct st_mysql_lex_string MYSQL_LEX_STRING;
+struct st_mysql_const_lex_string
+{
+  const char *str;
+  size_t length;
+};
+typedef struct st_mysql_const_lex_string MYSQL_CONST_LEX_STRING;
 extern struct thd_alloc_service_st {
-  void *(*thd_alloc_func)(void*, unsigned int);
-  void *(*thd_calloc_func)(void*, unsigned int);
+  void *(*thd_alloc_func)(void*, size_t);
+  void *(*thd_calloc_func)(void*, size_t);
   char *(*thd_strdup_func)(void*, const char *);
-  char *(*thd_strmake_func)(void*, const char *, unsigned int);
-  void *(*thd_memdup_func)(void*, const void*, unsigned int);
-  MYSQL_LEX_STRING *(*thd_make_lex_string_func)(void*, MYSQL_LEX_STRING *,
-                                        const char *, unsigned int, int);
+  char *(*thd_strmake_func)(void*, const char *, size_t);
+  void *(*thd_memdup_func)(void*, const void*, size_t);
+  MYSQL_CONST_LEX_STRING *(*thd_make_lex_string_func)(void*,
+                                        MYSQL_CONST_LEX_STRING *,
+                                        const char *, size_t, int);
 } *thd_alloc_service;
-void *thd_alloc(void* thd, unsigned int size);
-void *thd_calloc(void* thd, unsigned int size);
+void *thd_alloc(void* thd, size_t size);
+void *thd_calloc(void* thd, size_t size);
 char *thd_strdup(void* thd, const char *str);
-char *thd_strmake(void* thd, const char *str, unsigned int size);
-void *thd_memdup(void* thd, const void* str, unsigned int size);
-MYSQL_LEX_STRING *thd_make_lex_string(void* thd, MYSQL_LEX_STRING *lex_str,
-                                      const char *str, unsigned int size,
-                                      int allocate_lex_string);
+char *thd_strmake(void* thd, const char *str, size_t size);
+void *thd_memdup(void* thd, const void* str, size_t size);
+MYSQL_CONST_LEX_STRING
+*thd_make_lex_string(void* thd, MYSQL_CONST_LEX_STRING *lex_str,
+                     const char *str, size_t size,
+                     int allocate_lex_string);
 extern struct thd_autoinc_service_st {
   void (*thd_get_autoinc_func)(const void* thd,
                                unsigned long* off, unsigned long* inc);
@@ -510,7 +518,6 @@ void **thd_ha_data(const void* thd, const struct handlerton *hton);
 void thd_storage_lock_wait(void* thd, long long value);
 int thd_tx_isolation(const void* thd);
 int thd_tx_is_read_only(const void* thd);
-int thd_rpl_is_parallel(const void* thd);
 int mysql_tmpfile(const char *prefix);
 unsigned long thd_get_thread_id(const void* thd);
 void thd_get_xid(const void* thd, MYSQL_XID *xid);
@@ -532,12 +539,11 @@ struct mysql_event_general
   unsigned int general_command_length;
   const char *general_query;
   unsigned int general_query_length;
-  struct charset_info_st *general_charset;
+  const struct charset_info_st *general_charset;
   unsigned long long general_time;
   unsigned long long general_rows;
   unsigned long long query_id;
-  const char *database;
-  unsigned int database_length;
+  MYSQL_CONST_LEX_STRING database;
 };
 struct mysql_event_connection
 {
@@ -556,8 +562,7 @@ struct mysql_event_connection
   unsigned int host_length;
   const char *ip;
   unsigned int ip_length;
-  const char *database;
-  unsigned int database_length;
+  MYSQL_CONST_LEX_STRING database;
 };
 struct mysql_event_table
 {
@@ -570,15 +575,11 @@ struct mysql_event_table
   const char *proxy_user;
   const char *host;
   const char *ip;
-  const char *database;
-  unsigned int database_length;
-  const char *table;
-  unsigned int table_length;
+  MYSQL_CONST_LEX_STRING database;
+  MYSQL_CONST_LEX_STRING table;
+  MYSQL_CONST_LEX_STRING new_database;
+  MYSQL_CONST_LEX_STRING new_table;
   int read_only;
-  const char *new_database;
-  unsigned int new_database_length;
-  const char *new_table;
-  unsigned int new_table_length;
   unsigned long long query_id;
 };
 struct st_mysql_audit

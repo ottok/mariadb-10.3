@@ -16,7 +16,7 @@
 
 /* variable declarations are in sys_vars.cc now !!! */
 
-#include "sql_plugin.h"                         // Includes my_global.h
+#include "sql_plugin.h"
 #include "sql_class.h"                   // set_var.h: session_var_ptr
 #include "set_var.h"
 #include "sql_priv.h"
@@ -64,7 +64,7 @@ int sys_var_init()
   /* Must be already initialized. */
   DBUG_ASSERT(system_charset_info != NULL);
 
-  if (my_hash_init(&system_variable_hash, system_charset_info, 100, 0,
+  if (my_hash_init(&system_variable_hash, system_charset_info, 700, 0,
                    0, (my_hash_get_key) get_sys_var_length, 0, HASH_UNIQUE))
     goto error;
 
@@ -76,6 +76,11 @@ int sys_var_init()
 error:
   fprintf(stderr, "failed to initialize System variables");
   DBUG_RETURN(1);
+}
+
+uint sys_var_elements()
+{
+  return system_variable_hash.records;
 }
 
 int sys_var_add_options(DYNAMIC_ARRAY *long_options, int parse_flags)
@@ -109,6 +114,9 @@ void sys_var_end()
 
   DBUG_VOID_RETURN;
 }
+
+
+static bool static_test_load= TRUE;
 
 /**
   sys_var constructor
@@ -179,6 +187,8 @@ sys_var::sys_var(sys_var_chain *chain, const char *name_arg,
   else
     chain->first= this;
   chain->last= this;
+
+  test_load= &static_test_load;
 }
 
 bool sys_var::update(THD *thd, set_var *var)
@@ -199,26 +209,46 @@ bool sys_var::update(THD *thd, set_var *var)
       (on_update && on_update(this, thd, OPT_GLOBAL));
   }
   else
-    return session_update(thd, var) ||
+  {
+    bool ret= session_update(thd, var) ||
       (on_update && on_update(this, thd, OPT_SESSION));
+
+    /*
+      Make sure we don't session-track variables that are not actually
+      part of the session. tx_isolation and and tx_read_only for example
+      exist as GLOBAL, SESSION, and one-shot ("for next transaction only").
+    */
+    if ((var->type == OPT_SESSION) && (!ret))
+    {
+      SESSION_TRACKER_CHANGED(thd, SESSION_SYSVARS_TRACKER,
+                              (LEX_CSTRING*)var->var);
+      /*
+        Here MySQL sends variable name to avoid reporting change of
+        the tracker itself, but we decided that it is not needed
+      */
+      SESSION_TRACKER_CHANGED(thd, SESSION_STATE_CHANGE_TRACKER, NULL);
+    }
+
+    return ret;
+  }
 }
 
-uchar *sys_var::session_value_ptr(THD *thd, const LEX_STRING *base)
+uchar *sys_var::session_value_ptr(THD *thd, const LEX_CSTRING *base)
 {
   return session_var_ptr(thd);
 }
 
-uchar *sys_var::global_value_ptr(THD *thd, const LEX_STRING *base)
+uchar *sys_var::global_value_ptr(THD *thd, const LEX_CSTRING *base)
 {
   return global_var_ptr();
 }
 
 bool sys_var::check(THD *thd, set_var *var)
 {
-  if ((var->value && do_check(thd, var))
-      || (on_check && on_check(this, thd, var)))
+  if (unlikely((var->value && do_check(thd, var)) ||
+               (on_check && on_check(this, thd, var))))
   {
-    if (!thd->is_error())
+    if (likely(!thd->is_error()))
     {
       char buff[STRING_BUFFER_USUAL_SIZE];
       String str(buff, sizeof(buff), system_charset_info), *res;
@@ -241,7 +271,8 @@ bool sys_var::check(THD *thd, set_var *var)
   return false;
 }
 
-uchar *sys_var::value_ptr(THD *thd, enum_var_type type, const LEX_STRING *base)
+uchar *sys_var::value_ptr(THD *thd, enum_var_type type,
+                          const LEX_CSTRING *base)
 {
   DBUG_ASSERT(base);
   if (type == OPT_GLOBAL || scope() == GLOBAL)
@@ -293,13 +324,14 @@ do {                                                \
       sval.length= sval.str ? strlen(sval.str) : 0; \
       break;                                        \
     case SHOW_LEX_STRING:                           \
-      sval= *(LEX_STRING *) value;                  \
+      sval= *(LEX_CSTRING *) value;                  \
       break
 
 longlong sys_var::val_int(bool *is_null,
-                          THD *thd, enum_var_type type, const LEX_STRING *base)
+                          THD *thd, enum_var_type type,
+                          const LEX_CSTRING *base)
 {
-  LEX_STRING sval;
+  LEX_CSTRING sval;
   AutoWLock lock(&PLock_global_system_variables);
   const uchar *value= value_ptr(thd, type, base);
   *is_null= false;
@@ -325,13 +357,13 @@ longlong sys_var::val_int(bool *is_null,
 
 String *sys_var::val_str_nolock(String *str, THD *thd, const uchar *value)
 {
-  static LEX_STRING bools[]=
+  static LEX_CSTRING bools[]=
   {
-    { C_STRING_WITH_LEN("OFF") },
-    { C_STRING_WITH_LEN("ON") }
+    { STRING_WITH_LEN("OFF") },
+    { STRING_WITH_LEN("ON") }
   };
 
-  LEX_STRING sval;
+  LEX_CSTRING sval;
   switch (show_type())
   {
     case_get_string_as_lex_string;
@@ -352,7 +384,7 @@ String *sys_var::val_str_nolock(String *str, THD *thd, const uchar *value)
 
 
 String *sys_var::val_str(String *str,
-                         THD *thd, enum_var_type type, const LEX_STRING *base)
+                         THD *thd, enum_var_type type, const LEX_CSTRING *base)
 {
   AutoWLock lock(&PLock_global_system_variables);
   const uchar *value= value_ptr(thd, type, base);
@@ -361,9 +393,9 @@ String *sys_var::val_str(String *str,
 
 
 double sys_var::val_real(bool *is_null,
-                         THD *thd, enum_var_type type, const LEX_STRING *base)
+                         THD *thd, enum_var_type type, const LEX_CSTRING *base)
 {
-  LEX_STRING sval;
+  LEX_CSTRING sval;
   AutoWLock lock(&PLock_global_system_variables);
   const uchar *value= value_ptr(thd, type, base);
   *is_null= false;
@@ -371,7 +403,7 @@ double sys_var::val_real(bool *is_null,
   switch (show_type())
   {
     case_get_string_as_lex_string;
-    case_for_integers(return val);
+    case_for_integers(return (double)val);
     case_for_double(return val);
     case SHOW_MY_BOOL:  return *(my_bool*)value;
     default:            
@@ -422,6 +454,22 @@ void sys_var::do_deprecated_warning(THD *thd)
 
   @retval         true on error, false otherwise (warning or ok)
  */
+
+
+bool throw_bounds_warning(THD *thd, const char *name,const char *v)
+{
+  if (thd->variables.sql_mode & MODE_STRICT_ALL_TABLES)
+  {
+    my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), name, v);
+    return true;
+  }
+  push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+                      ER_TRUNCATED_WRONG_VALUE,
+                      ER_THD(thd, ER_TRUNCATED_WRONG_VALUE), name, v);
+  return false;
+}
+
+
 bool throw_bounds_warning(THD *thd, const char *name,
                           bool fixed, bool is_unsigned, longlong v)
 {
@@ -434,14 +482,12 @@ bool throw_bounds_warning(THD *thd, const char *name,
     else
       llstr(v, buf);
 
-    if (thd->is_strict_mode())
+    if (thd->variables.sql_mode & MODE_STRICT_ALL_TABLES)
     {
       my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), name, buf);
       return true;
     }
-    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
-                        ER_TRUNCATED_WRONG_VALUE,
-                        ER_THD(thd, ER_TRUNCATED_WRONG_VALUE), name, buf);
+    return throw_bounds_warning(thd, name, buf);
   }
   return false;
 }
@@ -454,14 +500,12 @@ bool throw_bounds_warning(THD *thd, const char *name, bool fixed, double v)
 
     my_gcvt(v, MY_GCVT_ARG_DOUBLE, sizeof(buf) - 1, buf, NULL);
 
-    if (thd->is_strict_mode())
+    if (thd->variables.sql_mode & MODE_STRICT_ALL_TABLES)
     {
       my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), name, buf);
       return true;
     }
-    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
-                        ER_TRUNCATED_WRONG_VALUE,
-                        ER_THD(thd, ER_TRUNCATED_WRONG_VALUE), name, buf);
+    return throw_bounds_warning(thd, name, buf);
   }
   return false;
 }
@@ -565,10 +609,10 @@ int mysql_del_sys_var_chain(sys_var *first)
 {
   int result= 0;
 
-  mysql_rwlock_wrlock(&LOCK_system_variables_hash);
+  mysql_prlock_wrlock(&LOCK_system_variables_hash);
   for (sys_var *var= first; var; var= var->next)
     result|= my_hash_delete(&system_variable_hash, (uchar*) var);
-  mysql_rwlock_unlock(&LOCK_system_variables_hash);
+  mysql_prlock_unlock(&LOCK_system_variables_hash);
 
   return result;
 }
@@ -641,7 +685,7 @@ SHOW_VAR* enumerate_sys_vars(THD *thd, bool sorted, enum enum_var_type scope)
     0           Unknown variable (error message is given)
 */
 
-sys_var *intern_find_sys_var(const char *str, uint length)
+sys_var *intern_find_sys_var(const char *str, size_t length)
 {
   sys_var *var;
 
@@ -686,10 +730,10 @@ int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool free)
   set_var_base *var;
   while ((var=it++))
   {
-    if ((error= var->check(thd)))
+    if (unlikely((error= var->check(thd))))
       goto err;
   }
-  if (was_error || !(error= MY_TEST(thd->is_error())))
+  if (unlikely(was_error) || likely(!(error= MY_TEST(thd->is_error()))))
   {
     it.rewind();
     while ((var= it++))
@@ -736,8 +780,7 @@ int set_var::check(THD *thd)
   if (!value)
     return 0;
 
-  if ((!value->fixed &&
-       value->fix_fields(thd, &value)) || value->check_cols(1))
+  if (value->fix_fields_if_needed_for_scalar(thd, &value))
     return -1;
   if (var->check_update_type(value))
   {
@@ -771,8 +814,7 @@ int set_var::light_check(THD *thd)
   if (type == OPT_GLOBAL && check_global_access(thd, SUPER_ACL))
     return 1;
 
-  if (value && ((!value->fixed && value->fix_fields(thd, &value)) ||
-                value->check_cols(1)))
+  if (value && value->fix_fields_if_needed_for_scalar(thd, &value))
     return -1;
   return 0;
 }
@@ -797,7 +839,7 @@ int set_var::update(THD *thd)
 
 
 set_var::set_var(THD *thd, enum_var_type type_arg, sys_var *var_arg,
-                 const LEX_STRING *base_name_arg, Item *value_arg)
+                 const LEX_CSTRING *base_name_arg, Item *value_arg)
   :var(var_arg), type(type_arg), base(*base_name_arg)
 {
   /*
@@ -808,7 +850,9 @@ set_var::set_var(THD *thd, enum_var_type type_arg, sys_var *var_arg,
   {
     Item_field *item= (Item_field*) value_arg;
     // names are utf8
-    if (!(value= new (thd->mem_root) Item_string_sys(thd, item->field_name)))
+    if (!(value= new (thd->mem_root) Item_string_sys(thd,
+                                                     item->field_name.str,
+                                                     (uint)item->field_name.length)))
       value=value_arg;                        /* Give error message later */
   }
   else
@@ -862,6 +906,8 @@ int set_var_user::update(THD *thd)
                MYF(0));
     return -1;
   }
+
+  SESSION_TRACKER_CHANGED(thd, SESSION_STATE_CHANGE_TRACKER, NULL);
   return 0;
 }
 
@@ -909,7 +955,11 @@ int set_var_role::check(THD *thd)
 int set_var_role::update(THD *thd)
 {
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
-  return acl_setrole(thd, role.str, access);
+  int res= acl_setrole(thd, role.str, access);
+  if (!res)
+    thd->session_tracker.mark_as_changed(thd, SESSION_STATE_CHANGE_TRACKER,
+                                         NULL);
+  return res;
 #else
   return 0;
 #endif
@@ -961,10 +1011,23 @@ int set_var_collation_client::check(THD *thd)
 
 int set_var_collation_client::update(THD *thd)
 {
-  thd->variables.character_set_client= character_set_client;
-  thd->variables.character_set_results= character_set_results;
-  thd->variables.collation_connection= collation_connection;
-  thd->update_charset();
+  thd->update_charset(character_set_client, collation_connection,
+                      character_set_results);
+
+  /* Mark client collation variables as changed */
+#ifndef EMBEDDED_LIBRARY
+  if (thd->session_tracker.get_tracker(SESSION_SYSVARS_TRACKER)->is_enabled())
+  {
+    thd->session_tracker.get_tracker(SESSION_SYSVARS_TRACKER)->
+      mark_as_changed(thd, (LEX_CSTRING*)Sys_character_set_client_ptr);
+    thd->session_tracker.get_tracker(SESSION_SYSVARS_TRACKER)->
+      mark_as_changed(thd, (LEX_CSTRING*)Sys_character_set_results_ptr);
+    thd->session_tracker.get_tracker(SESSION_SYSVARS_TRACKER)->
+      mark_as_changed(thd, (LEX_CSTRING*)Sys_character_set_connection_ptr);
+  }
+  thd->session_tracker.mark_as_changed(thd, SESSION_STATE_CHANGE_TRACKER, NULL);
+#endif //EMBEDDED_LIBRARY
+
   thd->protocol_text.init(thd);
   thd->protocol_binary.init(thd);
   return 0;
@@ -989,7 +1052,7 @@ static void store_var(Field *field, sys_var *var, enum_var_type scope,
     return;
 
   store_value_ptr(field, var, str,
-                  var->value_ptr(field->table->in_use, scope, &null_lex_str));
+                  var->value_ptr(field->table->in_use, scope, &null_clex_str));
 }
 
 int fill_sysvars(THD *thd, TABLE_LIST *tables, COND *cond)
@@ -1006,7 +1069,7 @@ int fill_sysvars(THD *thd, TABLE_LIST *tables, COND *cond)
 
   cond= make_cond_for_info_schema(thd, cond, tables);
   thd->count_cuted_fields= CHECK_FIELD_WARN;
-  mysql_rwlock_rdlock(&LOCK_system_variables_hash);
+  mysql_prlock_rdlock(&LOCK_system_variables_hash);
 
   for (uint i= 0; i < system_variable_hash.records; i++)
   {
@@ -1086,6 +1149,7 @@ int fill_sysvars(THD *thd, TABLE_LIST *tables, COND *cond)
       { STRING_WITH_LEN("SET") },                    // GET_SET       13
       { STRING_WITH_LEN("DOUBLE") },                 // GET_DOUBLE    14
       { STRING_WITH_LEN("FLAGSET") },                // GET_FLAGSET   15
+      { STRING_WITH_LEN("BOOLEAN") },                // GET_BIT       16
     };
     const ulong vartype= (var->option.var_type & GET_TYPE_MASK);
     const LEX_CSTRING *type= types + vartype;
@@ -1168,7 +1232,7 @@ int fill_sysvars(THD *thd, TABLE_LIST *tables, COND *cond)
   }
   res= 0;
 end:
-  mysql_rwlock_unlock(&LOCK_system_variables_hash);
+  mysql_prlock_unlock(&LOCK_system_variables_hash);
   thd->count_cuted_fields= save_count_cuted_fields;
   return res;
 }
@@ -1217,3 +1281,222 @@ enum sys_var::where get_sys_var_value_origin(void *ptr)
   return sys_var::CONFIG;
 }
 
+
+/*
+  Find the next item in string of comma-separated items.
+  END_POS points at the end of the string.
+  ITEM_START and ITEM_END return the limits of the next item.
+  Returns true while items are available, false at the end.
+*/
+static bool
+engine_list_next_item(const char **pos, const char *end_pos,
+                      const char **item_start, const char **item_end)
+{
+  if (*pos >= end_pos)
+    return false;
+  *item_start= *pos;
+  while (*pos < end_pos && **pos != ',')
+    ++*pos;
+  *item_end= *pos;
+  ++*pos;
+  return true;
+}
+
+
+static bool
+resolve_engine_list_item(THD *thd, plugin_ref *list, uint32 *idx,
+                         const char *pos, const char *pos_end,
+                         bool error_on_unknown_engine, bool temp_copy)
+{
+  LEX_CSTRING item_str;
+  plugin_ref ref;
+  uint32 i;
+  THD *thd_or_null = (temp_copy ? thd : NULL);
+
+  item_str.str= pos;
+  item_str.length= pos_end-pos;
+  ref= ha_resolve_by_name(thd_or_null, &item_str, false);
+  if (!ref)
+  {
+    if (error_on_unknown_engine)
+    {
+      ErrConvString err(pos, pos_end-pos, system_charset_info);
+      my_error(ER_UNKNOWN_STORAGE_ENGINE, MYF(0), err.ptr());
+      return true;
+    }
+    return false;
+  }
+  /* Ignore duplicates, like --plugin-load does. */
+  for (i= 0; i < *idx; ++i)
+  {
+    if (plugin_hton(list[i]) == plugin_hton(ref))
+    {
+      if (!temp_copy)
+        plugin_unlock(NULL, ref);
+      return false;
+    }
+  }
+  list[*idx]= ref;
+  ++*idx;
+  return false;
+}
+
+
+/*
+  Helper for class Sys_var_pluginlist.
+  Resolve a comma-separated list of storage engine names to a null-terminated
+  array of plugin_ref.
+
+  If TEMP_COPY is true, a THD must be given as well. In this case, the
+  allocated memory and locked plugins are registered in the THD and will
+  be freed / unlocked automatically. If TEMP_COPY is true, THD can be
+  passed as NULL, and resources must be freed explicitly later with
+  free_engine_list().
+*/
+plugin_ref *
+resolve_engine_list(THD *thd, const char *str_arg, size_t str_arg_len,
+                    bool error_on_unknown_engine, bool temp_copy)
+{
+  uint32 count, idx;
+  const char *pos, *item_start, *item_end;
+  const char *str_arg_end= str_arg + str_arg_len;
+  plugin_ref *res;
+
+  count= 0;
+  pos= str_arg;
+  for (;;)
+  {
+    if (!engine_list_next_item(&pos, str_arg_end, &item_start, &item_end))
+      break;
+    ++count;
+  }
+
+  if (temp_copy)
+    res= (plugin_ref *)thd->calloc((count+1)*sizeof(*res));
+  else
+    res= (plugin_ref *)my_malloc((count+1)*sizeof(*res), MYF(MY_ZEROFILL|MY_WME));
+  if (!res)
+  {
+    my_error(ER_OUTOFMEMORY, MYF(0), (int)((count+1)*sizeof(*res)));
+    goto err;
+  }
+
+  idx= 0;
+  pos= str_arg;
+  for (;;)
+  {
+    if (!engine_list_next_item(&pos, str_arg_end, &item_start, &item_end))
+      break;
+    DBUG_ASSERT(idx < count);
+    if (idx >= count)
+      break;
+    if (resolve_engine_list_item(thd, res, &idx, item_start, item_end,
+                                 error_on_unknown_engine, temp_copy))
+      goto err;
+  }
+
+  return res;
+
+err:
+  if (!temp_copy)
+    free_engine_list(res);
+  return NULL;
+}
+
+
+void
+free_engine_list(plugin_ref *list)
+{
+  plugin_ref *p;
+
+  if (!list)
+    return;
+  for (p= list; *p; ++p)
+    plugin_unlock(NULL, *p);
+  my_free(list);
+}
+
+
+plugin_ref *
+copy_engine_list(plugin_ref *list)
+{
+  plugin_ref *p;
+  uint32 count, i;
+
+  for (p= list, count= 0; *p; ++p, ++count)
+    ;
+  p= (plugin_ref *)my_malloc((count+1)*sizeof(*p), MYF(0));
+  if (!p)
+  {
+    my_error(ER_OUTOFMEMORY, MYF(0), (int)((count+1)*sizeof(*p)));
+    return NULL;
+  }
+  for (i= 0; i < count; ++i)
+    p[i]= my_plugin_lock(NULL, list[i]);
+  p[i] = NULL;
+  return p;
+}
+
+
+/*
+  Create a temporary copy of an engine list. The memory will be freed
+  (and the plugins unlocked) automatically, on the passed THD.
+*/
+plugin_ref *
+temp_copy_engine_list(THD *thd, plugin_ref *list)
+{
+  plugin_ref *p;
+  uint32 count, i;
+
+  for (p= list, count= 0; *p; ++p, ++count)
+    ;
+  p= (plugin_ref *)thd->alloc((count+1)*sizeof(*p));
+  if (!p)
+  {
+    my_error(ER_OUTOFMEMORY, MYF(0), (int)((count+1)*sizeof(*p)));
+    return NULL;
+  }
+  for (i= 0; i < count; ++i)
+    p[i]= my_plugin_lock(thd, list[i]);
+  p[i] = NULL;
+  return p;
+}
+
+
+char *
+pretty_print_engine_list(THD *thd, plugin_ref *list)
+{
+  plugin_ref *p;
+  size_t size;
+  char *buf, *pos;
+
+  if (!list || !*list)
+    return thd->strmake("", 0);
+
+  size= 0;
+  for (p= list; *p; ++p)
+    size+= plugin_name(*p)->length + 1;
+  buf= static_cast<char *>(thd->alloc(size));
+  if (!buf)
+    return NULL;
+  pos= buf;
+  for (p= list; *p; ++p)
+  {
+    LEX_CSTRING *name;
+    size_t remain;
+
+    remain= buf + size - pos;
+    DBUG_ASSERT(remain > 0);
+    if (remain <= 1)
+      break;
+    if (pos != buf)
+    {
+      pos= strmake(pos, ",", remain-1);
+      --remain;
+    }
+    name= plugin_name(*p);
+    pos= strmake(pos, name->str, MY_MIN(name->length, remain-1));
+  }
+  *pos= '\0';
+  return buf;
+}

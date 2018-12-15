@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "sp_head.h"
 #include "sp_pcontext.h"
@@ -29,52 +29,38 @@
 */
 #define MAX_MYSQL_ERRNO 65534
 
-const LEX_STRING Diag_condition_item_names[]=
+const LEX_CSTRING Diag_condition_item_names[]=
 {
-  { C_STRING_WITH_LEN("CLASS_ORIGIN") },
-  { C_STRING_WITH_LEN("SUBCLASS_ORIGIN") },
-  { C_STRING_WITH_LEN("CONSTRAINT_CATALOG") },
-  { C_STRING_WITH_LEN("CONSTRAINT_SCHEMA") },
-  { C_STRING_WITH_LEN("CONSTRAINT_NAME") },
-  { C_STRING_WITH_LEN("CATALOG_NAME") },
-  { C_STRING_WITH_LEN("SCHEMA_NAME") },
-  { C_STRING_WITH_LEN("TABLE_NAME") },
-  { C_STRING_WITH_LEN("COLUMN_NAME") },
-  { C_STRING_WITH_LEN("CURSOR_NAME") },
-  { C_STRING_WITH_LEN("MESSAGE_TEXT") },
-  { C_STRING_WITH_LEN("MYSQL_ERRNO") },
+  { STRING_WITH_LEN("CLASS_ORIGIN") },
+  { STRING_WITH_LEN("SUBCLASS_ORIGIN") },
+  { STRING_WITH_LEN("CONSTRAINT_CATALOG") },
+  { STRING_WITH_LEN("CONSTRAINT_SCHEMA") },
+  { STRING_WITH_LEN("CONSTRAINT_NAME") },
+  { STRING_WITH_LEN("CATALOG_NAME") },
+  { STRING_WITH_LEN("SCHEMA_NAME") },
+  { STRING_WITH_LEN("TABLE_NAME") },
+  { STRING_WITH_LEN("COLUMN_NAME") },
+  { STRING_WITH_LEN("CURSOR_NAME") },
+  { STRING_WITH_LEN("MESSAGE_TEXT") },
+  { STRING_WITH_LEN("MYSQL_ERRNO") },
 
-  { C_STRING_WITH_LEN("CONDITION_IDENTIFIER") },
-  { C_STRING_WITH_LEN("CONDITION_NUMBER") },
-  { C_STRING_WITH_LEN("CONNECTION_NAME") },
-  { C_STRING_WITH_LEN("MESSAGE_LENGTH") },
-  { C_STRING_WITH_LEN("MESSAGE_OCTET_LENGTH") },
-  { C_STRING_WITH_LEN("PARAMETER_MODE") },
-  { C_STRING_WITH_LEN("PARAMETER_NAME") },
-  { C_STRING_WITH_LEN("PARAMETER_ORDINAL_POSITION") },
-  { C_STRING_WITH_LEN("RETURNED_SQLSTATE") },
-  { C_STRING_WITH_LEN("ROUTINE_CATALOG") },
-  { C_STRING_WITH_LEN("ROUTINE_NAME") },
-  { C_STRING_WITH_LEN("ROUTINE_SCHEMA") },
-  { C_STRING_WITH_LEN("SERVER_NAME") },
-  { C_STRING_WITH_LEN("SPECIFIC_NAME") },
-  { C_STRING_WITH_LEN("TRIGGER_CATALOG") },
-  { C_STRING_WITH_LEN("TRIGGER_NAME") },
-  { C_STRING_WITH_LEN("TRIGGER_SCHEMA") }
-};
-
-const LEX_STRING Diag_statement_item_names[]=
-{
-  { C_STRING_WITH_LEN("NUMBER") },
-  { C_STRING_WITH_LEN("MORE") },
-  { C_STRING_WITH_LEN("COMMAND_FUNCTION") },
-  { C_STRING_WITH_LEN("COMMAND_FUNCTION_CODE") },
-  { C_STRING_WITH_LEN("DYNAMIC_FUNCTION") },
-  { C_STRING_WITH_LEN("DYNAMIC_FUNCTION_CODE") },
-  { C_STRING_WITH_LEN("ROW_COUNT") },
-  { C_STRING_WITH_LEN("TRANSACTIONS_COMMITTED") },
-  { C_STRING_WITH_LEN("TRANSACTIONS_ROLLED_BACK") },
-  { C_STRING_WITH_LEN("TRANSACTION_ACTIVE") }
+  { STRING_WITH_LEN("CONDITION_IDENTIFIER") },
+  { STRING_WITH_LEN("CONDITION_NUMBER") },
+  { STRING_WITH_LEN("CONNECTION_NAME") },
+  { STRING_WITH_LEN("MESSAGE_LENGTH") },
+  { STRING_WITH_LEN("MESSAGE_OCTET_LENGTH") },
+  { STRING_WITH_LEN("PARAMETER_MODE") },
+  { STRING_WITH_LEN("PARAMETER_NAME") },
+  { STRING_WITH_LEN("PARAMETER_ORDINAL_POSITION") },
+  { STRING_WITH_LEN("RETURNED_SQLSTATE") },
+  { STRING_WITH_LEN("ROUTINE_CATALOG") },
+  { STRING_WITH_LEN("ROUTINE_NAME") },
+  { STRING_WITH_LEN("ROUTINE_SCHEMA") },
+  { STRING_WITH_LEN("SERVER_NAME") },
+  { STRING_WITH_LEN("SPECIFIC_NAME") },
+  { STRING_WITH_LEN("TRIGGER_CATALOG") },
+  { STRING_WITH_LEN("TRIGGER_NAME") },
+  { STRING_WITH_LEN("TRIGGER_SCHEMA") }
 };
 
 
@@ -89,63 +75,6 @@ void Set_signal_information::clear()
   memset(m_item, 0, sizeof(m_item));
 }
 
-void
-Sql_cmd_common_signal::assign_defaults(Sql_condition *cond,
-                                       bool set_level_code,
-                                       Sql_condition::enum_warning_level level,
-                                       int sqlcode)
-{
-  if (set_level_code)
-  {
-    cond->m_level= level;
-    cond->m_sql_errno= sqlcode;
-  }
-  if (! cond->get_message_text())
-    cond->set_builtin_message_text(ER(sqlcode));
-}
-
-void Sql_cmd_common_signal::eval_defaults(THD *thd, Sql_condition *cond)
-{
-  DBUG_ASSERT(cond);
-
-  const char* sqlstate;
-  bool set_defaults= (m_cond != 0);
-
-  if (set_defaults)
-  {
-    /*
-      SIGNAL is restricted in sql_yacc.yy to only signal SQLSTATE conditions.
-    */
-    DBUG_ASSERT(m_cond->type == sp_condition_value::SQLSTATE);
-    sqlstate= m_cond->sql_state;
-    cond->set_sqlstate(sqlstate);
-  }
-  else
-    sqlstate= cond->get_sqlstate();
-
-  DBUG_ASSERT(sqlstate);
-  /* SQLSTATE class "00": illegal, rejected in the parser. */
-  DBUG_ASSERT((sqlstate[0] != '0') || (sqlstate[1] != '0'));
-
-  if ((sqlstate[0] == '0') && (sqlstate[1] == '1'))
-  {
-    /* SQLSTATE class "01": warning. */
-    assign_defaults(cond, set_defaults,
-                    Sql_condition::WARN_LEVEL_WARN, ER_SIGNAL_WARN);
-  }
-  else if ((sqlstate[0] == '0') && (sqlstate[1] == '2'))
-  {
-    /* SQLSTATE class "02": not found. */
-    assign_defaults(cond, set_defaults,
-                    Sql_condition::WARN_LEVEL_ERROR, ER_SIGNAL_NOT_FOUND);
-  }
-  else
-  {
-    /* other SQLSTATE classes : error. */
-    assign_defaults(cond, set_defaults,
-                    Sql_condition::WARN_LEVEL_ERROR, ER_SIGNAL_EXCEPTION);
-  }
-}
 
 static bool assign_fixed_string(MEM_ROOT *mem_root,
                                 CHARSET_INFO *dst_cs,
@@ -281,7 +210,7 @@ int Sql_cmd_common_signal::eval_signal_informations(THD *thd, Sql_condition *con
   int result= 1;
   enum enum_diag_condition_item_name item_enum;
   String *member;
-  const LEX_STRING *name;
+  const LEX_CSTRING *name;
 
   DBUG_ENTER("Sql_cmd_common_signal::eval_signal_informations");
 
@@ -289,16 +218,9 @@ int Sql_cmd_common_signal::eval_signal_informations(THD *thd, Sql_condition *con
        i <= LAST_DIAG_SET_PROPERTY;
        i++)
   {
-    set= m_set_signal_information.m_item[i];
-    if (set)
-    {
-      if (! set->fixed)
-      {
-        if (set->fix_fields(thd, & set))
-          goto end;
-        m_set_signal_information.m_item[i]= set;
-      }
-    }
+    if ((set= m_set_signal_information.m_item[i]) &&
+        set->fix_fields_if_needed(thd, &m_set_signal_information.m_item[i]))
+      goto end;
   }
 
   /*
@@ -333,12 +255,13 @@ int Sql_cmd_common_signal::eval_signal_informations(THD *thd, Sql_condition *con
     }
     /*
       Enforce that SET MESSAGE_TEXT = <value> evaluates the value
-      as VARCHAR(128) CHARACTER SET UTF8.
+      as VARCHAR(MYSQL_ERRMSG_SIZE) CHARACTER SET UTF8.
     */
     bool truncated;
     String utf8_text;
     str= set->val_str(& str_value);
-    truncated= assign_fixed_string(thd->mem_root, & my_charset_utf8_bin, 128,
+    truncated= assign_fixed_string(thd->mem_root, & my_charset_utf8_bin,
+                                   MYSQL_ERRMSG_SIZE,
                                    & utf8_text, str);
     if (truncated)
     {
@@ -389,7 +312,7 @@ int Sql_cmd_common_signal::eval_signal_informations(THD *thd, Sql_condition *con
     The various item->val_xxx() methods don't return an error code,
     but flag thd in case of failure.
   */
-  if (! thd->is_error())
+  if (likely(!thd->is_error()))
     result= 0;
 
 end:
@@ -416,7 +339,7 @@ bool Sql_cmd_common_signal::raise_condition(THD *thd, Sql_condition *cond)
 
   DBUG_ASSERT(thd->lex->query_tables == NULL);
 
-  eval_defaults(thd, cond);
+  cond->assign_defaults(thd, m_cond);
   if (eval_signal_informations(thd, cond))
     DBUG_RETURN(result);
 
@@ -424,13 +347,7 @@ bool Sql_cmd_common_signal::raise_condition(THD *thd, Sql_condition *cond)
   DBUG_ASSERT((cond->m_level == Sql_condition::WARN_LEVEL_WARN) ||
               (cond->m_level == Sql_condition::WARN_LEVEL_ERROR));
 
-  Sql_condition *raised= NULL;
-  raised= thd->raise_condition(cond->get_sql_errno(),
-                               cond->get_sqlstate(),
-                               cond->get_level(),
-                               cond->get_message_text());
-  if (raised)
-    raised->copy_opt_attributes(cond);
+  (void) thd->raise_condition(cond);
 
   if (cond->m_level == Sql_condition::WARN_LEVEL_WARN)
   {
@@ -444,7 +361,8 @@ bool Sql_cmd_common_signal::raise_condition(THD *thd, Sql_condition *cond)
 bool Sql_cmd_signal::execute(THD *thd)
 {
   bool result= TRUE;
-  Sql_condition cond(thd->mem_root);
+  DBUG_ASSERT(m_cond);
+  Sql_condition cond(thd->mem_root, m_cond->get_user_condition_identity());
 
   DBUG_ENTER("Sql_cmd_signal::execute");
 
@@ -498,11 +416,7 @@ bool Sql_cmd_resignal::execute(THD *thd)
     DBUG_RETURN(result);
   }
 
-  Sql_condition signaled_err(thd->mem_root);
-  signaled_err.set(signaled->sql_errno,
-                   signaled->sql_state,
-                   signaled->level,
-                   signaled->message);
+  Sql_condition signaled_err(thd->mem_root, *signaled, signaled->message);
 
   if (m_cond)
   {
@@ -514,13 +428,19 @@ bool Sql_cmd_resignal::execute(THD *thd)
     /* Check if the old condition still exists. */
     if (da->has_sql_condition(signaled->message, strlen(signaled->message)))
     {
-      /* Make room for the new RESIGNAL condition. */
-      da->reserve_space(thd, 1);
+      /*
+        Make room for the new RESIGNAL condition and one for the stack trace
+        note.
+      */
+      da->reserve_space(thd, 2);
     }
     else
     {
-      /* Make room for old condition + the new RESIGNAL condition. */
-      da->reserve_space(thd, 2);
+      /*
+        Make room for old condition + the new RESIGNAL condition + the stack
+        trace note.
+      */
+      da->reserve_space(thd, 3);
 
       da->push_warning(thd, &signaled_err);
     }

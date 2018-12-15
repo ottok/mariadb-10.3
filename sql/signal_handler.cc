@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
 
-#include "my_global.h"
+#include "mariadb.h"
 #include <signal.h>
 
 //#include "sys_vars.h"
@@ -88,7 +88,7 @@ extern "C" sig_handler handle_fatal_signal(int sig)
                         tm.tm_hour, tm.tm_min, tm.tm_sec);
   if (opt_expect_abort
 #ifdef _WIN32
-    && sig == EXCEPTION_BREAKPOINT /* __debugbreak in my_sigabrt_hander() */
+    && sig == (int)EXCEPTION_BREAKPOINT /* __debugbreak in my_sigabrt_hander() */
 #else
     && sig == SIGABRT
 #endif
@@ -113,7 +113,7 @@ extern "C" sig_handler handle_fatal_signal(int sig)
     "diagnose the problem, but since we have already crashed, \n"
     "something is definitely wrong and this may fail.\n\n");
 
-  set_server_version();
+  set_server_version(server_version, sizeof(server_version));
   my_safe_printf_stderr("Server version: %s\n", server_version);
 
   if (dflt_key_cache)
@@ -163,7 +163,7 @@ extern "C" sig_handler handle_fatal_signal(int sig)
       "where mysqld died. If you see no messages after this, something went\n"
       "terribly wrong...\n");
     my_print_stacktrace(thd ? (uchar*) thd->thread_stack : NULL,
-                        (ulong)my_thread_stack_size);
+                        (ulong)my_thread_stack_size, 0);
   }
   if (thd)
   {
@@ -200,6 +200,13 @@ extern "C" sig_handler handle_fatal_signal(int sig)
     case ABORT_QUERY:
     case ABORT_QUERY_HARD:
       kreason= "ABORT_QUERY";
+      break;
+    case KILL_SLAVE_SAME_ID:
+      kreason= "KILL_SLAVE_SAME_ID";
+      break;
+    case KILL_WAIT_TIMEOUT:
+    case KILL_WAIT_TIMEOUT_HARD:
+      kreason= "KILL_WAIT_TIMEOUT";
       break;
     }
     my_safe_printf_stderr("%s", "\n"
@@ -291,7 +298,9 @@ extern "C" sig_handler handle_fatal_signal(int sig)
 #ifdef HAVE_WRITE_CORE
   if (test_flags & TEST_CORE_ON_SIGNAL)
   {
-    my_safe_printf_stderr("%s", "Writing a core file\n");
+    char buff[80];
+    my_getwd(buff, sizeof(buff), 0);
+    my_safe_printf_stderr("Writing a core file at %s\n", buff);
     fflush(stderr);
     my_write_core(sig);
   }

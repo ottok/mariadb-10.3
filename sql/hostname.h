@@ -16,7 +16,6 @@
 #ifndef HOSTNAME_INCLUDED
 #define HOSTNAME_INCLUDED
 
-#include "my_global.h"                          /* uint */
 #include "my_net.h"
 #include "hash_filo.h"
 
@@ -168,7 +167,7 @@ extern ulong host_cache_size;
 #define RC_BLOCKED_HOST 1
 int ip_to_hostname(struct sockaddr_storage *ip_storage,
                    const char *ip_string,
-                   char **hostname, uint *connect_errors);
+                   const char **hostname, uint *connect_errors);
 
 void inc_host_errors(const char *ip_string, Host_errors *errors);
 void reset_host_connect_errors(const char *ip_string);

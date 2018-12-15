@@ -45,14 +45,17 @@ The parts not included are excluded by #ifndef UNIV_INNOCHECKSUM. */
 typedef void fil_space_t;
 
 #include "univ.i"                /*  include all of this */
+#include "page0size.h"
 
 #define FLST_BASE_NODE_SIZE (4 + 2 * FIL_ADDR_SIZE)
 #define FLST_NODE_SIZE (2 * FIL_ADDR_SIZE)
 #define FSEG_PAGE_DATA FIL_PAGE_DATA
-#define MLOG_1BYTE (1)
+#define FSEG_HEADER_SIZE	10
+#define UT_BITS_IN_BYTES(b) (((b) + 7) / 8)
 
 #include "ut0ut.h"
 #include "ut0byte.h"
+#include "mtr0types.h"
 #include "mach0data.h"
 #include "fsp0types.h"
 #include "rem0rec.h"
@@ -67,7 +70,6 @@ typedef void fil_space_t;
 #include "ut0crc32.h"            /* ut_crc32_init() */
 #include "fsp0pagecompress.h"    /* fil_get_compression_alg_name */
 #include "fil0crypt.h"           /* fil_space_verify_crypt_checksum */
-#include "page0size.h"
 
 #include <string.h>
 
@@ -91,11 +93,12 @@ static bool			use_end_page;
 static bool			do_one_page;
 static my_bool do_leaf;
 static my_bool per_page_details;
-static ulong n_merge;
+static ulint n_merge;
 extern ulong			srv_checksum_algorithm;
-static ulong physical_page_size;  /* Page size in bytes on disk. */
-static ulong logical_page_size;   /* Page size when uncompressed. */
+static ulint physical_page_size;  /* Page size in bytes on disk. */
+static ulint logical_page_size;   /* Page size when uncompressed. */
 ulong srv_page_size;
+ulong srv_page_size_shift;
 page_size_t			univ_page_size(0, 0, false);
 /* Current page number (0 based). */
 unsigned long long		cur_page_num;
@@ -306,16 +309,16 @@ const page_size_t
 get_page_size(
 	byte*	buf)
 {
-	const ulint	flags = mach_read_from_4(buf + FIL_PAGE_DATA
+	const unsigned	flags = mach_read_from_4(buf + FIL_PAGE_DATA
 						 + FSP_SPACE_FLAGS);
 
-	const ulint	ssize = FSP_FLAGS_GET_PAGE_SSIZE(flags);
+	const ulong	ssize = FSP_FLAGS_GET_PAGE_SSIZE(flags);
 
-	if (ssize == 0) {
-		srv_page_size = UNIV_PAGE_SIZE_ORIG;
-	} else {
-		srv_page_size = ((UNIV_ZIP_SIZE_MIN >> 1) << ssize);
-	}
+	srv_page_size_shift = ssize
+		? UNIV_ZIP_SIZE_SHIFT_MIN - 1 + ssize
+		: UNIV_PAGE_SIZE_SHIFT_ORIG;
+
+	srv_page_size = 1U << srv_page_size_shift;
 
 	univ_page_size.copy_from(
 		page_size_t(srv_page_size, srv_page_size, false));
@@ -429,13 +432,13 @@ open_file(
 						tablespace.
  @retval no. of bytes read.
 */
-ulong read_file(
+ulint read_file(
 	byte*	buf,
 	bool	partial_page_read,
-	ulong	physical_page_size,
+	ulint	physical_page_size,
 	FILE*	fil_in)
 {
-	ulong bytes = 0;
+	ulint bytes = 0;
 
 	DBUG_ASSERT(physical_page_size >= UNIV_ZIP_SIZE_MIN);
 
@@ -445,7 +448,7 @@ ulong read_file(
 		bytes = UNIV_ZIP_SIZE_MIN;
 	}
 
-	bytes += ulong(fread(buf, 1, physical_page_size, fil_in));
+	bytes += ulint(fread(buf, 1, physical_page_size, fil_in));
 
 	return bytes;
 }
@@ -492,8 +495,8 @@ is_page_corrupted(
 		for uncompressed tablespace. */
 		logseq = mach_read_from_4(buf + FIL_PAGE_LSN + 4);
 		logseqfield = mach_read_from_4(
-			buf + page_size.logical() -
-			FIL_PAGE_END_LSN_OLD_CHKSUM + 4);
+				buf + page_size.logical() -
+				FIL_PAGE_END_LSN_OLD_CHKSUM + 4);
 
 		if (is_log_enabled) {
 			fprintf(log_file,
@@ -522,14 +525,14 @@ is_page_corrupted(
 	normal method. */
 	if (is_encrypted && key_version != 0) {
 		is_corrupted = !fil_space_verify_crypt_checksum(buf,
-			page_size.is_compressed() ? page_size.physical() : 0, NULL, cur_page_num);
+			page_size, space_id, (ulint)cur_page_num);
 	} else {
 		is_corrupted = true;
 	}
 
 	if (is_corrupted) {
 		is_corrupted = buf_page_is_corrupted(
-			true, buf, page_size.is_compressed() ? page_size.physical() : 0, NULL);
+			true, buf, page_size, NULL);
 	}
 
 	return(is_corrupted);
@@ -574,6 +577,7 @@ is_page_empty(
 			return (false);
 		}
 	}
+
 	return (true);
 }
 
@@ -789,7 +793,7 @@ parse_page(
 	ulint right_page_no;
 	ulint data_bytes;
 	bool is_leaf;
-	int size_range_id;
+	ulint size_range_id;
 
 	/* Check whether page is doublewrite buffer. */
 	if(skip_page) {
@@ -843,12 +847,10 @@ parse_page(
 				/* data_bytes is bigger than logical_page_size */
 				size_range_id = SIZE_RANGES_FOR_PAGE + 1;
 			}
-
 			if (per_page_details) {
 				printf("index id=%llu page " ULINTPF " leaf %d n_recs " ULINTPF " data_bytes " ULINTPF
 					"\n", id, page_no, is_leaf, n_recs, data_bytes);
 			}
-
 			/* update per-index statistics */
 			{
 				if (index_ids.count(id) == 0) {
@@ -1165,6 +1167,7 @@ print_summary(
 		page_type.n_fil_page_type_page_compressed_encrypted);
 	fprintf(fil_out, "%8d\tOther type of page\n",
 		page_type.n_fil_page_type_other);
+
 	fprintf(fil_out, "\n===============================================\n");
 	fprintf(fil_out, "Additional information:\n");
 	fprintf(fil_out, "Undo page type: %d insert, %d update, %d other\n",
@@ -1536,7 +1539,7 @@ int main(
 	byte*		buf = NULL;
 	byte*		xdes = NULL;
 	/* bytes read count */
-	ulong		bytes;
+	ulint		bytes;
 	/* current time */
 	time_t		now;
 	/* last time */
@@ -1616,6 +1619,7 @@ int main(
 		my_print_variables(innochecksum_options);
 	}
 
+
 	buf_ptr = (byte*) malloc(UNIV_PAGE_SIZE_MAX * 2);
 	xdes_ptr = (byte*)malloc(UNIV_PAGE_SIZE_MAX * 2);
 	buf = (byte *) ut_align(buf_ptr, UNIV_PAGE_SIZE_MAX);
@@ -1623,6 +1627,7 @@ int main(
 
 	/* The file name is not optional. */
 	for (int i = 0; i < argc; ++i) {
+
 		/* Reset parameters for each file. */
 		filename = argv[i];
 		memset(&page_type, 0, sizeof(innodb_page_type));
@@ -1671,7 +1676,7 @@ int main(
 		}
 
 		/* Read the minimum page size. */
-		bytes = ulong(fread(buf, 1, UNIV_ZIP_SIZE_MIN, fil_in));
+		bytes = fread(buf, 1, UNIV_ZIP_SIZE_MIN, fil_in);
 		partial_page_read = true;
 
 		if (bytes != UNIV_ZIP_SIZE_MIN) {
@@ -1694,17 +1699,16 @@ int main(
 		/* Determine page size, zip_size and page compression
 		from fsp_flags and encryption metadata from page 0 */
 		const page_size_t&	page_size = get_page_size(buf);
+
 		ulint flags = mach_read_from_4(FSP_HEADER_OFFSET + FSP_SPACE_FLAGS + buf);
 		ulint zip_size = page_size.is_compressed() ? page_size.logical() : 0;
 		logical_page_size = page_size.is_compressed() ? zip_size : 0;
 		physical_page_size = page_size.physical();
-		srv_page_size = page_size.logical();
 		bool is_compressed = FSP_FLAGS_HAS_PAGE_COMPRESSION(flags);
 
 		if (page_size.physical() > UNIV_ZIP_SIZE_MIN) {
 			/* Read rest of the page 0 to determine crypt_data */
-			bytes = ulong(read_file(buf, partial_page_read, page_size.physical(), fil_in));
-
+			bytes = read_file(buf, partial_page_read, page_size.physical(), fil_in);
 			if (bytes != page_size.physical()) {
 				fprintf(stderr, "Error: Was not able to read the "
 					"rest of the page ");
@@ -1858,6 +1862,7 @@ int main(
 
 		/* main checksumming loop */
 		cur_page_num = start_page ? start_page : cur_page_num + 1;
+
 		lastt = 0;
 		while (!feof(fil_in)) {
 

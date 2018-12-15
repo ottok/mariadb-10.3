@@ -24,34 +24,35 @@ Implements a buffer pool dump/load.
 Created April 08, 2011 Vasil Dimov
 *******************************************************/
 
+#include "my_global.h"
+#include "my_sys.h"
+
+#include "mysql/psi/mysql_stage.h"
+#include "mysql/psi/psi.h"
+
 #include "univ.i"
 
-#include <stdarg.h> /* va_* */
-#include <string.h> /* strerror() */
-
-#include "buf0buf.h" /* buf_pool_mutex_enter(), srv_buf_pool_instances */
+#include "buf0buf.h"
 #include "buf0dump.h"
-#include "db0err.h"
-#include "dict0dict.h" /* dict_operation_lock */
-#include "os0file.h" /* OS_FILE_MAX_PATH */
-#include "os0sync.h" /* os_event* */
-#include "os0thread.h" /* os_thread_* */
-#include "srv0srv.h" /* srv_fast_shutdown, srv_buf_dump* */
-#include "srv0start.h" /* srv_shutdown_state */
-#include "sync0rw.h" /* rw_lock_s_lock() */
-#include "ut0byte.h" /* ut_ull_create() */
-#include "ut0sort.h" /* UT_SORT_FUNCTION_BODY */
+#include "dict0dict.h"
+#include "os0file.h"
+#include "os0thread.h"
+#include "srv0srv.h"
+#include "srv0start.h"
+#include "sync0rw.h"
+#include "ut0byte.h"
+
+#include <algorithm>
+
 #include "mysql/service_wsrep.h" /* wsrep_recovery */
 #include <my_service_manager.h>
 
 enum status_severity {
 	STATUS_INFO,
-	STATUS_NOTICE,
 	STATUS_ERR
 };
 
-#define SHUTTING_DOWN()	(UNIV_UNLIKELY(srv_shutdown_state \
-				       != SRV_SHUTDOWN_NONE))
+#define SHUTTING_DOWN()	(srv_shutdown_state != SRV_SHUTDOWN_NONE)
 
 /* Flags that tell the buffer pool dump/load thread which action should it
 take after being waked up. */
@@ -76,7 +77,6 @@ Wakes up the buffer pool dump/load thread and instructs it to start
 a dump. This function is called by MySQL code via buffer_pool_dump_now()
 and it should return immediately because the whole MySQL is frozen during
 its execution. */
-UNIV_INTERN
 void
 buf_dump_start()
 /*============*/
@@ -90,7 +90,6 @@ Wakes up the buffer pool dump/load thread and instructs it to start
 a load. This function is called by MySQL code via buffer_pool_load_now()
 and it should return immediately because the whole MySQL is frozen during
 its execution. */
-UNIV_INTERN
 void
 buf_load_start()
 /*============*/
@@ -121,12 +120,20 @@ buf_dump_status(
 
 	va_start(ap, fmt);
 
-	ut_vsnprintf(
+	vsnprintf(
 		export_vars.innodb_buffer_pool_dump_status,
 		sizeof(export_vars.innodb_buffer_pool_dump_status),
 		fmt, ap);
 
-	ib_logf((ib_log_level_t) severity, "%s", export_vars.innodb_buffer_pool_dump_status);
+	switch (severity) {
+	case STATUS_INFO:
+		ib::info() << export_vars.innodb_buffer_pool_dump_status;
+		break;
+
+	case STATUS_ERR:
+		ib::error() << export_vars.innodb_buffer_pool_dump_status;
+		break;
+	}
 
 	va_end(ap);
 }
@@ -152,15 +159,19 @@ buf_load_status(
 
 	va_start(ap, fmt);
 
-	ut_vsnprintf(
+	vsnprintf(
 		export_vars.innodb_buffer_pool_load_status,
 		sizeof(export_vars.innodb_buffer_pool_load_status),
 		fmt, ap);
 
-	if (severity == STATUS_NOTICE || severity == STATUS_ERR) {
-		ut_print_timestamp(stderr);
-		fprintf(stderr, " InnoDB: %s\n",
-			export_vars.innodb_buffer_pool_load_status);
+	switch (severity) {
+	case STATUS_INFO:
+		ib::info() << export_vars.innodb_buffer_pool_load_status;
+		break;
+
+	case STATUS_ERR:
+		ib::error() << export_vars.innodb_buffer_pool_load_status;
+		break;
 	}
 
 	va_end(ap);
@@ -185,6 +196,56 @@ get_buf_dump_dir()
 	return(dump_dir);
 }
 
+/** Generate the path to the buffer pool dump/load file.
+@param[out]	path		generated path
+@param[in]	path_size	size of 'path', used as in snprintf(3). */
+static
+void
+buf_dump_generate_path(
+	char*	path,
+	size_t	path_size)
+{
+	char	buf[FN_REFLEN];
+
+	snprintf(buf, sizeof(buf), "%s%c%s", get_buf_dump_dir(),
+		 OS_PATH_SEPARATOR, srv_buf_dump_filename);
+
+	os_file_type_t	type;
+	bool		exists = false;
+	bool		ret;
+
+	ret = os_file_status(buf, &exists, &type);
+
+	/* For realpath() to succeed the file must exist. */
+
+	if (ret && exists) {
+		/* my_realpath() assumes the destination buffer is big enough
+		to hold FN_REFLEN bytes. */
+		ut_a(path_size >= FN_REFLEN);
+
+		my_realpath(path, buf, 0);
+	} else {
+		/* If it does not exist, then resolve only srv_data_home
+		and append srv_buf_dump_filename to it. */
+		char	srv_data_home_full[FN_REFLEN];
+
+		my_realpath(srv_data_home_full, get_buf_dump_dir(), 0);
+
+		if (srv_data_home_full[strlen(srv_data_home_full) - 1]
+		    == OS_PATH_SEPARATOR) {
+
+			snprintf(path, path_size, "%s%s",
+				 srv_data_home_full,
+				 srv_buf_dump_filename);
+		} else {
+			snprintf(path, path_size, "%s%c%s",
+				 srv_data_home_full,
+				 OS_PATH_SEPARATOR,
+				 srv_buf_dump_filename);
+		}
+	}
+}
+
 /*****************************************************************//**
 Perform a buffer pool dump into the file specified by
 innodb_buffer_pool_filename. If any errors occur then the value of
@@ -207,14 +268,12 @@ buf_dump(
 	ulint	i;
 	int	ret;
 
-	ut_snprintf(full_filename, sizeof(full_filename),
-		    "%s%c%s", get_buf_dump_dir(), SRV_PATH_SEPARATOR,
-		    srv_buf_dump_filename);
+	buf_dump_generate_path(full_filename, sizeof(full_filename));
 
-	ut_snprintf(tmp_filename, sizeof(tmp_filename),
-		    "%s.incomplete", full_filename);
+	snprintf(tmp_filename, sizeof(tmp_filename),
+		 "%s.incomplete", full_filename);
 
-	buf_dump_status(STATUS_NOTICE, "Dumping buffer pool(s) to %s",
+	buf_dump_status(STATUS_INFO, "Dumping buffer pool(s) to %s",
 			full_filename);
 
 #if defined(__GLIBC__) || defined(__WIN__) || O_CLOEXEC == 0
@@ -246,8 +305,6 @@ buf_dump(
 		buf_dump_t*		dump;
 		ulint			n_pages;
 		ulint			j;
-		ulint			limit;
-		ulint			counter;
 
 		buf_pool = buf_pool_from_array(i);
 
@@ -264,17 +321,32 @@ buf_dump(
 		}
 
 		if (srv_buf_pool_dump_pct != 100) {
+			ulint		t_pages;
+
 			ut_ad(srv_buf_pool_dump_pct < 100);
 
-			n_pages = n_pages * srv_buf_pool_dump_pct / 100;
+			/* limit the number of total pages dumped to X% of the
+			 * total number of pages */
+			t_pages = buf_pool->curr_size
+					*  srv_buf_pool_dump_pct / 100;
+			if (n_pages > t_pages) {
+				buf_dump_status(STATUS_INFO,
+						"Instance " ULINTPF
+						", restricted to " ULINTPF
+						" pages due to "
+						"innodb_buf_pool_dump_pct=%lu",
+						i, t_pages,
+						srv_buf_pool_dump_pct);
+				n_pages = t_pages;
+			}
 
 			if (n_pages == 0) {
 				n_pages = 1;
 			}
 		}
 
-		dump = static_cast<buf_dump_t*>(
-			ut_malloc(n_pages * sizeof(*dump))) ;
+		dump = static_cast<buf_dump_t*>(ut_malloc_nokey(
+				n_pages * sizeof(*dump)));
 
 		if (dump == NULL) {
 			buf_pool_mutex_exit(buf_pool);
@@ -289,20 +361,22 @@ buf_dump(
 
 		for (bpage = UT_LIST_GET_FIRST(buf_pool->LRU), j = 0;
 		     bpage != NULL && j < n_pages;
-		     bpage = UT_LIST_GET_NEXT(LRU, bpage), j++) {
+		     bpage = UT_LIST_GET_NEXT(LRU, bpage)) {
 
 			ut_a(buf_page_in_file(bpage));
+			if (bpage->id.space() >= SRV_LOG_SPACE_FIRST_ID) {
+				/* Ignore the innodb_temporary tablespace. */
+				continue;
+			}
 
-			dump[j] = BUF_DUMP_CREATE(buf_page_get_space(bpage),
-						  buf_page_get_page_no(bpage));
+			dump[j++] = BUF_DUMP_CREATE(bpage->id.space(),
+						    bpage->id.page_no());
 		}
-
-		ut_a(j == n_pages);
 
 		buf_pool_mutex_exit(buf_pool);
 
-		limit = (ulint)((double)n_pages * ((double)srv_buf_dump_status_frequency / (double)100));
-		counter = 0;
+		ut_a(j <= n_pages);
+		n_pages = j;
 
 		for (j = 0; j < n_pages && !SHOULD_QUIT(); j++) {
 			ret = fprintf(f, ULINTPF "," ULINTPF "\n",
@@ -316,23 +390,6 @@ buf_dump(
 						tmp_filename, strerror(errno));
 				/* leave tmp_filename to exist */
 				return;
-			}
-
-			counter++;
-
-			/* Print buffer pool dump status only if
-			srv_buf_dump_status_frequency is > 0 and
-			we have processed that amount of pages. */
-			if (srv_buf_dump_status_frequency &&
-			    counter == limit) {
-				counter = 0;
-				buf_dump_status(
-					STATUS_INFO,
-					"Dumping buffer pool "
-					ULINTPF "/" ULINTPF ", "
-					"page " ULINTPF "/" ULINTPF,
-					i + 1, srv_buf_pool_instances,
-					j + 1, n_pages);
 			}
 			if (SHUTTING_DOWN() && !(j % 1024)) {
 				service_manager_extend_timeout(INNODB_EXTEND_TIMEOUT_INTERVAL,
@@ -381,44 +438,13 @@ buf_dump(
 
 	ut_sprintf_timestamp(now);
 
-	buf_dump_status(STATUS_NOTICE,
+	buf_dump_status(STATUS_INFO,
 			"Buffer pool(s) dump completed at %s", now);
-}
 
-/*****************************************************************//**
-Compare two buffer pool dump entries, used to sort the dump on
-space_no,page_no before loading in order to increase the chance for
-sequential IO.
-@return -1/0/1 if entry 1 is smaller/equal/bigger than entry 2 */
-static
-lint
-buf_dump_cmp(
-/*=========*/
-	const buf_dump_t	d1,	/*!< in: buffer pool dump entry 1 */
-	const buf_dump_t	d2)	/*!< in: buffer pool dump entry 2 */
-{
-	if (d1 < d2) {
-		return(-1);
-	} else if (d1 == d2) {
-		return(0);
-	} else {
-		return(1);
-	}
-}
-
-/*****************************************************************//**
-Sort a buffer pool dump on space_no, page_no. */
-static
-void
-buf_dump_sort(
-/*==========*/
-	buf_dump_t*	dump,	/*!< in/out: buffer pool dump to sort */
-	buf_dump_t*	tmp,	/*!< in/out: temp storage */
-	ulint		low,	/*!< in: lowest index (inclusive) */
-	ulint		high)	/*!< in: highest index (non-inclusive) */
-{
-	UT_SORT_FUNCTION_BODY(buf_dump_sort, dump, tmp, low, high,
-			      buf_dump_cmp);
+	/* Though dumping doesn't related to an incomplete load,
+	 we reset this to 0 here to indicate that a shutdown can also perform
+	 a dump */
+	export_vars.innodb_buffer_pool_load_incomplete = 0;
 }
 
 /*****************************************************************//**
@@ -429,7 +455,7 @@ UNIV_INLINE
 void
 buf_load_throttle_if_needed(
 /*========================*/
-	ulint*	last_check_time,	/*!< in/out: miliseconds since epoch
+	ulint*	last_check_time,	/*!< in/out: milliseconds since epoch
 					of the last time we did check if
 					throttling is needed, we do the check
 					every srv_io_capacity IO ops. */
@@ -479,7 +505,7 @@ buf_load_throttle_if_needed(
 	"cur_activity_count == *last_activity_count" check and calling
 	ut_time_ms() that often may turn out to be too expensive. */
 
-	if (elapsed_time < 1000 /* 1 sec (1000 mili secs) */) {
+	if (elapsed_time < 1000 /* 1 sec (1000 milli secs) */) {
 		os_thread_sleep((1000 - elapsed_time) * 1000 /* micro secs */);
 	}
 
@@ -502,7 +528,6 @@ buf_load()
 	char		now[32];
 	FILE*		f;
 	buf_dump_t*	dump;
-	buf_dump_t*	dump_tmp;
 	ulint		dump_n;
 	ulint		total_buffer_pools_pages;
 	ulint		i;
@@ -513,16 +538,14 @@ buf_load()
 	/* Ignore any leftovers from before */
 	buf_load_abort_flag = FALSE;
 
-	ut_snprintf(full_filename, sizeof(full_filename),
-		    "%s%c%s", get_buf_dump_dir(), SRV_PATH_SEPARATOR,
-		    srv_buf_dump_filename);
+	buf_dump_generate_path(full_filename, sizeof(full_filename));
 
-	buf_load_status(STATUS_NOTICE,
+	buf_load_status(STATUS_INFO,
 			"Loading buffer pool(s) from %s", full_filename);
 
-	f = fopen(full_filename, "r");
+	f = fopen(full_filename, "r" STR_O_CLOEXEC);
 	if (f == NULL) {
-		buf_load_status(STATUS_ERR,
+		buf_load_status(STATUS_INFO,
 				"Cannot open '%s' for reading: %s",
 				full_filename, strerror(errno));
 		return;
@@ -547,46 +570,45 @@ buf_load()
 			what = "parsing";
 		}
 		fclose(f);
-		buf_load_status(STATUS_ERR, "Error %s '%s', "
-				"unable to load buffer pool (stage 1)",
+		buf_load_status(STATUS_ERR, "Error %s '%s',"
+				" unable to load buffer pool (stage 1)",
 				what, full_filename);
 		return;
 	}
 
 	/* If dump is larger than the buffer pool(s), then we ignore the
 	extra trailing. This could happen if a dump is made, then buffer
-	pool is shrunk and then load it attempted. */
+	pool is shrunk and then load is attempted. */
 	total_buffer_pools_pages = buf_pool_get_n_pages()
 		* srv_buf_pool_instances;
 	if (dump_n > total_buffer_pools_pages) {
 		dump_n = total_buffer_pools_pages;
 	}
 
-	dump = static_cast<buf_dump_t*>(ut_malloc(dump_n * sizeof(*dump)));
+	if(dump_n != 0) {
+		dump = static_cast<buf_dump_t*>(ut_malloc_nokey(
+				dump_n * sizeof(*dump)));
+	} else {
+		fclose(f);
+		ut_sprintf_timestamp(now);
+		buf_load_status(STATUS_INFO,
+				"Buffer pool(s) load completed at %s"
+				" (%s was empty)", now, full_filename);
+		return;
+	}
 
 	if (dump == NULL) {
 		fclose(f);
 		buf_load_status(STATUS_ERR,
 				"Cannot allocate " ULINTPF " bytes: %s",
-				(ulint) (dump_n * sizeof(*dump)),
-				strerror(errno));
-		return;
-	}
-
-	dump_tmp = static_cast<buf_dump_t*>(
-		ut_malloc(dump_n * sizeof(*dump_tmp)));
-
-	if (dump_tmp == NULL) {
-		ut_free(dump);
-		fclose(f);
-		buf_load_status(STATUS_ERR,
-				"Cannot allocate " ULINTPF " bytes: %s",
-				(ulint) (dump_n * sizeof(*dump_tmp)),
+				dump_n * sizeof(*dump),
 				strerror(errno));
 		return;
 	}
 
 	rewind(f);
+
+	export_vars.innodb_buffer_pool_load_incomplete = 1;
 
 	for (i = 0; i < dump_n && !SHUTTING_DOWN(); i++) {
 		fscanf_ret = fscanf(f, ULINTPF "," ULINTPF,
@@ -599,24 +621,22 @@ buf_load()
 			/* else */
 
 			ut_free(dump);
-			ut_free(dump_tmp);
 			fclose(f);
 			buf_load_status(STATUS_ERR,
-					"Error parsing '%s', unable "
-					"to load buffer pool (stage 2)",
+					"Error parsing '%s', unable"
+					" to load buffer pool (stage 2)",
 					full_filename);
 			return;
 		}
 
 		if (space_id > ULINT32_MASK || page_no > ULINT32_MASK) {
 			ut_free(dump);
-			ut_free(dump_tmp);
 			fclose(f);
 			buf_load_status(STATUS_ERR,
-					"Error parsing '%s': bogus "
-					"space,page " ULINTPF "," ULINTPF
-					" at line " ULINTPF ", "
-					"unable to load buffer pool",
+					"Error parsing '%s': bogus"
+					" space,page " ULINTPF "," ULINTPF
+					" at line " ULINTPF ","
+					" unable to load buffer pool",
 					full_filename,
 					space_id, page_no,
 					i);
@@ -635,64 +655,149 @@ buf_load()
 
 	if (dump_n == 0) {
 		ut_free(dump);
-		ut_free(dump_tmp);
 		ut_sprintf_timestamp(now);
-		buf_load_status(STATUS_NOTICE,
-				"Buffer pool(s) load completed at %s "
-				"(%s was empty)", now, full_filename);
+		buf_load_status(STATUS_INFO,
+				"Buffer pool(s) load completed at %s"
+				" (%s was empty or had errors)", now, full_filename);
 		return;
 	}
 
 	if (!SHUTTING_DOWN()) {
-		buf_dump_sort(dump, dump_tmp, 0, dump_n);
+		std::sort(dump, dump + dump_n);
 	}
 
-	ut_free(dump_tmp);
+	ulint		last_check_time = 0;
+	ulint		last_activity_cnt = 0;
 
-	ulint	last_check_time = 0;
-	ulint	last_activity_cnt = 0;
+	/* Avoid calling the expensive fil_space_acquire_silent() for each
+	page within the same tablespace. dump[] is sorted by (space, page),
+	so all pages from a given tablespace are consecutive. */
+	ulint		cur_space_id = BUF_DUMP_SPACE(dump[0]);
+	fil_space_t*	space = fil_space_acquire_silent(cur_space_id);
+	page_size_t	page_size(space ? space->flags : 0);
+
+	/* JAN: TODO: MySQL 5.7 PSI
+#ifdef HAVE_PSI_STAGE_INTERFACE
+	PSI_stage_progress*	pfs_stage_progress
+		= mysql_set_stage(srv_stage_buffer_pool_load.m_key);
+	#endif*/ /* HAVE_PSI_STAGE_INTERFACE */
+	/*
+	mysql_stage_set_work_estimated(pfs_stage_progress, dump_n);
+	mysql_stage_set_work_completed(pfs_stage_progress, 0);
+	*/
 
 	for (i = 0; i < dump_n && !SHUTTING_DOWN(); i++) {
 
-		buf_read_page_async(BUF_DUMP_SPACE(dump[i]),
-				    BUF_DUMP_PAGE(dump[i]));
+		/* space_id for this iteration of the loop */
+		const ulint	this_space_id = BUF_DUMP_SPACE(dump[i]);
+
+		if (this_space_id >= SRV_LOG_SPACE_FIRST_ID) {
+			/* Ignore the innodb_temporary tablespace. */
+			continue;
+		}
+
+		if (this_space_id != cur_space_id) {
+			if (space != NULL) {
+				space->release();
+			}
+
+			cur_space_id = this_space_id;
+			space = fil_space_acquire_silent(cur_space_id);
+
+			if (space != NULL) {
+				const page_size_t	cur_page_size(
+					space->flags);
+				page_size.copy_from(cur_page_size);
+			}
+		}
+
+		/* JAN: TODO: As we use background page read below,
+		if tablespace is encrypted we cant use it. */
+		if (space == NULL ||
+		   (space && space->crypt_data &&
+		    space->crypt_data->encryption != FIL_ENCRYPTION_OFF &&
+		    space->crypt_data->type != CRYPT_SCHEME_UNENCRYPTED)) {
+			continue;
+		}
+
+		buf_read_page_background(
+			page_id_t(this_space_id, BUF_DUMP_PAGE(dump[i])),
+			page_size, true);
 
 		if (i % 64 == 63) {
 			os_aio_simulated_wake_handler_threads();
 		}
 
-		if (i % 128 == 0) {
-			buf_load_status(STATUS_INFO,
-					"Loaded " ULINTPF "/" ULINTPF " pages",
-					i + 1, dump_n);
-		}
-
 		if (buf_load_abort_flag) {
+			if (space != NULL) {
+				space->release();
+			}
 			buf_load_abort_flag = FALSE;
 			ut_free(dump);
 			buf_load_status(
-				STATUS_NOTICE,
+				STATUS_INFO,
 				"Buffer pool(s) load aborted on request");
+			/* Premature end, set estimated = completed = i and
+			end the current stage event. */
+			/*
+			mysql_stage_set_work_estimated(pfs_stage_progress, i);
+			mysql_stage_set_work_completed(pfs_stage_progress,
+			i);
+			*/
+#ifdef HAVE_PSI_STAGE_INTERFACE
+			/* mysql_end_stage(); */
+#endif /* HAVE_PSI_STAGE_INTERFACE */
 			return;
 		}
 
 		buf_load_throttle_if_needed(
 			&last_check_time, &last_activity_cnt, i);
+
+#ifdef UNIV_DEBUG
+		if ((i+1) >= srv_buf_pool_load_pages_abort) {
+			buf_load_abort_flag = 1;
+		}
+#endif
+	}
+
+	if (space != NULL) {
+		space->release();
 	}
 
 	ut_free(dump);
 
 	ut_sprintf_timestamp(now);
 
-	buf_load_status(STATUS_NOTICE,
+	if (i == dump_n) {
+		buf_load_status(STATUS_INFO,
 			"Buffer pool(s) load completed at %s", now);
+		export_vars.innodb_buffer_pool_load_incomplete = 0;
+	} else if (!buf_load_abort_flag) {
+		buf_load_status(STATUS_INFO,
+			"Buffer pool(s) load aborted due to user instigated abort at %s",
+			now);
+		/* intentionally don't reset innodb_buffer_pool_load_incomplete
+                   as we don't want a shutdown to save the buffer pool */
+	} else {
+		buf_load_status(STATUS_INFO,
+			"Buffer pool(s) load aborted due to shutdown at %s",
+			now);
+		/* intentionally don't reset innodb_buffer_pool_load_incomplete
+                   as we want to abort without saving the buffer pool */
+	}
+
+	/* Make sure that estimated = completed when we end. */
+	/* mysql_stage_set_work_completed(pfs_stage_progress, dump_n); */
+	/* End the stage progress event. */
+#ifdef HAVE_PSI_STAGE_INTERFACE
+	/* mysql_end_stage(); */
+#endif /* HAVE_PSI_STAGE_INTERFACE */
 }
 
 /*****************************************************************//**
 Aborts a currently running buffer pool load. This function is called by
 MySQL code via buffer_pool_load_abort() and it should return immediately
 because the whole MySQL is frozen during its execution. */
-UNIV_INTERN
 void
 buf_load_abort()
 /*============*/
@@ -705,15 +810,16 @@ This is the main thread for buffer pool dump/load. It waits for an
 event and when waked up either performs a dump or load and sleeps
 again.
 @return this function does not return, it calls os_thread_exit() */
-extern "C" UNIV_INTERN
+extern "C"
 os_thread_ret_t
 DECLARE_THREAD(buf_dump_thread)(void*)
 {
 	my_thread_init();
 	ut_ad(!srv_read_only_mode);
-
-	buf_dump_status(STATUS_INFO, "Dumping buffer pool(s) not yet started");
-	buf_load_status(STATUS_INFO, "Loading buffer pool(s) not yet started");
+	/* JAN: TODO: MySQL 5.7 PSI
+#ifdef UNIV_PFS_THREAD
+	pfs_register_thread(buf_dump_thread_key);
+	#endif */ /* UNIV_PFS_THREAD */
 
 	if (srv_buffer_pool_load_at_startup) {
 
@@ -747,15 +853,16 @@ DECLARE_THREAD(buf_dump_thread)(void*)
 	}
 
 	if (srv_buffer_pool_dump_at_shutdown && srv_fast_shutdown != 2) {
+		if (export_vars.innodb_buffer_pool_load_incomplete) {
+			buf_dump_status(STATUS_INFO,
+				"Dumping of buffer pool not started"
+				" as load was incomplete");
 #ifdef WITH_WSREP
-		if (!wsrep_recovery) {
+		} else if (wsrep_recovery) {
 #endif /* WITH_WSREP */
-
-		buf_dump(FALSE /* ignore shutdown down flag,
-		keep going even if we are in a shutdown state */);
-#ifdef WITH_WSREP
+		} else {
+			buf_dump(FALSE/* do complete dump at shutdown */);
 		}
-#endif /* WITH_WSREP */
 	}
 
 	srv_buf_dump_thread_active = false;
@@ -763,7 +870,7 @@ DECLARE_THREAD(buf_dump_thread)(void*)
 	my_thread_end();
 	/* We count the number of threads in os_thread_exit(). A created
 	thread should always use that to exit and not use return() to exit. */
-	os_thread_exit(NULL);
+	os_thread_exit();
 
 	OS_THREAD_DUMMY_RETURN;
 }

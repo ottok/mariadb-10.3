@@ -30,7 +30,7 @@ Created Nov 14, 2013 Vasil Dimov
 #include "univ.i"
 #include "fsp0types.h"
 
-#define FIELD_REF_SIZE 20
+#define FIELD_REF_SIZE 20U
 
 /** A BLOB field reference full of zero, for use in assertions and
 tests.Initially, BLOB field references are set to zero, in
@@ -176,7 +176,6 @@ private:
 	unsigned	m_is_compressed:1;
 };
 
-#ifndef UNIV_INNOCHECKSUM
 /* Overloading the global output operator to conveniently print an object
 of type the page_size_t.
 @param[in,out]	out	the output stream
@@ -193,7 +192,6 @@ operator<<(
 		<< ", compressed=" << obj.is_compressed() << "]";
 	return(out);
 }
-#endif
 
 extern page_size_t	univ_page_size;
 

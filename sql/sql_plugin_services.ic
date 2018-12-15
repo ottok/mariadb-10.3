@@ -125,12 +125,12 @@ static struct thd_rnd_service_st thd_rnd_handler= {
 };
 
 static struct base64_service_st base64_handler= {
-  base64_needed_encoded_length,
-  base64_encode_max_arg_length,
-  base64_needed_decoded_length,
-  base64_decode_max_arg_length,
-  base64_encode,
-  base64_decode
+  my_base64_needed_encoded_length,
+  my_base64_encode_max_arg_length,
+  my_base64_needed_decoded_length,
+  my_base64_decode_max_arg_length,
+  my_base64_encode,
+  my_base64_decode
 };
 
 static struct thd_error_context_service_st thd_error_context_handler= {
@@ -154,6 +154,8 @@ static struct wsrep_service_st wsrep_handler = {
   wsrep_aborting_thd_enqueue,
   wsrep_consistency_check,
   wsrep_is_wsrep_xid,
+  wsrep_xid_seqno,
+  wsrep_xid_uuid,
   wsrep_lock_rollback,
   wsrep_on,
   wsrep_post_commit,

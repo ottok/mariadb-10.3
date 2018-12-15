@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2000, 2012, Oracle and/or its affiliates.
+   Copyright (c) 2017, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -16,6 +17,7 @@
 
 /* This file is included by all internal myisam files */
 
+#include <my_global.h>
 #include <myisam.h>                     /* Structs & some defines */
 #include <myisampack.h>                 /* packing of keys */
 #include <my_tree.h>
@@ -92,16 +94,16 @@ typedef struct st_mi_state_info
 } MI_STATE_INFO;
 
 #define MI_STATE_INFO_SIZE      (24+14*8+7*4+2*2+8)
-#define MI_STATE_KEY_SIZE       8
-#define MI_STATE_KEYBLOCK_SIZE  8
-#define MI_STATE_KEYSEG_SIZE    4
+#define MI_STATE_KEY_SIZE       8U
+#define MI_STATE_KEYBLOCK_SIZE  8U
+#define MI_STATE_KEYSEG_SIZE    4U
 #define MI_STATE_EXTRA_SIZE ((MI_MAX_KEY+MI_MAX_KEY_BLOCK_SIZE)*MI_STATE_KEY_SIZE + MI_MAX_KEY*HA_MAX_KEY_SEG*MI_STATE_KEYSEG_SIZE)
 #define MI_KEYDEF_SIZE          (2+ 5*2)
 #define MI_UNIQUEDEF_SIZE       (2+1+1)
 #define HA_KEYSEG_SIZE          (6+ 2*2 + 4*2)
 #define MI_COLUMNDEF_SIZE       (2*3+1)
 #define MI_BASE_INFO_SIZE       (5*8 + 8*4 + 4 + 4*2 + 16)
-#define MI_INDEX_BLOCK_MARGIN   16      /* Safety margin for .MYI tables */
+#define MI_INDEX_BLOCK_MARGIN   16U      /* Safety margin for .MYI tables */
 
 typedef struct st_mi_base_info
 {
@@ -199,6 +201,7 @@ typedef struct st_mi_isam_share
   ulong max_pack_length;
   ulong state_diff_length;
   uint	rec_reflength;			/* rec_reflength in use now */
+  ulong vreclength;                     /* full reclength, including vcols */
   uint  unique_name_length;
   uint32 ftkeys;                        /* Number of full-text keys + 1 */
   File	kfile;				/* Shared keyfile */
@@ -222,7 +225,7 @@ typedef struct st_mi_isam_share
   THR_LOCK lock;
   mysql_mutex_t intern_lock;            /* Locking for use with _locking */
   mysql_rwlock_t *key_root_lock;
-  my_off_t mmaped_length;
+  size_t mmaped_length;
   uint     nonmmaped_inserts;           /* counter of writing in non-mmaped
                                            area */
   mysql_rwlock_t mmap_lock;
@@ -310,27 +313,27 @@ struct st_myisam_info
 #define USE_WHOLE_KEY   (HA_MAX_KEY_BUFF*2) /* Use whole key in _mi_search() */
 #define F_EXTRA_LCK     -1
 /* bits in opt_flag */
-#define MEMMAP_USED     32
-#define REMEMBER_OLD_POS 64
+#define MEMMAP_USED     32U
+#define REMEMBER_OLD_POS 64U
 
-#define WRITEINFO_UPDATE_KEYFILE        1
-#define WRITEINFO_NO_UNLOCK             2
+#define WRITEINFO_UPDATE_KEYFILE        1U
+#define WRITEINFO_NO_UNLOCK             2U
 
 /* once_flags */
-#define USE_PACKED_KEYS         1
-#define RRND_PRESERVE_LASTINX   2
+#define USE_PACKED_KEYS         1U
+#define RRND_PRESERVE_LASTINX   2U
 
 /* bits in state.changed */
-#define STATE_CHANGED           1
-#define STATE_CRASHED           2
-#define STATE_CRASHED_ON_REPAIR 4
-#define STATE_NOT_ANALYZED      8
-#define STATE_NOT_OPTIMIZED_KEYS 16
-#define STATE_NOT_SORTED_PAGES  32
+#define STATE_CHANGED           1U
+#define STATE_CRASHED           2U
+#define STATE_CRASHED_ON_REPAIR 4U
+#define STATE_NOT_ANALYZED      8U
+#define STATE_NOT_OPTIMIZED_KEYS 16U
+#define STATE_NOT_SORTED_PAGES  32U
 
 /* options to mi_read_cache */
-#define READING_NEXT    1
-#define READING_HEADER  2
+#define READING_NEXT    1U
+#define READING_HEADER  2U
 
 #define mi_getint(x)    ((uint) mi_uint2korr(x) & 32767)
 #define mi_putint(x,y,nod) { uint16 boh=(nod ? (uint16) 32768 : 0) + (uint16) (y);\
@@ -383,17 +386,17 @@ struct st_myisam_info
 #define MI_MAX_DYN_BLOCK_HEADER 20      /* Max prefix of record-block */
 #define MI_BLOCK_INFO_HEADER_LENGTH 20
 #define MI_DYN_DELETE_BLOCK_HEADER 20   /* length of delete-block-header */
-#define MI_DYN_MAX_BLOCK_LENGTH ((1L << 24)-4L)
+#define MI_DYN_MAX_BLOCK_LENGTH ((1UL << 24)-4UL)
 #define MI_DYN_MAX_ROW_LENGTH   (MI_DYN_MAX_BLOCK_LENGTH - MI_SPLIT_LENGTH)
-#define MI_DYN_ALIGN_SIZE       4       /* Align blocks on this */
+#define MI_DYN_ALIGN_SIZE       4U      /* Align blocks on this */
 #define MI_MAX_DYN_HEADER_BYTE  13      /* max header byte for dynamic rows */
-#define MI_MAX_BLOCK_LENGTH     ((((ulong) 1 << 24)-1) & (~ (ulong) (MI_DYN_ALIGN_SIZE-1)))
+#define MI_MAX_BLOCK_LENGTH     (((1U << 24)-1) & (~(MI_DYN_ALIGN_SIZE-1)))
 #define MI_REC_BUFF_OFFSET      ALIGN_SIZE(MI_DYN_DELETE_BLOCK_HEADER+sizeof(uint32))
 
 
-#define PACK_TYPE_SELECTED      1       /* Bits in field->pack_type */
-#define PACK_TYPE_SPACE_FIELDS  2
-#define PACK_TYPE_ZERO_FILL     4
+#define PACK_TYPE_SELECTED      1U      /* Bits in field->pack_type */
+#define PACK_TYPE_SPACE_FIELDS  2U
+#define PACK_TYPE_ZERO_FILL     4U
 #define MI_FOUND_WRONG_KEY 0x7FFFFFFF   /* Impossible value from ha_key_cmp */
 
 #define MI_MAX_KEY_BLOCK_SIZE   (MI_MAX_KEY_BLOCK_LENGTH/MI_MIN_KEY_BLOCK_LENGTH)
@@ -401,7 +404,7 @@ struct st_myisam_info
 #define MI_MAX_KEYPTR_SIZE      5       /* For calculating block lengths */
 #define MI_MIN_KEYBLOCK_LENGTH  50      /* When to split delete blocks */
 
-#define MI_MIN_SIZE_BULK_INSERT_TREE 16384 /* this is per key */
+#define MI_MIN_SIZE_BULK_INSERT_TREE 16384U /* this is per key */
 #define MI_MIN_ROWS_TO_USE_BULK_INSERT 100
 #define MI_MIN_ROWS_TO_DISABLE_INDEXES 100
 #define MI_MIN_ROWS_TO_USE_WRITE_CACHE 10
@@ -536,8 +539,7 @@ extern uchar *_mi_get_key(MI_INFO *info, MI_KEYDEF *keyinfo, uchar *page,
                           uchar *key, uchar *keypos,
                           uint *return_key_length);
 extern uint _mi_keylength(MI_KEYDEF *keyinfo, uchar *key);
-extern uint _mi_keylength_part(MI_KEYDEF *keyinfo, register uchar *key,
-                               HA_KEYSEG *end);
+extern uint _mi_keylength_part(MI_KEYDEF *keyinfo, uchar *key, HA_KEYSEG *end);
 extern uchar *_mi_move_key(MI_KEYDEF *keyinfo, uchar *to, uchar *from);
 extern int _mi_search_next(MI_INFO *info, MI_KEYDEF *keyinfo, uchar *key,
                            uint key_length, uint nextflag, my_off_t pos);
@@ -558,7 +560,7 @@ extern uint _mi_pack_key(MI_INFO *info, uint keynr, uchar *key,
                          HA_KEYSEG ** last_used_keyseg);
 extern int _mi_read_key_record(MI_INFO *info, my_off_t filepos, uchar *buf);
 extern int _mi_read_cache(IO_CACHE *info, uchar *buff, my_off_t pos,
-                          uint length, int re_read_if_possibly);
+                          size_t length, int re_read_if_possibly);
 extern ulonglong retrieve_auto_increment(MI_INFO *info, const uchar *record);
 
 extern uchar *mi_alloc_rec_buff(MI_INFO *, ulong, uchar **);
@@ -568,7 +570,7 @@ extern uchar *mi_alloc_rec_buff(MI_INFO *, ulong, uchar **);
 #define mi_get_rec_buff_len(info,buf)                              \
         (*((uint32 *)(mi_get_rec_buff_ptr(info,buf))))
 
-extern ulong _mi_rec_unpack(MI_INFO *info, uchar *to, uchar *from,
+extern size_t _mi_rec_unpack(MI_INFO *info, uchar *to, uchar *from,
                             ulong reclength);
 extern my_bool _mi_rec_check(MI_INFO *info,const uchar *record, uchar *packpos,
                              ulong packed_length, my_bool with_checkum);
@@ -608,12 +610,12 @@ typedef struct st_mi_block_info         /* Parameter to _mi_get_block_info */
 
         /* bits in return from _mi_get_block_info */
 
-#define BLOCK_FIRST     1
-#define BLOCK_LAST      2
-#define BLOCK_DELETED   4
-#define BLOCK_ERROR     8               /* Wrong data */
-#define BLOCK_SYNC_ERROR 16             /* Right data at wrong place */
-#define BLOCK_FATAL_ERROR 32            /* hardware-error */
+#define BLOCK_FIRST     1U
+#define BLOCK_LAST      2U
+#define BLOCK_DELETED   4U
+#define BLOCK_ERROR     8U              /* Wrong data */
+#define BLOCK_SYNC_ERROR 16U            /* Right data at wrong place */
+#define BLOCK_FATAL_ERROR 32U           /* hardware-error */
 
 #define NEED_MEM        ((uint) 10*4*(IO_SIZE+32)+32) /* Nead for recursion */
 #define MAXERR                  20
@@ -622,17 +624,17 @@ typedef struct st_mi_block_info         /* Parameter to _mi_get_block_info */
 #define INDEX_TMP_EXT           ".TMM"
 #define DATA_TMP_EXT            ".TMD"
 
-#define UPDATE_TIME             1
-#define UPDATE_STAT             2
-#define UPDATE_SORT             4
-#define UPDATE_AUTO_INC         8
-#define UPDATE_OPEN_COUNT       16
+#define UPDATE_TIME             1U
+#define UPDATE_STAT             2U
+#define UPDATE_SORT             4U
+#define UPDATE_AUTO_INC         8U
+#define UPDATE_OPEN_COUNT       16U
 
 /* We use MY_ALIGN_DOWN here mainly to ensure that we get stable values for mysqld --help ) */
 #define KEY_BUFFER_INIT	        MY_ALIGN_DOWN(1024L*1024L-MALLOC_OVERHEAD, IO_SIZE)
 #define READ_BUFFER_INIT	MY_ALIGN_DOWN(1024L*256L-MALLOC_OVERHEAD, 1024)
 #define SORT_BUFFER_INIT	MY_ALIGN_DOWN(1024L*1024L*128L-MALLOC_OVERHEAD, 1024)
-#define MIN_SORT_BUFFER		4096
+#define MIN_SORT_BUFFER		4096U
 
 enum myisam_log_commands
 {
@@ -694,7 +696,7 @@ extern int mi_indexes_are_disabled(MI_INFO *info);
 ulong _mi_calc_total_blob_length(MI_INFO *info, const uchar *record);
 ha_checksum mi_checksum(MI_INFO *info, const uchar *buf);
 ha_checksum mi_static_checksum(MI_INFO *info, const uchar *buf);
-my_bool mi_check_unique(MI_INFO *info, MI_UNIQUEDEF *def, uchar *record,
+my_bool mi_check_unique(MI_INFO *info, MI_UNIQUEDEF *def, const uchar *record,
                         ha_checksum unique_hash, my_off_t pos);
 ha_checksum mi_unique_hash(MI_UNIQUEDEF *def, const uchar *buf);
 int _mi_cmp_static_unique(MI_INFO *info, MI_UNIQUEDEF *def,
@@ -716,12 +718,12 @@ my_bool check_table_is_closed(const char *name, const char *where);
 int mi_open_datafile(MI_INFO *info, MYISAM_SHARE *share);
 
 int mi_open_keyfile(MYISAM_SHARE *share);
-void mi_setup_functions(register MYISAM_SHARE *share);
+void mi_setup_functions(MYISAM_SHARE *share);
 my_bool mi_dynmap_file(MI_INFO *info, my_off_t size);
 int mi_munmap_file(MI_INFO *info);
 void mi_remap_file(MI_INFO *info, my_off_t size);
 
-ICP_RESULT mi_check_index_cond(register MI_INFO *info, uint keynr, uchar *record);
+ICP_RESULT mi_check_index_cond(MI_INFO *info, uint keynr, uchar *record);
     /* Functions needed by mi_check */
 int killed_ptr(HA_CHECK *param);
 void mi_check_print_error(HA_CHECK *param, const char *fmt, ...);

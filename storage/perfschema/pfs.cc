@@ -41,7 +41,6 @@
 #include "sp_head.h"
 #include "pfs_digest.h"
 
-using std::min;
 /**
   @page PAGE_PERFORMANCE_SCHEMA The Performance Schema main page
   MySQL PERFORMANCE_SCHEMA implementation.
@@ -1237,12 +1236,12 @@ static enum_operation_type socket_operation_map[]=
   @param [out] output_length  Length of the resulting output string.
   @return 0 for success, non zero for errors
 */
-static int build_prefix(const LEX_STRING *prefix, const char *category,
+static int build_prefix(const LEX_CSTRING *prefix, const char *category,
                         char *output, int *output_length)
 {
-  int len= strlen(category);
+  size_t len= strlen(category);
   char *out_ptr= output;
-  int prefix_length= prefix->length;
+  size_t prefix_length= prefix->length;
 
   if (unlikely((prefix_length + len + 1) >=
                PFS_MAX_FULL_PREFIX_NAME_LENGTH))
@@ -1266,7 +1265,7 @@ static int build_prefix(const LEX_STRING *prefix, const char *category,
   out_ptr+= len;
   *out_ptr= '/';
   out_ptr++;
-  *output_length= out_ptr - output;
+  *output_length= (int)(out_ptr - output);
 
   return 0;
 }
@@ -1292,7 +1291,7 @@ static int build_prefix(const LEX_STRING *prefix, const char *category,
   {                                                                   \
     DBUG_ASSERT(info->m_key != NULL);                                 \
     DBUG_ASSERT(info->m_name != NULL);                                \
-    len= strlen(info->m_name);                                        \
+    len= (int)strlen(info->m_name);                                        \
     full_length= prefix_length + len;                                 \
     if (likely(full_length <= PFS_MAX_INFO_NAME_LENGTH))              \
     {                                                                 \
@@ -1404,7 +1403,7 @@ static void register_stage_v1(const char *category,
     info= *info_array;
     DBUG_ASSERT(info != NULL);
     DBUG_ASSERT(info->m_name != NULL);
-    len= strlen(info->m_name);
+    len= (int)strlen(info->m_name);
     full_length= prefix_length + len;
     if (likely(full_length <= PFS_MAX_INFO_NAME_LENGTH))
     {
@@ -1445,8 +1444,10 @@ static void register_statement_v1(const char *category,
 
   for (; count>0; count--, info++)
   {
-    DBUG_ASSERT(info->m_name != NULL);
-    len= strlen(info->m_name);
+    if (info->m_name == NULL)
+      continue;
+
+    len= (int)strlen(info->m_name);
     full_length= prefix_length + len;
     if (likely(full_length <= PFS_MAX_INFO_NAME_LENGTH))
     {
@@ -1614,6 +1615,14 @@ open_table_v1(PSI_table_share *share, const void *identity)
 {
   PFS_table_share *pfs_table_share= reinterpret_cast<PFS_table_share*> (share);
 
+  /*
+    When the performance schema is off, do not instrument anything.
+    Table handles have short life cycle, instrumentation will happen
+    again if needed during the next open().
+  */
+  if (psi_unlikely(! flag_global_instrumentation))
+    return NULL;
+
   if (unlikely(pfs_table_share == NULL))
     return NULL;
 
@@ -1623,14 +1632,6 @@ open_table_v1(PSI_table_share *share, const void *identity)
 
   /* This object is instrumented, but all table instruments are disabled. */
   if (! global_table_io_class.m_enabled && ! global_table_lock_class.m_enabled)
-    return NULL;
-
-  /*
-    When the performance schema is off, do not instrument anything.
-    Table handles have short life cycle, instrumentation will happen
-    again if needed during the next open().
-  */
-  if (! flag_global_instrumentation)
     return NULL;
 
   PFS_thread *thread= my_pthread_getspecific_ptr(PFS_thread*, THR_PFS);
@@ -1667,6 +1668,12 @@ rebind_table_v1(PSI_table_share *share, const void *identity, PSI_table *table)
     PFS_thread *thread;
     DBUG_ASSERT(pfs->m_thread_owner == NULL);
 
+    if (psi_unlikely(! flag_global_instrumentation))
+    {
+      destroy_table(pfs);
+      return NULL;
+    }
+
     /* The table handle was already instrumented, reuse it for this thread. */
     thread= my_pthread_getspecific_ptr(PFS_thread*, THR_PFS);
 
@@ -1682,15 +1689,12 @@ rebind_table_v1(PSI_table_share *share, const void *identity, PSI_table *table)
       return NULL;
     }
 
-    if (unlikely(! flag_global_instrumentation))
-    {
-      destroy_table(pfs);
-      return NULL;
-    }
-
     pfs->m_thread_owner= thread;
     return table;
   }
+
+  if (psi_unlikely(! flag_global_instrumentation))
+    return NULL;
 
   /* See open_table_v1() */
 
@@ -1703,9 +1707,6 @@ rebind_table_v1(PSI_table_share *share, const void *identity, PSI_table *table)
     return NULL;
 
   if (! global_table_io_class.m_enabled && ! global_table_lock_class.m_enabled)
-    return NULL;
-
-  if (! flag_global_instrumentation)
     return NULL;
 
   PFS_thread *thread= my_pthread_getspecific_ptr(PFS_thread*, THR_PFS);
@@ -1759,7 +1760,7 @@ static void destroy_socket_v1(PSI_socket *socket)
 */
 static void create_file_v1(PSI_file_key key, const char *name, File file)
 {
-  if (! flag_global_instrumentation)
+  if (psi_unlikely(! flag_global_instrumentation))
     return;
   int index= (int) file;
   if (unlikely(index < 0))
@@ -1788,7 +1789,7 @@ static void create_file_v1(PSI_file_key key, const char *name, File file)
     return;
   }
 
-  uint len= strlen(name);
+  uint len= (uint)strlen(name);
   PFS_file *pfs_file= find_or_create_file(pfs_thread, klass, name, len, true);
 
   file_handle_array[index]= pfs_file;
@@ -1941,7 +1942,7 @@ static void set_thread_id_v1(PSI_thread *thread, ulonglong processlist_id)
   PFS_thread *pfs= reinterpret_cast<PFS_thread*> (thread);
   if (unlikely(pfs == NULL))
     return;
-  pfs->m_processlist_id= processlist_id;
+  pfs->m_processlist_id= (ulong)processlist_id;
 }
 
 /**
@@ -2020,7 +2021,7 @@ static void set_thread_account_v1(const char *user, int user_len,
   DBUG_ASSERT((host != NULL) || (host_len == 0));
   DBUG_ASSERT(host_len >= 0);
 
-  host_len= min<size_t>(host_len, sizeof(pfs->m_hostname));
+  host_len= MY_MIN(host_len, static_cast<int>(sizeof(pfs->m_hostname)));
 
   if (unlikely(pfs == NULL))
     return;
@@ -2214,7 +2215,7 @@ start_mutex_wait_v1(PSI_mutex_locker_state *state,
   if (! pfs_mutex->m_enabled)
     return NULL;
 
-  register uint flags;
+  uint flags;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -2312,7 +2313,7 @@ start_rwlock_wait_v1(PSI_rwlock_locker_state *state,
   if (! pfs_rwlock->m_enabled)
     return NULL;
 
-  register uint flags;
+  uint flags;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -2420,7 +2421,7 @@ start_cond_wait_v1(PSI_cond_locker_state *state,
   if (! pfs_cond->m_enabled)
     return NULL;
 
-  register uint flags;
+  uint flags;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -2564,7 +2565,7 @@ start_table_io_wait_v1(PSI_table_locker_state *state,
 
   PFS_thread *pfs_thread= my_pthread_getspecific_ptr(PFS_thread*, THR_PFS);
 
-  register uint flags;
+  uint flags;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -2690,7 +2691,7 @@ start_table_lock_wait_v1(PSI_table_locker_state *state,
 
   DBUG_ASSERT((uint) lock_type < array_elements(table_lock_operation_map));
 
-  register uint flags;
+  uint flags;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -2782,7 +2783,7 @@ get_thread_file_name_locker_v1(PSI_file_locker_state *state,
   DBUG_ASSERT(static_cast<uint> (op) < array_elements(file_operation_map));
   DBUG_ASSERT(state != NULL);
 
-  if (! flag_global_instrumentation)
+  if (psi_unlikely(! flag_global_instrumentation))
     return NULL;
   PFS_file_class *klass= find_file_class(key);
   if (unlikely(klass == NULL))
@@ -2798,7 +2799,7 @@ get_thread_file_name_locker_v1(PSI_file_locker_state *state,
   if (flag_thread_instrumentation && ! pfs_thread->m_enabled)
     return NULL;
 
-  register uint flags;
+  uint flags;
 
   state->m_thread= reinterpret_cast<PSI_thread *> (pfs_thread);
   flags= STATE_FLAG_THREAD;
@@ -2867,7 +2868,7 @@ get_thread_file_stream_locker_v1(PSI_file_locker_state *state,
   if (! pfs_file->m_enabled)
     return NULL;
 
-  register uint flags;
+  uint flags;
 
   if (flag_thread_instrumentation)
   {
@@ -2973,7 +2974,7 @@ get_thread_file_descriptor_locker_v1(PSI_file_locker_state *state,
   DBUG_ASSERT(pfs_file->m_class != NULL);
   PFS_file_class *klass= pfs_file->m_class;
 
-  register uint flags;
+  uint flags;
 
   if (flag_thread_instrumentation)
   {
@@ -3062,7 +3063,7 @@ start_socket_wait_v1(PSI_socket_locker_state *state,
   if (!pfs_socket->m_enabled || pfs_socket->m_idle)
     return NULL;
 
-  register uint flags= 0;
+  uint flags= 0;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -3315,13 +3316,13 @@ start_idle_wait_v1(PSI_idle_locker_state* state, const char *src_file, uint src_
 {
   DBUG_ASSERT(state != NULL);
 
-  if (!flag_global_instrumentation)
+  if (psi_unlikely(! flag_global_instrumentation))
     return NULL;
 
   if (!global_idle_class.m_enabled)
     return NULL;
 
-  register uint flags= 0;
+  uint flags= 0;
   ulonglong timer_start= 0;
 
   if (flag_thread_instrumentation)
@@ -3403,7 +3404,7 @@ static void end_idle_wait_v1(PSI_idle_locker* locker)
   ulonglong timer_end= 0;
   ulonglong wait_time= 0;
 
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
 
   if (flags & STATE_FLAG_TIMED)
   {
@@ -3473,7 +3474,7 @@ static void end_mutex_wait_v1(PSI_mutex_locker* locker, int rc)
   DBUG_ASSERT(mutex != NULL);
   PFS_thread *thread= reinterpret_cast<PFS_thread *> (state->m_thread);
 
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
 
   if (flags & STATE_FLAG_TIMED)
   {
@@ -3794,7 +3795,7 @@ static void end_table_io_wait_v1(PSI_table_locker* locker)
     break;
   }
 
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
 
   if (flags & STATE_FLAG_TIMED)
   {
@@ -3865,7 +3866,7 @@ static void end_table_lock_wait_v1(PSI_table_locker* locker)
 
   PFS_single_stat *stat= & table->m_table_stat.m_lock_stat.m_stat[state->m_index];
 
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
 
   if (flags & STATE_FLAG_TIMED)
   {
@@ -3963,7 +3964,7 @@ static PSI_file* end_file_open_wait_v1(PSI_file_locker *locker,
       PFS_file_class *klass= reinterpret_cast<PFS_file_class*> (state->m_class);
       PFS_thread *thread= reinterpret_cast<PFS_thread*> (state->m_thread);
       const char *name= state->m_name;
-      uint len= strlen(name);
+      uint len= (uint)strlen(name);
       PFS_file *pfs_file= find_or_create_file(thread, klass, name, len, true);
       state->m_file= reinterpret_cast<PSI_file*> (pfs_file);
     }
@@ -3995,7 +3996,7 @@ static void end_file_open_wait_and_bind_to_descriptor_v1
     PFS_file_class *klass= reinterpret_cast<PFS_file_class*> (state->m_class);
     PFS_thread *thread= reinterpret_cast<PFS_thread*> (state->m_thread);
     const char *name= state->m_name;
-    uint len= strlen(name);
+    uint len= (uint)strlen(name);
     pfs_file= find_or_create_file(thread, klass, name, len, true);
     state->m_file= reinterpret_cast<PSI_file*> (pfs_file);
   }
@@ -4028,7 +4029,7 @@ static void start_file_wait_v1(PSI_file_locker *locker,
   PSI_file_locker_state *state= reinterpret_cast<PSI_file_locker_state*> (locker);
   DBUG_ASSERT(state != NULL);
 
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
 
   if (flags & STATE_FLAG_TIMED)
   {
@@ -4064,7 +4065,7 @@ static void end_file_wait_v1(PSI_file_locker *locker,
   ulonglong timer_end= 0;
   ulonglong wait_time= 0;
   PFS_byte_stat *byte_stat;
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
   size_t bytes= ((int)byte_count > -1 ? byte_count : 0);
 
   PFS_file_stat *file_stat;
@@ -4188,7 +4189,7 @@ static void start_file_close_wait_v1(PSI_file_locker *locker,
   case PSI_FILE_DELETE:
     thread= reinterpret_cast<PFS_thread*> (state->m_thread);
     name= state->m_name;
-    len= strlen(name);
+    len= (uint)strlen(name);
     pfs_file= find_or_create_file(thread, NULL, name, len, false);
     state->m_file= reinterpret_cast<PSI_file*> (pfs_file);
     break;
@@ -4252,7 +4253,7 @@ static void start_stage_v1(PSI_stage_key key, const char *src_file, int src_line
   /* Always update column threads.processlist_state. */
   pfs_thread->m_stage= key;
 
-  if (! flag_global_instrumentation)
+  if (psi_unlikely(! flag_global_instrumentation))
     return;
 
   if (flag_thread_instrumentation && ! pfs_thread->m_enabled)
@@ -4352,7 +4353,7 @@ static void end_stage_v1()
 
   pfs_thread->m_stage= 0;
 
-  if (! flag_global_instrumentation)
+  if (psi_unlikely(! flag_global_instrumentation))
     return;
 
   if (flag_thread_instrumentation && ! pfs_thread->m_enabled)
@@ -4411,7 +4412,7 @@ get_thread_statement_locker_v1(PSI_statement_locker_state *state,
   DBUG_ASSERT(state != NULL);
   DBUG_ASSERT(charset != NULL);
 
-  if (! flag_global_instrumentation)
+  if (psi_unlikely(! flag_global_instrumentation))
     return NULL;
   PFS_statement_class *klass= find_statement_class(key);
   if (unlikely(klass == NULL))
@@ -4419,7 +4420,7 @@ get_thread_statement_locker_v1(PSI_statement_locker_state *state,
   if (! klass->m_enabled)
     return NULL;
 
-  register uint flags;
+  uint flags;
 
   if (flag_thread_instrumentation)
   {
@@ -4596,7 +4597,7 @@ static void start_statement_v1(PSI_statement_locker *locker,
   PSI_statement_locker_state *state= reinterpret_cast<PSI_statement_locker_state*> (locker);
   DBUG_ASSERT(state != NULL);
 
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
   ulonglong timer_start= 0;
 
   if (flags & STATE_FLAG_TIMED)
@@ -4798,7 +4799,7 @@ static void end_statement_v1(PSI_statement_locker *locker, void *stmt_da)
 
   ulonglong timer_end= 0;
   ulonglong wait_time= 0;
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
 
   if (flags & STATE_FLAG_TIMED)
   {
@@ -4846,6 +4847,7 @@ static void end_statement_v1(PSI_statement_locker *locker, void *stmt_da)
 
       switch(da->status())
       {
+        case Diagnostics_area::DA_OK_BULK:
         case Diagnostics_area::DA_EMPTY:
           break;
         case Diagnostics_area::DA_OK:
@@ -4979,6 +4981,7 @@ static void end_statement_v1(PSI_statement_locker *locker, void *stmt_da)
 
   switch (da->status())
   {
+    case Diagnostics_area::DA_OK_BULK:
     case Diagnostics_area::DA_EMPTY:
       break;
     case Diagnostics_area::DA_OK:
@@ -5024,7 +5027,7 @@ static void end_socket_wait_v1(PSI_socket_locker *locker, size_t byte_count)
   ulonglong timer_end= 0;
   ulonglong wait_time= 0;
   PFS_byte_stat *byte_stat;
-  register uint flags= state->m_flags;
+  uint flags= state->m_flags;
   size_t bytes= ((int)byte_count > -1 ? byte_count : 0);
 
   switch (state->m_operation)
@@ -5119,7 +5122,7 @@ static void set_socket_info_v1(PSI_socket *socket,
 
   /** Set socket descriptor */
   if (fd != NULL)
-    pfs->m_fd= *fd;
+    pfs->m_fd= (uint)*fd;
 
   /** Set raw socket address and length */
   if (likely(addr != NULL && addr_len > 0))

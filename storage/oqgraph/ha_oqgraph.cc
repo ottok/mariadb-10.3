@@ -39,7 +39,7 @@
 #pragma implementation                          // gcc: Class implementation
 #endif
 
-#include <my_config.h>
+#include <my_global.h>
 #define MYSQL_SERVER 1                          // to have THD
 /* For the moment, include code to deal with integer latches.
  * I have wrapped it with this #ifdef to make it easier to find and remove in the future.
@@ -87,6 +87,7 @@ static const oqgraph_latch_op_table latch_ops_table[] = {
   { "", oqgraph::NO_SEARCH } ,  // suggested by Arjen, use empty string instead of no_search
   { "dijkstras", oqgraph::DIJKSTRAS } ,
   { "breadth_first", oqgraph::BREADTH_FIRST } ,
+  { "leaves", oqgraph::LEAVES },
   { NULL, -1 }
 };
 
@@ -297,7 +298,7 @@ int ha_oqgraph::oqgraph_check_table_structure (TABLE *table_arg)
 
   Field **field= table_arg->field;
   for (i= 0; *field && skel[i].colname; i++, field++) {
-    DBUG_PRINT( "oq-debug", ("Column %d: name='%s', expected '%s'; type=%d, expected %d.", i, (*field)->field_name, skel[i].colname, (*field)->type(), skel[i].coltype));
+    DBUG_PRINT( "oq-debug", ("Column %d: name='%s', expected '%s'; type=%d, expected %d.", i, (*field)->field_name.str, skel[i].colname, (*field)->type(), skel[i].coltype));
     bool badColumn = false;
     bool isLatchColumn = strcmp(skel[i].colname, "latch")==0;
     bool isStringLatch = true;
@@ -346,7 +347,7 @@ int ha_oqgraph::oqgraph_check_table_structure (TABLE *table_arg)
       push_warning_printf( current_thd, Sql_condition::WARN_LEVEL_WARN, HA_WRONG_CREATE_OPTION, "Column %d must be NULL.", i);
     }
     /* Check the column name */
-    if (!badColumn) if (strcmp(skel[i].colname,(*field)->field_name)) {
+    if (!badColumn) if (strcmp(skel[i].colname,(*field)->field_name.str)) {
       badColumn = true;
       push_warning_printf( current_thd, Sql_condition::WARN_LEVEL_WARN, HA_WRONG_CREATE_OPTION, "Column %d must be named '%s'.", i, skel[i].colname);
     }
@@ -562,7 +563,7 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
   init_tmp_table_share( thd, share, table->s->db.str, table->s->db.length, options->table_name, "");
   // because of that, we need to reinitialize the memroot (to reset MY_THREAD_SPECIFIC flag)
   DBUG_ASSERT(share->mem_root.used == NULL); // it's still empty
-  init_sql_alloc(&share->mem_root, TABLE_ALLOC_BLOCK_SIZE, 0, MYF(0));
+  init_sql_alloc(&share->mem_root, "share", TABLE_ALLOC_BLOCK_SIZE, 0, MYF(0));
 
   // What I think this code is doing:
   // * Our OQGRAPH table is `database_blah/name`
@@ -577,11 +578,10 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
   size_t tlen= strlen(options->table_name);
   size_t plen= (int)(p - name) + tlen + 1;
 
-  share->path.str= (char*)alloc_root(&share->mem_root, plen + 1); // MDEV-5996 space for trailing zero
-  // it seems there was a misunderstanding of why there is a separate length field in the String object
-  strmov(strnmov(share->path.str, name, (int)(p - name) + 1), options->table_name);
-
-  share->path.str[plen] = 0; // MDEV-5996 Make sure the pointer is zero terminated.  I really think this needs refactoring, soon...
+  share->path.str= (char*)alloc_root(&share->mem_root, plen + 1);
+  strmov(strnmov((char*) share->path.str, name, (int)(p - name) + 1),
+         options->table_name);
+  DBUG_ASSERT(strlen(share->path.str) == plen);
   share->normalized_path.str= share->path.str;
   share->path.length= share->normalized_path.length= plen;
 
@@ -622,10 +622,10 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
     DBUG_RETURN(-1);
   }
 
-  if (enum open_frm_error err= open_table_from_share(thd, share, "",
-                            (uint) (HA_OPEN_KEYFILE | HA_OPEN_RNDFILE |
-                                    HA_GET_INDEX | HA_TRY_READ_ONLY),
-                            READ_KEYINFO | COMPUTE_TYPES | EXTRA_RECORD,
+  if (enum open_frm_error err= open_table_from_share(thd, share,
+                                                     &empty_clex_str,
+                            (uint) (HA_OPEN_KEYFILE | HA_TRY_READ_ONLY),
+                            EXTRA_RECORD,
                             thd->open_options, edges, FALSE))
   {
     open_table_error(share, err, EMFILE); // NOTE - EMFILE is probably bogus, it reports as too many open files (!)
@@ -656,14 +656,14 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
 
   for (Field **field= edges->field; *field; ++field)
   {
-    if (strcmp(options->origid, (*field)->field_name))
+    if (strcmp(options->origid, (*field)->field_name.str))
       continue;
     if ((*field)->cmp_type() != INT_RESULT ||
         !((*field)->flags & NOT_NULL_FLAG))
     {
       fprint_error("Column '%s.%s' (origid) is not a not-null integer type",
           options->table_name, options->origid);
-      closefrm(edges, 0);
+      closefrm(edges);
       free_table_share(share);
       DBUG_RETURN(-1);
     }
@@ -673,7 +673,7 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
 
   if (!origid) {
     fprint_error("Invalid OQGRAPH backing store ('%s.origid' attribute not set to a valid column of '%s')", p+1, options->table_name);
-    closefrm(edges, 0);
+    closefrm(edges);
     free_table_share(share);
     DBUG_RETURN(-1);
   }
@@ -681,14 +681,14 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
 
   for (Field **field= edges->field; *field; ++field)
   {
-    if (strcmp(options->destid, (*field)->field_name))
+    if (strcmp(options->destid, (*field)->field_name.str))
       continue;
     if ((*field)->type() != origid->type() ||
         !((*field)->flags & NOT_NULL_FLAG))
     {
       fprint_error("Column '%s.%s' (destid) is not a not-null integer type or is a different type to origid attribute.",
           options->table_name, options->destid);
-      closefrm(edges, 0);
+      closefrm(edges);
       free_table_share(share);
       DBUG_RETURN(-1);
     }
@@ -698,29 +698,29 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
 
   if (!destid) {
     fprint_error("Invalid OQGRAPH backing store ('%s.destid' attribute not set to a valid column of '%s')", p+1, options->table_name);
-    closefrm(edges, 0);
+    closefrm(edges);
     free_table_share(share);
     DBUG_RETURN(-1);
   }
 
   // Make sure origid column != destid column
-  if (strcmp( origid->field_name, destid->field_name)==0) {
+  if (strcmp( origid->field_name.str, destid->field_name.str)==0) {
     fprint_error("Invalid OQGRAPH backing store ('%s.destid' attribute set to same column as origid attribute)", p+1, options->table_name);
-    closefrm(edges, 0);
+    closefrm(edges);
     free_table_share(share);
     DBUG_RETURN(-1);
   }
 
   for (Field **field= edges->field; options->weight && *field; ++field)
   {
-    if (strcmp(options->weight, (*field)->field_name))
+    if (strcmp(options->weight, (*field)->field_name.str))
       continue;
     if ((*field)->result_type() != REAL_RESULT ||
         !((*field)->flags & NOT_NULL_FLAG))
     {
       fprint_error("Column '%s.%s' (weight) is not a not-null real type",
           options->table_name, options->weight);
-      closefrm(edges, 0);
+      closefrm(edges);
       free_table_share(share);
       DBUG_RETURN(-1);
     }
@@ -730,7 +730,7 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
 
   if (!weight && options->weight) {
     fprint_error("Invalid OQGRAPH backing store ('%s.weight' attribute not set to a valid column of '%s')", p+1, options->table_name);
-    closefrm(edges, 0);
+    closefrm(edges);
     free_table_share(share);
     DBUG_RETURN(-1);
   }
@@ -738,7 +738,7 @@ int ha_oqgraph::open(const char *name, int mode, uint test_if_locked)
   if (!(graph_share = oqgraph::create(edges, origid, destid, weight)))
   {
     fprint_error("Unable to create graph instance.");
-    closefrm(edges, 0);
+    closefrm(edges);
     free_table_share(share);
     DBUG_RETURN(-1);
   }
@@ -763,7 +763,7 @@ int ha_oqgraph::close(void)
   if (have_table_share)
   {
     if (edges->file)
-      closefrm(edges, 0);
+      closefrm(edges);
     free_table_share(share);
     have_table_share = false;
   }
@@ -804,7 +804,7 @@ int ha_oqgraph::write_row(byte * buf)
   return HA_ERR_TABLE_READONLY;
 }
 
-int ha_oqgraph::update_row(const byte * old, byte * buf)
+int ha_oqgraph::update_row(const uchar * old, const uchar * buf)
 {
   return HA_ERR_TABLE_READONLY;
 }

@@ -14,11 +14,11 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h> // For HAVE_REPLICATION
+#include "mariadb.h" // For HAVE_REPLICATION
 #include "sql_priv.h"
 #include <my_dir.h>
 #include "rpl_mi.h"
-#include "slave.h"                              // SLAVE_MAX_HEARTBEAT_PERIOD
+#include "slave.h"
 #include "strfunc.h"
 #include "sql_repl.h"
 
@@ -28,7 +28,7 @@
 
 static void init_master_log_pos(Master_info* mi);
 
-Master_info::Master_info(LEX_STRING *connection_name_arg,
+Master_info::Master_info(LEX_CSTRING *connection_name_arg,
                          bool is_slave_recovery)
   :Slave_reporting_capability("I/O"),
    ssl(0), ssl_verify_server_cert(1), fd(-1), io_thd(0), 
@@ -42,8 +42,10 @@ Master_info::Master_info(LEX_STRING *connection_name_arg,
    using_gtid(USE_GTID_NO), events_queued_since_last_gtid(0),
    gtid_reconnect_event_skip_count(0), gtid_event_seen(false),
    in_start_all_slaves(0), in_stop_all_slaves(0), in_flush_all_relay_logs(0),
-   users(0), killed(0)
+   users(0), killed(0),
+   total_ddl_groups(0), total_non_trans_groups(0), total_trans_groups(0)
 {
+  char *tmp;
   host[0] = 0; user[0] = 0; password[0] = 0;
   ssl_ca[0]= 0; ssl_capath[0]= 0; ssl_cert[0]= 0;
   ssl_cipher[0]= 0; ssl_key[0]= 0;
@@ -55,16 +57,14 @@ Master_info::Master_info(LEX_STRING *connection_name_arg,
   */
   connection_name.length= cmp_connection_name.length=
     connection_name_arg->length;
-  if ((connection_name.str= (char*) my_malloc(connection_name_arg->length*2+2,
-                                              MYF(MY_WME))))
+  if ((connection_name.str= tmp= (char*)
+       my_malloc(connection_name_arg->length*2+2, MYF(MY_WME))))
   {
-    cmp_connection_name.str= (connection_name.str +
-                              connection_name_arg->length+1);
-    strmake(connection_name.str, connection_name_arg->str,
-            connection_name.length);
-    memcpy(cmp_connection_name.str, connection_name_arg->str,
-           connection_name.length+1);
-    my_casedn_str(system_charset_info, cmp_connection_name.str);
+    strmake(tmp, connection_name_arg->str, connection_name.length);
+    tmp+= connection_name_arg->length+1;
+    cmp_connection_name.str= tmp;
+    memcpy(tmp, connection_name_arg->str, connection_name.length+1);
+    my_casedn_str(system_charset_info, tmp);
   }
   /*
     When MySQL restarted, all Rpl_filter settings which aren't in the my.cnf
@@ -124,7 +124,7 @@ Master_info::~Master_info()
 #endif
   rpl_filters.delete_element(connection_name.str, connection_name.length,
                              (void (*)(const char*, uchar*)) free_rpl_filter);
-  my_free(connection_name.str);
+  my_free(const_cast<char*>(connection_name.str));
   delete_dynamic(&ignore_server_ids);
   mysql_mutex_destroy(&run_lock);
   mysql_mutex_destroy(&data_lock);
@@ -671,14 +671,14 @@ file '%s')", fname);
                             (ulong) mi->master_log_pos));
 
   mi->rli.mi= mi;
-  if (init_relay_log_info(&mi->rli, slave_info_fname))
+  if (mi->rli.init(slave_info_fname))
     goto err;
 
   mi->inited = 1;
   mi->rli.is_relay_log_recovery= FALSE;
   // now change cache READ -> WRITE - must do this before flush_master_info
   reinit_io_cache(&mi->file, WRITE_CACHE, 0L, 0, 1);
-  if ((error= MY_TEST(flush_master_info(mi, TRUE, TRUE))))
+  if (unlikely((error= MY_TEST(flush_master_info(mi, TRUE, TRUE)))))
     sql_print_error("Failed to flush master info file");
   mysql_mutex_unlock(&mi->data_lock);
   DBUG_RETURN(error);
@@ -901,7 +901,7 @@ void free_key_master_info(Master_info *mi)
    1 error
 */
 
-bool check_master_connection_name(LEX_STRING *name)
+bool check_master_connection_name(LEX_CSTRING *name)
 {
   if (name->length >= MAX_CONNECTION_NAME)
     return 1;
@@ -931,7 +931,7 @@ bool check_master_connection_name(LEX_STRING *name)
 
 void create_logfile_name_with_suffix(char *res_file_name, size_t length,
                                      const char *info_file, bool append,
-                                     LEX_STRING *suffix)
+                                     LEX_CSTRING *suffix)
 {
   char buff[MAX_CONNECTION_NAME+1],
     res[MAX_CONNECTION_NAME * MAX_FILENAME_MBWIDTH+1], *p;
@@ -1116,7 +1116,7 @@ bool Master_info_index::init_all_master_info()
     DBUG_RETURN(1);
   }
 
-  thd= new THD;  /* Needed by start_slave_threads */
+  thd= new THD(next_thread_id());  /* Needed by start_slave_threads */
   thd->thread_stack= (char*) &thd;
   thd->store_globals();
 
@@ -1124,7 +1124,7 @@ bool Master_info_index::init_all_master_info()
   while (!init_strvar_from_file(sign, sizeof(sign),
                                 &index_file, NULL))
   {
-    LEX_STRING connection_name;
+    LEX_CSTRING connection_name;
     Master_info *mi;
     char buf_master_info_file[FN_REFLEN];
     char buf_relay_log_info_file[FN_REFLEN];
@@ -1239,7 +1239,7 @@ bool Master_info_index::init_all_master_info()
   if (succ_num) // Have some Error and some Success
   {
     sql_print_warning("Reading of some Master_info entries failed");
-    DBUG_RETURN(2);
+    DBUG_RETURN(1);
   }
 
   sql_print_error("Reading of all Master_info entries failed!");
@@ -1253,7 +1253,7 @@ error:
 
 
 /* Write new master.info to master.info.index File */
-bool Master_info_index::write_master_name_to_index_file(LEX_STRING *name,
+bool Master_info_index::write_master_name_to_index_file(LEX_CSTRING *name,
                                                         bool do_sync)
 {
   DBUG_ASSERT(my_b_inited(&index_file) != 0);
@@ -1290,7 +1290,7 @@ bool Master_info_index::write_master_name_to_index_file(LEX_STRING *name,
 			WARN_LEVEL_ERROR-> Issue error if not exists
 */
 
-Master_info *get_master_info(const LEX_STRING *connection_name,
+Master_info *get_master_info(const LEX_CSTRING *connection_name,
                              Sql_condition::enum_warning_level warning)
 {
   Master_info *mi;
@@ -1356,12 +1356,12 @@ void Master_info::release()
 */
 
 Master_info *
-Master_info_index::get_master_info(const LEX_STRING *connection_name,
+Master_info_index::get_master_info(const LEX_CSTRING *connection_name,
                                    Sql_condition::enum_warning_level warning)
 {
   Master_info *mi;
   char buff[MAX_CONNECTION_NAME+1], *res;
-  uint buff_length;
+  size_t buff_length;
   DBUG_ENTER("get_master_info");
   DBUG_PRINT("enter",
              ("connection_name: '%.*s'", (int) connection_name->length,
@@ -1387,7 +1387,7 @@ Master_info_index::get_master_info(const LEX_STRING *connection_name,
 
 
 /* Check Master_host & Master_port is duplicated or not */
-bool Master_info_index::check_duplicate_master_info(LEX_STRING *name_arg,
+bool Master_info_index::check_duplicate_master_info(LEX_CSTRING *name_arg,
                                                     const char *host,
                                                     uint port)
 {
@@ -1558,6 +1558,9 @@ bool give_error_if_slave_running(bool already_locked)
 /**
    any_slave_sql_running()
 
+   @param
+   already_locked  0 if we need to lock, 1 if we have LOCK_active_mi_locked
+
    @return
    0            No Slave SQL thread is running
    #		Number of slave SQL thread running
@@ -1568,26 +1571,28 @@ bool give_error_if_slave_running(bool already_locked)
    hash entries can't be accessed.
 */
 
-uint any_slave_sql_running()
+uint any_slave_sql_running(bool already_locked)
 {
   uint count= 0;
   HASH *hash;
   DBUG_ENTER("any_slave_sql_running");
 
-  mysql_mutex_lock(&LOCK_active_mi);
+  if (!already_locked)
+    mysql_mutex_lock(&LOCK_active_mi);
   if (unlikely(shutdown_in_progress || !master_info_index))
+    count= 1;
+  else
   {
+    hash= &master_info_index->master_info_hash;
+    for (uint i= 0; i< hash->records; ++i)
+    {
+      Master_info *mi= (Master_info *)my_hash_element(hash, i);
+      if (mi->rli.slave_running != MYSQL_SLAVE_NOT_RUN)
+        count++;
+    }
+  }
+  if (!already_locked)
     mysql_mutex_unlock(&LOCK_active_mi);
-    DBUG_RETURN(1);
-  }
-  hash= &master_info_index->master_info_hash;
-  for (uint i= 0; i< hash->records; ++i)
-  {
-    Master_info *mi= (Master_info *)my_hash_element(hash, i);
-    if (mi->rli.slave_running != MYSQL_SLAVE_NOT_RUN)
-      count++;
-  }
-  mysql_mutex_unlock(&LOCK_active_mi);
   DBUG_RETURN(count);
 }
 
@@ -1644,7 +1649,7 @@ bool Master_info_index::start_all_slaves(THD *thd)
     error= start_slave(thd, mi, 1);
     mi->release();
     mysql_mutex_lock(&LOCK_active_mi);
-    if (error)
+    if (unlikely(error))
     {
       my_error(ER_CANT_START_STOP_SLAVE, MYF(0),
                "START",
@@ -1717,7 +1722,7 @@ bool Master_info_index::stop_all_slaves(THD *thd)
     error= stop_slave(thd, mi, 1);
     mi->release();
     mysql_mutex_lock(&LOCK_active_mi);
-    if (error)
+    if (unlikely(error))
     {
       my_error(ER_CANT_START_STOP_SLAVE, MYF(0),
                "STOP",
@@ -1910,14 +1915,14 @@ char *Domain_id_filter::as_string(enum_list_type type)
     return NULL;
 
   // Store the total number of elements followed by the individual elements.
-  ulong cur_len= sprintf(buf, "%u", ids->elements);
+  size_t cur_len= sprintf(buf, "%u", ids->elements);
   sz-= cur_len;
 
   for (uint i= 0; i < ids->elements; i++)
   {
     ulong domain_id;
     get_dynamic(ids, (void *) &domain_id, i);
-    cur_len+= my_snprintf(buf + cur_len, sz, " %u", domain_id);
+    cur_len+= my_snprintf(buf + cur_len, sz, " %lu", domain_id);
     sz-= cur_len;
   }
   return buf;
@@ -2016,7 +2021,7 @@ bool Master_info_index::flush_all_relay_logs()
     mi->release();
     mysql_mutex_lock(&LOCK_active_mi);
 
-    if (error)
+    if (unlikely(error))
     {
       result= true;
       break;

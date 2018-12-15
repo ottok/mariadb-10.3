@@ -19,7 +19,7 @@
 #ifdef HAVE_REPLICATION
 
 #include "mysql.h"
-#include "my_sys.h"
+#include <my_sys.h>
 #include "slave.h"
 
 typedef enum {RPL_AUTH_MASTER=0,RPL_IDLE_SLAVE,RPL_ACTIVE_SLAVE,
@@ -41,7 +41,7 @@ extern HASH slave_list;
 bool show_slave_hosts(THD* thd);
 void init_slave_list();
 void end_slave_list();
-int register_slave(THD* thd, uchar* packet, uint packet_length);
+int register_slave(THD* thd, uchar* packet, size_t packet_length);
 void unregister_slave(THD* thd, bool only_mine, bool need_mutex);
 
 #endif /* HAVE_REPLICATION */

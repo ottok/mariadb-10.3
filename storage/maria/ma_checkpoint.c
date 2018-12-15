@@ -48,7 +48,7 @@ static mysql_cond_t  COND_checkpoint;
 static MA_SERVICE_THREAD_CONTROL checkpoint_control=
   {0, FALSE, FALSE, &LOCK_checkpoint, &COND_checkpoint};
 /* is ulong like pagecache->blocks_changed */
-static ulong pages_to_flush_before_next_checkpoint;
+static uint pages_to_flush_before_next_checkpoint;
 static PAGECACHE_FILE *dfiles, /**< data files to flush in background */
   *dfiles_end; /**< list of data files ends here */
 static PAGECACHE_FILE *kfiles, /**< index files to flush in background */
@@ -131,7 +131,7 @@ int ma_checkpoint_execute(CHECKPOINT_LEVEL level, my_bool no_wait)
 
   result= really_execute_checkpoint();
   DBUG_EXECUTE_IF("maria_crash_after_checkpoint",
-                  { DBUG_PRINT("maria_crash", ("now")); DBUG_ABORT(); });
+                  { DBUG_PRINT("maria_crash", ("now")); DBUG_SUICIDE(); });
 
   mysql_cond_broadcast(&COND_checkpoint);
 end:
@@ -170,7 +170,7 @@ static int really_execute_checkpoint(void)
     "Horizon" is a lower bound of the LSN of the next log record.
   */
   checkpoint_start_log_horizon= translog_get_horizon();
-  DBUG_PRINT("info",("checkpoint_start_log_horizon (%lu,0x%lx)",
+  DBUG_PRINT("info",("checkpoint_start_log_horizon " LSN_FMT,
                      LSN_IN_PARTS(checkpoint_start_log_horizon)));
   lsn_store(checkpoint_start_log_horizon_char, checkpoint_start_log_horizon);
 
@@ -265,7 +265,7 @@ static int really_execute_checkpoint(void)
   ptr= record_pieces[3].str;
   pages_to_flush_before_next_checkpoint= uint4korr(ptr);
   DBUG_PRINT("checkpoint",("%u pages to flush before next checkpoint",
-                           (uint)pages_to_flush_before_next_checkpoint));
+                          pages_to_flush_before_next_checkpoint));
 
   /* compute log's low-water mark */
   {
@@ -332,11 +332,12 @@ int ma_checkpoint_init(ulong interval)
     res= 1;
   else if (interval > 0)
   {
+    size_t intv= interval;
     compile_time_assert(sizeof(void *) >= sizeof(ulong));
     if ((res= mysql_thread_create(key_thread_checkpoint,
                                   &checkpoint_control.thread, NULL,
                                   ma_checkpoint_background,
-                                  (void*) interval)))
+                                  (void*) intv)))
       checkpoint_control.killed= TRUE;
   }
   else
@@ -375,7 +376,7 @@ static void flush_all_tables(int what_to_flush)
                                   MA_STATE_INFO_WRITE_DONT_MOVE_OFFSET|
                                   MA_STATE_INFO_WRITE_LOCK);
         DBUG_PRINT("maria_flush_states",
-                   ("is_of_horizon: LSN (%lu,0x%lx)",
+                   ("is_of_horizon: LSN " LSN_FMT,
                     LSN_IN_PARTS(info->s->state.is_of_horizon)));
         break;
       case 2:
@@ -426,7 +427,7 @@ void ma_checkpoint_end(void)
                     flush_all_tables(1);
                   });
   DBUG_EXECUTE_IF("maria_crash",
-                  { DBUG_PRINT("maria_crash", ("now")); DBUG_ABORT(); });
+                  { DBUG_PRINT("maria_crash", ("now")); DBUG_SUICIDE(); });
 
   if (checkpoint_control.inited)
   {
@@ -546,8 +547,8 @@ pthread_handler_t ma_checkpoint_background(void *arg)
     right after "case 0", thus having 'dfile' unset. So the thread cares only
     about the interval's value when it started.
   */
-  const ulong interval= (ulong)arg;
-  uint sleeps, sleep_time;
+  const size_t interval= (size_t)arg;
+  size_t sleeps, sleep_time;
   TRANSLOG_ADDRESS log_horizon_at_last_checkpoint=
     translog_get_horizon();
   ulonglong pagecache_flushes_at_last_checkpoint=
@@ -561,9 +562,7 @@ pthread_handler_t ma_checkpoint_background(void *arg)
   DBUG_PRINT("info",("Maria background checkpoint thread starts"));
   DBUG_ASSERT(interval > 0);
 
-#ifdef HAVE_PSI_THREAD_INTERFACE
-  PSI_THREAD_CALL(set_thread_user_host)(0,0,0,0);
-#endif
+  PSI_CALL_set_thread_user_host(0,0,0,0);
 
   /*
     Recovery ended with all tables closed and a checkpoint: no need to take
@@ -639,7 +638,7 @@ pthread_handler_t ma_checkpoint_background(void *arg)
     case 1:
       /* set up parameters for background page flushing */
       filter_param.up_to_lsn= last_checkpoint_lsn;
-      pages_bunch_size= pages_to_flush_before_next_checkpoint / interval;
+      pages_bunch_size= pages_to_flush_before_next_checkpoint / (uint)interval;
       dfile= dfiles;
       kfile= kfiles;
       /* fall through */
@@ -751,7 +750,7 @@ static int collect_tables(LEX_STRING *str, LSN checkpoint_start_log_horizon)
   char *ptr;
   uint error= 1, sync_error= 0, nb, nb_stored, i;
   my_bool unmark_tables= TRUE;
-  uint total_names_length;
+  size_t total_names_length;
   LIST *pos; /**< to iterate over open tables */
   struct st_state_copy {
     uint index;
@@ -982,7 +981,7 @@ static int collect_tables(LEX_STRING *str, LSN checkpoint_start_log_horizon)
     DBUG_PRINT("info", ("ignore_share: %d", ignore_share));
     if (!ignore_share)
     {
-      uint open_file_name_len= share->open_file_name.length + 1;
+      size_t open_file_name_len= share->open_file_name.length + 1;
       /* remember the descriptors for background flush */
       *(dfiles_end++)= dfile;
       *(kfiles_end++)= kfile;

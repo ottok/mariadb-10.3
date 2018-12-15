@@ -1,10 +1,8 @@
-SET @saved_file_format = @@global.innodb_file_format;
 SET @saved_file_per_table = @@global.innodb_file_per_table;
 SET @saved_checksum_algorithm = @@global.innodb_checksum_algorithm;
 SET @saved_encrypt_tables = @@global.innodb_encrypt_tables;
 SET @saved_encryption_threads = @@global.innodb_encryption_threads;
 SET @saved_encryption_key_id = @@global.innodb_default_encryption_key_id;
-SET GLOBAL innodb_file_format = `Barracuda`;
 SET GLOBAL innodb_file_per_table = ON;
 SET GLOBAL innodb_encrypt_tables = ON;
 SET GLOBAL innodb_encryption_threads = 4;
@@ -40,6 +38,7 @@ backup: te_crc32
 backup: t_crc32
 backup: tpe_crc32
 backup: tp_crc32
+db.opt
 t_crc32.cfg
 t_crc32.frm
 t_crc32.ibd
@@ -249,6 +248,7 @@ backup: te_innodb
 backup: t_innodb
 backup: tpe_innodb
 backup: tp_innodb
+db.opt
 t_innodb.cfg
 t_innodb.frm
 t_innodb.ibd
@@ -458,6 +458,7 @@ backup: te_none
 backup: t_none
 backup: tpe_none
 backup: tp_none
+db.opt
 t_none.cfg
 t_none.frm
 t_none.ibd
@@ -638,7 +639,6 @@ test.tpe_none	check	status	OK
 test.tp_none	check	status	OK
 DROP TABLE tce_none, tc_none, te_none,
 t_none, tpe_none, tp_none;
-SET GLOBAL innodb_file_format = @saved_file_format;
 SET GLOBAL innodb_file_per_table = @saved_file_per_table;
 SET GLOBAL innodb_checksum_algorithm = @saved_checksum_algorithm;
 SET GLOBAL innodb_encrypt_tables = @saved_encrypt_tables;

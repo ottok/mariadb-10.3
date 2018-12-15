@@ -48,7 +48,7 @@
   (assuming a index for column d of table t2 is defined)
 */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include "key.h"                                // key_cmp_if_same
 #include "sql_select.h"
@@ -316,7 +316,7 @@ int opt_sum_query(THD *thd,
     else
     {
       error= tl->table->file->info(HA_STATUS_VARIABLE | HA_STATUS_NO_LOCK);
-      if(error)
+      if (unlikely(error))
       {
         tl->table->file->print_error(error, MYF(ME_FATALERROR));
         DBUG_RETURN(error);
@@ -398,18 +398,22 @@ int opt_sum_query(THD *thd,
             const_result= 0;
             break;
           }
-          if (!(error= table->file->ha_index_init((uint) ref.key, 1)))
+          longlong info_limit= 1;
+          table->file->info_push(INFO_KIND_FORCE_LIMIT_BEGIN, &info_limit);
+          if (likely(!(error= table->file->ha_index_init((uint) ref.key, 1))))
             error= (is_max ? 
                     get_index_max_value(table, &ref, range_fl) :
                     get_index_min_value(table, &ref, item_field, range_fl,
                                         prefix_len));
 
           /* Verify that the read tuple indeed matches the search key */
-	  if (!error && reckey_in_range(is_max, &ref, item_field->field, 
-			                conds, range_fl, prefix_len))
+	  if (!error &&
+              reckey_in_range(is_max, &ref, item_field->field,
+                              conds, range_fl, prefix_len))
 	    error= HA_ERR_KEY_NOT_FOUND;
-          table->disable_keyread();
+          table->file->ha_end_keyread();
           table->file->ha_index_end();
+          table->file->info_push(INFO_KIND_FORCE_LIMIT_END, NULL);
           if (error)
 	  {
 	    if (error == HA_ERR_KEY_NOT_FOUND || error == HA_ERR_END_OF_FILE)
@@ -470,12 +474,12 @@ int opt_sum_query(THD *thd,
     {
       if (recalc_const_item)
         item->update_used_tables();
-      if (!item->const_item())
+      if (!item->const_item() && item->type() != Item::WINDOW_FUNC_ITEM)
         const_result= 0;
     }
   }
 
-  if (thd->is_error())
+  if (unlikely(thd->is_error()))
     DBUG_RETURN(thd->get_stmt_da()->sql_errno());
 
   /*
@@ -768,12 +772,12 @@ static bool matching_cond(bool max_fl, TABLE_REF *ref, KEY *keyinfo,
   key_part_map org_key_part_used= *key_part_used;
   if (eq_type || between || max_fl == less_fl)
   {
-    uint length= (key_ptr-ref->key_buff)+part->store_length;
+    uint length= (uint)(key_ptr-ref->key_buff)+part->store_length;
     if (ref->key_length < length)
     {
     /* Ultimately ref->key_length will contain the length of the search key */
       ref->key_length= length;      
-      ref->key_parts= (part - keyinfo->key_part) + 1;
+      ref->key_parts= (uint)(part - keyinfo->key_part) + 1;
     }
     if (!*prefix_len && part+1 == field_part)       
       *prefix_len= length;
@@ -977,7 +981,7 @@ static bool find_key_for_maxmin(bool max_fl, TABLE_REF *ref,
             converted (for example to upper case)
           */
           if (field->part_of_key.is_set(idx))
-            table->enable_keyread();
+            table->file->ha_start_keyread(idx);
           DBUG_RETURN(TRUE);
         }
       }

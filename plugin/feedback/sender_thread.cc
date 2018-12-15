@@ -40,7 +40,7 @@ ulong interval= 60*60*24*7;       ///< in seconds (one week)
 */
 static int table_to_string(TABLE *table, String *result)
 {
-  bool res;
+  int res;
   char buff1[MAX_FIELD_WIDTH], buff2[MAX_FIELD_WIDTH];
   String str1(buff1, sizeof(buff1), system_charset_info);
   String str2(buff2, sizeof(buff2), system_charset_info);
@@ -64,7 +64,7 @@ static int table_to_string(TABLE *table, String *result)
     }
   }
 
-  res = res || result->append('\n');
+  res = res || (int)result->append('\n');
 
   /*
     Note, "|=" and not "||" - because we want to call ha_rnd_end()
@@ -89,9 +89,8 @@ static int prepare_for_fill(TABLE_LIST *tables)
     (every increment of global thread_id counts as a new connection
     in SHOW STATUS and we want to avoid skewing the statistics)
   */
-  thd->thread_id= thd->variables.pseudo_thread_id= thd_thread_id;
+  thd->variables.pseudo_thread_id= thd->thread_id;
   mysql_mutex_lock(&LOCK_thread_count);
-  thread_count++;
   threads.append(thd);
   mysql_mutex_unlock(&LOCK_thread_count);
   thd->thread_stack= (char*) &tables;
@@ -106,8 +105,7 @@ static int prepare_for_fill(TABLE_LIST *tables)
   thd->set_time();
   thd->init_for_queries();
   thd->real_id= pthread_self();
-  thd->db= NULL;
-  thd->db_length= 0;
+  thd->db= null_clex_str;
   thd->security_ctx->host_or_ip= "";
   thd->security_ctx->db_access= DB_ACLS;
   thd->security_ctx->master_access= ~NO_ACCESS;
@@ -115,11 +113,9 @@ static int prepare_for_fill(TABLE_LIST *tables)
   lex_start(thd);
   mysql_init_select(thd->lex);
 
-  tables->init_one_table(INFORMATION_SCHEMA_NAME.str,
-                         INFORMATION_SCHEMA_NAME.length,
-                         i_s_feedback->table_name,
-                         strlen(i_s_feedback->table_name),
-                         0, TL_READ);
+  LEX_CSTRING tbl_name= {i_s_feedback->table_name, strlen(i_s_feedback->table_name) };
+
+  tables->init_one_table(&INFORMATION_SCHEMA_NAME, &tbl_name, 0, TL_READ);
   tables->schema_table= i_s_feedback;
   tables->table= create_schema_table(thd, tables);
   if (!tables->table)
@@ -208,7 +204,7 @@ static void send_report(const char *when)
       SELECT * FROM INFORMATION_SCHEMA.FEEDBACK is doing,
       read and concatenate table data into a String.
     */
-    if (!(thd= new THD()))
+    if (!(thd= new THD(thd_thread_id)))
       return;
 
     if (prepare_for_fill(&tables))
@@ -239,7 +235,7 @@ static void send_report(const char *when)
       Url *url= todo[i];
 
       if (thd) // for nicer SHOW PROCESSLIST
-        thd->set_query(const_cast<char*>(url->url()), url->url_length());
+        thd->set_query(const_cast<char*>(url->url()), (uint) url->url_length());
 
       if (url->send(str.ptr(), str.length()))
         i++;
@@ -263,8 +259,8 @@ ret:
     */
     mysql_mutex_lock(&LOCK_thread_count);
     thd->set_status_var_init();
-    thread_count--;
     thd->killed= KILL_CONNECTION;
+    thd->unlink();
     mysql_cond_broadcast(&COND_thread_count);
     mysql_mutex_unlock(&LOCK_thread_count);
     delete thd;
@@ -280,9 +276,7 @@ pthread_handler_t background_thread(void *arg __attribute__((unused)))
   if (my_thread_init())
     return 0;
 
-  mysql_mutex_lock(&LOCK_thread_count);
-  thd_thread_id= thread_id++;
-  mysql_mutex_unlock(&LOCK_thread_count);
+  thd_thread_id= next_thread_id();
 
   if (slept_ok(startup_interval))
   {

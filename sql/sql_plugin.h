@@ -1,5 +1,5 @@
 /* Copyright (c) 2005, 2012, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2012, Monty Program Ab
+   Copyright (c) 2009, 2017, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,8 +24,9 @@
 #define SHOW_always_last SHOW_KEY_CACHE_LONG, \
             SHOW_LONG_STATUS, SHOW_DOUBLE_STATUS, \
             SHOW_HAVE, SHOW_MY_BOOL, SHOW_HA_ROWS, SHOW_SYS, \
-            SHOW_LONG_NOFLUSH, SHOW_LONGLONG_STATUS, SHOW_LEX_STRING
-#include <my_global.h>
+            SHOW_LONG_NOFLUSH, SHOW_LONGLONG_STATUS, SHOW_UINT32_STATUS, \
+            SHOW_LEX_STRING
+#include "mariadb.h"
 #undef SHOW_always_last
 
 #include "m_string.h"                       /* LEX_STRING */
@@ -53,9 +54,9 @@ extern ulong dlopen_count;
 /*
   the following flags are valid for plugin_init()
 */
-#define PLUGIN_INIT_SKIP_DYNAMIC_LOADING 1
-#define PLUGIN_INIT_SKIP_PLUGIN_TABLE    2
-#define PLUGIN_INIT_SKIP_INITIALIZATION  4
+#define PLUGIN_INIT_SKIP_DYNAMIC_LOADING 1U
+#define PLUGIN_INIT_SKIP_PLUGIN_TABLE    2U
+#define PLUGIN_INIT_SKIP_INITIALIZATION  4U
 
 #define INITIAL_LEX_PLUGIN_LIST_SIZE    16
 
@@ -71,12 +72,12 @@ typedef struct st_mysql_show_var SHOW_VAR;
   It's a bitmap, because it makes it easier to test
   "whether the state is one of those..."
 */
-#define PLUGIN_IS_FREED         1
-#define PLUGIN_IS_DELETED       2
-#define PLUGIN_IS_UNINITIALIZED 4
-#define PLUGIN_IS_READY         8
-#define PLUGIN_IS_DYING         16
-#define PLUGIN_IS_DISABLED      32
+#define PLUGIN_IS_FREED         1U
+#define PLUGIN_IS_DELETED       2U
+#define PLUGIN_IS_UNINITIALIZED 4U
+#define PLUGIN_IS_READY         8U
+#define PLUGIN_IS_DYING         16U
+#define PLUGIN_IS_DISABLED      32U
 
 struct st_ptr_backup {
   void **ptr;
@@ -90,7 +91,7 @@ struct st_ptr_backup {
 
 struct st_plugin_dl
 {
-  LEX_STRING dl;
+  LEX_CSTRING dl;
   void *handle;
   struct st_maria_plugin *plugins;
   st_ptr_backup *ptr_backup;
@@ -105,7 +106,7 @@ struct st_plugin_dl
 
 struct st_plugin_int
 {
-  LEX_STRING name;
+  LEX_CSTRING name;
   struct st_maria_plugin *plugin;
   struct st_plugin_dl *plugin_dl;
   st_ptr_backup *ptr_backup;
@@ -119,6 +120,8 @@ struct st_plugin_int
   enum enum_plugin_load_option load_option; /* OFF, ON, FORCE, F+PERMANENT */
 };
 
+
+extern mysql_mutex_t LOCK_plugin;
 
 /*
   See intern_plugin_lock() for the explanation for the
@@ -153,7 +156,7 @@ typedef int (*plugin_type_init)(struct st_plugin_int *);
 extern I_List<i_string> *opt_plugin_load_list_ptr;
 extern char *opt_plugin_dir_ptr;
 extern MYSQL_PLUGIN_IMPORT char opt_plugin_dir[FN_REFLEN];
-extern const LEX_STRING plugin_type_names[];
+extern const LEX_CSTRING plugin_type_names[];
 extern ulong plugin_maturity;
 extern TYPELIB plugin_maturity_values;
 extern const char *plugin_maturity_names[];
@@ -161,18 +164,18 @@ extern const char *plugin_maturity_names[];
 extern int plugin_init(int *argc, char **argv, int init_flags);
 extern void plugin_shutdown(void);
 void add_plugin_options(DYNAMIC_ARRAY *options, MEM_ROOT *mem_root);
-extern bool plugin_is_ready(const LEX_STRING *name, int type);
+extern bool plugin_is_ready(const LEX_CSTRING *name, int type);
 #define my_plugin_lock_by_name(A,B,C) plugin_lock_by_name(A,B,C)
 #define my_plugin_lock(A,B) plugin_lock(A,B)
 extern plugin_ref plugin_lock(THD *thd, plugin_ref ptr);
-extern plugin_ref plugin_lock_by_name(THD *thd, const LEX_STRING *name,
+extern plugin_ref plugin_lock_by_name(THD *thd, const LEX_CSTRING *name,
                                       int type);
 extern void plugin_unlock(THD *thd, plugin_ref plugin);
 extern void plugin_unlock_list(THD *thd, plugin_ref *list, uint count);
-extern bool mysql_install_plugin(THD *thd, const LEX_STRING *name,
-                                 const LEX_STRING *dl);
-extern bool mysql_uninstall_plugin(THD *thd, const LEX_STRING *name,
-                                   const LEX_STRING *dl);
+extern bool mysql_install_plugin(THD *thd, const LEX_CSTRING *name,
+                                 const LEX_CSTRING *dl);
+extern bool mysql_uninstall_plugin(THD *thd, const LEX_CSTRING *name,
+                                   const LEX_CSTRING *dl);
 extern bool plugin_register_builtin(struct st_mysql_plugin *plugin);
 extern void plugin_thdvar_init(THD *thd);
 extern void plugin_thdvar_cleanup(THD *thd);
@@ -190,8 +193,11 @@ extern bool plugin_foreach_with_mask(THD *thd, plugin_foreach_func *func,
                                      int type, uint state_mask, void *arg);
 extern void sync_dynamic_session_variables(THD* thd, bool global_lock);
 
-extern bool plugin_dl_foreach(THD *thd, const LEX_STRING *dl,
+extern bool plugin_dl_foreach(THD *thd, const LEX_CSTRING *dl,
                               plugin_foreach_func *func, void *arg);
+
+sys_var *find_sys_var_ex(THD *thd, const char *str, size_t length,
+                         bool throw_error, bool locked);
 
 extern void sync_dynamic_session_variables(THD* thd, bool global_lock);
 #endif

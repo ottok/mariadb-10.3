@@ -20,6 +20,7 @@
 #define _GNU_SOURCE // POSIX_SPAWN_USEVFORK flag
 #endif
 
+#include "mariadb.h"
 #include "wsrep_utils.h"
 #include "wsrep_mysqld.h"
 
@@ -413,7 +414,7 @@ process::wait ()
   return err_;
 }
 
-thd::thd (my_bool won) : init(), ptr(new THD)
+thd::thd (my_bool won) : init(), ptr(new THD(0))
 {
   if (ptr)
   {

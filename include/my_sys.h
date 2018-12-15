@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2017, MariaDB Corporation
+   Copyright (c) 2010, 2017, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -16,8 +16,6 @@
 
 #ifndef _my_sys_h
 #define _my_sys_h
-
-#include "my_global.h"                  /* C_MODE_START, C_MODE_END */
 
 #include <m_string.h>
 
@@ -61,68 +59,69 @@ typedef struct my_aio_result {
 #define MY_FILE_ERROR	((size_t) -1)
 
 	/* General bitmaps for my_func's */
-#define MY_FFNF		1	/* Fatal if file not found */
-#define MY_FNABP	2	/* Fatal if not all bytes read/writen */
-#define MY_NABP		4	/* Error if not all bytes read/writen */
-#define MY_FAE		8	/* Fatal if any error */
-#define MY_WME		16	/* Write message on error */
-#define MY_WAIT_IF_FULL 32	/* Wait and try again if disk full error */
-#define MY_IGNORE_BADFD 32      /* my_sync(): ignore 'bad descriptor' errors */
-#define MY_ENCRYPT      64      /* Encrypt IO_CACHE temporary files */
-#define MY_NOSYMLINKS  512      /* my_open(): don't follow symlinks */
-#define MY_FULL_IO     512      /* my_read(): loop intil I/O is complete */
-#define MY_DONT_CHECK_FILESIZE 128 /* Option to init_io_cache() */
-#define MY_LINK_WARNING 32	/* my_redel() gives warning if links */
-#define MY_COPYTIME	64	/* my_redel() copys time */
-#define MY_DELETE_OLD	256	/* my_create_with_symlink() */
-#define MY_RESOLVE_LINK 128	/* my_realpath(); Only resolve links */
-#define MY_HOLD_ORIGINAL_MODES 128  /* my_copy() holds to file modes */
-#define MY_REDEL_MAKE_BACKUP 256
-#define MY_SEEK_NOT_DONE 32	/* my_lock may have to do a seek */
-#define MY_SHORT_WAIT	64	/* my_lock() don't wait if can't lock */
-#define MY_FORCE_LOCK   128     /* use my_lock() even if disable_locking */
-#define MY_NO_WAIT      256	/* my_lock() don't wait at all */
+#define MY_FFNF		1U	/* Fatal if file not found */
+#define MY_FNABP	2U	/* Fatal if not all bytes read/written */
+#define MY_NABP		4U	/* Error if not all bytes read/written */
+#define MY_FAE		8U	/* Fatal if any error */
+#define MY_WME		16U	/* Write message on error */
+#define MY_WAIT_IF_FULL 32U	/* Wait and try again if disk full error */
+#define MY_IGNORE_BADFD 32U     /* my_sync(): ignore 'bad descriptor' errors */
+#define MY_ENCRYPT      64U     /* Encrypt IO_CACHE temporary files */
+#define MY_TEMPORARY    64U     /* create_temp_file(): delete file at once */
+#define MY_NOSYMLINKS  512U     /* my_open(): don't follow symlinks */
+#define MY_FULL_IO     512U     /* my_read(): loop until I/O is complete */
+#define MY_DONT_CHECK_FILESIZE 128U /* Option to init_io_cache() */
+#define MY_LINK_WARNING 32U	/* my_redel() gives warning if links */
+#define MY_COPYTIME	64U	/* my_redel() copies time */
+#define MY_DELETE_OLD	256U	/* my_create_with_symlink() */
+#define MY_RESOLVE_LINK 128U	/* my_realpath(); Only resolve links */
+#define MY_HOLD_ORIGINAL_MODES 128U  /* my_copy() holds to file modes */
+#define MY_REDEL_MAKE_BACKUP 256U
+#define MY_SEEK_NOT_DONE 32U	/* my_lock may have to do a seek */
+#define MY_SHORT_WAIT	64U	/* my_lock() don't wait if can't lock */
+#define MY_FORCE_LOCK   128U    /* use my_lock() even if disable_locking */
+#define MY_NO_WAIT      256U	/* my_lock() don't wait at all */
 /*
   init_dynamic_array() has init buffer; Internal flag, not to be used by
   caller.
 */
-#define MY_INIT_BUFFER_USED 256
-#define MY_ZEROFILL	32	/* my_malloc(), fill array with zero */
-#define MY_ALLOW_ZERO_PTR 64	/* my_realloc() ; zero ptr -> malloc */
-#define MY_FREE_ON_ERROR 128	/* my_realloc() ; Free old ptr on error */
-#define MY_HOLD_ON_ERROR 256	/* my_realloc() ; Return old ptr on error */
-#define MY_DONT_OVERWRITE_FILE 2048 /* my_copy: Don't overwrite file */
-#define MY_THREADSAFE 2048      /* my_seek(): lock fd mutex */
-#define MY_SYNC       4096      /* my_copy(): sync dst file */
-#define MY_SYNC_DIR   32768     /* my_create/delete/rename: sync directory */
-#define MY_SYNC_FILESIZE 65536  /* my_sync(): safe sync when file is extended */
-#define MY_THREAD_SPECIFIC 0x10000  /* my_malloc(): thread specific */
-#define MY_THREAD_MOVE     0x20000  /* realloc(); Memory can move */
-/* Tree that should delete things automaticly */ 
-#define MY_TREE_WITH_DELETE 0x40000
+#define MY_INIT_BUFFER_USED 256U
+#define MY_ZEROFILL	32U	/* my_malloc(), fill array with zero */
+#define MY_ALLOW_ZERO_PTR 64U	/* my_realloc() ; zero ptr -> malloc */
+#define MY_FREE_ON_ERROR 128U	/* my_realloc() ; Free old ptr on error */
+#define MY_HOLD_ON_ERROR 256U	/* my_realloc() ; Return old ptr on error */
+#define MY_DONT_OVERWRITE_FILE 2048U /* my_copy: Don't overwrite file */
+#define MY_THREADSAFE 2048U     /* my_seek(): lock fd mutex */
+#define MY_SYNC       4096U     /* my_copy(): sync dst file */
+#define MY_SYNC_DIR   32768U    /* my_create/delete/rename: sync directory */
+#define MY_SYNC_FILESIZE 65536U /* my_sync(): safe sync when file is extended */
+#define MY_THREAD_SPECIFIC 0x10000U /* my_malloc(): thread specific */
+#define MY_THREAD_MOVE     0x20000U /* realloc(); Memory can move */
+/* Tree that should delete things automatically */
+#define MY_TREE_WITH_DELETE 0x40000U
 
-#define MY_CHECK_ERROR	1	/* Params to my_end; Check open-close */
-#define MY_GIVE_INFO	2	/* Give time info about process*/
-#define MY_DONT_FREE_DBUG 4     /* Do not call DBUG_END() in my_end() */
+#define MY_CHECK_ERROR	1U	/* Params to my_end; Check open-close */
+#define MY_GIVE_INFO	2U	/* Give time info about process*/
+#define MY_DONT_FREE_DBUG 4U    /* Do not call DBUG_END() in my_end() */
 
-#define ME_BELL         4       /* Ring bell then printing message */
+#define ME_BELL         4U      /* Ring bell then printing message */
 #define ME_WAITTANG     0       /* Wait for a user action  */
-#define ME_NOREFRESH    64      /* Write the error message to error log */
-#define ME_NOINPUT      0       /* Dont use the input libary */
-#define ME_JUST_INFO    1024    /**< not error but just info */
-#define ME_JUST_WARNING 2048    /**< not error but just warning */
-#define ME_FATALERROR   4096    /* Fatal statement error */
+#define ME_NOREFRESH    64U     /* Write the error message to error log */
+#define ME_NOINPUT      0       /* Don't use the input library */
+#define ME_JUST_INFO    1024U   /**< not error but just info */
+#define ME_JUST_WARNING 2048U   /**< not error but just warning */
+#define ME_FATALERROR   4096U   /* Fatal statement error */
 
 	/* Bits in last argument to fn_format */
-#define MY_REPLACE_DIR		1	/* replace dir in name with 'dir' */
-#define MY_REPLACE_EXT		2	/* replace extension with 'ext' */
-#define MY_UNPACK_FILENAME	4	/* Unpack name (~ -> home) */
-#define MY_PACK_FILENAME	8	/* Pack name (home -> ~) */
-#define MY_RESOLVE_SYMLINKS	16	/* Resolve all symbolic links */
-#define MY_RETURN_REAL_PATH	32	/* return full path for file */
-#define MY_SAFE_PATH		64	/* Return NULL if too long path */
-#define MY_RELATIVE_PATH	128	/* name is relative to 'dir' */
-#define MY_APPEND_EXT           256     /* add 'ext' as additional extension*/
+#define MY_REPLACE_DIR		1U	/* replace dir in name with 'dir' */
+#define MY_REPLACE_EXT		2U	/* replace extension with 'ext' */
+#define MY_UNPACK_FILENAME	4U	/* Unpack name (~ -> home) */
+#define MY_PACK_FILENAME	8U	/* Pack name (home -> ~) */
+#define MY_RESOLVE_SYMLINKS	16U	/* Resolve all symbolic links */
+#define MY_RETURN_REAL_PATH	32U	/* return full path for file */
+#define MY_SAFE_PATH		64U	/* Return NULL if too long path */
+#define MY_RELATIVE_PATH	128U	/* name is relative to 'dir' */
+#define MY_APPEND_EXT           256U    /* add 'ext' as additional extension*/
 
 
 	/* My seek flags */
@@ -137,26 +136,29 @@ typedef struct my_aio_result {
 #define DFLT_INIT_HITS  3
 
 	/* root_alloc flags */
-#define MY_KEEP_PREALLOC	1
-#define MY_MARK_BLOCKS_FREE     2  /* move used to free list and reuse them */
+#define MY_KEEP_PREALLOC	1U
+#define MY_MARK_BLOCKS_FREE     2U /* move used to free list and reuse them */
 
 	/* Internal error numbers (for assembler functions) */
 #define MY_ERRNO_EDOM		33
 #define MY_ERRNO_ERANGE		34
 
 	/* Bits for get_date timeflag */
-#define GETDATE_DATE_TIME	1
-#define GETDATE_SHORT_DATE	2
-#define GETDATE_HHMMSSTIME	4
-#define GETDATE_GMT		8
-#define GETDATE_FIXEDLENGTH	16
+#define GETDATE_DATE_TIME	1U
+#define GETDATE_SHORT_DATE	2U
+#define GETDATE_HHMMSSTIME	4U
+#define GETDATE_GMT		8U
+#define GETDATE_FIXEDLENGTH	16U
 
 /* Extra length needed for filename if one calls my_create_backup_name */
 #define MY_BACKUP_NAME_EXTRA_LENGTH 17
 
+char *guess_malloc_library();
+
 /* If we have our own safemalloc (for debugging) */
 #if defined(SAFEMALLOC)
 void sf_report_leaked_memory(my_thread_id id);
+int sf_sanity();
 extern my_thread_id (*sf_malloc_dbug_id)(void);
 #define SAFEMALLOC_REPORT_MEMORY(X) sf_report_leaked_memory(X)
 #else
@@ -176,7 +178,7 @@ extern void *my_memdup(const void *from,size_t length,myf MyFlags);
 extern char *my_strdup(const char *from,myf MyFlags);
 extern char *my_strndup(const char *from, size_t length, myf MyFlags);
 
-#ifdef HAVE_LARGE_PAGES
+#ifdef HAVE_LINUX_LARGE_PAGES
 extern uint my_get_large_page_size(void);
 extern uchar * my_large_malloc(size_t size, myf my_flags);
 extern void my_large_free(uchar *ptr);
@@ -184,7 +186,15 @@ extern void my_large_free(uchar *ptr);
 #define my_get_large_page_size() (0)
 #define my_large_malloc(A,B) my_malloc_lock((A),(B))
 #define my_large_free(A) my_free_lock((A))
-#endif /* HAVE_LARGE_PAGES */
+#endif /* HAVE_LINUX_LARGE_PAGES */
+
+void my_init_atomic_write(void);
+#ifdef __linux__
+my_bool my_test_if_atomic_write(File handle, int pagesize);
+#else
+#define my_test_if_atomic_write(A, B) 0
+#endif /* __linux__ */
+extern my_bool my_may_have_atomic_write;
 
 #if defined(HAVE_ALLOCA) && !defined(HAVE_valgrind)
 #if defined(_AIX) && !defined(__GNUC__) && !defined(_AIX43)
@@ -234,7 +244,7 @@ extern int sf_leaking_memory; /* set to 1 to disable memleak detection */
 extern void (*proc_info_hook)(void *, const PSI_stage_info *, PSI_stage_info *,
                               const char *, const char *, const unsigned int);
 
-#ifdef HAVE_LARGE_PAGES
+#ifdef HAVE_LINUX_LARGE_PAGES
 extern my_bool my_use_large_pages;
 extern uint    my_large_page_size;
 #endif
@@ -262,7 +272,7 @@ extern myf      my_global_flags;        /* Set to MY_WME for more error messages
 extern void (*my_sigtstp_cleanup)(void),
 					/* Executed before jump to shell */
 	    (*my_sigtstp_restart)(void);
-					/* Executed when comming from shell */
+					/* Executed when coming from shell */
 extern MYSQL_PLUGIN_IMPORT int my_umask;		/* Default creation mask  */
 extern int my_umask_dir,
 	   my_recived_signals,	/* Signals we have got */
@@ -302,7 +312,7 @@ enum flush_type
   FLUSH_KEEP_LAZY
 };
 
-typedef struct st_record_cache	/* Used when cacheing records */
+typedef struct st_record_cache	/* Used when caching records */
 {
   File file;
   int	rc_seek,error,inited;
@@ -382,7 +392,7 @@ typedef struct st_io_cache_share
 #endif
 } IO_CACHE_SHARE;
 
-typedef struct st_io_cache		/* Used when cacheing files */
+typedef struct st_io_cache		/* Used when caching files */
 {
   /* Offset in file corresponding to the first byte of uchar* buffer. */
   my_off_t pos_in_file;
@@ -413,14 +423,6 @@ typedef struct st_io_cache		/* Used when cacheing files */
   uchar *write_pos;
   /* The non-inclusive boundary of the valid write area */
   uchar *write_end;
-
-  /*
-    Current_pos and current_end are convenience variables used by
-    my_b_tell() and other routines that need to know the current offset
-    current_pos points to &write_pos, and current_end to &write_end in a
-    WRITE_CACHE, and &read_pos and &read_end respectively otherwise
-  */
-  uchar  **current_pos, **current_end;
 
   /*
     The lock is for append buffer used in SEQ_READ_APPEND cache
@@ -466,6 +468,8 @@ typedef struct st_io_cache		/* Used when cacheing files */
   const char *dir;
   char prefix[3];
   File file; /* file descriptor */
+
+  struct st_io_cache *next_file_user;
   /*
     seek_not_done is set by my_b_seek() to inform the upcoming read/write
     operation that a seek needs to be preformed prior to the actual I/O
@@ -548,12 +552,13 @@ static inline int my_b_get(IO_CACHE *info)
   return _my_b_get(info);
 }
 
-/* my_b_write_byte dosn't have any err-check */
-static inline void my_b_write_byte(IO_CACHE *info, uchar chr)
+static inline my_bool my_b_write_byte(IO_CACHE *info, uchar chr)
 {
   if (info->write_pos >= info->write_end)
-    my_b_flush_io_cache(info, 1);
+    if (my_b_flush_io_cache(info, 1))
+      return 1;
   *info->write_pos++= chr;
+  return 0;
 }
 
 /**
@@ -569,17 +574,21 @@ static inline void my_b_write_byte(IO_CACHE *info, uchar chr)
 static inline size_t my_b_fill(IO_CACHE *info)
 {
   info->read_pos= info->read_end;
-  return _my_b_read(info,0,0) ? 0 : info->read_end - info->read_pos;
+  return _my_b_read(info,0,0) ? 0 : (size_t) (info->read_end - info->read_pos);
 }
 
 static inline my_off_t my_b_tell(const IO_CACHE *info)
 {
-  return info->pos_in_file + (*info->current_pos - info->request_pos);
+  if (info->type == WRITE_CACHE) {
+    return info->pos_in_file + (my_off_t)(info->write_pos - info->request_pos);
+
+  }
+  return info->pos_in_file + (my_off_t) (info->read_pos - info->request_pos);
 }
 
 static inline my_off_t my_b_write_tell(const IO_CACHE *info)
 {
-  return info->pos_in_file + (info->write_pos - info->write_buffer);
+  return info->pos_in_file + (my_off_t) (info->write_pos - info->write_buffer);
 }
 
 static inline uchar* my_b_get_buffer_start(const IO_CACHE *info)
@@ -589,7 +598,7 @@ static inline uchar* my_b_get_buffer_start(const IO_CACHE *info)
 
 static inline size_t my_b_get_bytes_in_buffer(const IO_CACHE *info)
 {
-  return info->read_end - info->request_pos;
+  return (size_t) (info->read_end - info->request_pos);
 }
 
 static inline my_off_t my_b_get_pos_in_file(const IO_CACHE *info)
@@ -599,7 +608,10 @@ static inline my_off_t my_b_get_pos_in_file(const IO_CACHE *info)
 
 static inline size_t my_b_bytes_in_cache(const IO_CACHE *info)
 {
-  return *info->current_end - *info->current_pos;
+  if (info->type == WRITE_CACHE) {
+    return (size_t) (info->write_end - info->write_pos);
+  }
+  return (size_t) (info->read_end - info->read_pos);
 }
 
 int      my_b_copy_to_file(IO_CACHE *cache, FILE *file);
@@ -689,14 +701,14 @@ extern void     my_osmaperr(unsigned long last_error);
 #endif
 
 extern void init_glob_errs(void);
-extern const char** get_global_errmsgs(void);
+extern const char** get_global_errmsgs(int nr);
 extern void wait_for_free_space(const char *filename, int errors);
 extern FILE *my_fopen(const char *FileName,int Flags,myf MyFlags);
 extern FILE *my_fdopen(File Filedes,const char *name, int Flags,myf MyFlags);
 extern FILE *my_freopen(const char *path, const char *mode, FILE *stream);
 extern int my_fclose(FILE *fd,myf MyFlags);
 extern int my_vfprintf(FILE *stream, const char* format, va_list args);
-extern void my_strerror(char *buf, size_t len, int nr);
+extern const char* my_strerror(char *buf, size_t len, int nr);
 extern int my_fprintf(FILE *stream, const char* format, ...);
 extern File my_fileno(FILE *fd);
 extern int my_chsize(File fd,my_off_t newlength, int filler, myf MyFlags);
@@ -708,9 +720,9 @@ extern int my_sync(File fd, myf my_flags);
 extern int my_sync_dir(const char *dir_name, myf my_flags);
 extern int my_sync_dir_by_file(const char *file_name, myf my_flags);
 extern const char *my_get_err_msg(uint nr);
-extern int my_error_register(const char** (*get_errmsgs) (void),
+extern int my_error_register(const char** (*get_errmsgs) (int nr),
                              uint first, uint last);
-extern const char **my_error_unregister(uint first, uint last);
+extern my_bool my_error_unregister(uint first, uint last);
 extern void my_message(uint my_err, const char *str,myf MyFlags);
 extern void my_message_stderr(uint my_err, const char *str, myf MyFlags);
 extern my_bool my_init(void);
@@ -721,12 +733,6 @@ void my_create_backup_name(char *to, const char *from,
                            time_t backup_time_stamp);
 extern int my_copystat(const char *from, const char *to, int MyFlags);
 extern char * my_filename(File fd);
-
-#ifdef EXTRA_DEBUG
-void my_print_open_files(void);
-#else
-#define my_print_open_files()
-#endif
 
 extern my_bool init_tmpdir(MY_TMPDIR *tmpdir, const char *pathlist);
 extern char *my_tmpdir(MY_TMPDIR *tmpdir);
@@ -793,9 +799,13 @@ extern int init_io_cache(IO_CACHE *info,File file,size_t cachesize,
 extern my_bool reinit_io_cache(IO_CACHE *info,enum cache_type type,
 			       my_off_t seek_offset, my_bool use_async_io,
 			       my_bool clear_cache);
-extern void setup_io_cache(IO_CACHE* info);
 extern void init_io_cache_share(IO_CACHE *read_cache, IO_CACHE_SHARE *cshare,
                                 IO_CACHE *write_cache, uint num_threads);
+
+extern int init_slave_io_cache(IO_CACHE *master, IO_CACHE *slave);
+void end_slave_io_cache(IO_CACHE *cache);
+void seek_io_cache(IO_CACHE *cache, my_off_t needed_offset);
+
 extern void remove_io_thread(IO_CACHE *info);
 extern int _my_b_async_read(IO_CACHE *info,uchar *Buffer,size_t Count);
 extern int my_b_append(IO_CACHE *info,const uchar *Buffer,size_t Count);
@@ -810,9 +820,9 @@ extern int end_io_cache(IO_CACHE *info);
 extern void my_b_seek(IO_CACHE *info,my_off_t pos);
 extern size_t my_b_gets(IO_CACHE *info, char *to, size_t max_length);
 extern my_off_t my_b_filelength(IO_CACHE *info);
-extern size_t my_b_write_backtick_quote(IO_CACHE *info, const char *str,
-                                        size_t len);
-extern size_t my_b_printf(IO_CACHE *info, const char* fmt, ...);
+extern my_bool my_b_write_backtick_quote(IO_CACHE *info, const char *str,
+                                         size_t len);
+extern my_bool my_b_printf(IO_CACHE *info, const char* fmt, ...);
 extern size_t my_b_vprintf(IO_CACHE *info, const char* fmt, va_list ap);
 extern my_bool open_cached_file(IO_CACHE *cache,const char *dir,
 				 const char *prefix, size_t cache_size,
@@ -878,8 +888,9 @@ extern void my_free_lock(void *ptr);
 #define alloc_root_inited(A) ((A)->min_malloc != 0)
 #define ALLOC_ROOT_MIN_BLOCK_SIZE (MALLOC_OVERHEAD + sizeof(USED_MEM) + 8)
 #define clear_alloc_root(A) do { (A)->free= (A)->used= (A)->pre_alloc= 0; (A)->min_malloc=0;} while(0)
-extern void init_alloc_root(MEM_ROOT *mem_root, size_t block_size,
-			    size_t pre_alloc_size, myf my_flags);
+extern void init_alloc_root(MEM_ROOT *mem_root, const char *name,
+                            size_t block_size, size_t pre_alloc_size,
+                            myf my_flags);
 extern void *alloc_root(MEM_ROOT *mem_root, size_t Size);
 extern void *multi_alloc_root(MEM_ROOT *mem_root, ...);
 extern void free_root(MEM_ROOT *root, myf MyFLAGS);
@@ -906,7 +917,7 @@ extern int unpackfrm(uchar **, size_t *, const uchar *);
 
 extern ha_checksum my_checksum(ha_checksum crc, const uchar *mem,
                                size_t count);
-#ifndef DBUG_OFF
+#ifdef DBUG_ASSERT_EXISTS
 extern void my_debug_put_break_here(void);
 #else
 #define my_debug_put_break_here() do {} while(0)
@@ -924,6 +935,13 @@ extern int my_getncpus(void);
 typedef struct {ulonglong val;} my_hrtime_t;
 void my_time_init(void);
 extern my_hrtime_t my_hrtime(void);
+
+#ifdef _WIN32
+extern my_hrtime_t my_hrtime_coarse();
+#else
+#define my_hrtime_coarse() my_hrtime()
+#endif
+
 extern ulonglong my_interval_timer(void);
 extern ulonglong my_getcputime(void);
 
@@ -932,7 +950,7 @@ extern ulonglong my_getcputime(void);
 #define hrtime_from_time(X)             ((ulonglong)((X)*HRTIME_RESOLUTION))
 #define hrtime_to_double(X)             ((X).val/(double)HRTIME_RESOLUTION)
 #define hrtime_sec_part(X)              ((ulong)((X).val % HRTIME_RESOLUTION))
-#define my_time(X)                      hrtime_to_time(my_hrtime())
+#define my_time(X)                      hrtime_to_time(my_hrtime_coarse())
 
 #if STACK_DIRECTION < 0
 #define available_stack_size(CUR,END) (long) ((char*)(CUR) - (char*)(END))
@@ -1021,6 +1039,7 @@ extern void add_compiled_collation(struct charset_info_st *cs);
 extern size_t escape_string_for_mysql(CHARSET_INFO *charset_info,
                                       char *to, size_t to_length,
                                       const char *from, size_t length);
+extern char *get_tty_password(const char *opt_message);
 #ifdef __WIN__
 #define BACKSLASH_MBTAIL
 /* File system character set */
@@ -1030,9 +1049,9 @@ extern size_t escape_quotes_for_mysql(CHARSET_INFO *charset_info,
                                       char *to, size_t to_length,
                                       const char *from, size_t length);
 
-extern void thd_increment_bytes_sent(void *thd, ulong length);
-extern void thd_increment_bytes_received(void *thd, ulong length);
-extern void thd_increment_net_big_packet_count(void *thd, ulong length);
+extern void thd_increment_bytes_sent(void *thd, size_t length);
+extern void thd_increment_bytes_received(void *thd, size_t length);
+extern void thd_increment_net_big_packet_count(void *thd, size_t length);
 
 #ifdef __WIN__
 extern my_bool have_tcpip;		/* Is set if tcpip is used */

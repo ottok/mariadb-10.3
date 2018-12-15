@@ -174,8 +174,8 @@ fn_expand(const char *filename, char *result_buf)
   char dir[FN_REFLEN];
   const int flags= MY_UNPACK_FILENAME | MY_SAFE_PATH | MY_RELATIVE_PATH;
   DBUG_ENTER("fn_expand");
-  DBUG_PRINT("enter", ("filename: %s, result_buf: 0x%lx",
-                       filename, (unsigned long) result_buf));
+  DBUG_PRINT("enter", ("filename: %s, result_buf: %p",
+                       filename, result_buf));
   if (my_getwd(dir, sizeof(dir), MYF(0)))
     DBUG_RETURN(3);
   DBUG_PRINT("debug", ("dir: %s", dir));
@@ -519,7 +519,7 @@ int my_load_defaults(const char *conf_file, const char **groups,
   uint args_sep= my_getopt_use_args_separator ? 1 : 0;
   DBUG_ENTER("load_defaults");
 
-  init_alloc_root(&alloc, 512, 0, MYF(0));
+  init_alloc_root(&alloc, "my_load_defaults", 512, 0, MYF(0));
   if ((dirs= init_default_directories(&alloc)) == NULL)
     goto err;
   /*
@@ -565,7 +565,7 @@ int my_load_defaults(const char *conf_file, const char **groups,
   for (; *groups ; groups++)
     group.count++;
 
-  if (my_init_dynamic_array(&args, sizeof(char*),*argc, 32, MYF(0)))
+  if (my_init_dynamic_array(&args, sizeof(char*), 128, 64, MYF(0)))
     goto err;
 
   ctx.alloc= &alloc;
@@ -1042,7 +1042,7 @@ void my_print_default_files(const char *conf_file)
   {
     const char **dirs;
     MEM_ROOT alloc;
-    init_alloc_root(&alloc, 512, 0, MYF(0));
+    init_alloc_root(&alloc, "my_print_defaults", 512, 0, MYF(0));
 
     if ((dirs= init_default_directories(&alloc)) == NULL)
     {
@@ -1125,43 +1125,7 @@ static int add_directory(MEM_ROOT *alloc, const char *dir, const char **dirs)
   return 0;
 }
 
-
 #ifdef __WIN__
-/*
-  This wrapper for GetSystemWindowsDirectory() will dynamically bind to the
-  function if it is available, emulate it on NT4 Terminal Server by stripping
-  the \SYSTEM32 from the end of the results of GetSystemDirectory(), or just
-  return GetSystemDirectory().
- */
-
-typedef UINT (WINAPI *GET_SYSTEM_WINDOWS_DIRECTORY)(LPSTR, UINT);
-
-static size_t my_get_system_windows_directory(char *buffer, size_t size)
-{
-  size_t count;
-  GET_SYSTEM_WINDOWS_DIRECTORY
-    func_ptr= (GET_SYSTEM_WINDOWS_DIRECTORY)
-              GetProcAddress(GetModuleHandle("kernel32.dll"),
-                                             "GetSystemWindowsDirectoryA");
-
-  if (func_ptr)
-    return func_ptr(buffer, (uint) size);
-
-  /*
-    Windows NT 4.0 Terminal Server Edition:  
-    To retrieve the shared Windows directory, call GetSystemDirectory and
-    trim the "System32" element from the end of the returned path.
-  */
-  count= GetSystemDirectory(buffer, (uint) size);
-  if (count > 8 && stricmp(buffer+(count-8), "\\System32") == 0)
-  {
-    count-= 8;
-    buffer[count] = '\0';
-  }
-  return count;
-}
-
-
 static const char *my_get_module_parent(char *buf, size_t size)
 {
   char *last= NULL;
@@ -1210,7 +1174,7 @@ static const char **init_default_directories(MEM_ROOT *alloc)
 
   {
     char fname_buffer[FN_REFLEN];
-    if (my_get_system_windows_directory(fname_buffer, sizeof(fname_buffer)))
+    if (GetSystemWindowsDirectory(fname_buffer, sizeof(fname_buffer)))
       errors += add_directory(alloc, fname_buffer, dirs);
 
     if (GetWindowsDirectory(fname_buffer, sizeof(fname_buffer)))
@@ -1222,7 +1186,7 @@ static const char **init_default_directories(MEM_ROOT *alloc)
     {
       errors += add_directory(alloc, fname_buffer, dirs);
 
-      strncat(fname_buffer, "/data", sizeof(fname_buffer));
+      strcat_s(fname_buffer, sizeof(fname_buffer), "/data");
       errors += add_directory(alloc, fname_buffer, dirs);
     }
   }

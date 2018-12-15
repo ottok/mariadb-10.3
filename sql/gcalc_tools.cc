@@ -15,7 +15,7 @@
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 
-#include <my_global.h> 
+#include "mariadb.h"
 
 #ifdef HAVE_SPATIAL
 
@@ -655,6 +655,17 @@ int Gcalc_result_receiver::move_hole(uint32 dest_position, uint32 source_positio
 
 Gcalc_operation_reducer::Gcalc_operation_reducer(size_t blk_size) :
   Gcalc_dyn_list(blk_size, sizeof(res_point)),
+#ifndef GCALC_DBUG_OFF
+  n_res_points(0),
+#endif /*GCALC_DBUG_OFF*/
+  m_res_hook((Gcalc_dyn_list::Item **)&m_result),
+  m_first_active_thread(NULL)
+{}
+
+
+Gcalc_operation_reducer::Gcalc_operation_reducer(
+                           const Gcalc_operation_reducer &gor) :
+  Gcalc_dyn_list(gor),
 #ifndef GCALC_DBUG_OFF
   n_res_points(0),
 #endif /*GCALC_DBUG_OFF*/

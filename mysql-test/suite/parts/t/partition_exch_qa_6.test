@@ -81,4 +81,3 @@ connection default;
 source suite/parts/inc/part_exch_drop_tabs.inc;
 
 DROP USER test2@localhost;
-

@@ -29,7 +29,7 @@
 #include <table.h>
 #include <field.h>
 
-handlerton *sequence_hton;
+static handlerton *sequence_hton;
 
 class Sequence_share : public Handler_share {
 public:
@@ -95,9 +95,9 @@ public:
   ha_rows records_in_range(uint inx, key_range *min_key,
                                    key_range *max_key);
 
-  double scan_time() { return nvalues(); }
-  double read_time(uint index, uint ranges, ha_rows rows) { return rows; }
-  double keyread_time(uint index, uint ranges, ha_rows rows) { return rows; }
+  double scan_time() { return (double)nvalues(); }
+  double read_time(uint index, uint ranges, ha_rows rows) { return (double)rows; }
+  double keyread_time(uint index, uint ranges, ha_rows rows) { return (double)rows; }
 
 private:
   void set(uchar *buf);
@@ -418,7 +418,7 @@ create_group_by_handler(THD *thd, Query *query)
     if (field->table != query->from->table)
       return 0;
     /* Check that we are using a SUM() on the primary key */
-    if (strcmp(field->field_name, "seq"))
+    if (strcmp(field->field_name.str, "seq"))
       return 0;
   }
 

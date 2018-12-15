@@ -4,6 +4,10 @@
 --let $rpl_topology=1->2
 --source include/rpl_init.inc
 
+call mtr.add_suppression("Deadlock found when trying to get lock; try restarting transaction");
+call mtr.add_suppression("Can't find record in 't1'");
+call mtr.add_suppression("Can't find record in 't2'");
+
 --connection server_1
 ALTER TABLE mysql.gtid_slave_pos ENGINE=InnoDB;
 CREATE TABLE t1 (a int PRIMARY KEY, b INT) ENGINE=InnoDB;
@@ -563,8 +567,15 @@ DROP TABLE t1, t2, t3;
 # The earlier part of this test file have plenty of transactions being rolled
 # back. But the last DROP TABLE statement runs on its own and should never
 # conflict, thus at this point the mysql.gtid_slave_pos table should be clean.
---echo Check that no more than the expected last two GTIDs are in mysql.gtid_slave_pos
-select count(*) from mysql.gtid_slave_pos order by domain_id, sub_id;
+#
+# To support @@gtid_pos_auto_engines, when a row is inserted in the table, it
+# is associated with the engine of the table at insertion time, and it will
+# only be deleted during record_gtid from a table of the same engine. Since we
+# alter the table from MyISAM to InnoDB at the start of this test, we should
+# end up with 4 rows: two left-over from when the table was MyISAM, and two
+# left-over from the InnoDB part.
+--echo Check that no more than the expected last four GTIDs are in mysql.gtid_slave_pos
+select count(4) <= 4 from mysql.gtid_slave_pos order by domain_id, sub_id;
 
 --connection server_1
 --source include/rpl_end.inc

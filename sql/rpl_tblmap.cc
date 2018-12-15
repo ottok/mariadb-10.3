@@ -13,7 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 
 #ifdef HAVE_REPLICATION
@@ -46,7 +46,8 @@ table_mapping::table_mapping()
 		   offsetof(entry,table_id),sizeof(ulong),
 		   0,0,0);
   /* We don't preallocate any block, this is consistent with m_free=0 above */
-  init_alloc_root(&m_mem_root, TABLE_ID_HASH_SIZE*sizeof(entry), 0, MYF(0));
+  init_alloc_root(&m_mem_root, "table_mapping",
+                  TABLE_ID_HASH_SIZE*sizeof(entry), 0, MYF(0));
   DBUG_VOID_RETURN;
 }
 
@@ -66,8 +67,8 @@ TABLE* table_mapping::get_table(ulong table_id)
   entry *e= find_entry(table_id);
   if (e) 
   {
-    DBUG_PRINT("info", ("tid %lu -> table 0x%lx (%s)", 
-			table_id, (long) e->table,
+    DBUG_PRINT("info", ("tid %lu -> table %p (%s)", 
+			table_id, e->table,
 			MAYBE_TABLE_NAME(e->table)));
     DBUG_RETURN(e->table);
   }
@@ -105,9 +106,9 @@ int table_mapping::expand()
 int table_mapping::set_table(ulong table_id, TABLE* table)
 {
   DBUG_ENTER("table_mapping::set_table(ulong,TABLE*)");
-  DBUG_PRINT("enter", ("table_id: %lu  table: 0x%lx (%s)", 
+  DBUG_PRINT("enter", ("table_id: %lu  table: %p (%s)", 
 		       table_id, 
-		       (long) table, MAYBE_TABLE_NAME(table)));
+		       table, MAYBE_TABLE_NAME(table)));
   entry *e= find_entry(table_id);
   if (e == 0)
   {
@@ -133,8 +134,8 @@ int table_mapping::set_table(ulong table_id, TABLE* table)
     DBUG_RETURN(ERR_MEMORY_ALLOCATION);
   }
 
-  DBUG_PRINT("info", ("tid %lu -> table 0x%lx (%s)", 
-		      table_id, (long) e->table,
+  DBUG_PRINT("info", ("tid %lu -> table %p (%s)", 
+		      table_id, e->table,
 		      MAYBE_TABLE_NAME(e->table)));
   DBUG_RETURN(0);		// All OK
 }

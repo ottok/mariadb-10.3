@@ -1,5 +1,4 @@
-SET GLOBAL innodb_file_format = `Barracuda`;
-SET GLOBAL innodb_file_per_table = ON;
+call mtr.add_suppression("InnoDB: Cannot add field .* in table");
 # Test 1) Show the page size from Information Schema
 SELECT variable_value FROM information_schema.global_status
 WHERE LOWER(variable_name) = 'innodb_page_size';
@@ -223,7 +222,6 @@ FROM information_schema.tables WHERE table_name = 't1';
 table_name	row_format	create_options
 t1	Compressed	row_format=COMPRESSED
 DROP TABLE t1;
-SET GLOBAL innodb_file_format = `Barracuda`;
 CREATE TABLE t2(d varchar(17) PRIMARY KEY) ENGINE=innodb DEFAULT CHARSET=utf8;
 CREATE TABLE t3(a int PRIMARY KEY) ENGINE=innodb;
 INSERT INTO t3 VALUES (22),(44),(33),(55),(66);
@@ -370,35 +368,30 @@ CREATE INDEX t1t ON t1 (t(767));
 BEGIN;
 UPDATE t1 SET t=@e;
 ROLLBACK;
-CREATE INDEX t1u ON t1 (u(767));
-ERROR 42000: Row size too large. The maximum row size for the used table type, not counting BLOBs, is 8126. This includes storage overhead, check the manual. You have to change some columns to TEXT or BLOBs
-CREATE INDEX t1ut ON t1 (u(767), t(767));
-ERROR 42000: Row size too large. The maximum row size for the used table type, not counting BLOBs, is 8126. This includes storage overhead, check the manual. You have to change some columns to TEXT or BLOBs
-CREATE INDEX t1st ON t1 (s(767), t(767));
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` blob,
-  `b` blob,
-  `c` blob,
-  `d` blob,
-  `e` blob,
-  `f` blob,
-  `g` blob,
-  `h` blob,
-  `i` blob,
-  `j` blob,
-  `k` blob,
-  `l` blob,
-  `m` blob,
-  `n` blob,
-  `o` blob,
-  `p` blob,
-  `q` blob,
-  `r` blob,
-  `s` blob,
-  `t` blob,
-  `u` blob,
+  `a` blob DEFAULT NULL,
+  `b` blob DEFAULT NULL,
+  `c` blob DEFAULT NULL,
+  `d` blob DEFAULT NULL,
+  `e` blob DEFAULT NULL,
+  `f` blob DEFAULT NULL,
+  `g` blob DEFAULT NULL,
+  `h` blob DEFAULT NULL,
+  `i` blob DEFAULT NULL,
+  `j` blob DEFAULT NULL,
+  `k` blob DEFAULT NULL,
+  `l` blob DEFAULT NULL,
+  `m` blob DEFAULT NULL,
+  `n` blob DEFAULT NULL,
+  `o` blob DEFAULT NULL,
+  `p` blob DEFAULT NULL,
+  `q` blob DEFAULT NULL,
+  `r` blob DEFAULT NULL,
+  `s` blob DEFAULT NULL,
+  `t` blob DEFAULT NULL,
+  `u` blob DEFAULT NULL,
   KEY `t1a` (`a`(767)),
   KEY `t1b` (`b`(767)),
   KEY `t1c` (`c`(767)),
@@ -418,12 +411,9 @@ t1	CREATE TABLE `t1` (
   KEY `t1q` (`q`(767)),
   KEY `t1r` (`r`(767)),
   KEY `t1s` (`s`(767)),
-  KEY `t1t` (`t`(767)),
-  KEY `t1st` (`s`(767),`t`(767))
+  KEY `t1t` (`t`(767))
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC
 DROP TABLE t1;
-SET GLOBAL innodb_file_format = `Barracuda`;
-SET GLOBAL innodb_file_per_table = ON;
 Test an assertion failure on purge.
 CREATE TABLE t1_purge (
 A int,
@@ -464,8 +454,6 @@ DELETE FROM t1_purge;
 DELETE FROM t2_purge;
 DELETE FROM t3_purge;
 DELETE FROM t4_purge;
-SET GLOBAL innodb_file_per_table=on;
-SET GLOBAL innodb_file_format='Barracuda';
 SET @r=REPEAT('a',500);
 CREATE TABLE tlong(a int,
 v1 varchar(500), v2 varchar(500), v3 varchar(500),
@@ -510,22 +498,22 @@ CREATE INDEX ndx_p ON tlong2 (p(500));
 SHOW CREATE TABLE tlong2;
 Table	Create Table
 tlong2	CREATE TABLE `tlong2` (
-  `a` blob,
-  `b` blob,
-  `c` blob,
-  `d` blob,
-  `e` blob,
-  `f` blob,
-  `g` blob,
-  `h` blob,
-  `i` blob,
-  `j` blob,
-  `k` blob,
-  `l` blob,
-  `m` blob,
-  `n` blob,
-  `o` blob,
-  `p` blob,
+  `a` blob DEFAULT NULL,
+  `b` blob DEFAULT NULL,
+  `c` blob DEFAULT NULL,
+  `d` blob DEFAULT NULL,
+  `e` blob DEFAULT NULL,
+  `f` blob DEFAULT NULL,
+  `g` blob DEFAULT NULL,
+  `h` blob DEFAULT NULL,
+  `i` blob DEFAULT NULL,
+  `j` blob DEFAULT NULL,
+  `k` blob DEFAULT NULL,
+  `l` blob DEFAULT NULL,
+  `m` blob DEFAULT NULL,
+  `n` blob DEFAULT NULL,
+  `o` blob DEFAULT NULL,
+  `p` blob DEFAULT NULL,
   KEY `ndx_c` (`c`(500)),
   KEY `ndx_d` (`d`(500)),
   KEY `ndx_e` (`e`(500)),
@@ -554,7 +542,7 @@ SHOW WARNINGS;
 Level	Code	Message
 ROLLBACK;
 DROP TABLE bug12547647;
-SET SESSION innodb_strict_mode = off;
+SET SESSION innodb_strict_mode = on;
 CREATE TABLE t1(
 c text NOT NULL, d text NOT NULL,
 PRIMARY KEY (c(767),d(767)))

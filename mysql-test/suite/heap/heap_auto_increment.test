@@ -35,10 +35,6 @@ drop table t1;
 # End of 4.1 tests
 
 --echo #
---echo # Start of 5.5 tests
---echo #
-
---echo #
 --echo # MDEV-16534 PPC64: Unexpected error with a negative values into auto-increment columns in HEAP, MyISAM, ARIA
 --echo #
 
@@ -56,5 +52,16 @@ DROP TABLE t1;
 
 --echo #
 --echo # End of 5.5 tests
+--echo #
+
+--echo #
+--echo # MDEV-15352 AUTO_INCREMENT breaks after updating a column value to a negative number
+--echo #
+
+SET @engine='MEMORY';
+--source include/autoinc_mdev15353.inc
+
+--echo #
+--echo # End of 10.2 tests
 --echo #
 

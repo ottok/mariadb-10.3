@@ -1377,7 +1377,7 @@ int ha_tokudb::open_secondary_dictionary(
     char* newname = NULL;
     size_t newname_len = 0;
 
-    sprintf(dict_name, "key-%s", key_info->name);
+    sprintf(dict_name, "key-%s", key_info->name.str);
 
     newname_len = get_max_dict_name_path_length(name);
     newname =
@@ -1691,7 +1691,7 @@ int ha_tokudb::initialize_share(const char* name, int mode) {
         } else {
             share->_key_descriptors[i]._is_unique = false;
             share->_key_descriptors[i]._name =
-                tokudb::memory::strdup(table_share->key_info[i].name, 0);
+                tokudb::memory::strdup(table_share->key_info[i].name.str, 0);
         }
 
         if (table_share->key_info[i].flags & HA_NOSAME) {
@@ -2086,7 +2086,7 @@ int ha_tokudb::write_frm_data(DB* db, DB_TXN* txn, const char* frm_name) {
     size_t frm_len = 0;
     int error = 0;
 
-#if 100000 <= MYSQL_VERSION_ID && MYSQL_VERSION_ID <= 100199
+#if 100000 <= MYSQL_VERSION_ID
     error = table_share->read_frm_image((const uchar**)&frm_data,&frm_len);
     if (error) { goto cleanup; }
 #else    
@@ -2128,7 +2128,7 @@ int ha_tokudb::verify_frm_data(const char* frm_name, DB_TXN* txn) {
     HA_METADATA_KEY curr_key = hatoku_frm_data;
 
     // get the frm data from MySQL
-#if 100000 <= MYSQL_VERSION_ID && MYSQL_VERSION_ID <= 100199
+#if 100000 <= MYSQL_VERSION_ID
     error = table_share->read_frm_image((const uchar**)&mysql_frm_data,&mysql_frm_len);
     if (error) { 
         goto cleanup;
@@ -3571,7 +3571,7 @@ int ha_tokudb::is_index_unique(bool* is_unique, DB_TXN* txn, DB* db, KEY* key_in
                 "Verifying index uniqueness: Checked %llu of %llu rows in key-%s.",
                 (long long unsigned) cnt,
                 share->row_count(),
-                key_info->name);
+                key_info->name.str);
             thd_proc_info(thd, status_msg);
             if (thd_kill_level(thd)) {
                 my_error(ER_QUERY_INTERRUPTED, MYF(0));
@@ -3596,7 +3596,7 @@ cleanup:
     return error;
 }
 
-int ha_tokudb::is_val_unique(bool* is_unique, uchar* record, KEY* key_info, uint dict_index, DB_TXN* txn) {
+int ha_tokudb::is_val_unique(bool* is_unique, const uchar* record, KEY* key_info, uint dict_index, DB_TXN* txn) {
     int error = 0;
     bool has_null;
     DBC* tmp_cursor = NULL;
@@ -4014,7 +4014,6 @@ int ha_tokudb::write_row(uchar * record) {
     // some crap that needs to be done because MySQL does not properly abstract
     // this work away from us, namely filling in auto increment and setting auto timestamp
     //
-    ha_statistic_increment(&SSV::ha_write_count);
 #if MYSQL_VERSION_ID < 50600
     if (table->timestamp_field_type & TIMESTAMP_AUTO_SET_ON_INSERT) {
         table->timestamp_field->set_time();
@@ -4183,7 +4182,7 @@ bool ha_tokudb::key_changed(uint keynr, const uchar * old_row, const uchar * new
 //      0 on success
 //      error otherwise
 //
-int ha_tokudb::update_row(const uchar * old_row, uchar * new_row) {
+int ha_tokudb::update_row(const uchar * old_row, const uchar * new_row) {
     TOKUDB_HANDLER_DBUG_ENTER("");
     DBT prim_key, old_prim_key, prim_row, old_prim_row;
     int UNINIT_VAR(error);
@@ -4199,7 +4198,6 @@ int ha_tokudb::update_row(const uchar * old_row, uchar * new_row) {
     memset((void *) &prim_row, 0, sizeof(prim_row));
     memset((void *) &old_prim_row, 0, sizeof(old_prim_row));
 
-    ha_statistic_increment(&SSV::ha_update_count);
 #if MYSQL_VERSION_ID < 50600
     if (table->timestamp_field_type & TIMESTAMP_AUTO_SET_ON_UPDATE) {
         table->timestamp_field->set_time();
@@ -4366,8 +4364,6 @@ int ha_tokudb::delete_row(const uchar * record) {
     THD* thd = ha_thd();
     uint curr_num_DBs;
     tokudb_trx_data* trx = (tokudb_trx_data *) thd_get_ha_data(thd, tokudb_hton);
-
-    ha_statistic_increment(&SSV::ha_delete_count);
 
     //
     // grab reader lock on numDBs_lock
@@ -4926,7 +4922,6 @@ int ha_tokudb::read_full_row(uchar * buf) {
 // 
 int ha_tokudb::index_next_same(uchar* buf, const uchar* key, uint keylen) {
     TOKUDB_HANDLER_DBUG_ENTER("");
-    ha_statistic_increment(&SSV::ha_read_next_count);
 
     DBT curr_key;
     DBT found_key;
@@ -5015,7 +5010,6 @@ int ha_tokudb::index_read(
         cursor->c_remove_restriction(cursor);
     }
 
-    ha_statistic_increment(&SSV::ha_read_key_count);
     memset((void *) &row, 0, sizeof(row));
 
     info.ha = this;
@@ -5667,7 +5661,6 @@ cleanup:
 //
 int ha_tokudb::index_next(uchar * buf) {
     TOKUDB_HANDLER_DBUG_ENTER("");
-    ha_statistic_increment(&SSV::ha_read_next_count);
     int error = get_next(buf, 1, NULL, key_read);
     TOKUDB_HANDLER_DBUG_RETURN(error);
 }
@@ -5689,7 +5682,6 @@ int ha_tokudb::index_read_last(uchar * buf, const uchar * key, uint key_len) {
 //
 int ha_tokudb::index_prev(uchar * buf) {
     TOKUDB_HANDLER_DBUG_ENTER("");
-    ha_statistic_increment(&SSV::ha_read_prev_count);
     int error = get_next(buf, -1, NULL, key_read);
     TOKUDB_HANDLER_DBUG_RETURN(error);
 }
@@ -5712,8 +5704,6 @@ int ha_tokudb::index_first(uchar * buf) {
     THD* thd = ha_thd();
     tokudb_trx_data* trx = (tokudb_trx_data *) thd_get_ha_data(thd, tokudb_hton);;
     HANDLE_INVALID_CURSOR();
-
-    ha_statistic_increment(&SSV::ha_read_first_count);
 
     info.ha = this;
     info.buf = buf;
@@ -5756,8 +5746,6 @@ int ha_tokudb::index_last(uchar * buf) {
     THD* thd = ha_thd();
     tokudb_trx_data* trx = (tokudb_trx_data *) thd_get_ha_data(thd, tokudb_hton);;
     HANDLE_INVALID_CURSOR();
-
-    ha_statistic_increment(&SSV::ha_read_last_count);
 
     info.ha = this;
     info.buf = buf;
@@ -5838,7 +5826,6 @@ int ha_tokudb::rnd_end() {
 //
 int ha_tokudb::rnd_next(uchar * buf) {
     TOKUDB_HANDLER_DBUG_ENTER("");
-    ha_statistic_increment(&SSV::ha_read_rnd_next_count);
     int error = get_next(buf, 1, NULL, false);
     TOKUDB_HANDLER_DBUG_RETURN(error);
 }
@@ -5944,7 +5931,6 @@ int ha_tokudb::rnd_pos(uchar * buf, uchar * pos) {
     DBT* key = get_pos(&db_pos, pos); 
 
     unpack_entire_row = true;
-    ha_statistic_increment(&SSV::ha_read_rnd_count);
     tokudb_active_index = MAX_KEY;
 
     THD *thd = ha_thd();
@@ -6877,7 +6863,7 @@ void ha_tokudb::update_create_info(HA_CREATE_INFO* create_info) {
 // during drop table, we do not attempt to remove already dropped
 // indexes because we did not keep status.tokudb in sync with list of indexes.
 //
-int ha_tokudb::remove_key_name_from_status(DB* status_block, char* key_name, DB_TXN* txn) {
+int ha_tokudb::remove_key_name_from_status(DB* status_block, const char* key_name, DB_TXN* txn) {
     int error;
     uchar status_key_info[FN_REFLEN + sizeof(HA_METADATA_KEY)];
     HA_METADATA_KEY md_key = hatoku_key_name;
@@ -6903,7 +6889,8 @@ int ha_tokudb::remove_key_name_from_status(DB* status_block, char* key_name, DB_
 // writes the key name in status.tokudb, so that we may later delete or rename
 // the dictionary associated with key_name
 //
-int ha_tokudb::write_key_name_to_status(DB* status_block, char* key_name, DB_TXN* txn) {
+int ha_tokudb::write_key_name_to_status(DB* status_block, const char* key_name,
+ DB_TXN* txn) {
     int error;
     uchar status_key_info[FN_REFLEN + sizeof(HA_METADATA_KEY)];
     HA_METADATA_KEY md_key = hatoku_key_name;
@@ -6942,7 +6929,7 @@ void ha_tokudb::trace_create_table_info(TABLE* form) {
             TOKUDB_HANDLER_TRACE(
                 "field:%d:%s:type=%d:flags=%x",
                 i,
-                field->field_name,
+                field->field_name.str,
                 field->type(),
                 field->flags);
         }
@@ -6951,7 +6938,7 @@ void ha_tokudb::trace_create_table_info(TABLE* form) {
             TOKUDB_HANDLER_TRACE(
                 "key:%d:%s:%d",
                 i,
-                key->name,
+                key->name.str,
                 key->user_defined_key_parts);
             uint p;
             for (p = 0; p < key->user_defined_key_parts; p++) {
@@ -6962,7 +6949,7 @@ void ha_tokudb::trace_create_table_info(TABLE* form) {
                     i,
                     p,
                     key_part->length,
-                    field->field_name,
+                    field->field_name.str,
                     field->type(),
                     field->flags);
             }
@@ -7072,7 +7059,7 @@ int ha_tokudb::create_secondary_dictionary(
         goto cleanup;
     }
 
-    sprintf(dict_name, "key-%s", key_info->name);
+    sprintf(dict_name, "key-%s", key_info->name.str);
     make_name(newname, newname_len, name, dict_name);
 
     prim_key = (hpk) ? NULL : &form->s->key_info[primary_key];
@@ -7312,7 +7299,7 @@ int ha_tokudb::create(
                 "This is probably due to an alter table engine=TokuDB. To load this "
                 "table, do a dump and load",
                 name,
-                field->field_name
+                field->field_name.str
                 );
             error = HA_ERR_UNSUPPORTED;
             goto cleanup;
@@ -7442,7 +7429,7 @@ int ha_tokudb::create(
 
             error = write_key_name_to_status(
                 status_block,
-                form->s->key_info[i].name,
+                form->s->key_info[i].name.str,
                 txn);
             if (error) {
                 goto cleanup;
@@ -8169,7 +8156,8 @@ int ha_tokudb::tokudb_add_index(
     //
     for (uint i = 0; i < num_of_keys; i++) {
         for (uint j = 0; j < table_arg->s->keys; j++) {
-            if (strcmp(key_info[i].name, table_arg->s->key_info[j].name) == 0) {
+            if (strcmp(key_info[i].name.str,
+                       table_arg->s->key_info[j].name.str) == 0) {
                 error = HA_ERR_WRONG_COMMAND;
                 goto cleanup;
             }
@@ -8494,7 +8482,7 @@ int ha_tokudb::tokudb_add_index(
     // now write stuff to status.tokudb
     //
     for (uint i = 0; i < num_of_keys; i++) {
-        write_key_name_to_status(share->status_block, key_info[i].name, txn);
+        write_key_name_to_status(share->status_block, key_info[i].name.str, txn);
     }
     share->unlock();
     
@@ -8625,7 +8613,7 @@ int ha_tokudb::drop_indexes(uint* key_num,
 
         error = remove_key_name_from_status(
             share->status_block,
-            key_info[curr_index].name,
+            key_info[curr_index].name.str,
             txn);
         if (error) {
             goto cleanup;
@@ -8634,7 +8622,7 @@ int ha_tokudb::drop_indexes(uint* key_num,
         error = delete_or_rename_dictionary(
             share->full_table_name(),
             NULL,
-            key_info[curr_index].name,
+            key_info[curr_index].name.str,
             true,
             txn,
             true);
@@ -8750,7 +8738,7 @@ int ha_tokudb::truncate_dictionary(uint keynr, DB_TXN* txn) {
         error = delete_or_rename_dictionary(
             share->full_table_name(),
             NULL,
-            table_share->key_info[keynr].name,
+            table_share->key_info[keynr].name.str,
             true, //is_key
             txn,
             true); // is a delete

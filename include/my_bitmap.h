@@ -45,6 +45,8 @@ extern "C" {
 /* compatibility functions */
 #define bitmap_init(A,B,C,D) my_bitmap_init(A,B,C,D)
 #define bitmap_free(A) my_bitmap_free(A)
+/* Reset memory. Faster then doing a full bzero */
+#define my_bitmap_clear(A) ((A)->bitmap= 0)
 
 extern void create_last_word_mask(MY_BITMAP *map);
 extern my_bool my_bitmap_init(MY_BITMAP *map, my_bitmap_map *buf, uint n_bits,
@@ -58,6 +60,7 @@ extern my_bool bitmap_is_overlapping(const MY_BITMAP *map1,
 extern my_bool bitmap_test_and_set(MY_BITMAP *map, uint bitmap_bit);
 extern my_bool bitmap_test_and_clear(MY_BITMAP *map, uint bitmap_bit);
 extern my_bool bitmap_fast_test_and_set(MY_BITMAP *map, uint bitmap_bit);
+extern my_bool bitmap_fast_test_and_clear(MY_BITMAP *map, uint bitmap_bit);
 extern my_bool bitmap_union_is_set_all(const MY_BITMAP *map1,
                                        const MY_BITMAP *map2);
 extern my_bool bitmap_exists_intersection(const MY_BITMAP **bitmap_array,

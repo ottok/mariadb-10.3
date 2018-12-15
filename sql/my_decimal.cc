@@ -14,7 +14,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <my_global.h>
+#include "mariadb.h"
 #include "sql_priv.h"
 #include <time.h>
 
@@ -238,7 +238,7 @@ int my_decimal2binary(uint mask, const my_decimal *d, uchar *bin, int prec,
     E_DEC_OOM
 */
 
-int str2my_decimal(uint mask, const char *from, uint length,
+int str2my_decimal(uint mask, const char *from, size_t length,
                    CHARSET_INFO *charset, my_decimal *decimal_value,
                    const char **end_ptr)
 {

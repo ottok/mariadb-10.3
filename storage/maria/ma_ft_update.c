@@ -28,6 +28,8 @@ void _ma_ft_segiterator_init(MARIA_HA *info, uint keynr, const uchar *record,
   ftsi->num=info->s->keyinfo[keynr].keysegs;
   ftsi->seg=info->s->keyinfo[keynr].seg;
   ftsi->rec=record;
+  ftsi->pos= 0;                          /* Avoid warnings from gcc */
+  ftsi->len= 0;                          /* Avoid warnings from gcc */
   DBUG_VOID_RETURN;
 }
 
@@ -83,7 +85,7 @@ uint _ma_ft_segiterator(register FT_SEG_ITERATOR *ftsi)
   if (ftsi->seg->flag & HA_BLOB_PART)
   {
     ftsi->len= _ma_calc_blob_length(ftsi->seg->bit_start,ftsi->pos);
-    memcpy(&ftsi->pos, ftsi->pos+ftsi->seg->bit_start, sizeof(char*));
+    memcpy((char**) &ftsi->pos, ftsi->pos+ftsi->seg->bit_start, sizeof(char*));
     DBUG_RETURN(1);
   }
   ftsi->len=ftsi->seg->length;
@@ -184,7 +186,7 @@ int _ma_ft_cmp(MARIA_HA *info, uint keynr, const uchar *rec1, const uchar *rec2)
     if ((ftsi1.pos != ftsi2.pos) &&
         (!ftsi1.pos || !ftsi2.pos ||
          ha_compare_text(cs, ftsi1.pos,ftsi1.len,
-                         ftsi2.pos,ftsi2.len,0,0)))
+                         ftsi2.pos,ftsi2.len,0)))
       DBUG_RETURN(THOSE_TWO_DAMN_KEYS_ARE_REALLY_DIFFERENT);
   }
   DBUG_RETURN(GEE_THEY_ARE_ABSOLUTELY_IDENTICAL);
@@ -212,7 +214,7 @@ int _ma_ft_update(MARIA_HA *info, uint keynr, uchar *keybuf,
   while(old_word->pos && new_word->pos)
   {
     cmp= ha_compare_text(cs, (uchar*) old_word->pos,old_word->len,
-                             (uchar*) new_word->pos,new_word->len,0,0);
+                             (uchar*) new_word->pos,new_word->len,0);
     cmp2= cmp ? 0 : (fabs(old_word->weight - new_word->weight) > 1.e-5);
 
     if (cmp < 0 || cmp2)
@@ -287,17 +289,10 @@ MARIA_KEY *_ma_ft_make_key(MARIA_HA *info, MARIA_KEY *key, uint keynr,
                            FT_WORD *wptr, my_off_t filepos)
 {
   uchar buf[HA_FT_MAXBYTELEN+16];
+    float weight=(float) ((filepos==HA_OFFSET_ERROR) ? 0 : wptr->weight);
   DBUG_ENTER("_ma_ft_make_key");
 
-#if HA_FT_WTYPE == HA_KEYTYPE_FLOAT
-  {
-    float weight=(float) ((filepos==HA_OFFSET_ERROR) ? 0 : wptr->weight);
-    mi_float4store(buf,weight);
-  }
-#else
-#error
-#endif
-
+  mi_float4store(buf,weight);
   int2store(buf+HA_FT_WLEN,wptr->len);
   memcpy(buf+HA_FT_WLEN+2,wptr->pos,wptr->len);
   /* Can't be spatial so it's ok to call _ma_make_key directly here */
