@@ -8,8 +8,8 @@ debian/additions/debian-start.inc.sh usr/share/mysql
 debian/additions/echo_stderr usr/share/mysql
 debian/additions/mariadb.conf.d/50-mysqld_safe.cnf etc/mysql/mariadb.conf.d
 debian/additions/mariadb.conf.d/50-server.cnf etc/mysql/mariadb.conf.d
-debian/additions/source_mariadb-10.1.py usr/share/apport/package-hooks
-debian/mariadb-server-10.1.insserv.conf => etc/insserv.conf.d/mariadb
+debian/additions/source_mariadb-10.3.py usr/share/apport/package-hooks
+debian/mariadb-server-10.3.insserv.conf => etc/insserv.conf.d/mariadb
 etc/apparmor.d/usr.sbin.mysqld
 [linux-any] lib/systemd/system/mariadb@.service
 [linux-any] lib/systemd/system/mariadb.service
@@ -65,7 +65,7 @@ usr/lib/*/mariadb18/plugin/server_audit.so
 usr/lib/*/mariadb18/plugin/simple_password_check.so
 usr/lib/*/mariadb18/plugin/sql_errlog.so
 usr/lib/*/mariadb18/plugin/wsrep_info.so
-usr/share/doc/mariadb-server-10.1/mysqld.sym.gz
+usr/share/doc/mariadb-server-10.3/mysqld.sym.gz
 usr/share/mysql/errmsg-utf8.txt
 usr/share/mysql/fill_help_tables.sql
 usr/share/mysql/maria_add_gis_sp.sql

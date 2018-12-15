@@ -1,5 +1,5 @@
 Tests: smoke
-Depends: mariadb-server-10.1
+Depends: mariadb-server-10.3
 Restrictions: allow-stderr needs-root isolation-container
 
 Tests: upstream

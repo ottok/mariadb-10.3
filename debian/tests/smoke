@@ -6,7 +6,7 @@ set -ex
 #
 # This test should be declared in debian/tests/control with a dependency
 # on the package that provides a configured MariaDB server (eg.
-# mariadb-server-10.1).
+# mariadb-server-10.3).
 #
 # This test should be declared in debian/tests/control with the
 # following restrictions:

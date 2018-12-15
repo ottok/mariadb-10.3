@@ -21,13 +21,13 @@ The official Debian package source is hosted on the Debian Gitlab server under
 the MariaDB/MySQL packaging team at https://salsa.debian.org/mariadb-team/. You
 are welcome to fork it and make merge requests.
 
-To get the latest official Debian packaging source of mariadb-10.1, clone the
+To get the latest official Debian packaging source of mariadb-10.3, clone the
 source repository with all relevant branches (master, upstream, pristine-tar) to
 your local environment using _git-buildpackage_:
-  gbp clone --pristine-tar https://salsa.debian.org/mariadb-team/mariadb-10.1.git
+  gbp clone --pristine-tar https://salsa.debian.org/mariadb-team/mariadb-10.3.git
 
 If you have your own fork and SSH keys set up on Salsa, you can run:
-  gbp clone --pristine-tar git@salsa.debian.org:<username>/mariadb-10.1.git
+  gbp clone --pristine-tar git@salsa.debian.org:<username>/mariadb-10.3.git
 
 
 The clone needs to be run only once. On later runs you can refresh your clone with

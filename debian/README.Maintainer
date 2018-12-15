@@ -44,14 +44,14 @@ See README.Contribute for details.
 ## Importing initial sources from upstream the first fime ##
 
 Create repository
-  mkdir mariadb-10.1
-  cd mariadb-10.1
+  mkdir mariadb-10.3
+  cd mariadb-10.3
   git init
   git branch upstream
-  gbp import-orig --pristine-tar ../../upstream/mariadb-10.1.20
+  gbp import-orig --pristine-tar ../../upstream/mariadb-10.3.20
 
 Fill in values prompted
-  What will be the source package name? [mariadb] mariadb-10.1
+  What will be the source package name? [mariadb] mariadb-10.3
   What is the upstream version? [10.1.20]
 
 Checkout master into working dir and finish up manually what needs to be done
@@ -79,7 +79,7 @@ https://mariadb.com/kb/en/mariadb/development/release-notes/
 ### Steps to import new upstream version ###
 
 Download new source package
-  cd pkg-mariadb-10.1
+  cd pkg-mariadb-10.3
   gbp import-orig --uscan --no-interactive --verbose
 
 Refresh patches
@@ -117,7 +117,7 @@ Then proceed to make a source only build
 
 Test more with upload to Launchpad
   COMMIT_ID=`git log -n 1 --oneline | cut -d ' ' -f 1`
-  PKG=mariadb-10.1
+  PKG=mariadb-10.3
   backportpackage --yes -u ppa:mysql-ubuntu/$PKG -d xenial -S ~`date '+%s'`.$COMMIT_ID $PKG*.dsc
 
 When done, push to Salsa:
@@ -135,8 +135,8 @@ Once you are sure there are no regressions, finally upload to Debian
   dput ftp-master *.changes
 
 After the upload, check that everything is OK at
-* https://tracker.debian.org/mariadb-10.1 (Debian)
-* https://launchpad.net/ubuntu/+source/mariadb-10.1 (Ubuntu)
+* https://tracker.debian.org/mariadb-10.3 (Debian)
+* https://launchpad.net/ubuntu/+source/mariadb-10.3 (Ubuntu)
 
 ### Maintaining debian/copyright ###
 
