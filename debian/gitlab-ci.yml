@@ -19,7 +19,7 @@ build package:
     expire_in: 180 day
     name: "$CI_BUILD_NAME"
     paths:
-        - ${WORKING_DIR}/
+      - ${WORKING_DIR}/
   script:
     - gbp pull --ignore-branch --pristine-tar --track-missing
     - while true; do sleep 600; echo "10 minutes passed" >&2; done & # Progress keeper since build is long and silent
@@ -82,3 +82,117 @@ run lintian:
 #    - piuparts --hard-link -e ${CHROOT_PATH} ${WORKING_DIR}/*.deb
 #  tags:
 #    - privileged
+
+test install:
+  stage: test
+  image: debian:sid
+  artifacts:
+    when: always
+    expire_in: 180 day
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - mkdir debug
+    - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
+    - apt-get update
+    - apt-get install -y ./*.deb
+    - mariadb --version
+    - find /var/lib/mysql -ls > debug/var-lib-mysql.list
+    - cp -ra /etc/mysql debug/etc-mysql
+    - service mysql restart || true # Always proceed even if init failed
+    - service mysql status || true
+    - cp -ra /var/log/mysql debug/var-log-mysql
+    - mariadb --skip-column-names -e "select @@version, @@version_comment"
+    - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
+
+test upgrade:
+  stage: test
+  image: debian:sid
+  artifacts:
+    when: always
+    expire_in: 180 day
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - mkdir debug
+    - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
+    - apt-get update
+    - apt-get install -y 'mariadb-*'
+    - service mysql status || true # Always proceed even if init failed
+    - service mysql restart || true
+    - mariadb --skip-column-names -e "select @@version, @@version_comment"
+    - apt-get install -y ./*.deb
+    - mariadb --version
+    - find /var/lib/mysql -ls > debug/var-lib-mysql.list
+    - cp -ra /etc/mysql debug/etc-mysql
+    - service mysql restart || true # Always proceed even if init failed
+    - service mysql status || true
+    - cp -ra /var/log/mysql debug/var-log-mysql
+    - mariadb --skip-column-names -e "select @@version, @@version_comment"
+    - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
+
+# Upgrading from MySQL 5.7 does not yet fully work due to differences in
+# auth-socket plugin name and Password column in user table.
+#test mysql upgrade:
+#  stage: test
+#  image: debian:sid
+#  script:
+#    - apt-get update
+#    - apt-get install -y mysql-server
+#    - /etc/init.d/mysql restart
+#    - mysql --version
+#    - echo 'SHOW DATABASES;' | mysql
+#    - cd ${WORKING_DIR}; apt-get install -y ./*.deb
+#    - /etc/init.d/mysql restart
+#    - mariadb --version
+#    - echo 'SHOW DATABASES;' | mariadb
+
+test features:
+  stage: test
+  image: debian:sid
+  artifacts:
+    when: always
+    expire_in: 180 day
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - mkdir debug
+    - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
+    - apt-get update
+    - apt-get install -y ./*.deb
+    - mariadb --version
+    - find /var/lib/mysql -ls > debug/var-lib-mysql.list
+    - cp -ra /etc/mysql debug/etc-mysql
+    - service mysql restart || true # Always proceed even if init failed
+    - service mysql status || true
+    - cp -ra /var/log/mysql debug/var-log-mysql
+    # Print info about server
+    - mariadb --skip-column-names -e "select @@version, @@version_comment"
+    - mariadb --skip-column-names -e "select engine, support, transactions, savepoints from information_schema.engines order by engine" | sort
+    - mariadb --skip-column-names -e "select plugin_name, plugin_status, plugin_type, plugin_library, plugin_license from information_schema.all_plugins order by plugin_name, plugin_library"
+    # Test various features
+    - mariadb -e "CREATE DATABASE db"
+    - mariadb -e "CREATE TABLE db.t_innodb(a1 SERIAL, c1 CHAR(8)) ENGINE=InnoDB; INSERT INTO db.t_innodb VALUES (1,'"'"'foo'"'"'),(2,'"'"'bar'"'"')"
+    - mariadb -e "CREATE TABLE db.t_myisam(a2 SERIAL, c2 CHAR(8)) ENGINE=MyISAM; INSERT INTO db.t_myisam VALUES (1,'"'"'foo'"'"'),(2,'"'"'bar'"'"')"
+    - mariadb -e "CREATE TABLE db.t_aria(a3 SERIAL, c3 CHAR(8)) ENGINE=Aria; INSERT INTO db.t_aria VALUES (1,'"'"'foo'"'"'),(2,'"'"'bar'"'"')"
+    - mariadb -e "CREATE TABLE db.t_memory(a4 SERIAL, c4 CHAR(8)) ENGINE=MEMORY; INSERT INTO db.t_memory VALUES (1,'"'"'foo'"'"'),(2,'"'"'bar'"'"')"
+    - mariadb -e "CREATE ALGORITHM=MERGE VIEW db.v_merge AS SELECT * FROM db.t_innodb, db.t_myisam, db.t_aria"
+    - mariadb -e "CREATE ALGORITHM=TEMPTABLE VIEW db.v_temptable AS SELECT * FROM db.t_innodb, db.t_myisam, db.t_aria"
+    - mariadb -e "CREATE PROCEDURE db.p() SELECT * FROM db.v_merge"
+    - mariadb -e "CREATE FUNCTION db.f() RETURNS INT DETERMINISTIC RETURN 1"
+    # Test that the features still work (this step can be done e.g. after an upgrade)
+    - mariadb -e "SHOW TABLES IN db"
+    - mariadb -e "SELECT * FROM db.t_innodb; INSERT INTO db.t_innodb VALUES (3,'"'"'foo'"'"'),(4,'"'"'bar'"'"')"
+    - mariadb -e "SELECT * FROM db.t_myisam; INSERT INTO db.t_myisam VALUES (3,'"'"'foo'"'"'),(4,'"'"'bar'"'"')"
+    - mariadb -e "SELECT * FROM db.t_aria; INSERT INTO db.t_aria VALUES (3,'"'"'foo'"'"'),(4,'"'"'bar'"'"')"
+    - mariadb -e "SELECT * FROM db.t_memory; INSERT INTO db.t_memory VALUES (1,'"'"'foo'"'"'),(2,'"'"'bar'"'"')"
+    - mariadb -e "SELECT COUNT(*) FROM db.v_merge"
+    - mariadb -e "SELECT COUNT(*) FROM db.v_temptable"
+    - mariadb -e "CALL db.p()"
+    - mariadb -e "SELECT db.f()"
