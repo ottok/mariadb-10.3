@@ -110,12 +110,6 @@ collation-server      = utf8mb4_general_ci
 #
 # InnoDB is enabled by default with a 10MB datafile in /var/lib/mysql/.
 # Read the manual for more InnoDB related options. There are many!
-#
-# Allow index key prefixes up to 3072 bytes. If not set, the limit is 767 bytes.
-# This is important as utf8mb4 is used. See Debian bug #886756.
-innodb_file_format        = barracuda
-innodb_large_prefix       = on
-innodb_default_row_format = dynamic
 
 #
 # * Unix socket authentication plugin is built-in since 10.0.22-6
