@@ -1,3 +1,9 @@
+mariadb-10.3 (1:10.3.11-1~exp2) UNRELEASED; urgency=low
+
+  * Open new entry
+
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 16 Dec 2018 17:13:15 +0200
+
 mariadb-10.3 (1:10.3.11-1~exp1) experimental; urgency=low
 
   * Import to Debian latest major release of MariaDB (Closes: #867892)
