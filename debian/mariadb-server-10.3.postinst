@@ -100,7 +100,7 @@ EOF
     # Debian: beware of the bashisms...
     # Debian: can safely run on upgrades with existing databases
     set +e
-    bash /usr/bin/mysql_install_db --skip-auth-anonymous-user --auth-root-authentication-method=socket \
+    bash /usr/bin/mysql_install_db --auth-root-authentication-method=socket \
                                    --rpm --cross-bootstrap --user=mysql \
                                    --disable-log-bin  --skip-test-db 2>&1 | \
                                    $ERR_LOGGER
