@@ -1,0 +1,82 @@
+Description: Link against libatomic where necessary
+Author: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Forwarded: https://github.com/MariaDB/server/pull/979
+Last-Update: 2018-12-16
+
+--- a/configure.cmake
++++ b/configure.cmake
+@@ -920,6 +920,21 @@ int main()
+ }"
+ HAVE_GCC_ATOMIC_BUILTINS)
+ CHECK_CXX_SOURCE_COMPILES("
++#include <cstdint>
++int main() {
++    uint64_t x = 1;
++    __atomic_add_fetch(&x, 0, __ATOMIC_RELAXED);
++    return x;
++}
++" HAVE__ATOMIC_ADD_FETCH)
++if (NOT HAVE__ATOMIC_ADD_FETCH)
++    check_library_exists(atomic __atomic_add_fetch_8 "" HAVE_LIBATOMIC)
++    if (HAVE_LIBATOMIC)
++        SET(CMAKE_REQUIRED_LIBRARIES atomic)
++        SET(LIBATOMIC atomic)
++    endif()
++endif()
++CHECK_CXX_SOURCE_COMPILES("
+ int main()
+ {
+   long long int var= 1;
+--- a/libmysqld/CMakeLists.txt
++++ b/libmysqld/CMakeLists.txt
+@@ -145,7 +145,7 @@ ENDIF()
+
+
+ SET(LIBS
+-  dbug strings mysys mysys_ssl pcre vio
++  dbug strings mysys mysys_ssl pcre vio ${LIBATOMIC}
+   ${ZLIB_LIBRARY} ${SSL_LIBRARIES}
+   ${LIBWRAP} ${LIBCRYPT} ${LIBDL}
+   ${MYSQLD_STATIC_PLUGIN_LIBS}
+--- a/sql/CMakeLists.txt
++++ b/sql/CMakeLists.txt
+@@ -169,7 +169,8 @@ TARGET_LINK_LIBRARIES(sql ${MYSQLD_STATI
+   ${LIBWRAP} ${LIBCRYPT} ${LIBDL} ${CMAKE_THREAD_LIBS_INIT}
+   ${WSREP_LIB}
+   ${SSL_LIBRARIES}
+-  ${LIBSYSTEMD})
++  ${LIBSYSTEMD}
++  ${LIBATOMIC})
+
+ IF(WIN32)
+   SET(MYSQLD_SOURCE main.cc nt_servc.cc message.rc)
+--- a/storage/perfschema/unittest/CMakeLists.txt
++++ b/storage/perfschema/unittest/CMakeLists.txt
+@@ -29,4 +29,4 @@ ADD_DEPENDENCIES(pfs_server_stubs GenErr
+
+ MY_ADD_TESTS(pfs_instr_class pfs_instr_class-oom pfs_instr pfs_instr-oom
+              pfs_account-oom pfs_host-oom pfs_timer pfs_user-oom pfs pfs_misc
+-  EXT "cc" LINK_LIBRARIES perfschema mysys pfs_server_stubs)
++  EXT "cc" LINK_LIBRARIES perfschema mysys pfs_server_stubs ${LIBATOMIC})
+--- a/unittest/mysys/CMakeLists.txt
++++ b/unittest/mysys/CMakeLists.txt
+@@ -15,7 +15,7 @@
+
+ MY_ADD_TESTS(bitmap base64 my_atomic my_rdtsc lf my_malloc my_getopt dynstring
+              aes
+-             LINK_LIBRARIES mysys)
++             LINK_LIBRARIES mysys ${LIBATOMIC})
+ MY_ADD_TESTS(my_vsnprintf LINK_LIBRARIES strings mysys)
+
+ ADD_DEFINITIONS(${SSL_DEFINES})
+--- a/unittest/sql/CMakeLists.txt
++++ b/unittest/sql/CMakeLists.txt
+@@ -27,7 +27,7 @@ ELSE()
+   ADD_EXECUTABLE(explain_filename-t explain_filename-t.cc)
+ ENDIF()
+
+-TARGET_LINK_LIBRARIES(explain_filename-t sql mytap)
++TARGET_LINK_LIBRARIES(explain_filename-t sql mytap ${LIBATOMIC})
+ MY_ADD_TEST(explain_filename)
+
+ ADD_EXECUTABLE(mf_iocache-t mf_iocache-t.cc ../../sql/mf_iocache_encr.cc)
