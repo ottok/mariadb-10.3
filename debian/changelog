@@ -1,31 +1,23 @@
-mariadb-10.3 (1:10.3.11-1~exp3) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.11-1) unstable; urgency=low
 
-  * New changelog entry
-
- -- Otto Kekäläinen <otto@debian.org>  Tue, 18 Dec 2018 18:06:50 +0200
-
-mariadb-10.3 (1:10.3.11-1~exp2) experimental; urgency=low
-
-  * Partially revert c034491: Debian and Docker builds don't support --mem
+  [ Otto Kekäläinen ]
+  * Import to Debian latest major release of MariaDB (Closes: #867892)
+  * Packaging carries on all impromevements done on to the latest MariaDB
+    10.1.x packages in Debian unstable up until Dec 15th 2018.
+  * Drop the Hurd socket patch that it is already applied upstream
   * Update SSL/TLS keys as OpenSSL since 1.1.0 rejects weak keys by default
   * Remove innodb_* options from server config that are default in 10.3
   * Remove --skip-auth-anonymous-user deprecated in 10.3
   * Include also arch specific skiplists in CI tests
   * Make TokuDB explicitly depend on libjemalloc1
-  * Lintian fix: remove unnecessary Priority: optional definition
   * Follow Salsa-CI changes and update build image name to 'dockerbuilder'
-  * Rename gitlab-ci.yml following the Salsa CI example
   * Extend gitlab-ci to test installation and upgrade of MariaDB
 
- -- Otto Kekäläinen <otto@debian.org>  Tue, 18 Dec 2018 09:32:58 +0200
+  [ Vicențiu Ciorbaru ]
+  * Refresh c11_atomics patch for 10.3
+  * Fix MEMORY storage engine test
 
-mariadb-10.3 (1:10.3.11-1~exp1) experimental; urgency=low
-
-  * Import to Debian latest major release of MariaDB (Closes: #867892)
-  * Packaging carries on all impromevements done on to the latest MariaDB
-    10.1.x packages in Debian unstable up until Dec 15th 2018.
-
- -- Otto Kekäläinen <otto@debian.org>  Sat, 15 Dec 2018 19:20:12 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 20 Dec 2018 21:52:42 +0200
 
 mariadb-10.1 (1:10.1.37-3) unstable; urgency=low
 
