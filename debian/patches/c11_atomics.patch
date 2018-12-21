@@ -1,5 +1,5 @@
 Author: Vicențiu Ciorbaru <vicentiu@mariadb.org>
-Date:   Thu Dec 20 10:00:10 2018 +0200
+Date:   Fri Dec 21 19:14:04 2018 +0200
 
    Link with libatomic to enable C11 atomics support
 
@@ -7,6 +7,8 @@ Date:   Thu Dec 20 10:00:10 2018 +0200
    atomic operations. Check first if support is available without
    linking, otherwise use the library.
 
+diff --git a/configure.cmake b/configure.cmake
+index 42ba24961..2d183ea9f 100644
 --- a/configure.cmake
 +++ b/configure.cmake
 @@ -926,7 +926,25 @@ int main()
@@ -36,6 +38,23 @@ Date:   Thu Dec 20 10:00:10 2018 +0200
  
  IF(WITH_VALGRIND)
    SET(HAVE_valgrind 1)
+diff --git a/mysys/CMakeLists.txt b/mysys/CMakeLists.txt
+index 97890cc9d..d4f264d7a 100644
+--- a/mysys/CMakeLists.txt
++++ b/mysys/CMakeLists.txt
+@@ -78,6 +78,10 @@ TARGET_LINK_LIBRARIES(mysys dbug strings mysys_ssl ${ZLIB_LIBRARY}
+  ${LIBNSL} ${LIBM} ${LIBRT} ${LIBDL} ${LIBSOCKET} ${LIBEXECINFO} ${CRC32_LIBRARY})
+ DTRACE_INSTRUMENT(mysys)
+ 
++IF (HAVE_GCC_C11_ATOMICS_WITH_LIBATOMIC)
++  TARGET_LINK_LIBRARIES(mysys atomic)
++ENDIF()
++
+ IF(HAVE_BFD_H)
+   TARGET_LINK_LIBRARIES(mysys bfd)  
+ ENDIF(HAVE_BFD_H)
+diff --git a/sql/CMakeLists.txt b/sql/CMakeLists.txt
+index d85e588ab..68dde1de6 100644
 --- a/sql/CMakeLists.txt
 +++ b/sql/CMakeLists.txt
 @@ -178,6 +178,10 @@ ELSE()
