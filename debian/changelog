@@ -1,8 +1,14 @@
-mariadb-10.3 (1:10.3.11-2) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.11-2) unstable; urgency=low
 
-  * Open new entry.
+  [ Vicențiu Ciorbaru ]
+  * Update c11_atomics patch to include mysys. This should fix both
+    mips and armel build failures.
 
- -- Otto Kekäläinen <otto@debian.org>  Thu, 20 Dec 2018 23:02:49 +0200
+  [ Otto Kekäläinen ]
+  * Make libmariadb-dev depend on libssl-dev (Closes: #917135)
+  * Remove "Conflicts: libmariadbclient18 (<< 10.2.0)" (Closes: #917075)
+
+ -- Otto Kekäläinen <otto@debian.org>  Mon, 24 Dec 2018 18:50:31 +0200
 
 mariadb-10.3 (1:10.3.11-1) unstable; urgency=low
 
