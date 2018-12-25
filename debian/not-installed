@@ -82,6 +82,7 @@ usr/sql-bench/Data/ATIS/class_of_service.txt
 usr/sql-bench/Data/ATIS/flight_day.txt
 usr/sql-bench/Data/ATIS/transport.txt
 usr/bin/mysqlbug
+usr/bin/sst_dump
 usr/include/mysql/private/wsrep_xid.h
 usr/include/mysql/private/rpl_reporting.h
 usr/include/mysql/private/sql_partition.h
