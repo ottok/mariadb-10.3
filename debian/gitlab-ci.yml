@@ -196,3 +196,34 @@ test features:
     - mariadb -e "SELECT COUNT(*) FROM db.v_temptable"
     - mariadb -e "CALL db.p()"
     - mariadb -e "SELECT db.f()"
+
+test upgrade-libmysql:
+  stage: test
+  image: debian:sid
+  artifacts:
+    when: always
+    expire_in: 180 day
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - mkdir debug
+    - dpkg -l | grep -iE "maria|mysql|galera" || true
+    - apt-get update
+    - apt-get install -y pkg-config libmysqld-dev libmysqlclient-dev
+    - pkg-config --list-all
+    - apt-get install -y ./libmariadb3_*.deb ./mariadb-common_*.deb
+    - pkg-config --list-all
+    - apt-get install -y ./libmariadbclient18_*.deb
+    - pkg-config --list-all
+    - apt-get install -y ./libmariadb-dev_*.deb
+    - pkg-config --list-all
+    - apt-get install -y ./libmariadb-dev-compat_*.deb
+    - pkg-config --list-all
+    - apt-get install -y ./libmariadbd19_*.deb
+    - pkg-config --list-all
+    - apt-get install -y ./libmariadbd-dev_*.deb
+    - pkg-config --list-all
+    - apt-get install -y default-libmysqlclient-dev default-libmysqld-dev
+    - pkg-config --list-all
