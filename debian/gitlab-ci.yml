@@ -121,7 +121,7 @@ test upgrade:
     - mkdir debug
     - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
     - apt-get update
-    - apt-get install -y 'mariadb-*'
+    - apt-get install -y mariadb-server-10.1 # Debian unstable still has this and other -10.1 packages
     - service mysql status || true # Always proceed even if init failed
     - service mysql restart || true
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
