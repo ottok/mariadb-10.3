@@ -45,9 +45,14 @@ Depends: libmariadb3 (= ${binary:Version}),
          zlib1g-dev,
          ${misc:Depends},
          ${shlibs:Depends}
-Breaks: libmariadbclient-dev
-Replaces: libmariadbclient-dev
-Conflicts: libmariadbclient16-dev
+Breaks: libmariadbclient-dev,
+        libmysqlclient-dev,
+        libmysqld-dev
+Replaces: libmariadbclient-dev,
+          libmysqlclient-dev,
+          libmysqld-dev
+Conflicts: libmariadbclient16-dev,
+           libmysqlclient-dev
 Provides: libmariadbclient-dev
 Description: MariaDB database development files
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
@@ -67,15 +72,9 @@ Depends: libmariadb-dev (= ${binary:Version}),
          ${misc:Depends}
 Conflicts: libmariadb-client-lgpl-dev-compat,
            libmariadbclient-dev-compat,
-           libmysqlclient-dev,
-           libmysqlclient10-dev,
-           libmysqlclient12-dev,
-           libmysqlclient14-dev,
-           libmysqlclient15-dev,
-           libmysqlclient16-dev
+           libmysqlclient-dev
 Provides: libmariadb-client-lgpl-dev-compat,
-          libmariadbclient-dev-compat,
-          libmysqlclient-dev
+          libmariadbclient-dev-compat
 Breaks: libmariadb-client-lgpl-dev-compat,
         libmariadbclient-dev-compat,
         libmysqlclient-dev
@@ -475,8 +474,8 @@ Description: OQGraph storage engine for MariaDB
 
 Package: mariadb-plugin-tokudb
 Architecture: amd64
-Depends: mariadb-server-10.3 (= ${binary:Version}),
-         libjemalloc1 (>= 3.0.0~),
+Depends: libjemalloc1 (>= 3.0.0~),
+         mariadb-server-10.3 (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends}
 Breaks: mariadb-server-10.0,
