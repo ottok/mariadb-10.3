@@ -93,7 +93,7 @@ maintenance releases and any fix done upstream will therefore be included in
 Debian relatively quickly. You can send email to the developers mailing list
 or open a pull request at https://github.com/MariaDB/server.
 
-Follow these instructions is your fix is about packaging in Debian specifically.
+Follow these instructions if your fix is about packaging in Debian specifically.
 Start by using gitk or similar tool to browse the previous changes. Try to follow
 similar pattern in your new changes.
 
@@ -102,7 +102,7 @@ subdirectory. If you need to create changes outside the debian/ directory,
 then you need to create a patch file using the same pattern as the patches
 found in debian/patches and activated by a line in debian/patches/series
 
-Do not bundle in you commit any changes to debian/changelog. The correct changelog
+Do not bundle in your commit any changes to debian/changelog. The correct changelog
 entries will be created later by the maintainer using git-dch in an automated fashion.
 
 For an example of a patch adding commit see https://github.com/ottok/mariadb-10.0/commit/8d2a7c909
