@@ -83,6 +83,8 @@ usr/sql-bench/Data/ATIS/flight_day.txt
 usr/sql-bench/Data/ATIS/transport.txt
 usr/bin/mysqlbug
 usr/bin/sst_dump
+usr/bin/wsrep_sst_xtrabackup
+usr/bin/wsrep_sst_xtrabackup-v2
 usr/include/mysql/private/wsrep_xid.h
 usr/include/mysql/private/rpl_reporting.h
 usr/include/mysql/private/sql_partition.h
@@ -343,6 +345,8 @@ usr/share/mysql/mysql-test/mysql-test-run
 usr/share/man/man1/mysqlbug.1
 usr/share/man/man1/mysql.server.1
 usr/share/man/man1/my_safe_process.1
+usr/share/man/man1/wsrep_sst_xtrabackup-v2.1
+usr/share/man/man1/wsrep_sst_xtrabackup.1
 usr/share/groonga-normalizer-mysql/README.md
 usr/share/groonga-normalizer-mysql/lgpl-2.0.txt
 usr/share/groonga/README.md
