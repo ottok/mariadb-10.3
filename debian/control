@@ -76,6 +76,9 @@ Conflicts: libmariadb-client-lgpl-dev-compat,
 Provides: libmariadb-client-lgpl-dev-compat,
           libmariadbclient-dev-compat,
           libmysqlclient-dev
+Breaks: libmariadb-client-lgpl-dev-compat,
+        libmariadbclient-dev-compat,
+        libmysqlclient-dev
 Replaces: libmariadb-client-lgpl-dev-compat,
           libmariadbclient-dev-compat,
           libmysqlclient-dev
