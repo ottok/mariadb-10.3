@@ -134,12 +134,6 @@ Section: libs
 Depends: ${misc:Depends},
          ${shlibs:Depends}
 Multi-Arch: same
-Breaks: libmariadbd-dev (<< ${source:Version}),
-        libmariadbd18,
-        libmysqld-dev
-Replaces: libmariadbd-dev (<< ${source:Version}),
-          libmariadbd18,
-          libmysqld-dev
 Description: MariaDB embedded database, shared library
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
