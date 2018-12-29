@@ -1,15 +1,15 @@
-# Dutch mariadb-10.3.24-7 po-debconf translation,
+# Dutch mariadb-10 po-debconf translation,
 # Copyright (C) 2006 THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the mariadb-10.3 package.
 # Vincent Zweije <zweije@xs4all.nl>, 2006.
-# Frans Spiesschaert <Frans.Spiesschaert@yucom.be>, 2014, 2016.
+# Frans Spiesschaert <Frans.Spiesschaert@yucom.be>, 2014, 2016, 2018.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: mariadb-10.3.24-7\n"
+"Project-Id-Version: mariadb-10.2.7-1\n"
 "Report-Msgid-Bugs-To: mariadb-10.3@packages.debian.org\n"
-"POT-Creation-Date: 2016-04-13 11:44+0300\n"
-"PO-Revision-Date: 2016-04-18 20:55+0200\n"
+"POT-Creation-Date: 2016-04-30 22:44+0300\n"
+"PO-Revision-Date: 2018-03-29 21:25+0200\n"
 "Last-Translator: Frans Spiesschaert <Frans.Spiesschaert@yucom.be>\n"
 "Language-Team: Debian Dutch l10n Team <debian-l10n-dutch@lists.debian.org>\n"
 "Language: nl\n"
@@ -17,7 +17,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
-"X-Generator: Gtranslator 2.91.6\n"
+"X-Generator: Gtranslator 2.91.7\n"
 
 #. Type: note
 #. Description
@@ -110,6 +110,61 @@ msgstr ""
 "installeren of als een ander mariadb-serverpakket het al gebruikt, zou de "
 "data behouden moeten worden."
 
+#~ msgid "New password for the MariaDB \"root\" user:"
+#~ msgstr "Nieuw wachtwoord voor de MariaDB \"root\"-gebruiker:"
+
+#~ msgid ""
+#~ "While not mandatory, it is highly recommended that you set a password for "
+#~ "the MariaDB administrative \"root\" user."
+#~ msgstr ""
+#~ "Hoewel niet verplicht, wordt het sterk aangeraden een wachtwoord in te "
+#~ "stellen voor de \"root\"-gebruiker (beheerder) van MariaDB."
+
+#~ msgid "If this field is left blank, the password will not be changed."
+#~ msgstr ""
+#~ "Als dit veld leeg wordt gelaten, zal het wachtwoord niet worden veranderd."
+
+#~ msgid "Repeat password for the MariaDB \"root\" user:"
+#~ msgstr "Herhaal het wachtwoord voor de MariaDB \"root\"-gebruiker:"
+
+#~ msgid "Unable to set password for the MariaDB \"root\" user"
+#~ msgstr ""
+#~ "Kan het wachtwoord voor de MariaDB \"root\"-gebruiker niet instellen"
+
+#~ msgid ""
+#~ "An error occurred while setting the password for the MariaDB "
+#~ "administrative user. This may have happened because the account already "
+#~ "has a password, or because of a communication problem with the MariaDB "
+#~ "server."
+#~ msgstr ""
+#~ "Er is een fout opgetreden bij het instellen van het wachtwoord voor de "
+#~ "MariaDB-beheerder. Dat kan komen doordat het account al een wachtwoord "
+#~ "heeft, of omdat er een probleem was bij het communiceren met de MariaDB-"
+#~ "server."
+
+#~ msgid ""
+#~ "You should check the account's password after the package installation."
+#~ msgstr ""
+#~ "U zou het wachtwoord van het account moeten controleren nadat het pakket "
+#~ "is geĩnstalleerd."
+
+#~| msgid ""
+#~| "Please read the /usr/share/doc/mariadb-server-10.3/README.Debian file "
+#~| "for more information."
+#~ msgid ""
+#~ "Please read the /usr/share/doc/mariadb-server-10.2/README.Debian file for "
+#~ "more information."
+#~ msgstr ""
+#~ "Raadpleeg voor bijkomende informatie het bestand /usr/share/doc/mariadb-"
+#~ "server-10.2/README.Debian."
+
+#~ msgid "Password input error"
+#~ msgstr "Fout bij het invoeren van het wachtwoord"
+
+#~ msgid "The two passwords you entered were not the same. Please try again."
+#~ msgstr ""
+#~ "De twee wachtwoorden die u invoerde waren niet gelijk. Probeer opnieuw."
+
 #~ msgid "A file named /var/lib/mysql/debian-*.flag exists on this system."
 #~ msgstr ""
 #~ "Er bestaat een bestand genaamd /var/lib/mysql/debian-*.flag op dit "
@@ -150,55 +205,3 @@ msgstr ""
 #~ "Merk op dat MariaDB een aantal uitbreidingen heeft die niet bestaan in "
 #~ "MySQL. Daardoor zal terug overschakelen op MySQL niet altijd lukken, of "
 #~ "althans niet even automatisch als overschakelen van MySQL op MariaDB."
-
-#~ msgid "Unable to set password for the MariaDB \"root\" user"
-#~ msgstr ""
-#~ "Kan het wachtwoord voor de MariaDB \"root\"-gebruiker niet instellen"
-
-#~ msgid ""
-#~ "An error occurred while setting the password for the MariaDB "
-#~ "administrative user. This may have happened because the account already "
-#~ "has a password, or because of a communication problem with the MariaDB "
-#~ "server."
-#~ msgstr ""
-#~ "Er is een fout opgetreden bij het instellen van het wachtwoord voor de "
-#~ "MariaDB-beheerder. Dat kan komen doordat het account al een wachtwoord "
-#~ "heeft, of omdat er een probleem was bij het communiceren met de MariaDB-"
-#~ "server."
-
-#~ msgid ""
-#~ "You should check the account's password after the package installation."
-#~ msgstr ""
-#~ "U zou het wachtwoord van het account moeten controleren nadat het pakket "
-#~ "is geĩnstalleerd."
-
-#~ msgid ""
-#~ "Please read the /usr/share/doc/mariadb-server-10.3/README.Debian file for "
-#~ "more information."
-#~ msgstr ""
-#~ "Raadpleeg voor bijkomende informatie het bestand /usr/share/doc/mariadb-"
-#~ "server-10.3/README.Debian."
-
-#~ msgid "New password for the MariaDB \"root\" user:"
-#~ msgstr "Nieuw wachtwoord voor de MariaDB \"root\"-gebruiker:"
-
-#~ msgid ""
-#~ "While not mandatory, it is highly recommended that you set a password for "
-#~ "the MariaDB administrative \"root\" user."
-#~ msgstr ""
-#~ "Hoewel niet verplicht, wordt het sterk aangeraden een wachtwoord in te "
-#~ "stellen voor de \"root\"-gebruiker (beheerder) van MariaDB."
-
-#~ msgid "If this field is left blank, the password will not be changed."
-#~ msgstr ""
-#~ "Als dit veld leeg wordt gelaten, zal het wachtwoord niet worden veranderd."
-
-#~ msgid "Repeat password for the MariaDB \"root\" user:"
-#~ msgstr "Herhaal het wachtwoord voor de MariaDB \"root\"-gebruiker:"
-
-#~ msgid "Password input error"
-#~ msgstr "Fout bij het invoeren van het wachtwoord"
-
-#~ msgid "The two passwords you entered were not the same. Please try again."
-#~ msgstr ""
-#~ "De twee wachtwoorden die u invoerde waren niet gelijk. Probeer opnieuw."
