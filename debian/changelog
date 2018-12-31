@@ -1,8 +1,29 @@
-mariadb-10.3 (1:10.3.11-3) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.11-3) unstable; urgency=low
 
-  * Open a new changelog entry
+  [ Otto Kekäläinen ]
+  * Use sst_dump from package rocksdb-tools (Closes: #886853)
+  * Remove wsrep_sst_xtrabackup(-v2) already deprecated in upstream
+  * Make gitlab-ci.yml upgrade test specifically run mariadb-server-10.1->10.3
+  * Fix upstream RocksDB patch to fix Lintian complaints about source code
+  * Drop the MIPS Innobase patch that it is already fixed upstream
+  * Extend gitlab-ci.yml to test libmysql* interactions
+  * Ensure libmariadbd19 does not breaks/replace anything
+  * Make libmariadb-dev-compat break what is replaces
+  * Make libmariadb-dev breaks/replaces libmysqlclient-dev (Closes: #863675)
+  * Update Dutch translation by Frans Spiesschaert (Closes: #895461)
 
- -- Otto Kekäläinen <otto@debian.org>  Tue, 25 Dec 2018 13:56:17 +0200
+  [ Faustin Lammler ]
+  * Fix 2 typo error in README contributor
+  * Lintian some complaints
+
+  [ Helge Deller ]
+  * Skip failing test on HPPA, it's not too important (Closes: #917395)
+
+  [ Scott Kitterman ]
+  * Update libmariadb-dev.links to restore /usr/include/mysql compatibility 
+    symlinks lost when the default switched from 10.1 to 10.3 (Closes: #917266)
+
+ -- Otto Kekäläinen <otto@debian.org>  Mon, 31 Dec 2018 16:39:33 +0200
 
 mariadb-10.3 (1:10.3.11-2) unstable; urgency=low
 
