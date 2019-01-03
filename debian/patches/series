@@ -1,8 +1,6 @@
 disable-test-disks.patch
 extend_default_test_timeout_for_tokudb.patch
 innodb_simulate_comp_test_speedup.patch
-#mysqld_multi_confd.patch
-#mysqld_multi.server_lsb-header.patch
 mips-groonga-atomic.patch
 mips-connect-unaligned.patch
 mips-machine.patch
