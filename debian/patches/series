@@ -4,7 +4,6 @@ innodb_simulate_comp_test_speedup.patch
 mips-groonga-atomic.patch
 mips-connect-unaligned.patch
 mips-machine.patch
-#armhf_mroonga_storage_fail.patch
 c11_atomics.patch
 kFreeBSD-gettid.patch
 mytop-merge_src:mytop_improvements.patch
