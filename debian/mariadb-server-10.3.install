@@ -44,7 +44,7 @@ usr/bin/wsrep_sst_rsync
 usr/bin/wsrep_sst_rsync_wan
 usr/lib/*/mariadb19/plugin/auth_ed25519.so
 usr/lib/*/mariadb19/plugin/auth_pam.so
-usr/lib/*/mariadb19/plugin/disks.so
+[linux-any] usr/lib/*/mariadb19/plugin/disks.so
 usr/lib/*/mariadb19/plugin/file_key_management.so
 usr/lib/*/mariadb19/plugin/ha_archive.so
 usr/lib/*/mariadb19/plugin/ha_blackhole.so
