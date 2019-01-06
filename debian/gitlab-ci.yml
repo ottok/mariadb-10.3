@@ -213,6 +213,7 @@ test upgrade-libmysql:
     - apt-get update
     - apt-get install -y pkg-config libmysqld-dev libmysqlclient-dev
     - pkg-config --list-all
+    - pkg-config --cflags mysqlclient # mysqlclient.pc from original package
     - apt-get install -y ./libmariadb3_*.deb ./mariadb-common_*.deb
     - pkg-config --list-all
     - apt-get install -y ./libmariadbclient18_*.deb
@@ -220,6 +221,7 @@ test upgrade-libmysql:
     - apt-get install -y ./libmariadb-dev_*.deb
     - pkg-config --list-all
     - apt-get install -y ./libmariadb-dev-compat_*.deb
+    - pkg-config --cflags mysqlclient # mysqlclient.pc from compat package
     - pkg-config --list-all
     - apt-get install -y ./libmariadbd19_*.deb
     - pkg-config --list-all
@@ -227,3 +229,6 @@ test upgrade-libmysql:
     - pkg-config --list-all
     - apt-get install -y default-libmysqlclient-dev default-libmysqld-dev
     - pkg-config --list-all
+    - pkg-config --cflags mysqlclient
+    - pkg-config --cflags libmariadb
+    - pkg-config --cflags mariadb
