@@ -2,6 +2,11 @@
 
 . /usr/share/debconf/confmodule
 
+# Automatically set version to ease maintenance of this file.
+# Assume the filename is /path/to/mariadb-server-##.#.postrm
+# Pick version string based on location. Python equivalent would be x[-11:-7].
+VERSION=${0: -11:4}
+
 if [ -n "$DEBIAN_SCRIPT_DEBUG" ]; then set -v -x; DEBIAN_SCRIPT_TRACE=1; fi
 ${DEBIAN_SCRIPT_TRACE:+ echo "#42#DEBUG# RUNNING $0 $*" 1>&2 }
 
@@ -10,14 +15,14 @@ ${DEBIAN_SCRIPT_TRACE:+ echo "#42#DEBUG# RUNNING $0 $*" 1>&2 }
 # - Remove the mysql user only after all his owned files are purged.
 # - Cleanup the initscripts only if this was the last provider of them
 #
-if [ "$1" = "purge" ] && [ -f "/var/lib/mysql/debian-10.3.flag" ]; then
+if [ "$1" = "purge" ] && [ -f "/var/lib/mysql/debian-$VERSION.flag" ]; then
   # we remove the mysql user only after all his owned files are purged
   rm -f /var/log/mysql.{log,err}{,.0,.[1234567].gz}
   rm -rf /var/log/mysql
 
-  db_input high mariadb-server-10.3/postrm_remove_databases || true
+  db_input high mariadb-server-$VERSION/postrm_remove_databases || true
   db_go || true
-  db_get mariadb-server-10.3/postrm_remove_databases || true
+  db_get mariadb-server-$VERSION/postrm_remove_databases || true
   if [ "$RET" = "true" ]; then
     # never remove the debian.cnf when the databases are still existing
     # else we ran into big trouble on the next install!
