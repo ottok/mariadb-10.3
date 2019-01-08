@@ -1,8 +1,14 @@
-mariadb-10.3 (1:10.3.11-4) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.12-1) unstable; urgency=low
 
-  * Open new entry
+  [ Otto Kekäläinen ]
+  * New upstream version 10.3.12
+  * Create the mysqlclient.pc symlink at correct path with /pkgconfig/ (Closes: #878340)
 
- -- Otto Kekäläinen <otto@debian.org>  Tue, 01 Jan 2019 10:23:19 +0200
+  [ Samuel Thibault ]
+  * Do not try to install disks.so file not built on non-Linux
+  * Tune symbol visibility on GNU/Hurd too
+
+ -- Otto Kekäläinen <otto@debian.org>  Tue, 08 Jan 2019 22:52:16 +0100
 
 mariadb-10.3 (1:10.3.11-3) unstable; urgency=low
 

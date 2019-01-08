@@ -29,7 +29,7 @@ and will correctly detect if __bss_start will be available or not.
  # Run platform tests
  INCLUDE(configure.cmake)
  
-@@ -337,8 +339,6 @@ SET(MALLOC_LIBRARY "system")
+@@ -338,8 +340,6 @@ SET(PYTHON_SHEBANG "/usr/bin/env python"
  
  CHECK_PCRE()
  

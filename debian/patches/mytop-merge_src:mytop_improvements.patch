@@ -2,9 +2,6 @@ From: Debian MySQL Maintainers <pkg-mysql-maint@lists.alioth.debian.org>
 Date: Thu, 10 Aug 2017 20:40:29 +0200
 Subject: mytop-merge_src:mytop_improvements
 
----
- scripts/mytop.sh | 184 +++++++++++++++++++++++++++++++++++++++----------------
- 1 file changed, 132 insertions(+), 52 deletions(-)
 
 --- a/scripts/mytop.sh
 +++ b/scripts/mytop.sh
@@ -132,7 +129,7 @@ Subject: mytop-merge_src:mytop_improvements
          Clear() unless $config{batchmode};
 -        print "Command Summary [hit q to exit this mode]\n";
 -        next;
-+       	print "Command Summary\n"; 
++       	print "Command Summary\n";
 +	next;
      }
  
@@ -170,7 +167,7 @@ Subject: mytop-merge_src:mytop_improvements
  
 -          printf(" Sorts: %5.0f qps now: %4.0f Slow qps: %3.1f  Threads: %4.0f (%4.0f/%4.0f) %02.0f/%02.0f/%02.0f/%02.0f\n",
 +          printf(" Sorts: %6.0f qps now: %4.0f Slow qps: %3.1f  Threads: %4.0f (%4.0f/%4.0f) %02.0f/%02.0f/%02.0f/%02.0f\n",
- 		 ( $STATUS{Sort_rows} - $OLD_STATUS{Sort_rows} ) / $t_delta, 
+ 		 ( $STATUS{Sort_rows} - $OLD_STATUS{Sort_rows} ) / $t_delta,
                   ( $STATUS{Questions} - $OLD_STATUS{Questions} ) / $t_delta,
                   ( # slow now (qps)
 @@ -1020,7 +1062,7 @@ sub GetData()
@@ -211,11 +208,11 @@ Subject: mytop-merge_src:mytop_improvements
  	if (defined($data->{Master_Host}))
          {
  	    if (defined($data->{Seconds_Behind_Master}))
-@@ -1210,6 +1252,11 @@ sub GetData()
+@@ -1211,6 +1253,11 @@ sub GetData()
  #	    my $host = $thread->{Host};
  	    my $host = gethostbyaddr(inet_aton($thread->{Host}), AF_INET);
  #            $host =~ s/^([^.]+).*/$1/;
-+	    if ($host) 
++	    if ($host)
 +	    {
 +		$host =~ s/^([^.]+).*/$1/;
 +		$thread->{Host} = $host;
@@ -223,7 +220,7 @@ Subject: mytop-merge_src:mytop_improvements
              $thread->{Host} = $host;
          }
  
-@@ -1233,18 +1280,19 @@ sub GetData()
+@@ -1234,18 +1281,19 @@ sub GetData()
          ## break EXPLAIN if you try to explain a mangled query.  It
          ## may be re-enabled later as an option.
  
@@ -250,7 +247,7 @@ Subject: mytop-merge_src:mytop_improvements
          ## stow it in the cache
  
          $qcache{$thread->{Id}}  = $thread->{Info};
-@@ -1371,7 +1419,7 @@ sub GetInnoDBStatus()
+@@ -1372,7 +1420,7 @@ sub GetInnoDBStatus()
          }
      }
  
@@ -259,7 +256,7 @@ Subject: mytop-merge_src:mytop_improvements
  
      open P, "|$config{pager}" or die "$!";
      print keys %{$data[0]};
-@@ -1722,7 +1770,7 @@ Help for mytop version $main::VERSION by
+@@ -1723,7 +1771,7 @@ Help for mytop version $main::VERSION by
    e - explain the query that a thread is running
    E - display current replication error
    f - show full query info for a given thread
@@ -268,7 +265,7 @@ Subject: mytop-merge_src:mytop_improvements
    h - show only a specifc host's connections
    H - toggle the mytop header
    i - toggle the display of idle (sleeping) threads
-@@ -1737,7 +1785,7 @@ Help for mytop version $main::VERSION by
+@@ -1738,7 +1786,7 @@ Help for mytop version $main::VERSION by
    r - reset the status counters (via FLUSH STATUS on your server)
    R - change reverse IP lookup
    s - change the delay between screen updates
@@ -277,7 +274,7 @@ Subject: mytop-merge_src:mytop_improvements
    t - switch to thread view (default)
    u - show only a specific user
    V - show variables
-@@ -1745,7 +1793,7 @@ Help for mytop version $main::VERSION by
+@@ -1746,7 +1794,7 @@ Help for mytop version $main::VERSION by
    ! - Skip an error that has stopped replications (at your own risk)
    L - show full queries (do not strip to terminal width)
  
@@ -286,7 +283,7 @@ Subject: mytop-merge_src:mytop_improvements
  This version comes as part of the ${GREEN}MariaDB${RESET} distribution.
  ];
  
-@@ -1805,6 +1853,9 @@ sub Hashes($)
+@@ -1806,6 +1854,9 @@ sub Hashes($)
  sub Execute($)
  {
      my $sql = shift;
@@ -296,7 +293,7 @@ Subject: mytop-merge_src:mytop_improvements
      my $sth = $dbh->prepare($sql);
  
      if (not $sth) { ReadMode($RM_RESET); die $DBI::errstr; }
-@@ -1861,7 +1912,7 @@ B<mytop> [options]
+@@ -1862,7 +1913,7 @@ B<mytop> [options]
  
  =head1 AVAILABILITY
  
@@ -305,7 +302,7 @@ Subject: mytop-merge_src:mytop_improvements
  
  This version comes as part of the B<MariaDB> distribution. See B<http://mariadb.org/>.
  
-@@ -1875,6 +1926,7 @@ In order for B<mytop> to function proper
+@@ -1876,6 +1927,7 @@ In order for B<mytop> to function proper
  following:
  
    * Perl 5.005 or newer
@@ -313,7 +310,7 @@ Subject: mytop-merge_src:mytop_improvements
    * Getopt::Long
    * DBI and DBD::mysql
    * Term::ReadKey from CPAN
-@@ -2016,46 +2068,49 @@ have two dashes `--'. Short arguments on
+@@ -2017,46 +2069,49 @@ have two dashes `--'. Short arguments on
  
  =over
  
@@ -375,7 +372,7 @@ Subject: mytop-merge_src:mytop_improvements
  
  If you're running B<mytop> on the same host as MariaDB, you may wish to
  have it use the MariaDB socket directly rather than a standard TCP/IP
-@@ -2070,7 +2125,7 @@ Default: none.
+@@ -2071,7 +2126,7 @@ Default: none.
  
  =item B<--header> or B<--noheader>
  
@@ -384,7 +381,7 @@ Subject: mytop-merge_src:mytop_improvements
  with the B<h> key while B<mytop> is running.
  
  Default: header.
-@@ -2096,7 +2151,7 @@ Default: idle.
+@@ -2097,7 +2152,7 @@ Default: idle.
  Specify if you want to be prompted to type in your database password.
  This provides a little bit more security since it not only prevents
  the password from viewable in a process list, but also doesn't require
@@ -393,7 +390,7 @@ Subject: mytop-merge_src:mytop_improvements
  You will B<only> be prompted if a password has not been specified in
  your config file or through another command line option.
  
-@@ -2110,6 +2165,27 @@ with hostnames but toggling this option.
+@@ -2111,6 +2166,27 @@ with hostnames but toggling this option.
  
  Default: noresolve
  
@@ -421,7 +418,7 @@ Subject: mytop-merge_src:mytop_improvements
  =back
  
  Command-line arguments will always take precedence over config file
-@@ -2153,6 +2229,13 @@ you want them to, of course).
+@@ -2154,6 +2230,13 @@ you want them to, of course).
  You may have white space on either side of the C<=> in lines of the
  config file.
  
@@ -435,7 +432,7 @@ Subject: mytop-merge_src:mytop_improvements
  =head2 Shortcut Keys
  
  The following keys perform various actions while B<mytop> is
-@@ -2204,8 +2287,8 @@ running queries appear at the top of the
+@@ -2205,8 +2288,8 @@ running queries appear at the top of the
  
  =item B<I>
  
@@ -446,7 +443,7 @@ Subject: mytop-merge_src:mytop_improvements
  summarize that data rather than producing raw output.
  
  =item B<k>
-@@ -2258,8 +2341,8 @@ Show only threads owned by a giver user.
+@@ -2259,8 +2342,8 @@ Show only threads owned by a giver user.
  
  The B<s> key has a command-line counterpart: B<-s>.
  
@@ -457,7 +454,7 @@ Subject: mytop-merge_src:mytop_improvements
  
  =head1 BUGS
  
-@@ -2292,9 +2375,6 @@ width. If you have fairly long database/
+@@ -2293,9 +2376,6 @@ width. If you have fairly long database/
  may appear odd. I have no good idea as to how best to deal with that
  yet. Suggestions are welcome.
  
@@ -467,7 +464,7 @@ Subject: mytop-merge_src:mytop_improvements
  You should be able to specify the columns you'd like to see in the
  display and the order in which they appear. If you only have one
  username that connects to your database, it's probably not worth
-@@ -2411,12 +2491,12 @@ terminals don't freak out.
+@@ -2412,12 +2492,12 @@ terminals don't freak out.
  
  =item jon r. luini <falcon@chime.com>
  

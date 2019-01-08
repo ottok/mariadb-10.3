@@ -3,10 +3,8 @@ Forwarded: https://github.com/MariaDB/mariadb-connector-c/pull/94
 Author: Samuel Thibault <samuel.thibault@ens-lyon.org>
 Last-Update: 2019-01-04
 
-Index: mariadb-10.3-10.3.11/libmariadb/libmariadb/CMakeLists.txt
-===================================================================
---- mariadb-10.3-10.3.11.orig/libmariadb/libmariadb/CMakeLists.txt
-+++ mariadb-10.3-10.3.11/libmariadb/libmariadb/CMakeLists.txt
+--- a/libmariadb/libmariadb/CMakeLists.txt
++++ b/libmariadb/libmariadb/CMakeLists.txt
 @@ -403,7 +403,8 @@ IF(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MSVC)
    SET_TARGET_PROPERTIES(mariadbclient PROPERTIES STATIC_LIBRARY_FLAGS "/machine:x64")
  ENDIF()
