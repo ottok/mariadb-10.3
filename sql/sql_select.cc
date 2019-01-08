@@ -20281,6 +20281,10 @@ test_if_quick_select(JOIN_TAB *tab)
 
   delete tab->select->quick;
   tab->select->quick=0;
+
+  if (tab->table->file->inited != handler::NONE)
+    tab->table->file->ha_index_or_rnd_end();
+
   int res= tab->select->test_quick_select(tab->join->thd, tab->keys,
                                           (table_map) 0, HA_POS_ERROR, 0,
                                           FALSE, /*remove where parts*/FALSE);
@@ -22777,9 +22781,11 @@ static int remove_dup_with_compare(THD *thd, TABLE *table, Field **first_field,
   }
 
   file->extra(HA_EXTRA_NO_CACHE);
+  (void) file->ha_rnd_end();
   DBUG_RETURN(0);
 err:
   file->extra(HA_EXTRA_NO_CACHE);
+  (void) file->ha_rnd_end();
   if (error)
     file->print_error(error,MYF(0));
   DBUG_RETURN(1);
@@ -25744,13 +25750,13 @@ int JOIN::save_explain_data_intern(Explain_query *output,
       (1) they are not parts of ON clauses that were eliminated by table 
           elimination.
       (2) they are not merged derived tables
-      (3) they are not unreferenced CTE
+      (3) they are not hanging CTEs (they are needed for execution)
     */
     if (!(tmp_unit->item && tmp_unit->item->eliminated) &&    // (1)
         (!tmp_unit->derived ||
          tmp_unit->derived->is_materialized_derived()) &&     // (2)
-        !(tmp_unit->with_element && 
-          !tmp_unit->with_element->is_referenced()))          // (3)
+        !(tmp_unit->with_element &&
+          (!tmp_unit->derived || !tmp_unit->derived->derived_result))) // (3)
    {
       explain->add_child(tmp_unit->first_select()->select_number);
     }
@@ -25811,11 +25817,12 @@ static void select_describe(JOIN *join, bool need_tmp_table, bool need_order,
       Save plans for child subqueries, when
       (1) they are not parts of eliminated WHERE/ON clauses.
       (2) they are not VIEWs that were "merged for INSERT".
-      (3) they are not unreferenced CTE.
+      (3) they are not hanging CTEs (they are needed for execution)
     */
     if (!(unit->item && unit->item->eliminated) &&                     // (1)
         !(unit->derived && unit->derived->merged_for_insert) &&        // (2)
-        !(unit->with_element && !unit->with_element->is_referenced())) // (3)  
+        !(unit->with_element &&
+          (!unit->derived || !unit->derived->derived_result)))         // (3)
     {
       if (mysql_explain_union(thd, unit, result))
         DBUG_VOID_RETURN;

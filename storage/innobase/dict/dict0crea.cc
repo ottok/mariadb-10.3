@@ -24,8 +24,6 @@ Database object creation
 Created 1/8/1996 Heikki Tuuri
 *******************************************************/
 
-#include "ha_prototypes.h"
-
 #include "dict0crea.h"
 #include "btr0pcur.h"
 #include "btr0btr.h"
@@ -43,8 +41,6 @@ Created 1/8/1996 Heikki Tuuri
 #include "ut0vec.h"
 #include "dict0priv.h"
 #include "fts0priv.h"
-#include "fsp0space.h"
-#include "fsp0sysspace.h"
 #include "srv0start.h"
 
 /*****************************************************************//**
@@ -2153,15 +2149,6 @@ dict_create_add_foreigns_to_dictionary(
 			return(error);
 		}
 	}
-
-	trx->op_info = "committing foreign key definitions";
-
-	if (trx_is_started(trx)) {
-
-		trx_commit(trx);
-	}
-
-	trx->op_info = "";
 
 	return(DB_SUCCESS);
 }

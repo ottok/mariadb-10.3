@@ -71,6 +71,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "buf0flu.h"
 #include "buf0lru.h"
 #include "dict0boot.h"
+#include "dict0load.h"
 #include "btr0defragment.h"
 #include "dict0crea.h"
 #include "dict0dict.h"
@@ -78,8 +79,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "dict0stats_bg.h"
 #include "fil0fil.h"
 #include "fsp0fsp.h"
-#include "fsp0space.h"
-#include "fsp0sysspace.h"
 #include "fts0fts.h"
 #include "fts0plugin.h"
 #include "fts0priv.h"
@@ -87,10 +86,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "ibuf0ibuf.h"
 #include "lock0lock.h"
 #include "log0crypt.h"
-#include "mem0mem.h"
 #include "mtr0mtr.h"
 #include "os0file.h"
-#include "os0thread.h"
 #include "page0zip.h"
 #include "pars0pars.h"
 #include "rem0types.h"
@@ -147,8 +144,8 @@ void close_thread_tables(THD* thd);
 
 #ifdef WITH_WSREP
 #include "dict0priv.h"
-#include "ut0byte.h"
 #include <mysql/service_md5.h>
+#include "wsrep_sst.h"
 
 extern MYSQL_PLUGIN_IMPORT MYSQL_BIN_LOG mysql_bin_log;
 
@@ -252,10 +249,10 @@ void set_my_errno(int err)
 	errno = err;
 }
 
-static uint mysql_fields(const TABLE *table)
+static uint omits_virtual_cols(const TABLE_SHARE &share)
 {
-	return table->s->frm_version < FRM_VER_EXPRESSSIONS
-		? table->s->stored_fields : table->s->fields;
+	return share.frm_version < FRM_VER_EXPRESSSIONS &&
+	       share.virtual_fields;
 }
 
 /** Checks whether the file name belongs to a partition of a table.
@@ -3735,6 +3732,15 @@ static int innodb_init_params()
 		ib::info() << "For Galera, using innodb_lock_schedule_algorithm=fcfs";
 		innodb_lock_schedule_algorithm = INNODB_LOCK_SCHEDULE_ALGORITHM_FCFS;
 	}
+
+	/* Print deprecation info if xtrabackup is used for SST method */
+	if (global_system_variables.wsrep_on
+	    && wsrep_sst_method
+	    && (!strcmp(wsrep_sst_method, "xtrabackup")
+	        || !strcmp(wsrep_sst_method, "xtrabackup-v2"))) {
+		ib::info() << "Galera SST method xtrabackup is deprecated and the "
+			" support for it may be removed in future releases.";
+	}
 #endif /* WITH_WSREP */
 
 #ifndef HAVE_LZ4
@@ -5441,6 +5447,26 @@ normalize_table_name_c_low(
 	}
 }
 
+create_table_info_t::create_table_info_t(
+	THD*		thd,
+	TABLE*		form,
+	HA_CREATE_INFO*	create_info,
+	char*		table_name,
+	char*		remote_path,
+	bool		file_per_table,
+	trx_t*		trx)
+	: m_thd(thd),
+	  m_trx(trx),
+	  m_form(form),
+	  m_default_row_format(innodb_default_row_format),
+	  m_create_info(create_info),
+	  m_table_name(table_name), m_table(NULL),
+	  m_drop_before_rollback(false),
+	  m_remote_path(remote_path),
+	  m_innodb_file_per_table(file_per_table)
+{
+}
+
 /** Normalizes a table name string.
 A normalized name consists of the database name catenated to '/'
 and table name. For example: test/mytable.
@@ -6088,12 +6114,13 @@ no_such_table:
 		DBUG_RETURN(HA_ERR_NO_SUCH_TABLE);
 	}
 
-	size_t n_fields = mysql_fields(table);
+	size_t n_fields = omits_virtual_cols(*table_share)
+		? table_share->stored_fields : table_share->fields;
 	size_t n_cols = dict_table_get_n_user_cols(ib_table)
 		+ dict_table_get_n_v_cols(ib_table)
 		- !!DICT_TF2_FLAG_IS_SET(ib_table, DICT_TF2_FTS_HAS_DOC_ID);
 
-	if (n_cols != n_fields) {
+	if (UNIV_UNLIKELY(n_cols != n_fields)) {
 		ib::warn() << "Table " << norm_name << " contains "
 			<< n_cols << " user"
 			" defined columns in InnoDB, but " << n_fields
@@ -7253,6 +7280,10 @@ build_template_needs_field(
 {
 	const Field*	field	= table->field[i];
 
+	if (innobase_is_v_fld(field) && omits_virtual_cols(*table->s)) {
+		return NULL;
+	}
+
 	if (!index_contains) {
 		if (read_just_key) {
 			/* If this is a 'key read', we do not need
@@ -7277,7 +7308,6 @@ build_template_needs_field(
 	if (fetch_primary_key_cols
 	    && dict_table_col_in_clustered_key(index->table, i - num_v)) {
 		/* This field is needed in the query */
-
 		return(field);
 	}
 
@@ -7330,17 +7360,11 @@ build_template_field(
 
 	templ = prebuilt->mysql_template + prebuilt->n_template++;
 	UNIV_MEM_INVALID(templ, sizeof *templ);
-
-	if (innobase_is_v_fld(field)) {
-		templ->is_virtual = true;
-		col = &dict_table_get_nth_v_col(index->table, v_no)->m_col;
-	} else {
-		templ->is_virtual = false;
-		col = dict_table_get_nth_col(index->table, i);
-	}
+	templ->is_virtual = innobase_is_v_fld(field);
 
 	if (!templ->is_virtual) {
 		templ->col_no = i;
+		col = dict_table_get_nth_col(index->table, i);
 		templ->clust_rec_field_no = dict_col_get_clust_pos(
 						col, clust_index);
 		/* If clustered index record field is not found, lets print out
@@ -7379,7 +7403,7 @@ build_template_field(
 					<< table->field[j]->field_name.str;
 			}
 
-			ib::error() << "Clustered record field for column " << i
+			ib::fatal() << "Clustered record field for column " << i
 				<< " not found table n_user_defined "
 				<< clust_index->n_user_defined_cols
 				<< " index n_user_defined "
@@ -7396,8 +7420,6 @@ build_template_field(
 				<< table->s->stored_fields
 				<< " query "
 				<< innobase_get_stmt_unsafe(current_thd, &size);
-
-			ut_a(templ->clust_rec_field_no != ULINT_UNDEFINED);
 		}
 		templ->rec_field_is_prefix = FALSE;
 		templ->rec_prefix_field_no = ULINT_UNDEFINED;
@@ -7415,6 +7437,8 @@ build_template_field(
 						&templ->rec_prefix_field_no);
 		}
 	} else {
+		ut_ad(!omits_virtual_cols(*table->s));
+		col = &dict_table_get_nth_v_col(index->table, v_no)->m_col;
 		templ->clust_rec_field_no = v_no;
 		templ->rec_prefix_field_no = ULINT_UNDEFINED;
 
@@ -7498,10 +7522,8 @@ ha_innobase::build_template(
 {
 	dict_index_t*	index;
 	dict_index_t*	clust_index;
-	ulint		n_fields;
 	ibool		fetch_all_in_key	= FALSE;
 	ibool		fetch_primary_key_cols	= FALSE;
-	ulint		i;
 
 	if (m_prebuilt->select_lock_type == LOCK_X || m_prebuilt->table->no_rollback()) {
 		/* We always retrieve the whole clustered index record if we
@@ -7556,7 +7578,8 @@ ha_innobase::build_template(
 	/* Below we check column by column if we need to access
 	the clustered index. */
 
-	n_fields = (ulint) mysql_fields(table);
+	const bool skip_virtual = omits_virtual_cols(*table_share);
+	const ulint n_fields = table_share->fields;
 
 	if (!m_prebuilt->mysql_template) {
 		m_prebuilt->mysql_template = (mysql_row_templ_t*)
@@ -7576,25 +7599,25 @@ ha_innobase::build_template(
 	/* Note that in InnoDB, i is the column number in the table.
 	MySQL calls columns 'fields'. */
 
+	ulint num_v = 0;
+
 	if (active_index != MAX_KEY
 	    && active_index == pushed_idx_cond_keyno) {
-		ulint	num_v = 0;
-
 		/* Push down an index condition or an end_range check. */
-		for (i = 0; i < n_fields; i++) {
-			ibool		index_contains;
-
-			if (innobase_is_v_fld(table->field[i])) {
-				index_contains = dict_index_contains_col_or_prefix(
-					index, num_v, true);
-                                if (index_contains)
-                                {
-                                        m_prebuilt->n_template = 0;
-                                        goto no_icp;
-                                }
-			} else {
-				index_contains = dict_index_contains_col_or_prefix(
-					index, i - num_v, false);
+		for (ulint i = 0; i < n_fields; i++) {
+			const Field* field = table->field[i];
+			const bool is_v = innobase_is_v_fld(field);
+			if (is_v && skip_virtual) {
+				num_v++;
+				continue;
+			}
+			ibool index_contains
+				= dict_index_contains_col_or_prefix(
+					index, is_v ? num_v : i - num_v, is_v);
+			if (is_v && index_contains) {
+				m_prebuilt->n_template = 0;
+				num_v = 0;
+				goto no_icp;
 			}
 
 			/* Test if an end_range or an index condition
@@ -7612,17 +7635,10 @@ ha_innobase::build_template(
 			the subset
 			field->part_of_key.is_set(active_index)
 			which would be acceptable if end_range==NULL. */
-			bool	is_v = innobase_is_v_fld(table->field[i]);
 			if (build_template_needs_field_in_icp(
 				    index, m_prebuilt, index_contains,
 				    is_v ? num_v : i - num_v, is_v)) {
-				/* Needed in ICP */
-				const Field*		field;
-				mysql_row_templ_t*	templ;
-
-				if (whole_row) {
-					field = table->field[i];
-				} else {
+				if (!whole_row) {
 					field = build_template_needs_field(
 						index_contains,
 						m_prebuilt->read_just_key,
@@ -7630,15 +7646,16 @@ ha_innobase::build_template(
 						fetch_primary_key_cols,
 						index, table, i, num_v);
 					if (!field) {
-						if (innobase_is_v_fld(
-							table->field[i])) {
+						if (is_v) {
 							num_v++;
 						}
 						continue;
 					}
 				}
 
-				templ = build_template_field(
+				ut_ad(!is_v);
+
+				mysql_row_templ_t* templ= build_template_field(
 					m_prebuilt, clust_index, index,
 					table, field, i - num_v, 0);
 
@@ -7713,7 +7730,8 @@ ha_innobase::build_template(
 				      < m_prebuilt->index->n_uniq);
 				*/
 			}
-			if (innobase_is_v_fld(table->field[i])) {
+
+			if (is_v) {
 				num_v++;
 			}
 		}
@@ -7725,29 +7743,24 @@ ha_innobase::build_template(
 
 		/* Include the fields that are not needed in index condition
 		pushdown. */
-		for (i = 0; i < n_fields; i++) {
+		for (ulint i = 0; i < n_fields; i++) {
 			mysql_row_templ_t*	templ;
-			ibool			index_contains;
-
-			if (innobase_is_v_fld(table->field[i])) {
-				index_contains = dict_index_contains_col_or_prefix(
-					index, num_v, true);
-			} else {
-				index_contains = dict_index_contains_col_or_prefix(
-					index, i - num_v, false);
+			const Field*		field = table->field[i];
+			const bool is_v = innobase_is_v_fld(field);
+			if (is_v && skip_virtual) {
+				num_v++;
+				continue;
 			}
 
-			bool	is_v = innobase_is_v_fld(table->field[i]);
+			ibool index_contains
+				= dict_index_contains_col_or_prefix(
+					index, is_v ? num_v : i - num_v, is_v);
 
 			if (!build_template_needs_field_in_icp(
 				    index, m_prebuilt, index_contains,
 				    is_v ? num_v : i - num_v, is_v)) {
 				/* Not needed in ICP */
-				const Field*	field;
-
-				if (whole_row) {
-					field = table->field[i];
-				} else {
+				if (!whole_row) {
 					field = build_template_needs_field(
 						index_contains,
 						m_prebuilt->read_just_key,
@@ -7755,7 +7768,7 @@ ha_innobase::build_template(
 						fetch_primary_key_cols,
 						index, table, i, num_v);
 					if (!field) {
-						if (innobase_is_v_fld(table->field[i])) {
+						if (is_v) {
 							num_v++;
 						}
 						continue;
@@ -7765,8 +7778,9 @@ ha_innobase::build_template(
 				templ = build_template_field(
 					m_prebuilt, clust_index, index,
 					table, field, i - num_v, num_v);
+				ut_ad(templ->is_virtual == (ulint)is_v);
 
-				if (templ->is_virtual) {
+				if (is_v) {
 					num_v++;
 				}
 			}
@@ -7776,21 +7790,26 @@ ha_innobase::build_template(
 	} else {
 no_icp:
 		mysql_row_templ_t*	templ;
-		ulint			num_v = 0;
 		/* No index condition pushdown */
 		m_prebuilt->idx_cond = NULL;
+		ut_ad(num_v == 0);
 
-		for (i = 0; i < n_fields; i++) {
-			const Field*	field;
+		for (ulint i = 0; i < n_fields; i++) {
+			const Field*	field = table->field[i];
+			const bool is_v = innobase_is_v_fld(field);
 
 			if (whole_row) {
+				if (is_v && skip_virtual) {
+					num_v++;
+					continue;
+				}
 				/* Even this is whole_row, if the seach is
 				on a virtual column, and read_just_key is
 				set, and field is not in this index, we
 				will not try to fill the value since they
 				are not stored in such index nor in the
 				cluster index. */
-				if (innobase_is_v_fld(table->field[i])
+				if (is_v
 				    && m_prebuilt->read_just_key
 				    && !dict_index_contains_col_or_prefix(
 					m_prebuilt->index, num_v, true))
@@ -7801,12 +7820,10 @@ no_icp:
 					num_v++;
 					continue;
 				}
-
-				field = table->field[i];
 			} else {
 				ibool	contain;
 
-				if (!innobase_is_v_fld(table->field[i])) {
+				if (!is_v) {
 					contain = dict_index_contains_col_or_prefix(
 						index, i - num_v,
 						false);
@@ -7825,7 +7842,7 @@ no_icp:
 					fetch_primary_key_cols,
 					index, table, i, num_v);
 				if (!field) {
-					if (innobase_is_v_fld(table->field[i])) {
+					if (is_v) {
 						num_v++;
 					}
 					continue;
@@ -7835,7 +7852,8 @@ no_icp:
 			templ = build_template_field(
 				m_prebuilt, clust_index, index,
 				table, field, i - num_v, num_v);
-			if (templ->is_virtual) {
+			ut_ad(templ->is_virtual == (ulint)is_v);
+			if (is_v) {
 				num_v++;
 			}
 		}
@@ -7844,8 +7862,7 @@ no_icp:
 	if (index != clust_index && m_prebuilt->need_to_access_clustered) {
 		/* Change rec_field_no's to correspond to the clustered index
 		record */
-		for (i = 0; i < m_prebuilt->n_template; i++) {
-
+		for (ulint i = 0; i < m_prebuilt->n_template; i++) {
 			mysql_row_templ_t*	templ
 				= &m_prebuilt->mysql_template[i];
 
@@ -8273,13 +8290,12 @@ calc_row_difference(
 	ulint		n_changed = 0;
 	dfield_t	dfield;
 	dict_index_t*	clust_index;
-	uint		i;
 	ibool		changes_fts_column = FALSE;
 	ibool		changes_fts_doc_col = FALSE;
 	trx_t* const	trx = prebuilt->trx;
 	doc_id_t	doc_id = FTS_NULL_DOC_ID;
 	ulint		num_v = 0;
-	uint		n_fields = mysql_fields(table);
+	const bool 	skip_virtual = omits_virtual_cols(*table->s);
 
 	ut_ad(!srv_read_only_mode);
 
@@ -8289,16 +8305,15 @@ calc_row_difference(
 	/* We use upd_buff to convert changed fields */
 	buf = (byte*) upd_buff;
 
-	for (i = 0; i < n_fields; i++) {
+	for (uint i = 0; i < table->s->fields; i++) {
 		field = table->field[i];
-		bool		is_virtual = innobase_is_v_fld(field);
-		dict_col_t*	col;
-
-		if (is_virtual) {
-			col = &prebuilt->table->v_cols[num_v].m_col;
-		} else {
-			col = &prebuilt->table->cols[i - num_v];
+		const bool is_virtual = innobase_is_v_fld(field);
+		if (is_virtual && skip_virtual) {
+			continue;
 		}
+		dict_col_t* col = is_virtual
+			? &prebuilt->table->v_cols[num_v].m_col
+			: &prebuilt->table->cols[i - num_v];
 
 		o_ptr = (const byte*) old_row + get_field_offset(table, field);
 		n_ptr = (const byte*) new_row + get_field_offset(table, field);
@@ -8654,33 +8669,25 @@ wsrep_calc_row_hash(
 					dictionary */
 	row_prebuilt_t*	prebuilt)	/*!< in: InnoDB prebuilt struct */
 {
-	Field*		field;
-	enum_field_types field_mysql_type;
-	uint		n_fields;
 	ulint		len;
 	const byte*	ptr;
-	ulint		col_type;
-	uint		i;
 
 	void *ctx = alloca(my_md5_context_size());
 	my_md5_init(ctx);
 
-	n_fields = mysql_fields(table);
-
-	for (i = 0; i < n_fields; i++) {
+	for (uint i = 0; i < table->s->fields; i++) {
 		byte null_byte=0;
 		byte true_byte=1;
 
-		field = table->field[i];
+		const Field* field = table->field[i];
+		if (innobase_is_v_fld(field)) {
+			continue;
+		}
 
 		ptr = (const byte*) row + get_field_offset(table, field);
 		len = field->pack_length();
 
-		field_mysql_type = field->type();
-
-		col_type = prebuilt->table->cols[i].mtype;
-
-		switch (col_type) {
+		switch (prebuilt->table->cols[i].mtype) {
 
 		case DATA_BLOB:
 			ptr = row_mysql_read_blob_ref(&len, ptr, len);
@@ -8690,7 +8697,7 @@ wsrep_calc_row_hash(
 		case DATA_VARCHAR:
 		case DATA_BINARY:
 		case DATA_VARMYSQL:
-			if (field_mysql_type == MYSQL_TYPE_VARCHAR) {
+			if (field->type() == MYSQL_TYPE_VARCHAR) {
 				/* This is a >= 5.0.3 type true VARCHAR where
 				the real payload data length is stored in
 				1 or 2 bytes */
@@ -10590,9 +10597,9 @@ create_table_check_doc_id_col(
 					ULINT_UNDEFINED if column is of the
 					wrong type/name/size */
 {
-	uint		n_fields = mysql_fields(form);
+	ut_ad(!omits_virtual_cols(*form->s));
 
-	for (ulint i = 0; i < n_fields; i++) {
+	for (ulint i = 0; i < form->s->fields; i++) {
 		const Field*	field;
 		ulint		col_type;
 		ulint		col_len;
@@ -10787,6 +10794,7 @@ create_table_info_t::create_table_def()
 	DBUG_PRINT("enter", ("table_name: %s", m_table_name));
 
 	DBUG_ASSERT(m_trx->mysql_thd == m_thd);
+	DBUG_ASSERT(!m_drop_before_rollback);
 
 	/* MySQL does the name length check. But we do additional check
 	on the name length here */
@@ -11049,6 +11057,7 @@ err_col:
 				table, m_trx,
 				(fil_encryption_t)options->encryption,
 				(uint32_t)options->encryption_key_id);
+			m_drop_before_rollback = (err == DB_SUCCESS);
 		}
 
 		DBUG_EXECUTE_IF("ib_crash_during_create_for_encryption",
@@ -11064,9 +11073,6 @@ err_col:
 	case DB_SUCCESS:
 		ut_ad(table);
 		m_table = table;
-		if (m_flags2 & DICT_TF2_FTS) {
-			fts_optimize_add_table(table);
-		}
 		DBUG_RETURN(0);
 	default:
 		break;
@@ -11085,7 +11091,8 @@ err_col:
 			 : ER_TABLESPACE_EXISTS, MYF(0), display_name);
 	}
 
-	DBUG_RETURN(convert_error_code_to_mysql(err, m_flags, m_thd));}
+	DBUG_RETURN(convert_error_code_to_mysql(err, m_flags, m_thd));
+}
 
 /*****************************************************************//**
 Creates an index in an InnoDB database. */
@@ -11468,7 +11475,7 @@ Check engine specific table options not handled by SQL-parser.
 const char*
 create_table_info_t::check_table_options()
 {
-	enum row_type	row_format = m_form->s->row_type;
+	enum row_type row_format = m_create_info->row_type;
 	ha_table_option_struct *options= m_form->s->option_struct;
 	fil_encryption_t encrypt = (fil_encryption_t)options->encryption;
 	bool should_encrypt = (encrypt == FIL_ENCRYPTION_ON);
@@ -11515,7 +11522,16 @@ create_table_info_t::check_table_options()
 			return "PAGE_COMPRESSED";
 		}
 
-		if (row_format == ROW_TYPE_REDUNDANT) {
+		switch (row_format) {
+		default:
+			break;
+		case ROW_TYPE_DEFAULT:
+			if (m_default_row_format
+			    != DEFAULT_ROW_FORMAT_REDUNDANT) {
+				break;
+			}
+			/* fall through */
+		case ROW_TYPE_REDUNDANT:
 			push_warning(
 				m_thd, Sql_condition::WARN_LEVEL_WARN,
 				HA_WRONG_CREATE_OPTION,
@@ -11721,9 +11737,9 @@ create_table_info_t::parse_table_name(
 
 /** Determine InnoDB table flags.
 If strict_mode=OFF, this will adjust the flags to what should be assumed.
-@retval true if successful, false if error */
-bool
-create_table_info_t::innobase_table_flags()
+@retval true on success
+@retval false on error */
+bool create_table_info_t::innobase_table_flags()
 {
 	DBUG_ENTER("innobase_table_flags");
 
@@ -11731,7 +11747,7 @@ create_table_info_t::innobase_table_flags()
 	ulint		zip_ssize = 0;
 	enum row_type	row_type;
 	rec_format_t	innodb_row_format =
-		get_row_format(innodb_default_row_format);
+		get_row_format(m_default_row_format);
 	const bool	is_temp
 		= m_create_info->options & HA_LEX_CREATE_TMP_TABLE;
 	bool		zip_allowed
@@ -11832,7 +11848,7 @@ index_bad:
 		}
 	}
 
-	row_type = m_form->s->row_type;
+	row_type = m_create_info->row_type;
 
 	if (zip_ssize && zip_allowed) {
 		/* if ROW_FORMAT is set to default,
@@ -12168,8 +12184,6 @@ create_table_info_t::initialize()
 		DBUG_RETURN(HA_ERR_WRONG_INDEX);
 	}
 
-	ut_ad(m_form->s->row_type == m_create_info->row_type);
-
 	/* Get the transaction associated with the current thd, or create one
 	if not yet created */
 
@@ -12213,8 +12227,6 @@ int create_table_info_t::prepare_create_table(const char* name, bool strict)
 	ut_ad(m_thd != NULL);
 	ut_ad(m_create_info != NULL);
 
-	ut_ad(m_form->s->row_type == m_create_info->row_type);
-
 	set_tablespace_type(false);
 
 	normalize_table_name(m_table_name, name);
@@ -12256,8 +12268,6 @@ int create_table_info_t::create_table(bool create_fk)
 	int		error;
 	int		primary_key_no;
 	uint		i;
-	const char*	stmt;
-	size_t		stmt_len;
 
 	DBUG_ENTER("create_table");
 
@@ -12274,6 +12284,9 @@ int create_table_info_t::create_table(bool create_fk)
 	if (error) {
 		DBUG_RETURN(error);
 	}
+
+	DBUG_ASSERT(m_drop_before_rollback
+		    == !(m_flags2 & DICT_TF2_TEMPORARY));
 
 	/* Create the keys */
 
@@ -12333,8 +12346,7 @@ int create_table_info_t::create_table(bool create_fk)
 
 			my_error(ER_WRONG_NAME_FOR_INDEX, MYF(0),
 				 FTS_DOC_ID_INDEX_NAME);
-			error = -1;
-			DBUG_RETURN(error);
+			DBUG_RETURN(-1);
 		case FTS_EXIST_DOC_ID_INDEX:
 		case FTS_NOT_EXIST_DOC_ID_INDEX:
 			break;
@@ -12347,13 +12359,6 @@ int create_table_info_t::create_table(bool create_fk)
 		error = convert_error_code_to_mysql(err, 0, NULL);
 
 		if (error) {
-			trx_rollback_to_savepoint(m_trx, NULL);
-			m_trx->error_state = DB_SUCCESS;
-
-			row_drop_table_for_mysql(m_table_name, m_trx,
-						 SQLCOM_DROP_DB);
-
-			m_trx->error_state = DB_SUCCESS;
 			DBUG_RETURN(error);
 		}
 	}
@@ -12375,15 +12380,28 @@ int create_table_info_t::create_table(bool create_fk)
 		dict_table_get_all_fts_indexes(m_table, fts->indexes);
 	}
 
-	stmt = innobase_get_stmt_unsafe(m_thd, &stmt_len);
-
-	if (stmt) {
-		dberr_t	err = row_table_add_foreign_constraints(
-			create_fk ? m_trx : NULL, stmt, stmt_len, m_table_name,
-			m_create_info->options & HA_LEX_CREATE_TMP_TABLE);
+	size_t stmt_len;
+	if (const char* stmt = innobase_get_stmt_unsafe(m_thd, &stmt_len)) {
+		dberr_t err = create_fk
+			? dict_create_foreign_constraints(
+				m_trx, stmt, stmt_len, m_table_name,
+				m_flags2 & DICT_TF2_TEMPORARY)
+			: DB_SUCCESS;
+		if (err == DB_SUCCESS) {
+			/* Check that also referencing constraints are ok */
+			dict_names_t	fk_tables;
+			err = dict_load_foreigns(m_table_name, NULL,
+						 false, true,
+						 DICT_ERR_IGNORE_NONE,
+						 fk_tables);
+			while (err == DB_SUCCESS && !fk_tables.empty()) {
+				dict_load_table(fk_tables.front(), true,
+						DICT_ERR_IGNORE_NONE);
+				fk_tables.pop_front();
+			}
+		}
 
 		switch (err) {
-
 		case DB_PARENT_NO_INDEX:
 			push_warning_printf(
 				m_thd, Sql_condition::WARN_LEVEL_WARN,
@@ -12416,10 +12434,9 @@ int create_table_info_t::create_table(bool create_fk)
 			break;
 		}
 
-		error = convert_error_code_to_mysql(err, m_flags, NULL);
-
-		if (error) {
-			DBUG_RETURN(error);
+		if (err != DB_SUCCESS) {
+			DBUG_RETURN(convert_error_code_to_mysql(
+					    err, m_flags, NULL));
 		}
 	}
 
@@ -12468,6 +12485,10 @@ create_table_info_t::create_table_update_dict()
 			trx_free(m_trx);
 			DBUG_RETURN(-1);
 		}
+
+		mutex_enter(&dict_sys->mutex);
+		fts_optimize_add_table(innobase_table);
+		mutex_exit(&dict_sys->mutex);
 	}
 
 	if (const Field* ai = m_form->found_next_number_field) {
@@ -12577,12 +12598,21 @@ ha_innobase::create(
 	}
 
 	if ((error = info.create_table(own_trx))) {
+		/* Drop the being-created table before rollback,
+		so that rollback can possibly rename back a table
+		that could have been renamed before the failed creation. */
+		if (info.drop_before_rollback()) {
+			trx->error_state = DB_SUCCESS;
+			row_drop_table_for_mysql(info.table_name(),
+						 trx, SQLCOM_TRUNCATE, true,
+						 false);
+		}
 		trx_rollback_for_mysql(trx);
 		row_mysql_unlock_data_dictionary(trx);
 		if (own_trx) {
 			trx_free(trx);
-			DBUG_RETURN(error);
 		}
+		DBUG_RETURN(error);
 	}
 
 	innobase_commit_low(trx);
@@ -12927,16 +12957,25 @@ inline int ha_innobase::delete_table(const char* name, enum_sql_command sqlcom)
 int ha_innobase::delete_table(const char* name)
 {
 	enum_sql_command sqlcom = enum_sql_command(thd_sql_command(ha_thd()));
+	/* SQLCOM_TRUNCATE should be passed via ha_innobase::truncate() only.
 
-        if (sqlcom == SQLCOM_TRUNCATE
-            && thd_killed(ha_thd())
-            && (m_prebuilt == NULL || m_prebuilt->table->is_temporary())) {
-                sqlcom = SQLCOM_DROP_TABLE;
-        }
+	On client disconnect, when dropping temporary tables, the
+	previous sqlcom would not be overwritten.  In such a case, we
+	will have thd_kill_level() != NOT_KILLED, !m_prebuilt can
+	hold, and sqlcom could be anything, including TRUNCATE.
 
-	/* SQLCOM_TRUNCATE will be passed via ha_innobase::truncate() only. */
-        DBUG_ASSERT(sqlcom != SQLCOM_TRUNCATE);
-        return delete_table(name, sqlcom);
+	The sqlcom only matters for persistent tables; no persistent
+	metadata or FOREIGN KEY metadata is kept for temporary
+	tables. Therefore, we relax the assertion. If there is a bug
+	that slips through this assertion due to !m_prebuilt, the
+	worst impact should be that on DROP TABLE of a persistent
+	table, FOREIGN KEY constraints will be ignored and their
+	metadata will not be removed. */
+	DBUG_ASSERT(sqlcom != SQLCOM_TRUNCATE
+		    || (thd_kill_level(ha_thd()) != THD_IS_NOT_KILLED
+			&& (!m_prebuilt
+			    || m_prebuilt->table->is_temporary())));
+	return delete_table(name, sqlcom);
 }
 
 /** Remove all tables in the named database inside InnoDB.
@@ -13015,6 +13054,7 @@ innobase_drop_database(
 @param[in]	from	old table name
 @param[in]	to	new table name
 @param[in]	commit	whether to commit trx
+@param[in]	use_fk	whether to parse and enforce FOREIGN KEY constraints
 @return DB_SUCCESS or error code */
 inline
 dberr_t
@@ -13022,7 +13062,8 @@ innobase_rename_table(
 	trx_t*		trx,
 	const char*	from,
 	const char*	to,
-	bool		commit = true)
+	bool		commit,
+	bool		use_fk)
 {
 	dberr_t	error;
 	char	norm_to[FN_REFLEN];
@@ -13077,7 +13118,8 @@ innobase_rename_table(
 		goto func_exit;
 	}
 
-	error = row_rename_table_for_mysql(norm_from, norm_to, trx, commit);
+	error = row_rename_table_for_mysql(norm_from, norm_to, trx, commit,
+					   use_fk);
 
 	if (error != DB_SUCCESS) {
 		if (error == DB_TABLE_NOT_FOUND
@@ -13102,7 +13144,8 @@ innobase_rename_table(
 #endif /* _WIN32 */
 				trx_start_if_not_started(trx, true);
 				error = row_rename_table_for_mysql(
-					par_case_name, norm_to, trx, TRUE);
+					par_case_name, norm_to, trx,
+					true, false);
 			}
 		}
 
@@ -13183,14 +13226,31 @@ int ha_innobase::truncate()
 	trx_set_dict_operation(trx, TRX_DICT_OP_TABLE);
 	row_mysql_lock_data_dictionary(trx);
 	int err = convert_error_code_to_mysql(
-		innobase_rename_table(trx, ib_table->name.m_name, temp_name, false),
+		innobase_rename_table(trx, ib_table->name.m_name, temp_name,
+				      false, false),
 		ib_table->flags, m_user_thd);
 	if (err) {
 		trx_rollback_for_mysql(trx);
 		row_mysql_unlock_data_dictionary(trx);
 	} else {
+		switch (dict_tf_get_rec_format(ib_table->flags)) {
+		case REC_FORMAT_REDUNDANT:
+			info.row_type = ROW_TYPE_REDUNDANT;
+			break;
+		case REC_FORMAT_COMPACT:
+			info.row_type = ROW_TYPE_COMPACT;
+			break;
+		case REC_FORMAT_COMPRESSED:
+			info.row_type = ROW_TYPE_COMPRESSED;
+			break;
+		case REC_FORMAT_DYNAMIC:
+			info.row_type = ROW_TYPE_DYNAMIC;
+			break;
+		}
+
 		err = create(name, table, &info,
-			     dict_table_is_file_per_table(ib_table), trx);
+			     ib_table->is_temporary()
+			     || dict_table_is_file_per_table(ib_table), trx);
 	}
 
 	trx_free(trx);
@@ -13236,7 +13296,7 @@ ha_innobase::rename_table(
 	++trx->will_lock;
 	trx_set_dict_operation(trx, TRX_DICT_OP_INDEX);
 
-	dberr_t	error = innobase_rename_table(trx, from, to);
+	dberr_t	error = innobase_rename_table(trx, from, to, true, true);
 
 	DEBUG_SYNC(thd, "after_innobase_rename_table");
 
@@ -21000,7 +21060,7 @@ const char*	BUG_REPORT_MSG =
 
 const char*	FORCE_RECOVERY_MSG =
 	"Please refer to "
-	"https://mariadb.com/kb/en/library/xtradbinnodb-recovery-modes/"
+	"https://mariadb.com/kb/en/library/innodb-recovery-modes/"
 	" for information about forcing recovery.";
 
 const char*	ERROR_CREATING_MSG =
@@ -21018,7 +21078,7 @@ const char*	SET_TRANSACTION_MSG =
 	"Please refer to https://mariadb.com/kb/en/library/set-transaction/";
 
 const char*	INNODB_PARAMETERS_MSG =
-	"Please refer to https://mariadb.com/kb/en/library/xtradbinnodb-server-system-variables/";
+	"Please refer to https://mariadb.com/kb/en/library/innodb-system-variables/";
 
 /**********************************************************************
 Converts an identifier from my_charset_filename to UTF-8 charset.

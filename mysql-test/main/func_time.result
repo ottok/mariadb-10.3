@@ -3481,9 +3481,6 @@ DROP TABLE t1,t2;
 # End of 10.2 tests
 #
 #
-# Start of 10.3 tests
-#
-#
 #  MDEV-12515 Wrong value when storing DATE_ADD() and ADDTIME() to a numeric field
 #
 SET sql_mode='';
@@ -3789,3 +3786,6 @@ CAST(CAST(LAST_DAY(TIME'00:00:00') AS DATE) AS TIME) AS c2,
 CAST(LAST_DAY(TIME'00:00:00') AS TIME) AS c3;
 c1	c2	c3
 2018-08-31	00:00:00	00:00:00
+#
+# End of 10.3 tests
+#

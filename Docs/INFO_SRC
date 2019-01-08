@@ -1,8 +1,8 @@
-commit: fe0e65dbe28f93bfc677d12be4166415dc1bec5a
-date: 2018-11-16 19:58:52 +0200
-build-date: 2018-11-16 18:04:56 +0000 
-short: fe0e65d
+commit: faf206a848684bc0f87c93a2b47a55063bbccc6c
+date: 2019-01-04 17:25:19 +0200
+build-date: 2019-01-04 15:28:51 +0000 
+short: faf206a
 branch: HEAD
 
 
-MariaDB source 10.3.11
+MariaDB source 10.3.12

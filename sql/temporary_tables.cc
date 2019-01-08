@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016,2018 MariaDB Corporation
+  Copyright (c) 2016 MariaDB Corporation
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -489,7 +489,6 @@ bool THD::close_temporary_tables()
   }
 
   DBUG_ASSERT(!rgi_slave);
-  lex->sql_command = SQLCOM_DROP_TABLE;
 
   /*
     Ensure we don't have open HANDLERs for tables we are about to close.
@@ -1042,39 +1041,28 @@ TABLE *THD::find_temporary_table(const char *key, uint key_length,
       /* A matching TMP_TABLE_SHARE is found. */
       All_share_tables_list::Iterator tables_it(share->all_tmp_tables);
 
-      while ((table= tables_it++))
+      bool found= false;
+      while (!found && (table= tables_it++))
       {
         switch (state)
         {
-        case TMP_TABLE_IN_USE:
-          if (table->query_id > 0)
-          {
-            result= table;
-            goto done;
-          }
-          break;
-        case TMP_TABLE_NOT_IN_USE:
-          if (table->query_id == 0)
-          {
-            result= table;
-            goto done;
-          }
-          break;
-        case TMP_TABLE_ANY:
-          {
-            result= table;
-            goto done;
-          }
-          break;
-        default:                                /* Invalid */
-          DBUG_ASSERT(0);
-          goto done;
+        case TMP_TABLE_IN_USE:     found= table->query_id > 0;  break;
+        case TMP_TABLE_NOT_IN_USE: found= table->query_id == 0; break;
+        case TMP_TABLE_ANY:        found= true;                 break;
         }
       }
+      if (table && unlikely(table->m_needs_reopen))
+      {
+        share->all_tmp_tables.remove(table);
+        free_temporary_table(table);
+        it.rewind();
+        continue;
+      }
+      result= table;
+      break;
     }
   }
 
-done:
   if (locked)
   {
     DBUG_ASSERT(m_tmp_tables_locked);
@@ -1155,8 +1143,7 @@ TABLE *THD::open_temporary_table(TMP_TABLE_SHARE *share,
   @return Success                     false
           Failure                     true
 */
-bool THD::find_and_use_tmp_table(const TABLE_LIST *tl,
-                                 TABLE **out_table)
+bool THD::find_and_use_tmp_table(const TABLE_LIST *tl, TABLE **out_table)
 {
   DBUG_ENTER("THD::find_and_use_tmp_table");
 
@@ -1166,11 +1153,9 @@ bool THD::find_and_use_tmp_table(const TABLE_LIST *tl,
 
   key_length= create_tmp_table_def_key(key, tl->get_db_name(),
                                         tl->get_table_name());
-  result=
-    use_temporary_table(find_temporary_table(key, key_length,
-                                             TMP_TABLE_NOT_IN_USE),
-                        out_table);
-
+  result= use_temporary_table(find_temporary_table(key, key_length,
+                                                   TMP_TABLE_NOT_IN_USE),
+                              out_table);
   DBUG_RETURN(result);
 }
 

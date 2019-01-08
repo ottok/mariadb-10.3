@@ -1944,10 +1944,6 @@ DROP TABLE t1,t2;
 --echo #
 
 --echo #
---echo # Start of 10.3 tests
---echo #
-
---echo #
 --echo #  MDEV-12515 Wrong value when storing DATE_ADD() and ADDTIME() to a numeric field
 --echo #
 
@@ -2244,3 +2240,7 @@ SELECT
   LAST_DAY(TIME'00:00:00') AS c1,
   CAST(CAST(LAST_DAY(TIME'00:00:00') AS DATE) AS TIME) AS c2,
   CAST(LAST_DAY(TIME'00:00:00') AS TIME) AS c3;
+
+--echo #
+--echo # End of 10.3 tests
+--echo #

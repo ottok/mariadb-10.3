@@ -24,8 +24,6 @@ The transaction
 Created 3/26/1996 Heikki Tuuri
 *******************************************************/
 
-#include "ha_prototypes.h"
-
 #include "trx0trx.h"
 
 #ifdef WITH_WSREP
@@ -41,7 +39,6 @@ Created 3/26/1996 Heikki Tuuri
 #include "que0que.h"
 #include "srv0mon.h"
 #include "srv0srv.h"
-#include "fsp0sysspace.h"
 #include "srv0start.h"
 #include "trx0purge.h"
 #include "trx0rec.h"
@@ -49,7 +46,6 @@ Created 3/26/1996 Heikki Tuuri
 #include "trx0rseg.h"
 #include "trx0undo.h"
 #include "trx0xa.h"
-#include "ut0new.h"
 #include "ut0pool.h"
 #include "ut0vec.h"
 
@@ -783,9 +779,7 @@ trx_lists_init_at_db_start()
 evenly distributed between 0 and innodb_undo_logs-1
 @return	persistent rollback segment
 @retval	NULL	if innodb_read_only */
-static
-trx_rseg_t*
-trx_assign_rseg_low()
+static trx_rseg_t* trx_assign_rseg_low()
 {
 	if (srv_read_only_mode) {
 		ut_ad(srv_undo_logs == ULONG_UNDEFINED);
@@ -836,8 +830,8 @@ trx_assign_rseg_low()
 			ut_ad(rseg->is_persistent());
 
 			if (rseg->space != fil_system.sys_space) {
-				ut_ad(srv_undo_tablespaces > 1);
-				if (rseg->skip_allocation) {
+				if (rseg->skip_allocation
+				    || !srv_undo_tablespaces) {
 					continue;
 				}
 			} else if (trx_rseg_t* next

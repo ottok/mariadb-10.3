@@ -24,8 +24,6 @@ Update of a row
 Created 12/27/1996 Heikki Tuuri
 *******************************************************/
 
-#include "ha_prototypes.h"
-
 #include "row0upd.h"
 #include "dict0dict.h"
 #include "dict0mem.h"
@@ -2322,7 +2320,7 @@ row_upd_sec_index_entry(
 
 	mtr.start();
 
-	switch (index->table->space->id) {
+	switch (index->table->space_id) {
 	case SRV_TMP_SPACE_ID:
 		mtr.set_log_mode(MTR_LOG_NO_REDO);
 		flags = BTR_NO_LOCKING_FLAG;

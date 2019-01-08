@@ -844,6 +844,7 @@ bool Item_func_hybrid_field_type::get_date_from_decimal_op(MYSQL_TIME *ltime,
   my_decimal value, *res;
   if (!(res= decimal_op_with_null_check(&value)) ||
       decimal_to_datetime_with_warn(res, ltime, fuzzydate,
+                                    field_table_or_null(),
                                     field_name_or_null()))
     return make_zero_mysql_time(ltime, fuzzydate);
   return (null_value= 0);
@@ -882,6 +883,7 @@ bool Item_func_hybrid_field_type::get_date_from_int_op(MYSQL_TIME *ltime,
   bool neg= !unsigned_flag && value < 0;
   if (null_value || int_to_datetime_with_warn(neg, neg ? -value : value,
                                               ltime, fuzzydate,
+                                              field_table_or_null(),
                                               field_name_or_null()))
     return make_zero_mysql_time(ltime, fuzzydate);
   return (null_value= 0);
@@ -917,6 +919,7 @@ bool Item_func_hybrid_field_type::get_date_from_real_op(MYSQL_TIME *ltime,
 {
   double value= real_op();
   if (null_value || double_to_datetime_with_warn(value, ltime, fuzzydate,
+                                                 field_table_or_null(),
                                                  field_name_or_null()))
     return make_zero_mysql_time(ltime, fuzzydate);
   return (null_value= 0);
@@ -1749,13 +1752,9 @@ longlong Item_func_int_div::val_int()
 
 bool Item_func_int_div::fix_length_and_dec()
 {
-  Item_result argtype= args[0]->result_type();
-  /* use precision ony for the data type it is applicable for and valid */
-  uint32 char_length= args[0]->max_char_length() -
-                      (argtype == DECIMAL_RESULT || argtype == INT_RESULT ?
-                       args[0]->decimals : 0);
-  fix_char_length(char_length > MY_INT64_NUM_DECIMAL_DIGITS ?
-                  MY_INT64_NUM_DECIMAL_DIGITS : char_length);
+  uint32 prec= args[0]->decimal_int_part();
+  set_if_smaller(prec, MY_INT64_NUM_DECIMAL_DIGITS);
+  fix_char_length(prec);
   maybe_null=1;
   unsigned_flag=args[0]->unsigned_flag | args[1]->unsigned_flag;
   return false;
@@ -3302,6 +3301,8 @@ udf_handler::fix_fields(THD *thd, Item_func_or_sum *func,
       if (item->maybe_null)
 	func->maybe_null=1;
       func->with_sum_func= func->with_sum_func || item->with_sum_func;
+      func->with_window_func= func->with_window_func ||
+                              item->with_window_func;
       func->with_field= func->with_field || item->with_field;
       func->with_param= func->with_param || item->with_param;
       func->With_subquery_cache::join(item);
