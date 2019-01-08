@@ -24,13 +24,11 @@ Import a tablespace to a running instance.
 Created 2012-02-08 by Sunny Bains.
 *******************************************************/
 
-#include "ha_prototypes.h"
-
 #include "row0import.h"
 #include "btr0pcur.h"
-#include "btr0sea.h"
 #include "que0que.h"
 #include "dict0boot.h"
+#include "dict0load.h"
 #include "ibuf0ibuf.h"
 #include "pars0pars.h"
 #include "row0sel.h"
@@ -39,7 +37,6 @@ Created 2012-02-08 by Sunny Bains.
 #include "row0quiesce.h"
 #include "fil0pagecompress.h"
 #include "trx0undo.h"
-#include "ut0new.h"
 #ifdef HAVE_LZO
 #include "lzo/lzo1x.h"
 #endif
@@ -2053,7 +2050,7 @@ row_import_discard_changes(
 
 	table->file_unreadable = true;
 	if (table->space) {
-		fil_close_tablespace(trx, table->space->id);
+		fil_close_tablespace(trx, table->space_id);
 		table->space = NULL;
 	}
 }
@@ -3436,9 +3433,7 @@ not_encrypted:
 				}
 			} else {
 				if (!fil_space_verify_crypt_checksum(
-					    src, callback.get_page_size(),
-					    block->page.id.space(),
-					    block->page.id.page_no())) {
+					    src, callback.get_page_size())) {
 					goto page_corrupted;
 				}
 

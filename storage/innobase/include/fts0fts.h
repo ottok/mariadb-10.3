@@ -27,12 +27,8 @@ Created 2011/09/02 Sunny Bains
 #ifndef fts0fts_h
 #define fts0fts_h
 
-#include "ha_prototypes.h"
-
 #include "data0type.h"
 #include "data0types.h"
-#include "dict0types.h"
-#include "hash0hash.h"
 #include "mem0mem.h"
 #include "rem0types.h"
 #include "row0types.h"

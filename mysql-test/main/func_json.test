@@ -484,7 +484,6 @@ SET sql_mode=default;
 
 select JSON_VALID( '{"a":1]' );
 
-
 --echo #
 --echo # End of 10.2 tests
 --echo #

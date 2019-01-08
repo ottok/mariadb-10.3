@@ -31,7 +31,6 @@ The database buffer buf_pool
 Created 11/5/1995 Heikki Tuuri
 *******************************************************/
 
-#include "univ.i"
 #include "mtr0types.h"
 #include "mach0data.h"
 #include "page0size.h"
@@ -47,7 +46,6 @@ Created 11/5/1995 Heikki Tuuri
 #include "btr0btr.h"
 #include "fil0fil.h"
 #include "fil0crypt.h"
-#include "fsp0sysspace.h"
 #include "buf0buddy.h"
 #include "lock0lock.h"
 #include "sync0rw.h"
@@ -62,12 +60,10 @@ Created 11/5/1995 Heikki Tuuri
 #include "dict0dict.h"
 #include "log0recv.h"
 #include "srv0mon.h"
-#include "fsp0sysspace.h"
 #endif /* !UNIV_INNOCHECKSUM */
 #include "page0zip.h"
 #include "sync0sync.h"
 #include "buf0dump.h"
-#include "ut0new.h"
 #include <new>
 #include <map>
 #include <sstream>
@@ -75,7 +71,6 @@ Created 11/5/1995 Heikki Tuuri
 #include "fil0pagecompress.h"
 #include "fsp0pagecompress.h"
 #endif
-#include "ha_prototypes.h"
 #include "ut0byte.h"
 #include <new>
 
@@ -530,10 +525,14 @@ decompress_with_slot:
 			       + dst_frame)) {
 		/* Verify encryption checksum before we even try to
 		decrypt. */
-		if (!fil_space_verify_crypt_checksum(
-			    dst_frame, bpage->size, bpage->id.space(),
-			    bpage->id.page_no())) {
+		if (!fil_space_verify_crypt_checksum(dst_frame, bpage->size)) {
 decrypt_failed:
+			ib::error() << "Encrypted page " << bpage->id
+				    << " in file " << space->chain.start->name
+				    << " looks corrupted; key_version="
+				    << mach_read_from_4(
+					    FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION
+					    + dst_frame);
 			/* Mark page encrypted in case it should be. */
 			if (space->crypt_data->type
 			    != CRYPT_SCHEME_UNENCRYPTED) {
@@ -738,38 +737,18 @@ buf_block_alloc(
 }
 #endif /* !UNIV_INNOCHECKSUM */
 
-/** Checks if a page contains only zeroes.
-@param[in]	read_buf	database page
-@param[in]	page_size	page size
-@return true if page is filled with zeroes */
-bool
-buf_page_is_zeroes(
-	const byte*		read_buf,
-	const page_size_t&	page_size)
-{
-	for (ulint i = 0; i < page_size.logical(); i++) {
-		if (read_buf[i] != 0) {
-			return(false);
-		}
-	}
-	return(true);
-}
-
 /** Checks if the page is in crc32 checksum format.
 @param[in]	read_buf		database page
 @param[in]	checksum_field1		new checksum field
 @param[in]	checksum_field2		old checksum field
-@param[in]	use_legacy_big_endian   use legacy big endian algorithm
 @return true if the page is in crc32 checksum format. */
 bool
 buf_page_is_checksum_valid_crc32(
 	const byte*			read_buf,
 	ulint				checksum_field1,
-	ulint				checksum_field2,
-	bool				use_legacy_big_endian)
+	ulint				checksum_field2)
 {
-	const uint32_t	crc32 = buf_calc_page_crc32(read_buf,
-						    use_legacy_big_endian);
+	const uint32_t	crc32 = buf_calc_page_crc32(read_buf);
 
 #ifdef UNIV_INNOCHECKSUM
 	if (log_file
@@ -783,25 +762,14 @@ buf_page_is_checksum_valid_crc32(
 #endif /* UNIV_INNOCHECKSUM */
 
 	if (checksum_field1 != checksum_field2) {
-		goto invalid;
+		return false;
 	}
 
-	if (checksum_field1 == crc32) {
-		return(true);
-	} else {
-		const uint32_t	crc32_legacy = buf_calc_page_crc32(read_buf, true);
-
-		if (checksum_field1 == crc32_legacy) {
-			return(true);
-		}
-	}
-
-invalid:
-	DBUG_LOG("checksum", "Page checksum crc32 not valid"
-		   << " field1 " << checksum_field1
-		   << " field2 " << checksum_field2
-		 << " crc32 " << crc32);
-	return(false);
+	return checksum_field1 == crc32
+#ifdef INNODB_BUG_ENDIAN_CRC32
+		|| checksum_field1 == buf_calc_page_crc32(read_buf, true)
+#endif
+		;
 }
 
 /** Checks if the page is in innodb checksum format.
@@ -930,6 +898,29 @@ buf_page_is_checksum_valid_none(
 	       && checksum_field1 == BUF_NO_CHECKSUM_MAGIC);
 }
 
+#ifdef INNODB_BUG_ENDIAN_CRC32
+/** Validate the CRC-32C checksum of a page.
+@param[in]	page		buffer page (srv_page_size bytes)
+@param[in]	checksum	CRC-32C checksum stored on page
+@return	computed checksum */
+static uint32_t buf_page_check_crc32(const byte* page, uint32_t checksum)
+{
+	uint32_t crc32 = buf_calc_page_crc32(page);
+
+	if (checksum != crc32) {
+		crc32 = buf_calc_page_crc32(page, true);
+	}
+
+	return crc32;
+}
+#else /* INNODB_BUG_ENDIAN_CRC32 */
+/** Validate the CRC-32C checksum of a page.
+@param[in]	page		buffer page (srv_page_size bytes)
+@param[in]	checksum	CRC-32C checksum stored on page
+@return	computed checksum */
+# define buf_page_check_crc32(page, checksum) buf_calc_page_crc32(page)
+#endif /* INNODB_BUG_ENDIAN_CRC32 */
+
 /** Check if a page is corrupt.
 @param[in]	check_lsn	whether the LSN should be checked
 @param[in]	read_buf	database page
@@ -947,18 +938,21 @@ buf_page_is_corrupted(
 	const void* 	 	space)
 #endif
 {
-	size_t checksum_field1 = 0;
-	size_t checksum_field2 = 0;
 #ifndef UNIV_INNOCHECKSUM
 	DBUG_EXECUTE_IF("buf_page_import_corrupt_failure", return(true); );
 #endif
+	size_t		checksum_field1 = 0;
+	size_t		checksum_field2 = 0;
+	uint32_t	crc32 = 0;
+	bool		crc32_inited = false;
+
 	ulint page_type = mach_read_from_2(read_buf + FIL_PAGE_TYPE);
 
 	/* We can trust page type if page compression is set on tablespace
 	flags because page compression flag means file must have been
 	created with 10.1 (later than 5.5 code base). In 10.1 page
 	compressed tables do not contain post compression checksum and
-	FIL_PAGE_END_LSN_OLD_CHKSUM field stored.  Note that space can
+	FIL_PAGE_END_LSN_OLD_CHKSUM field stored. Note that space can
 	be null if we are in fil_check_first_page() and first page
 	is not compressed or encrypted. Page checksum is verified
 	after decompression (i.e. normally pages are already
@@ -979,13 +973,7 @@ buf_page_is_corrupted(
 
 		/* Stored log sequence numbers at the start and the end
 		of page do not match */
-#ifndef UNIV_INNOCHECKSUM
-		ib::info() << "Log sequence number at the start "
-			   << mach_read_from_4(read_buf + FIL_PAGE_LSN + 4)
-			   << " and the end "
-			   << mach_read_from_4(read_buf + srv_page_size - FIL_PAGE_END_LSN_OLD_CHKSUM + 4)
-			   << " do not match";
-#endif /* UNIV_INNOCHECKSUM */
+
 		return(true);
 	}
 
@@ -1046,73 +1034,39 @@ buf_page_is_corrupted(
 	    && *reinterpret_cast<const ib_uint64_t*>(
 		    read_buf + FIL_PAGE_LSN) == 0) {
 
-		ulint i;
-
 		/* make sure that the page is really empty */
-		for (i = 0; i < page_size.logical(); ++i) {
-
-			/* The FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID has been
-			repurposed for page compression. It can be
-			set for uncompressed empty pages. */
-
-			if ((i < FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION
-			     || i >= FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID)
-			    && read_buf[i] != 0) {
-
-#ifndef UNIV_INNOCHECKSUM
-				ib::info() << "Checksum fields zero but page is not empty.";
-#endif
-
-				break;
+		for (ulint i = 0; i < page_size.logical(); i++) {
+			if (read_buf[i] != 0) {
+				return(true);
 			}
 		}
 #ifdef UNIV_INNOCHECKSUM
-		if (i >= page_size.logical()) {
-			if (log_file) {
-				fprintf(log_file, "Page::%llu"
-					" is empty and uncorrupted\n",
-					cur_page_num);
-			}
-			return(false);
+		if (log_file) {
+			fprintf(log_file, "Page::%llu"
+				" is empty and uncorrupted\n",
+				cur_page_num);
 		}
-#else
-		return(i < page_size.logical());
 #endif /* UNIV_INNOCHECKSUM */
+		return(false);
 	}
-
-#ifndef UNIV_INNOCHECKSUM
-	const page_id_t	page_id(mach_read_from_4(
-					read_buf + FIL_PAGE_SPACE_ID),
-				mach_read_from_4(
-					read_buf + FIL_PAGE_OFFSET));
-#endif /* UNIV_INNOCHECKSUM */
 
 	const srv_checksum_algorithm_t	curr_algo =
 		static_cast<srv_checksum_algorithm_t>(srv_checksum_algorithm);
 
-	bool	legacy_checksum_checked = false;
-
 	switch (curr_algo) {
-	case SRV_CHECKSUM_ALGORITHM_CRC32:
 	case SRV_CHECKSUM_ALGORITHM_STRICT_CRC32:
-
-		if (buf_page_is_checksum_valid_crc32(read_buf,
-			checksum_field1, checksum_field2, false)) {
-			return(false);
-		}
-
+		return !buf_page_is_checksum_valid_crc32(
+			read_buf, checksum_field1, checksum_field2);
+	case SRV_CHECKSUM_ALGORITHM_STRICT_INNODB:
+		return !buf_page_is_checksum_valid_innodb(
+			read_buf, checksum_field1, checksum_field2);
+	case SRV_CHECKSUM_ALGORITHM_STRICT_NONE:
+		return !buf_page_is_checksum_valid_none(
+			read_buf, checksum_field1, checksum_field2);
+	case SRV_CHECKSUM_ALGORITHM_CRC32:
+	case SRV_CHECKSUM_ALGORITHM_INNODB:
 		if (buf_page_is_checksum_valid_none(read_buf,
 			checksum_field1, checksum_field2)) {
-			if (curr_algo
-			    == SRV_CHECKSUM_ALGORITHM_STRICT_CRC32) {
-#ifndef UNIV_INNOCHECKSUM
-				page_warn_strict_checksum(
-					curr_algo,
-					SRV_CHECKSUM_ALGORITHM_NONE,
-					page_id);
-#endif /* !UNIV_INNOCHECKSUM */
-			}
-
 #ifdef UNIV_INNOCHECKSUM
 			if (log_file) {
 				fprintf(log_file, "page::%llu;"
@@ -1130,173 +1084,97 @@ buf_page_is_corrupted(
 					checksum_field1);
 			}
 #endif /* UNIV_INNOCHECKSUM */
-
-			return(false);
+			return false;
 		}
 
-		/* We need to check whether the stored checksum matches legacy
-		big endian checksum or Innodb checksum. We optimize the order
-		based on earlier results. if earlier we have found pages
-		matching legacy big endian checksum, we try to match it first.
-		Otherwise we check innodb checksum first. */
-		if (legacy_big_endian_checksum) {
-			if (buf_page_is_checksum_valid_crc32(read_buf,
-				checksum_field1, checksum_field2, true)) {
+		/* Very old versions of InnoDB only stored 8 byte lsn to the
+		start and the end of the page. */
 
-				return(false);
+		/* Since innodb_checksum_algorithm is not strict_* allow
+		any of the algos to match for the old field */
+
+		if (checksum_field2
+		    != mach_read_from_4(read_buf + FIL_PAGE_LSN)
+		    && checksum_field2 != BUF_NO_CHECKSUM_MAGIC) {
+
+			if (srv_checksum_algorithm
+			    == SRV_CHECKSUM_ALGORITHM_CRC32) {
+				crc32 = buf_page_check_crc32(read_buf,
+							     checksum_field2);
+				crc32_inited = true;
+
+				if (checksum_field2 != crc32
+				    && checksum_field2
+				       != buf_calc_page_old_checksum(read_buf)) {
+					return true;
+				}
+			} else {
+				ut_ad(srv_checksum_algorithm
+				      == SRV_CHECKSUM_ALGORITHM_INNODB);
+
+				if (checksum_field2
+				    != buf_calc_page_old_checksum(read_buf)) {
+					crc32 = buf_page_check_crc32(
+						read_buf, checksum_field2);
+					crc32_inited = true;
+
+					if (checksum_field2 != crc32) {
+						return true;
+					}
+				}
 			}
-			legacy_checksum_checked = true;
 		}
 
-		if (buf_page_is_checksum_valid_innodb(read_buf,
-			checksum_field1, checksum_field2)) {
-			if (curr_algo
-			    == SRV_CHECKSUM_ALGORITHM_STRICT_CRC32) {
-#ifndef UNIV_INNOCHECKSUM
-				page_warn_strict_checksum(
-					curr_algo,
-					SRV_CHECKSUM_ALGORITHM_INNODB,
-					page_id);
-#endif
-			}
+		if (checksum_field1 == 0
+		    || checksum_field1 == BUF_NO_CHECKSUM_MAGIC) {
+		} else if (srv_checksum_algorithm
+			   == SRV_CHECKSUM_ALGORITHM_CRC32) {
 
-			return(false);
-		}
-
-		/* If legacy checksum is not checked, do it now. */
-		if (!legacy_checksum_checked && buf_page_is_checksum_valid_crc32(
-			read_buf, checksum_field1, checksum_field2, true)) {
-
-			legacy_big_endian_checksum = true;
-			return(false);
-		}
-
-#ifdef UNIV_INNOCHECKSUM
-		if (log_file) {
-			fprintf(log_file, "Fail; page::%llu;"
-				" invalid (fails crc32 checksum)\n",
-				cur_page_num);
-		}
-#endif /* UNIV_INNOCHECKSUM */
-		return(true);
-
-	case SRV_CHECKSUM_ALGORITHM_INNODB:
-	case SRV_CHECKSUM_ALGORITHM_STRICT_INNODB:
-
-		if (buf_page_is_checksum_valid_innodb(read_buf,
-			checksum_field1, checksum_field2)) {
-			return(false);
-		}
-
-		if (buf_page_is_checksum_valid_none(read_buf,
-			checksum_field1, checksum_field2)) {
-			if (curr_algo
-			    == SRV_CHECKSUM_ALGORITHM_STRICT_INNODB) {
-#ifndef UNIV_INNOCHECKSUM
-				page_warn_strict_checksum(
-					curr_algo,
-					SRV_CHECKSUM_ALGORITHM_NONE,
-					page_id);
-#endif
-			}
-#ifdef UNIV_INNOCHECKSUM
-			if (log_file) {
-				fprintf(log_file, "page::%llu;"
-					" old style: calculated = %u;"
-					" recorded = %zu;\n", cur_page_num,
-					buf_calc_page_old_checksum(read_buf),
-					checksum_field2);
-				fprintf(log_file, "page::%llu;"
-					" new style: calculated = %u;"
-					" crc32 = %u; recorded = %zu;\n",
-					cur_page_num,
-					buf_calc_page_new_checksum(read_buf),
-					buf_calc_page_crc32(read_buf),
-					checksum_field1);
-			}
-#endif /* UNIV_INNOCHECKSUM */
-
-			return(false);
-		}
-
-		if (buf_page_is_checksum_valid_crc32(read_buf,
-			checksum_field1, checksum_field2, false)
-		    || buf_page_is_checksum_valid_crc32(read_buf,
-			checksum_field1, checksum_field2, true)) {
-
-			if (curr_algo
-			    == SRV_CHECKSUM_ALGORITHM_STRICT_INNODB) {
-#ifndef UNIV_INNOCHECKSUM
-				page_warn_strict_checksum(
-					curr_algo,
-					SRV_CHECKSUM_ALGORITHM_CRC32,
-					page_id);
-#endif
+			if (!crc32_inited) {
+				crc32 = buf_page_check_crc32(
+					read_buf, checksum_field2);
+				crc32_inited = true;
 			}
 
-			return(false);
+			if (checksum_field1 != crc32
+			    && checksum_field1
+			    != buf_calc_page_new_checksum(read_buf)) {
+				return true;
+			}
+		} else {
+			ut_ad(srv_checksum_algorithm
+			      == SRV_CHECKSUM_ALGORITHM_INNODB);
+
+			if (checksum_field1
+			    != buf_calc_page_new_checksum(read_buf)) {
+
+				if (!crc32_inited) {
+					crc32 = buf_page_check_crc32(
+						read_buf, checksum_field2);
+					crc32_inited = true;
+				}
+
+				if (checksum_field1 != crc32) {
+					return true;
+				}
+			}
 		}
 
-#ifdef UNIV_INNOCHECKSUM
-		if (log_file) {
-			fprintf(log_file, "Fail; page::%llu;"
-				" invalid (fails innodb checksum)\n",
-				cur_page_num);
-		}
-#endif /* UNIV_INNOCHECKSUM */
-
-		return(true);
-
-	case SRV_CHECKSUM_ALGORITHM_STRICT_NONE:
-
-		if (buf_page_is_checksum_valid_none(read_buf,
-			checksum_field1, checksum_field2)) {
-			return(false);
+		if (crc32_inited
+		    && ((checksum_field1 == crc32
+			 && checksum_field2 != crc32)
+			|| (checksum_field1 != crc32
+			    && checksum_field2 == crc32))) {
+			return true;
 		}
 
-		if (buf_page_is_checksum_valid_crc32(read_buf,
-			checksum_field1, checksum_field2, false)
-		    || buf_page_is_checksum_valid_crc32(read_buf,
-			checksum_field1, checksum_field2, true)) {
-#ifndef UNIV_INNOCHECKSUM
-			page_warn_strict_checksum(
-				curr_algo,
-				SRV_CHECKSUM_ALGORITHM_CRC32,
-				page_id);
-#endif /* !UNIV_INNOCHECKSUM */
-			return(false);
-		}
-
-		if (buf_page_is_checksum_valid_innodb(read_buf,
-			checksum_field1, checksum_field2)) {
-#ifndef UNIV_INNOCHECKSUM
-			page_warn_strict_checksum(
-				curr_algo,
-				SRV_CHECKSUM_ALGORITHM_INNODB,
-				page_id);
-#endif /* !UNIV_INNOCHECKSUM */
-			return(false);
-		}
-
-#ifdef UNIV_INNOCHECKSUM
-		if (log_file) {
-			fprintf(log_file, "Fail; page::%llu;"
-				" invalid (fails none checksum)\n",
-				cur_page_num);
-		}
-#endif /* UNIV_INNOCHECKSUM */
-
-		return(true);
-
+		break;
 	case SRV_CHECKSUM_ALGORITHM_NONE:
 		/* should have returned false earlier */
 		break;
-	/* no default so the compiler will emit a warning if new enum
-	is added and not handled here */
 	}
 
-	ut_error;
-	return(false);
+	return false;
 }
 
 #ifndef UNIV_INNOCHECKSUM
@@ -1379,10 +1257,12 @@ buf_page_print(const byte* read_buf, const page_size_t& page_size)
 			<< page_zip_calc_checksum(
 				read_buf, page_size.physical(),
 				SRV_CHECKSUM_ALGORITHM_CRC32)
+#ifdef INNODB_BUG_ENDIAN_CRC32
 			<< "/"
 			<< page_zip_calc_checksum(
 				read_buf, page_size.physical(),
 				SRV_CHECKSUM_ALGORITHM_CRC32, true)
+#endif
 			<< ", "
 			<< buf_checksum_algorithm_name(
 				SRV_CHECKSUM_ALGORITHM_INNODB)
@@ -1408,9 +1288,10 @@ buf_page_print(const byte* read_buf, const page_size_t& page_size)
 
 	} else {
 		const uint32_t	crc32 = buf_calc_page_crc32(read_buf);
-
+#ifdef INNODB_BUG_ENDIAN_CRC32
 		const uint32_t	crc32_legacy = buf_calc_page_crc32(read_buf,
 								   true);
+#endif /* INNODB_BUG_ENDIAN_CRC32 */
 		ulint page_type = fil_page_get_type(read_buf);
 
 		ib::info() << "Uncompressed page, stored checksum in field1 "
@@ -1419,7 +1300,10 @@ buf_page_print(const byte* read_buf, const page_size_t& page_size)
 			<< ", calculated checksums for field1: "
 			<< buf_checksum_algorithm_name(
 				SRV_CHECKSUM_ALGORITHM_CRC32) << " "
-			<< crc32 << "/" << crc32_legacy
+			<< crc32
+#ifdef INNODB_BUG_ENDIAN_CRC32
+			<< "/" << crc32_legacy
+#endif
 			<< ", "
 			<< buf_checksum_algorithm_name(
 				SRV_CHECKSUM_ALGORITHM_INNODB) << " "
@@ -1436,7 +1320,10 @@ buf_page_print(const byte* read_buf, const page_size_t& page_size)
 			<< ", calculated checksums for field2: "
 			<< buf_checksum_algorithm_name(
 				SRV_CHECKSUM_ALGORITHM_CRC32) << " "
-			<< crc32 << "/" << crc32_legacy
+			<< crc32
+#ifdef INNODB_BUG_ENDIAN_CRC32
+			<< "/" << crc32_legacy
+#endif
 			<< ", "
 			<< buf_checksum_algorithm_name(
 				SRV_CHECKSUM_ALGORITHM_INNODB) << " "
@@ -4073,10 +3960,12 @@ buf_zip_decompress(
 			<< ", crc32: "
 			<< page_zip_calc_checksum(
 				frame, size, SRV_CHECKSUM_ALGORITHM_CRC32)
+#ifdef INNODB_BUG_ENDIAN_CRC32
 			<< "/"
 			<< page_zip_calc_checksum(
 				frame, size, SRV_CHECKSUM_ALGORITHM_CRC32,
 				true)
+#endif
 			<< " innodb: "
 			<< page_zip_calc_checksum(
 				frame, size, SRV_CHECKSUM_ALGORITHM_INNODB)
@@ -4559,7 +4448,7 @@ loop:
 				<< ". The most probable cause"
 				" of this error may be that the"
 				" table has been corrupted."
-				" See https://mariadb.com/kb/en/library/xtradbinnodb-recovery-modes/";
+				" See https://mariadb.com/kb/en/library/innodb-recovery-modes/";
 		}
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
@@ -5989,18 +5878,14 @@ or decrypt/decompress just failed.
 @retval	DB_DECRYPTION_FAILED	if page post encryption checksum matches but
 after decryption normal page checksum does not match.
 @retval	DB_TABLESPACE_DELETED	if accessed tablespace is not found */
-static
-dberr_t
-buf_page_check_corrupt(buf_page_t* bpage, fil_space_t* space)
+static dberr_t buf_page_check_corrupt(buf_page_t* bpage, fil_space_t* space)
 {
 	ut_ad(space->pending_io());
 
 	byte* dst_frame = (bpage->zip.data) ? bpage->zip.data :
 		((buf_block_t*) bpage)->frame;
-	bool still_encrypted = false;
 	dberr_t err = DB_SUCCESS;
 	bool corrupted = false;
-	fil_space_crypt_t* crypt_data = space->crypt_data;
 
 	/* In buf_decrypt_after_read we have either decrypted the page if
 	page post encryption checksum matches and used key_id is found
@@ -6008,12 +5893,12 @@ buf_page_check_corrupt(buf_page_t* bpage, fil_space_t* space)
 	not decrypted and it could be either encrypted and corrupted
 	or corrupted or good page. If we decrypted, there page could
 	still be corrupted if used key does not match. */
-	still_encrypted = crypt_data
-		&& crypt_data->type != CRYPT_SCHEME_UNENCRYPTED
+	const bool still_encrypted = mach_read_from_4(
+		dst_frame + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION)
+		&& space->crypt_data
+		&& space->crypt_data->type != CRYPT_SCHEME_UNENCRYPTED
 		&& !bpage->encrypted
-		&& fil_space_verify_crypt_checksum(
-			dst_frame, bpage->size,
-			bpage->id.space(), bpage->id.page_no());
+		&& fil_space_verify_crypt_checksum(dst_frame, bpage->size);
 
 	if (!still_encrypted) {
 		/* If traditional checksums match, we assume that page is

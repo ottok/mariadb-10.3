@@ -24,8 +24,6 @@ Insert buffer
 Created 7/19/1997 Heikki Tuuri
 *******************************************************/
 
-#include "ha_prototypes.h"
-
 #include "ibuf0ibuf.h"
 #include "sync0sync.h"
 #include "btr0sea.h"
@@ -55,7 +53,6 @@ my_bool	srv_ibuf_disable_background_merge;
 #include "log0recv.h"
 #include "que0que.h"
 #include "srv0start.h" /* srv_shutdown_state */
-#include "fsp0sysspace.h"
 #include "rem0cmp.h"
 
 /*	STRUCTURE OF AN INSERT BUFFER RECORD
@@ -3375,7 +3372,7 @@ ibuf_insert_low(
 	ut_ad(!dict_index_is_spatial(index));
 	ut_ad(dtuple_check_typed(entry));
 	ut_ad(!no_counter || op == IBUF_OP_INSERT);
-	ut_ad(page_id.space() == index->table->space->id);
+	ut_ad(page_id.space() == index->table->space_id);
 	ut_a(op < IBUF_OP_COUNT);
 
 	do_merge = FALSE;
@@ -4928,6 +4925,20 @@ ibuf_print(
 #endif /* UNIV_IBUF_COUNT_DEBUG */
 
 	mutex_exit(&ibuf_mutex);
+}
+
+/** Check if a page is all zeroes.
+@param[in]	read_buf	database page
+@param[in]	size		page size
+@return	whether the page is all zeroes */
+static bool buf_page_is_zeroes(const byte* read_buf, const page_size_t& size)
+{
+	for (ulint i = 0; i < size.physical(); i++) {
+		if (read_buf[i] != 0) {
+			return false;
+		}
+	}
+	return true;
 }
 
 /** Check the insert buffer bitmaps on IMPORT TABLESPACE.

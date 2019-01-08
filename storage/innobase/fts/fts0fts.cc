@@ -22,8 +22,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 Full Text Search interface
 ***********************************************************************/
 
-#include "ha_prototypes.h"
-
 #include "trx0roll.h"
 #include "row0mysql.h"
 #include "row0upd.h"
@@ -40,7 +38,6 @@ Full Text Search interface
 #include "dict0stats.h"
 #include "btr0pcur.h"
 #include "sync0sync.h"
-#include "ut0new.h"
 
 static const ulint FTS_MAX_ID_LEN = 32;
 
@@ -1513,8 +1510,8 @@ fts_rename_one_aux_table(
 	       table_new_name_len - new_db_name_len);
 	fts_table_new_name[table_new_name_len] = 0;
 
-	return(row_rename_table_for_mysql(
-		fts_table_old_name, fts_table_new_name, trx, false));
+	return row_rename_table_for_mysql(
+		fts_table_old_name, fts_table_new_name, trx, false, false);
 }
 
 /****************************************************************//**
@@ -1744,7 +1741,7 @@ fts_create_in_mem_aux_table(
 {
 	dict_table_t*	new_table = dict_mem_table_create(
 		aux_table_name, NULL, n_cols, 0, table->flags,
-		table->space->id == TRX_SYS_SPACE
+		table->space_id == TRX_SYS_SPACE
 		? 0 : table->space->purpose == FIL_TYPE_TEMPORARY
 		? DICT_TF2_TEMPORARY : DICT_TF2_USE_FILE_PER_TABLE);
 
@@ -1773,7 +1770,7 @@ fts_create_one_common_table(
 	const char*		fts_suffix,
 	mem_heap_t*		heap)
 {
-	dict_table_t*		new_table = NULL;
+	dict_table_t*		new_table;
 	dberr_t			error;
 	bool			is_config = strcmp(fts_suffix, "CONFIG") == 0;
 
@@ -1826,11 +1823,13 @@ fts_create_one_common_table(
 	}
 
 	if (error != DB_SUCCESS) {
-		trx->error_state = error;
 		dict_mem_table_free(new_table);
 		new_table = NULL;
 		ib::warn() << "Failed to create FTS common table "
 			<< fts_table_name;
+		trx->error_state = DB_SUCCESS;
+		row_drop_table_for_mysql(fts_table_name, trx, SQLCOM_DROP_DB);
+		trx->error_state = error;
 	}
 	return(new_table);
 }
@@ -1971,7 +1970,7 @@ fts_create_one_index_table(
 	mem_heap_t*		heap)
 {
 	dict_field_t*		field;
-	dict_table_t*		new_table = NULL;
+	dict_table_t*		new_table;
 	char			table_name[MAX_FULL_NAME_LEN];
 	dberr_t			error;
 	CHARSET_INFO*		charset;
@@ -2035,11 +2034,13 @@ fts_create_one_index_table(
 	}
 
 	if (error != DB_SUCCESS) {
-		trx->error_state = error;
 		dict_mem_table_free(new_table);
 		new_table = NULL;
 		ib::warn() << "Failed to create FTS index table "
 			<< table_name;
+		trx->error_state = DB_SUCCESS;
+		row_drop_table_for_mysql(table_name, trx, SQLCOM_DROP_DB);
+		trx->error_state = error;
 	}
 
 	return(new_table);
@@ -6232,7 +6233,7 @@ fts_rename_one_aux_table_to_hex_format(
 	}
 
 	error = row_rename_table_for_mysql(aux_table->name, new_name, trx,
-					   FALSE);
+					   false, false);
 
 	if (error != DB_SUCCESS) {
 		ib::warn() << "Failed to rename aux table '"
@@ -6371,7 +6372,7 @@ fts_rename_aux_tables_to_hex_format_low(
 			DICT_TF2_FLAG_UNSET(table, DICT_TF2_FTS_AUX_HEX_NAME);
 			err = row_rename_table_for_mysql(table->name.m_name,
 							 aux_table->name,
-							 trx_bg, FALSE);
+							 trx_bg, false, false);
 
 			trx_bg->dict_operation_lock_mode = 0;
 			dict_table_close(table, TRUE, FALSE);

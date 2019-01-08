@@ -26,8 +26,6 @@ Created 2/2/1994 Heikki Tuuri
 #ifndef page0page_h
 #define page0page_h
 
-#include "univ.i"
-
 #include "page0types.h"
 #ifndef UNIV_INNOCHECKSUM
 #include "fil0fil.h"
@@ -1352,17 +1350,6 @@ page_find_rec_with_heap_no(
 const rec_t*
 page_find_rec_max_not_deleted(
 	const page_t*	page);
-
-/** Issue a warning when the checksum that is stored in the page is valid,
-but different than the global setting innodb_checksum_algorithm.
-@param[in]	current_algo	current checksum algorithm
-@param[in]	page_checksum	page valid checksum
-@param[in]	page_id		page identifier */
-void
-page_warn_strict_checksum(
-	srv_checksum_algorithm_t	curr_algo,
-	srv_checksum_algorithm_t	page_checksum,
-	const page_id_t			page_id);
 
 #ifdef UNIV_MATERIALIZE
 #undef UNIV_INLINE

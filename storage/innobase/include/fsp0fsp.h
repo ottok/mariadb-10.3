@@ -27,13 +27,10 @@ Created 12/18/1995 Heikki Tuuri
 #ifndef fsp0fsp_h
 #define fsp0fsp_h
 
-#include "univ.i"
-
 #include "fsp0types.h"
 
 #ifndef UNIV_INNOCHECKSUM
 
-#include "fsp0space.h"
 #include "fut0lst.h"
 #include "mtr0mtr.h"
 #include "page0types.h"
@@ -41,7 +38,6 @@ Created 12/18/1995 Heikki Tuuri
 #include "ut0byte.h"
 
 #endif /* !UNIV_INNOCHECKSUM */
-#include "fsp0types.h"
 
 /** @return the PAGE_SSIZE flags for the current innodb_page_size */
 #define FSP_FLAGS_PAGE_SSIZE()						\
