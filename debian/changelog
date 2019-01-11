@@ -2,7 +2,13 @@ mariadb-10.3 (1:10.3.12-1) unstable; urgency=low
 
   [ Otto Kekäläinen ]
   * New upstream version 10.3.12
-  * Create the mysqlclient.pc symlink at correct path with /pkgconfig/ (Closes: #878340)
+  * Create the mysqlclient.pc symlink at correct path with /pkgconfig/
+    (Closes: #878340)
+  * Add libjemalloc2 as alternative dep for mariadb-plugin-tokudb
+  * Prevent mysql_upgrade from being triggered on every server restart
+  * Automate VERSION variable in mariadb-server installer scripts
+  * Improve logging and tag syslog messages with postinstall filename
+  * Make libmariadbclient18 Breaks old libpam-mysql and libdbd-mysql-perl
 
   [ Samuel Thibault ]
   * Do not try to install disks.so file not built on non-Linux
@@ -32,7 +38,7 @@ mariadb-10.3 (1:10.3.11-3) unstable; urgency=low
   * Skip failing test on HPPA, it's not too important (Closes: #917395)
 
   [ Scott Kitterman ]
-  * Update libmariadb-dev.links to restore /usr/include/mysql compatibility 
+  * Update libmariadb-dev.links to restore /usr/include/mysql compatibility
     symlinks lost when the default switched from 10.1 to 10.3 (Closes: #917266)
 
  -- Otto Kekäläinen <otto@debian.org>  Mon, 31 Dec 2018 16:39:33 +0200
