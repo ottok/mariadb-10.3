@@ -121,6 +121,8 @@ Depends: libmariadb3 (= ${binary:Version}),
          ${misc:Depends}
 Replaces: libmariadbclient18
 Provides: libmariadbclient18
+Breaks: libdbd-mysql-perl (<< 4.050),
+        libpam-mysql (<< 0.8.1-1+b1)
 Description: Virtual package to satisfy external libmariadbclient18 depends
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
