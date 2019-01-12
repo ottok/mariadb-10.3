@@ -1,3 +1,9 @@
+mariadb-10.3 (1:10.3.12-2) UNRELEASED; urgency=low
+
+  * New entry
+
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 12 Jan 2019 21:34:18 +0200
+
 mariadb-10.3 (1:10.3.12-1) unstable; urgency=low
 
   [ Otto Kekäläinen ]
