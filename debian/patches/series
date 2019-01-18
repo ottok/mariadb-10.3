@@ -15,3 +15,4 @@ mips-compilation-failure-__bss_start-symbol-miss.patch
 stronger-openssl-1.1.0-compatible-keys.patch
 rocksdb-js-source.patch
 hurd-symbols.patch
+tokudb-libjemalloc.patch
