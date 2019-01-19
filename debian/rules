@@ -49,11 +49,6 @@ ifneq ($(DEB_HOST_ARCH),amd64)
     CMAKEFLAGS += -DWITHOUT_TOKUDB=true
 endif
 
-# Disable jemalloc on mips* due to #843926
-ifneq (,$(filter $(DEB_HOST_ARCH), mips mipsel mips64 mips64el))
-    CMAKEFLAGS += -DWITH_JEMALLOC=no
-endif
-
 # Add support for verbose builds
 MAKEFLAGS += VERBOSE=1
 
