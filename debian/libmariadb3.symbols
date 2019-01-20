@@ -1,4 +1,5 @@
 libmariadb.so.3 libmariadb3 #MINVER#
+* Build-Depends-Package: libmariadb-dev
  libmariadb_3@libmariadb_3 3.0.0
  libmariadbclient_18@libmariadbclient_18 3.0.0
  libmysqlclient_18@libmysqlclient_18 3.0.0
