@@ -1,2 +1,2 @@
 # OK, this file is part of test suite and only used for a test
-mariadb-test: arch-dependent-file-in-usr-share usr/share/mysql/mysql-test/lib/My/SafeProcess/my_safe_process
+arch-dependent-file-in-usr-share usr/share/mysql/mysql-test/lib/My/SafeProcess/my_safe_process
