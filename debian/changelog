@@ -1,8 +1,25 @@
-mariadb-10.3 (1:10.3.12-2) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.12-2) unstable; urgency=medium
 
-  * New entry
+  [ Adrian Bunk ]
+  * mariadb-plugin-tokudb: Properly generate the libjemalloc dependency
 
- -- Otto Kekäläinen <otto@debian.org>  Sat, 12 Jan 2019 21:34:18 +0200
+  [ Otto Kekäläinen ]
+  * Re-enable jemalloc as Debian#843926 is now fixed (Closes: #918798)
+  * Update gitlab-ci.yml
+    * Follow upstream 'build' and 'lintian' steps
+    * Extend upgrade testing to upgrade from buster->sid (10.1 -> 10.3)
+  * Make libmariadb-dev-compat also Breaks+Replaces old libmariadbclient-dev
+    (Closes: #863675)
+  * Revert "Update libmariadb-dev.links to restore /usr/include/mysql.."
+
+  [ Andreas Beckmann ]
+  * Reintroduce libmariadbclient-dev as a transitional package
+  * Drop obsolete libmariadbclient18 symbols file
+  * Add Build-Depends-Package field to symbols file
+  * Minimize the upstream signing key by dropping all signatures
+  * Fix multiple Lintian issues
+
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 24 Jan 2019 20:56:46 +0200
 
 mariadb-10.3 (1:10.3.12-1) unstable; urgency=low
 
