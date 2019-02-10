@@ -25,8 +25,10 @@ This can be done by using dgit. The example command below will fetch the latest
 mariadb-10.0 package available in Ubuntu 16.04 (Xenial) base archive or security
 archive (whichever has a newer version):
   dgit -d ubuntu clone mariadb-10.0 xenial,-security
+  cp -ra mariadb-10.0/* .
 
-You can then compare these two directories with a recursive diff.
+You can then compare these two directories with a recursive diff or `git diff`.
+
 
 Another option is to manually check on packages.debian.org or packages.ubuntu.com
 what is the latest version, and download and extract it on top of the existing
@@ -90,7 +92,7 @@ the files and update the patches or discard the patch completely if you are
 _sure_ that it has been applied upstream.
 
 Generate new debian/changelog entry automatically with git-dch
-  git-dch -avR
+  gbp dch -avR
 
 Edit the details to match correct release
   gedit debian/changelog &
@@ -121,12 +123,12 @@ Test more with upload to Launchpad
   backportpackage --yes -u ppa:mysql-ubuntu/$PKG -d xenial -S ~`date '+%s'`.$COMMIT_ID $PKG*.dsc
 
 When done, push to Salsa:
-  git push -v
+  gbp push
 
 Wait until the Salsa CI pipeline finishes. If it did not either spot any
 regressions, proceed to tagging the commit:
-  git tag -s ...
-  git push --tags
+  gbp tag
+  gbp push
 
 Sign and upload to autobake for one final round of testing:
   dput autobake *.changes
@@ -182,13 +184,13 @@ needs to be tested on the Ubuntu release which most closely matches the Debian
 release in question. The following matrix maps what package should be tested
 where:
 
-- 10.3 for sid on launchpad cosmic
+- 10.4 for sid on launchpad disco
+- 10.3 for buster on launchpad disco
 - 10.1 for bionic on launchpad bionic
 - 10.0 for xenial on launchpad xenial
-- 10.1 for sid on launchpad cosmic
 - 10.1 for stretch on launchpad xenial
-- 10.0 for jessie on launhcpad trusty
-- 5.5. for trusy on launchpad trusty
+- 10.0 for jessie on launchpad trusty
+- 5.5. for trusty on launchpad trusty
 
 ## Uploading to Ubuntu security releases ##
 
@@ -208,8 +210,12 @@ git-buildpackage to produce test builds instead of plain 'fakeroot dpkg-buildpac
 Do the security uploads in this order for having the best chance of catching
 regressions before they spread out to too many users.
 
-Upload priority for 10.1
+Upload priority for 10.3
 - debian sid
+- debian buster
+- ubuntu disco
+
+for 10.1
 - debian stretch
 - ubuntu bionic
 
@@ -219,7 +225,6 @@ for 10.0
 
 for 5.5
 - ubuntu trusty
-
 
 ## Comparison to other distributions ##
 
