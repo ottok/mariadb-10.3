@@ -1,8 +1,14 @@
-mariadb-10.3 (1:10.3.12-3) UNRELEASED; urgency=low
+mariadb-10.3 (1:10.3.13-1) unstable; urgency=medium
 
-  * Open new changelog entry
+  * New upstream version 10.3.13
+  * Includes fixes for the following security vulnerabilities 
+    (Closes: #920933):
+    - CVE-2019-2537
+    - CVE-2019-2529
+  * Update gitlab-ci.yml to match state where 10.1 is removed from testing
+  * Update README.Maintainer details after executing latest sec uploads round
 
- -- Otto Kekäläinen <otto@debian.org>  Sun, 27 Jan 2019 20:29:03 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Fri, 22 Feb 2019 10:53:23 +0200
 
 mariadb-10.3 (1:10.3.12-2) unstable; urgency=medium
 

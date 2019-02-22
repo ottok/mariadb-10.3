@@ -20,7 +20,7 @@ and will correctly detect if __bss_start will be available or not.
 
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -306,6 +306,8 @@ ELSE()
+@@ -312,6 +312,8 @@ ELSE()
    SET(DEFAULT_TMPDIR "\"${TMPDIR}\"")
  ENDIF()
  
@@ -29,7 +29,7 @@ and will correctly detect if __bss_start will be available or not.
  # Run platform tests
  INCLUDE(configure.cmake)
  
-@@ -338,8 +340,6 @@ SET(PYTHON_SHEBANG "/usr/bin/env python"
+@@ -345,8 +347,6 @@ MARK_AS_ADVANCED(PYTHON_SHEBANG)
  
  CHECK_PCRE()
  

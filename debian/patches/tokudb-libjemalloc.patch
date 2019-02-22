@@ -7,8 +7,8 @@ Description: tokudb: fix linking with jemalloc
  libjemalloc generated.
 Author: Adrian Bunk <bunk@debian.org>
 
---- mariadb-10.3-10.3.12.orig/storage/tokudb/CMakeLists.txt
-+++ mariadb-10.3-10.3.12/storage/tokudb/CMakeLists.txt
+--- a/storage/tokudb/CMakeLists.txt
++++ b/storage/tokudb/CMakeLists.txt
 @@ -69,7 +69,7 @@ ELSEIF(LIBJEMALLOC STREQUAL jemalloc)
    ENDIF()
    GET_FILENAME_COMPONENT(LIBJEMALLOC_PATH ${LIBJEMALLOC_SO} REALPATH CACHE)
