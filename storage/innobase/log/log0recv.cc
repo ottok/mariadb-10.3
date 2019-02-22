@@ -2,7 +2,7 @@
 
 Copyright (c) 1997, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2018, MariaDB Corporation.
+Copyright (c) 2013, 2019, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -152,9 +152,13 @@ struct file_name_t {
 	/** Status of the tablespace */
 	fil_status	status;
 
+	/** FSP_SIZE of tablespace */
+	ulint		size;
+
 	/** Constructor */
 	file_name_t(std::string name_, bool deleted) :
-		name(name_), space(NULL), status(deleted ? DELETED: NORMAL) {}
+		name(name_), space(NULL), status(deleted ? DELETED: NORMAL),
+		size(0) {}
 };
 
 /** Map of dirty tablespaces during recovery */
@@ -326,6 +330,11 @@ fil_name_process(
 			ut_ad(space != NULL);
 
 			if (f.space == NULL || f.space == space) {
+
+				if (f.size && f.space == NULL) {
+					fil_space_set_recv_size(space->id, f.size);
+				}
+
 				f.name = fname.name;
 				f.space = space;
 				f.status = file_name_t::NORMAL;
@@ -791,7 +800,9 @@ loop:
 			happen when InnoDB was killed while it was
 			writing redo log. We simply treat this as an
 			abrupt end of the redo log. */
+fail:
 			end_lsn = *start_lsn;
+			success = false;
 			break;
 		}
 
@@ -813,9 +824,7 @@ loop:
 					    << log_block_get_checkpoint_no(buf)
 					    << " expected: " << crc
 					    << " found: " << cksum;
-				end_lsn = *start_lsn;
-				success = false;
-				break;
+				goto fail;
 			}
 
 			if (is_encrypted()) {
@@ -829,8 +838,7 @@ loop:
 		    || (dl > OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE
 			&& dl != OS_FILE_LOG_BLOCK_SIZE)) {
 			recv_sys->found_corrupt_log = true;
-			end_lsn = *start_lsn;
-			break;
+			goto fail;
 		}
 	}
 
@@ -1037,9 +1045,7 @@ static dberr_t recv_log_recover_10_4()
 {
 	ut_ad(!log_sys.is_encrypted());
 	const lsn_t	lsn = log_sys.log.lsn;
-	log_mutex_enter();
 	const lsn_t	source_offset = log_sys.log.calc_lsn_offset(lsn);
-	log_mutex_exit();
 	const ulint	page_no
 		= (ulint) (source_offset / univ_page_size.physical());
 	byte*		buf = log_sys.buf;
@@ -2344,11 +2350,24 @@ recv_parse_log_rec(
 	}
 
 	if (*page_no == 0 && *type == MLOG_4BYTES
+	    && apply
 	    && mach_read_from_2(old_ptr) == FSP_HEADER_OFFSET + FSP_SIZE) {
 		old_ptr += 2;
-		fil_space_set_recv_size(*space,
-					mach_parse_compressed(&old_ptr,
-							      end_ptr));
+
+		ulint size = mach_parse_compressed(&old_ptr, end_ptr);
+
+		recv_spaces_t::iterator it = recv_spaces.find(*space);
+
+		ut_ad(!recv_sys->mlog_checkpoint_lsn
+		      || *space == TRX_SYS_SPACE
+		      || srv_is_undo_tablespace(*space)
+		      || it != recv_spaces.end());
+
+		if (it != recv_spaces.end() && !it->second.space) {
+			it->second.size = size;
+		}
+
+		fil_space_set_recv_size(*space, size);
 	}
 
 	return ulint(new_ptr - ptr);

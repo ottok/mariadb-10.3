@@ -128,6 +128,8 @@ scripts/wsrep_sst_mysqldump
 scripts/wsrep_sst_rsync
 scripts/wsrep_sst_rsync_wan
 scripts/wsrep_sst_mariabackup
+scripts/wsrep_sst_xtrabackup
+scripts/wsrep_sst_xtrabackup-v2
 scripts/maria_add_gis_sp.sql
 scripts/maria_add_gis_sp_bootstrap.sql
 scripts/galera_new_cluster
@@ -189,6 +191,7 @@ storage/myisam/myisampack
 storage/myisam/rt_test
 storage/myisam/sp_test
 storage/rocksdb/ldb
+storage/rocksdb/myrocks_hotbackup
 storage/rocksdb/mysql_ldb
 storage/rocksdb/sst_dump
 storage/rocksdb/rdb_source_revision.h
