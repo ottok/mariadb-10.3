@@ -1492,8 +1492,7 @@ static bool fix_user_plugin_ptr(ACL_USER *user)
   else
     return true;
 
-  if (user->auth_string.length)
-    set_user_salt(user, user->auth_string.str, user->auth_string.length);
+  set_user_salt(user, user->auth_string.str, user->auth_string.length);
   return false;
 }
 
@@ -1967,6 +1966,11 @@ static bool acl_load(THD *thd, const Grant_tables& tables)
                                 "password will be ignored.",
                                 safe_str(user.user.str),
                                 safe_str(user.host.hostname));
+            }
+            else if (password_len)
+            {
+              user.auth_string.str= password;
+              user.auth_string.length= password_len;
             }
 
             fix_user_plugin_ptr(&user);
@@ -10507,6 +10511,7 @@ int mysql_alter_user(THD* thd, List<LEX_USER> &users_list)
   DBUG_ENTER("mysql_alter_user");
   int result= 0;
   String wrong_users;
+  bool some_users_altered= false;
 
   /* The only table we're altering is the user table. */
   Grant_tables tables(Table_user, TL_WRITE);
@@ -10532,6 +10537,7 @@ int mysql_alter_user(THD* thd, List<LEX_USER> &users_list)
       result= TRUE;
       continue;
     }
+    some_users_altered= true;
   }
 
   /* Unlock ACL data structures. */
@@ -10556,6 +10562,10 @@ int mysql_alter_user(THD* thd, List<LEX_USER> &users_list)
                wrong_users.c_ptr_safe());
     }
   }
+
+  if (some_users_altered)
+    result|= write_bin_log(thd, FALSE, thd->query(),
+                                     thd->query_length());
   DBUG_RETURN(result);
 }
 
