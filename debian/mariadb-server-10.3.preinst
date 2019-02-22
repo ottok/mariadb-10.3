@@ -9,10 +9,8 @@
 
 . /usr/share/debconf/confmodule
 
-# Automatically set version to ease maintenance of this file.
-# Assume the filename is /path/to/mariadb-server-##.#.preinst
-# Pick version string based on location. Python equivalent would be x[-12:-8].
-VERSION=${0: -12:4}
+# Automatically set version to ease maintenance of this file
+MAJOR_VER="${DPKG_MAINTSCRIPT_PACKAGE#mariadb-server-}"
 
 # Just kill the invalid insserv.conf.d directory without fallback
 if [ -d "/etc/insserv.conf.d/mariadb/" ]; then
@@ -28,7 +26,7 @@ mysql_upgradedir=/var/lib/mysql-upgrade
 
 ################################ main() ##########################
 
-this_version=$VERSION
+this_version=$MAJOR_VER
 max_upgradeable_version=5.7
 
 # Check if a flag file is found that indicates a previous MariaDB or MySQL
@@ -92,7 +90,7 @@ fi
 # Instead simply move the old datadir and create a new for this_version.
 if [ ! -z "$downgrade_detected" ]
 then
-  db_input critical mariadb-server-$VERSION/old_data_directory_saved || true
+  db_input critical mariadb-server-$MAJOR_VER/old_data_directory_saved || true
   db_go
   echo "The file $mysql_datadir/debian-$found_version.flag indicates a" 1>&2
   echo "version that cannot automatically be upgraded. Therefore the" 1>&2
