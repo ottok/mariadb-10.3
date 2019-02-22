@@ -200,6 +200,22 @@ test features:
     - mariadb -e "CALL db.p()"
     - mariadb -e "SELECT db.f()"
 
+# Build a piece of software that was designed bot libmysqlclient-dev using the
+# libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time
+test build mariadbclient:
+  stage: test
+  image: debian:sid
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - mkdir debug
+    - apt-get update
+    - apt-get install -y pkg-config ./libmariadb-dev*.deb ./libmariadb3_*.deb ./mariadb-common*.deb
+    - pkg-config --cflags --libs mysqlclient # See what MySQLdb builds with
+    - apt-get install -y python3-pip
+    - pip3 install mysqlclient # Compiles module against libmysqlclient
+    - apt-get purge -y libmariadb-dev # Not needed for run-time
+    - python3 -c "import MySQLdb; print(MySQLdb.get_client_info())"
+
 test upgrade libmysql:
   stage: test
   image: debian:sid
@@ -232,9 +248,9 @@ test upgrade libmysql:
     - apt-get install -y default-libmysqlclient-dev default-libmysqld-dev
     - ldconfig -p # | grep -e mariadb -e mysql
     - pkg-config --list-all
-    - pkg-config --cflags mysqlclient
-    - pkg-config --cflags libmariadb
-    - pkg-config --cflags mariadb
+    - pkg-config --cflags --libs mysqlclient
+    - pkg-config --cflags --libs libmariadb
+    - pkg-config --cflags --libs mariadb
 
 test upgrade default-libmysqlclient-dev:
   stage: test
@@ -254,6 +270,7 @@ test upgrade default-libmysqlclient-dev:
     - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
     - ldconfig -p # | grep -e mariadb -e mysql
     - pkg-config --list-all
-    - pkg-config --cflags mysqlclient
-    - pkg-config --cflags libmariadb
-    - pkg-config --cflags mariadb
+    - pkg-config --cflags --libs mysqlclient
+    - pkg-config --cflags --libs libmariadb
+    - pkg-config --cflags --libs mariadb
+
