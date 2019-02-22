@@ -38,7 +38,6 @@ Vcs-Git: https://salsa.debian.org/mariadb-team/mariadb-10.3.git
 
 Package: libmariadb-dev
 Architecture: any
-Multi-Arch: same
 Section: libdevel
 Depends: libmariadb3 (= ${binary:Version}),
          libssl-dev | libssl1.0-dev,
@@ -134,6 +133,7 @@ Description: MariaDB database client library
 Package: libmariadbclient18
 Section: libs
 Architecture: any
+Multi-Arch: same
 Depends: libmariadb3 (= ${binary:Version}),
          ${misc:Depends}
 Replaces: libmariadbclient18
@@ -432,6 +432,7 @@ Description: Backup tool for MariaDB server
 
 Package: mariadb-plugin-connect
 Architecture: any
+Multi-Arch: same
 Depends: libxml2,
          mariadb-server-10.3,
          unixodbc,
@@ -472,6 +473,7 @@ Description: RocksDB storage engine for MariaDB
 
 Package: mariadb-plugin-oqgraph
 Architecture: any
+Multi-Arch: same
 Depends: libjudydebian1,
          mariadb-server-10.3,
          ${misc:Depends},
@@ -537,6 +539,7 @@ Description: Spider storage engine for MariaDB
 
 Package: mariadb-plugin-gssapi-server
 Architecture: any
+Multi-Arch: same
 Depends: libgssapi-krb5-2,
          mariadb-server-10.3,
          ${misc:Depends},
@@ -553,6 +556,7 @@ Description: GSSAPI authentication plugin for MariaDB server
 
 Package: mariadb-plugin-gssapi-client
 Architecture: any
+Multi-Arch: same
 Depends: libgssapi-krb5-2,
          mariadb-client-10.3,
          ${misc:Depends},
@@ -569,6 +573,7 @@ Description: GSSAPI authentication plugin for MariaDB client
 
 Package: mariadb-plugin-cracklib-password-check
 Architecture: any
+Multi-Arch: same
 Depends: libcrack2 (>= 2.9.0),
          mariadb-server-10.3,
          ${misc:Depends},
