@@ -79,6 +79,8 @@ ifneq (,$(filter $(DEB_HOST_ARCH), kfreebsd-i386 kfreebsd-amd64))
 	rm debian/libmariadb3.symbols
 endif
 
+	# Remove -DWITH_SSL=bundle if you want to use system OpenSSL, otherwise
+	# the server will use YaSSL and Connector/C will use GnuTLS
 	mkdir -p $(BUILDDIR) && cd $(BUILDDIR) && \
 	sh -c  'PATH=$${MYSQL_BUILD_PATH:-"/usr/lib/ccache:/usr/local/bin:/usr/bin:/bin"} \
 	    	CC=${CC} \
@@ -94,6 +96,7 @@ endif
 	    -DINSTALL_PLUGINDIR=lib/$(DEB_HOST_MULTIARCH)/mariadb19/plugin \
 	    -DINSTALL_MYSQLTESTDIR=share/mysql/mysql-test \
 	    -DPLUGIN_AUTH_SOCKET=STATIC \
+			-DWITH_SSL=bundled \
 	    -DPLUGIN_AWS_KEY_MANAGEMENT=NO \
 	    -DDEB=$(DEB_VENDOR) ..'
 
