@@ -134,18 +134,6 @@ can read it.  Every other configuration parameter can be stored there, too.
 For more information in the MariaDB manual in/usr/share/doc/mariadb-doc or
 https://mariadb.com/kb/en/configuring-mariadb-with-mycnf/.
 
-ATTENTION: It is necessary, that a ~/.my.cnf from root always contains a "user"
-line wherever there is a "password" line, else, the Debian maintenance
-scripts, that use /etc/mysql/debian.cnf, will use the username
-"root" but the password that is in root's .my.cnf. Also note,
-that every change you make in the /root/.my.cnf will affect the mysql cron
-script, too.
-
-  # an example of $HOME/.my.cnf
-	[client]
-	user		= your-mysql-username
-	password	= enter-your-good-new-password-here
-
 * FURTHER NOTES ON REPLICATION
 ===============================
 If the MySQL server is acting as a replication slave, you should not
