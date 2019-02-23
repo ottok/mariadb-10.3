@@ -8,7 +8,8 @@ variables:
 
 stages:
   - build
-  - test
+  - test quality
+  - test minor upgrade
 
 build package:
   stage: build
@@ -50,7 +51,7 @@ build package:
 #    - eatmydata autopkgtest ${WORKING_DIR}/*.deb -- null
 
 run lintian:
-  stage: test
+  stage: test quality
   image: registry.salsa.debian.org/salsa-ci-team/images/lintian
   script:
     - lintian ${WORKING_DIR}/*.changes | tee lintian.output
@@ -99,7 +100,7 @@ run lintian:
 #    - privileged
 
 test install:
-  stage: test
+  stage: test quality
   image: debian:sid
   artifacts:
     when: always
@@ -122,7 +123,7 @@ test install:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
 
 test upgrade sid:
-  stage: test
+  stage: test minor upgrade
   image: debian:sid
   artifacts:
     when: always
@@ -131,7 +132,6 @@ test upgrade sid:
       - ${WORKING_DIR}/debug
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - mkdir debug
     - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
     - apt-get update
     - apt-get install -y 'default-mysql*' 'mariadb-*' 'libmariadb*' # Install almost everything curently in Debian Sid
@@ -165,7 +165,7 @@ test upgrade sid:
 #    - echo 'SHOW DATABASES;' | mariadb
 
 test features:
-  stage: test
+  stage: test quality
   image: debian:sid
   artifacts:
     when: always
@@ -211,8 +211,8 @@ test features:
 
 # Build a piece of software that was designed bot libmysqlclient-dev using the
 # libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time
-test build mariadbclient:
-  stage: test
+test build Python-MySQLdb with mariadbclient:
+  stage: test quality
   image: debian:sid
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
@@ -225,8 +225,8 @@ test build mariadbclient:
     - apt-get purge -y libmariadb-dev # Not needed for run-time
     - python3 -c "import MySQLdb; print(MySQLdb.get_client_info())"
 
-test upgrade libmysql:
-  stage: test
+test upgrade libmysql* to libmariadb*:
+  stage: test minor upgrade
   image: debian:sid
   artifacts:
     when: always
@@ -235,7 +235,6 @@ test upgrade libmysql:
       - ${WORKING_DIR}/debug
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - mkdir debug
     - dpkg -l | grep -iE "maria|mysql|galera" || true
     - apt-get update
     - apt-get install -y pkg-config libmysqld-dev libmysqlclient-dev
@@ -262,7 +261,7 @@ test upgrade libmysql:
     - pkg-config --cflags --libs mariadb
 
 test upgrade default-libmysqlclient-dev:
-  stage: test
+  stage: test minor upgrade
   image: debian:testing
   artifacts:
     when: always
@@ -271,7 +270,6 @@ test upgrade default-libmysqlclient-dev:
       - ${WORKING_DIR}/debug
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - mkdir debug
     - dpkg -l | grep -iE "maria|mysql|galera" || true
     - apt-get update
     - apt-get install -y pkg-config default-libmysqlclient-dev default-libmysqld-dev
