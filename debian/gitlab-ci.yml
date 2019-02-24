@@ -10,6 +10,7 @@ stages:
   - build
   - test quality
   - test minor upgrade
+  - test major upgrade
 
 build package:
   stage: build
@@ -148,6 +149,35 @@ test upgrade sid:
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
 
+test upgrade stretch:
+  stage: test major upgrade
+  image: debian:stretch
+  artifacts:
+    when: always
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - apt-get update
+    - apt-get install -y 'default-mysql*' 'mariadb-*' 'libmariadbd*' 'libmariadbclient*' # Install almost everything curently in Debian Stretch
+    - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
+    - service mysql status || true # Always proceed even if init failed
+    - service mysql restart || true
+    - mariadb --skip-column-names -e "select @@version, @@version_comment"
+    - echo 'deb http://deb.debian.org/debian sid main' > /etc/apt/sources.list
+    - apt-get update; apt-get install -y apt # Uprade minimal stack first
+    - apt-get install -y ./*.deb
+    - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
+    - mariadb --version
+    - find /var/lib/mysql -ls > debug/var-lib-mysql.list
+    - cp -ra /etc/mysql debug/etc-mysql
+    - service mysql restart || true # Always proceed even if init failed
+    - service mysql status || true
+    - cp -ra /var/log/mysql debug/var-log-mysql
+    - mariadb --skip-column-names -e "select @@version, @@version_comment"
+    - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
+
 # Upgrading from MySQL 5.7 does not yet fully work due to differences in
 # auth-socket plugin name and Password column in user table.
 #test mysql upgrade:
@@ -275,6 +305,52 @@ test upgrade default-libmysqlclient-dev:
     - apt-get install -y pkg-config default-libmysqlclient-dev default-libmysqld-dev
     - pkg-config --list-all
     - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
+    - ldconfig -p # | grep -e mariadb -e mysql
+    - pkg-config --list-all
+    - pkg-config --cflags --libs mysqlclient
+    - pkg-config --cflags --libs libmariadb
+    - pkg-config --cflags --libs mariadb
+
+test upgrade stretch default-libmysqlclient-dev:
+  stage: test major upgrade
+  image: debian:stretch
+  artifacts:
+    when: always
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - dpkg -l | grep -iE "maria|mysql|galera" || true
+    - apt-get update
+    - apt-get install -y pkg-config default-libmysqlclient-dev
+    - pkg-config --list-all
+    - echo 'deb http://deb.debian.org/debian sid main' > /etc/apt/sources.list
+    - apt-get update; apt-get install -y apt # Uprade minimal stack first
+    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadbclient-dev_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
+    - ldconfig -p # | grep -e mariadb -e mysql
+    - pkg-config --list-all
+    - pkg-config --cflags --libs mysqlclient
+    - pkg-config --cflags --libs libmariadb
+    - pkg-config --cflags --libs mariadb
+
+test upgrade stretch mariadb-connector-c:
+  stage: test major upgrade
+  image: debian:stretch
+  artifacts:
+    when: always
+    name: "$CI_BUILD_NAME"
+    paths:
+      - ${WORKING_DIR}/debug
+  script:
+    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
+    - dpkg -l | grep -iE "maria|mysql|galera" || true
+    - apt-get update
+    - apt-get install -y pkg-config libmariadb2 libmariadb-dev libmariadb-dev-compat
+    - pkg-config --list-all
+    - echo 'deb http://deb.debian.org/debian sid main' > /etc/apt/sources.list
+    - apt-get update; apt-get install -y apt # Uprade minimal stack first
+    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadbclient-dev_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
     - ldconfig -p # | grep -e mariadb -e mysql
     - pkg-config --list-all
     - pkg-config --cflags --libs mysqlclient
