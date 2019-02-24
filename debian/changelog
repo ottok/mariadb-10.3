@@ -5,10 +5,14 @@ mariadb-10.3 (1:10.3.13-1) unstable; urgency=medium
     (Closes: #920933):
     - CVE-2019-2537
     - CVE-2019-2529
-  * Update gitlab-ci.yml to match state where 10.1 is removed from testing
-  * Update README.Maintainer details after executing latest sec uploads round
+  * Update symbols list to match latest MariaDB Connector C release
+  * Use bundled SSL libraries instead of system OpenSSL (Closes: #921488)
+  * Fix 'Multi-Arch: same' stanzas (Closes: #920364)
+  * Implement proper version detection in maintainer scripts (Closes: #920415)
+  * Make libmariadb-dev depend on libgnutls28-dev (Closes: #917135)
+  * Extend Gitlab-CI significantly and update READMEs
 
- -- Otto Kekäläinen <otto@debian.org>  Fri, 22 Feb 2019 10:53:23 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 24 Feb 2019 21:14:15 +0200
 
 mariadb-10.3 (1:10.3.12-2) unstable; urgency=medium
 
