@@ -53,7 +53,7 @@ build package:
 
 run lintian:
   stage: test quality
-  image: registry.salsa.debian.org/salsa-ci-team/images/lintian
+  image: registry.salsa.debian.org/salsa-ci-team/images/lintian:${RELEASE}
   script:
     - lintian ${WORKING_DIR}/*.changes | tee lintian.output
     - cat lintian.output | /root/go/bin/lintian2junit > ${WORKING_DIR}/lintian.xml
