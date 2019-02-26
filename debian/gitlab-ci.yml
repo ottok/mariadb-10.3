@@ -65,22 +65,22 @@ run lintian:
 
 # Reprotest exceeds the 2 hour timeout limit on Github CI, so results in failure
 # and must be disabled until a quicker (times two) build is possible.
-#run reprotest:
-#  stage: test
-#  image: genericpipeline/reprotest-docker
-#  artifacts:
-#    name: "$CI_BUILD_NAME"
-#    expire_in: 180 day
-#    paths:
-#      - ./reprotest.log
-#    when: always
-#  script:
-#    - apt-get update && apt-get install eatmydata -y
-#    - eatmydata apt-get build-dep -y .
-#    - export DEB_BUILD_OPTIONS=nocheck
-#    - eatmydata reprotest . -- null &> reprotest.log
-#  tags:
-#    - privileged
+run reprotest:
+  stage: test quality
+  image: registry.salsa.debian.org/salsa-ci-team/images/reprotest
+  artifacts:
+    name: "$CI_JOB_NAME:$CI_COMMIT_REF_NAME"
+    paths:
+      - $CI_PROJECT_DIR/reprotest.log
+    when: always
+  script:
+    - apt-get update
+    - eatmydata apt-get build-dep -y .
+    - export DEB_BUILD_OPTIONS=nocheck
+    - eatmydata reprotest --min-cpus $(nproc --all) ${REPROTEST_EXTRA_ARGS} . -- null &> "${CI_PROJECT_DIR}/reprotest.log"
+  after_script:
+    - tail -n 5000 "${CI_PROJECT_DIR}/reprotest.log" >&2;
+  allow_failure: true
 
 # Piuparts is passing on official piuparts.debian.org, but fail on Gitlab CI
 # with 'FAIL: Package purging left files on system'. Disabling for now.
