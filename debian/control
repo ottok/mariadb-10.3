@@ -120,8 +120,8 @@ Conflicts: mariadb-galera-server-10.0 (<< 10.0.5),
            mariadb-server-5.2,
            mariadb-server-5.3,
            mariadb-server-5.5 (<< 5.5.33)
-Breaks: libmariadbclient18 (<< ${source:Version})
-Replaces: libmariadbclient18 (<< ${source:Version})
+Breaks: libmariadbclient18
+Replaces: libmariadbclient18
 Description: MariaDB database client library
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
@@ -129,25 +129,6 @@ Description: MariaDB database client library
  ease of use.
  .
  This package includes the client library.
-
-Package: libmariadbclient18
-Section: libs
-Architecture: any
-Multi-Arch: same
-Depends: libmariadb3 (= ${binary:Version}),
-         ${misc:Depends}
-Replaces: libmariadbclient18
-Provides: libmariadbclient18
-Breaks: libdbd-mysql-perl (<< 4.050),
-        libpam-mysql (<< 0.8.1-1+b1)
-Description: Virtual package to satisfy external libmariadbclient18 depends
- MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
- server. SQL (Structured Query Language) is the most popular database query
- language in the world. The main goals of MariaDB are speed, robustness and
- ease of use.
- .
- This package provides compatibility symlinks for binaries that expect to find
- libmariadbclient.so.18 will automatically use libmariadb.so.3 instead.
 
 Package: libmariadbd19
 Architecture: any

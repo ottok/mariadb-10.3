@@ -264,8 +264,6 @@ test upgrade libmysql* to libmariadb*:
     - pkg-config --cflags mysqlclient # mysqlclient.pc from original package
     - apt-get install -y ./libmariadb3_*.deb ./mariadb-common_*.deb
     - pkg-config --list-all
-    - apt-get install -y ./libmariadbclient18_*.deb
-    - pkg-config --list-all
     - apt-get install -y ./libmariadb-dev_*.deb
     - pkg-config --list-all
     - apt-get install -y ./libmariadb-dev-compat_*.deb
@@ -296,7 +294,7 @@ test upgrade default-libmysqlclient-dev:
     - apt-get update
     - apt-get install -y pkg-config default-libmysqlclient-dev default-libmysqld-dev
     - pkg-config --list-all
-    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
+    - apt-get install -y ./libmariadb3_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
     - ldconfig -p # | grep -e mariadb -e mysql
     - pkg-config --list-all
     - pkg-config --cflags --libs mysqlclient
@@ -319,7 +317,7 @@ test upgrade stretch default-libmysqlclient-dev:
     - pkg-config --list-all
     - echo 'deb http://deb.debian.org/debian sid main' > /etc/apt/sources.list
     - apt-get update; apt-get install -y apt # Uprade minimal stack first
-    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadbclient-dev_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
+    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient-dev_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
     - ldconfig -p # | grep -e mariadb -e mysql
     - pkg-config --list-all
     - pkg-config --cflags --libs mysqlclient
@@ -342,7 +340,7 @@ test upgrade stretch mariadb-connector-c:
     - pkg-config --list-all
     - echo 'deb http://deb.debian.org/debian sid main' > /etc/apt/sources.list
     - apt-get update; apt-get install -y apt # Uprade minimal stack first
-    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient18_*.deb ./libmariadbclient-dev_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
+    - apt-get install -y ./libmariadb3_*.deb ./libmariadbclient-dev_*.deb ./libmariadb-dev_*.deb ./libmariadb-dev-compat_*.deb ./libmariadbd19_*.deb ./libmariadbd-dev_*.deb ./mariadb-common_*.deb
     - ldconfig -p # | grep -e mariadb -e mysql
     - pkg-config --list-all
     - pkg-config --cflags --libs mysqlclient
