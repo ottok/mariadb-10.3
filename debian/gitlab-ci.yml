@@ -374,8 +374,8 @@ test mysql-5.5 upgrade:
     - mariadb --version
     - echo 'SHOW DATABASES;' | mariadb
 
-# Upgrading from MySQL 5.7 does not yet fully work due to differences in
-# auth-socket plugin name and Password column in user table.
+# Upgrading from MySQL 5.7 involves automatic renaming of auth_socket plugin
+# to unix_socket and automaticly re-adding Password column in user table.
 test mysql-5.7 upgrade:
   stage: test mysql upgrade
   image: debian:sid
@@ -393,6 +393,8 @@ test mysql-5.7 upgrade:
     - /etc/init.d/mysql stop
     - killall mysqld || true # Ensure server is not running during update to avoid read lock issues specific to Docker
     - cd ${WORKING_DIR}; apt-get install -y ./*.deb || true # Allow to proceed so debug artifacts get collected
+    - service mysql restart || true # Do a manual restart since the postinst scripts don't trigger systemd in Docker
+    - apt-get install -y ./*.deb || true # Complete the installation now when the restart fixed database formats
     - service mysql restart || true # Always proceed even if init failed
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
