@@ -40,9 +40,35 @@ build package:
     - du -shc ${WORKING_DIR}/* # Show total file size of artifacts. Must stay are under 100 MB.
     - mv ${CCACHE_TMP_DIR} ${CCACHE_WORK_DIR}
 
+build backported package:
+  stage: build
+  image: registry.salsa.debian.org/salsa-ci-team/images/gbp
+  cache:
+    paths:
+      - ${CCACHE_WORK_DIR}
+  variables:
+    CCACHE_TMP_DIR: ${CI_PROJECT_DIR}/../.ccache
+    CCACHE_WORK_DIR: ${WORKING_DIR}/.ccache
+  services:
+    - docker:dind
+  artifacts:
+    expire_in: 90 day
+    name: "$CI_JOB_NAME:$CI_COMMIT_REF_NAME"
+    paths:
+      - ${WORKING_DIR}/
+  script:
+    - mkdir -p ${CCACHE_WORK_DIR}
+    - mv ${CCACHE_WORK_DIR} ${CCACHE_TMP_DIR}
+    - gbp pull --ignore-branch --pristine-tar --track-missing
+    - while true; do sleep 600; echo "10 minutes passed" >&2; done & # Progress keeper since build is long and silent
+    - gbp buildpackage --git-ignore-branch --git-export-dir=${WORKING_DIR} --git-builder="docker-build.sh registry.salsa.debian.org/salsa-ci-team/images/dockerbuilder:stretch-backports" | tail -n 10000 # Keep log under 4 MB
+    - du -shc ${WORKING_DIR}/* # Show total file size of artifacts. Must stay are under 100 MB.
+    - mv ${CCACHE_TMP_DIR} ${CCACHE_WORK_DIR}
 
 run lintian:
   stage: test quality
+  dependencies:
+    - build package
   image: registry.salsa.debian.org/salsa-ci-team/images/lintian:${RELEASE}
   script:
     - lintian ${WORKING_DIR}/*.changes | tee lintian.output
@@ -57,6 +83,8 @@ run lintian:
 # before actual reproducibility issues can be tested and fixed.
 run reprotest:
   stage: test extras
+  dependencies:
+    - build package
   image: registry.salsa.debian.org/salsa-ci-team/images/reprotest
   artifacts:
     name: "$CI_JOB_NAME:$CI_COMMIT_REF_NAME"
@@ -76,6 +104,8 @@ run reprotest:
 # with 'FAIL: Package purging left files on system'.
 run piuparts:
   stage: test extras
+  dependencies:
+    - build package
   image: registry.salsa.debian.org/salsa-ci-team/images/piuparts
   services:
     - docker:dind
@@ -105,6 +135,8 @@ run piuparts:
 
 fresh install:
   stage: test quality
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   artifacts:
     when: always
@@ -113,11 +145,11 @@ fresh install:
       - ${WORKING_DIR}/debug
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - mkdir debug
     - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
     - apt-get update
     - apt-get install -y ./*.deb
     - mariadb --version
+    - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - service mysql restart || true # Always proceed even if init failed
@@ -128,6 +160,8 @@ fresh install:
 
 upgrade on sid:
   stage: upgrades in Debian unstable
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   artifacts:
     when: always
@@ -144,6 +178,7 @@ upgrade on sid:
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
     - apt-get install -y ./*.deb
     - mariadb --version
+    - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - service mysql restart || true # Always proceed even if init failed
@@ -154,6 +189,8 @@ upgrade on sid:
 
 upgrade on stretch:
   stage: upgrades in Debian stable
+  dependencies:
+    - build package
   image: debian:stable
   artifacts:
     when: always
@@ -173,6 +210,7 @@ upgrade on stretch:
     - apt-get install -y ./*.deb
     - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
     - mariadb --version
+    - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - service mysql restart || true # Always proceed even if init failed
@@ -183,6 +221,8 @@ upgrade on stretch:
 
 test basic features:
   stage: test quality
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   artifacts:
     when: always
@@ -191,11 +231,11 @@ test basic features:
       - ${WORKING_DIR}/debug
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - mkdir debug
     - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
     - apt-get update
     - apt-get install -y ./*.deb
     - mariadb --version
+    - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - service mysql restart || true # Always proceed even if init failed
@@ -234,6 +274,8 @@ test basic features:
 #
 run autopkgtest:
   stage: test quality
+  dependencies:
+    - build package
   image: registry.salsa.debian.org/salsa-ci-team/images/autopkgtest:${RELEASE}
   script:
     - eatmydata autopkgtest -U ${WORKING_DIR}/*.changes -- null || [ $? -eq 8 ]
@@ -242,6 +284,8 @@ run autopkgtest:
 
 run blhc:
   stage: test extras
+  dependencies:
+    - build package
   image: registry.salsa.debian.org/salsa-ci-team/images/blhc
   script:
     - blhc --debian --line-numbers --color ${WORKING_DIR}/*.build || [ $? -eq 1 ]
@@ -253,10 +297,12 @@ run blhc:
 # libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time.
 build mariadbclient consumer Python-MySQLdb:
   stage: test quality
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - mkdir debug
+    - mkdir -p debug # Ensure dir exists before using it
     - apt-get update
     - apt-get install -y pkg-config ./libmariadb-dev*.deb ./libmariadb3_*.deb ./mariadb-common*.deb
     - pkg-config --cflags --libs mysqlclient # See what MySQLdb builds with
@@ -267,6 +313,8 @@ build mariadbclient consumer Python-MySQLdb:
 
 libmysql* to libmariadb* upgrade:
   stage: upgrades in Debian unstable
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   artifacts:
     when: always
@@ -300,6 +348,8 @@ libmysql* to libmariadb* upgrade:
 
 default-libmysqlclient-dev on sid upgrade:
   stage: upgrades in Debian unstable
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   artifacts:
     when: always
@@ -321,6 +371,8 @@ default-libmysqlclient-dev on sid upgrade:
 
 default-libmysqlclient-dev on stretch upgrade:
   stage: upgrades in Debian stable
+  dependencies:
+    - build package
   image: debian:stable
   artifacts:
     when: always
@@ -344,6 +396,8 @@ default-libmysqlclient-dev on stretch upgrade:
 
 mariadb-connector-c on stretch upgrade:
   stage: upgrades in Debian stable
+  dependencies:
+    - build package
   image: debian:stable
   artifacts:
     when: always
@@ -367,6 +421,8 @@ mariadb-connector-c on stretch upgrade:
 
 mysql-5.5 to mariadb upgrade:
   stage: upgrades in Debian stable
+  dependencies:
+    - build package
   image: debian:jessie
   artifacts:
     when: always
@@ -383,6 +439,7 @@ mysql-5.5 to mariadb upgrade:
     - apt-get update; apt-get install -y apt # Uprade minimal stack first
     - cd ${WORKING_DIR}; apt-get install -y ./*.deb || true # Allow to proceed so debug artifacts get collected
     - service mysql restart || true # Always proceed even if init failed
+    - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - cp -ra /var/log/mysql debug/var-log-mysql
@@ -394,6 +451,8 @@ mysql-5.5 to mariadb upgrade:
 # to unix_socket and automaticly re-adding Password column in user table.
 mysql-5.7 to mariadb upgrade:
   stage: upgrades in Debian unstable
+  dependencies:
+    - build package
   image: debian:${RELEASE}
   artifacts:
     when: always
@@ -412,6 +471,7 @@ mysql-5.7 to mariadb upgrade:
     - service mysql restart || true # Do a manual restart since the postinst scripts don't trigger systemd in Docker
     - apt-get install -y ./*.deb || true # Complete the installation now when the restart fixed database formats
     - service mysql restart || true # Always proceed even if init failed
+    - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - cp -ra /var/log/mysql debug/var-log-mysql
