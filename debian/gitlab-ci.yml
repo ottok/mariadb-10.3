@@ -40,17 +40,6 @@ build package:
     - du -shc ${WORKING_DIR}/* # Show total file size of artifacts. Must stay are under 100 MB.
     - mv ${CCACHE_TMP_DIR} ${CCACHE_WORK_DIR}
 
-# Autopkgtest must be disabled, because the test 'upstream' will be skipped and
-# thus the command returns exit code 2 and is considered failed by Gitlab CI.
-# Removing 'breaks-testbed' stanza from tests/control will result in that the
-# test is run on Gitlab CI, but then it will fail in multiple tests as it cannot
-# bind to network interfaces and other needes stuff inside Gitlab CI containers.
-#
-#run autopkgtest:
-#  stage: test
-#  script:
-#    - apt-get update && apt-get install autopkgtest eatmydata -y --no-install-recommends
-#    - eatmydata autopkgtest ${WORKING_DIR}/*.deb -- null
 
 run lintian:
   stage: test quality
@@ -230,6 +219,29 @@ test basic features:
     - mariadb -e "SELECT COUNT(*) FROM db.v_temptable"
     - mariadb -e "CALL db.p()"
     - mariadb -e "SELECT db.f()"
+
+# Autopkgtest must be disabled, because the test 'upstream' will be skipped and
+# thus the command returns exit code 2 and is considered failed by Gitlab CI.
+# Removing 'breaks-testbed' stanza from tests/control will result in that the
+# test is run on Gitlab CI, but then it will fail in multiple tests as it cannot
+# bind to network interfaces and other needes stuff inside Gitlab CI containers.
+#
+run autopkgtest:
+  stage: test quality
+  image: registry.salsa.debian.org/salsa-ci-team/images/autopkgtest:${RELEASE}
+  script:
+    - eatmydata autopkgtest -U ${WORKING_DIR}/*.changes -- null || [ $? -eq 8 ]
+  variables:
+      GIT_STRATEGY: none
+
+run blhc:
+  stage: test extras
+  image: registry.salsa.debian.org/salsa-ci-team/images/blhc
+  script:
+    - blhc --debian --line-numbers --color ${WORKING_DIR}/*.build || [ $? -eq 1 ]
+  variables:
+      GIT_STRATEGY: none
+  allow_failure: true
 
 # Build a piece of software that was designed for libmysqlclient-dev but using the
 # libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time.

@@ -4,4 +4,4 @@ Restrictions: allow-stderr needs-root isolation-container
 
 Tests: upstream
 Depends: mariadb-test
-Restrictions: allow-stderr breaks-testbed
+Restrictions: allow-stderr
