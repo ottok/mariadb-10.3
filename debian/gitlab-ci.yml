@@ -9,9 +9,9 @@ variables:
 stages:
   - build
   - test quality
-  - test minor upgrade
-  - test major upgrade
-  - test mysql upgrade
+  - upgrades in Debian unstable
+  - upgrades in Debian stable
+  - test extras
 
 build package:
   stage: build
@@ -64,10 +64,10 @@ run lintian:
     reports:
       junit: ${WORKING_DIR}/lintian.xml
 
-# Reprotest exceeds the 2 hour timeout limit on Github CI, so results in failure
-# and must be disabled until a quicker (times two) build is possible.
+# Reprotest exceeds the 2 hour timeout limit on Github CI, which should be fixed
+# before actual reproducibility issues can be tested and fixed.
 run reprotest:
-  stage: test quality
+  stage: test extras
   image: registry.salsa.debian.org/salsa-ci-team/images/reprotest
   artifacts:
     name: "$CI_JOB_NAME:$CI_COMMIT_REF_NAME"
@@ -84,15 +84,15 @@ run reprotest:
   allow_failure: true
 
 # Piuparts is passing on official piuparts.debian.org, but fail on Gitlab CI
-# with 'FAIL: Package purging left files on system'. Disabling for now.
+# with 'FAIL: Package purging left files on system'.
 run piuparts:
-  stage: test quality
+  stage: test extras
   image: registry.salsa.debian.org/salsa-ci-team/images/piuparts
   services:
     - docker:dind
   script:
     - CHROOT_PATH=/tmp/debian-unstable
-    - CONTAINER_ID=$(docker run --rm -d debian:unstable sleep infinity)
+    - CONTAINER_ID=$(docker run --rm -d debian:${RELEASE} sleep infinity)
     - docker exec ${CONTAINER_ID} bash -c "apt-get update && apt-get install eatmydata -y"
     - mkdir -p ${CHROOT_PATH}
     - docker export ${CONTAINER_ID} | tar -C ${CHROOT_PATH} -xf -
@@ -108,9 +108,9 @@ run piuparts:
       GIT_STRATEGY: none
   allow_failure: true
 
-test install:
+fresh install:
   stage: test quality
-  image: debian:sid
+  image: debian:${RELEASE}
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -131,9 +131,9 @@ test install:
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
 
-test upgrade sid:
-  stage: test minor upgrade
-  image: debian:sid
+upgrade on sid:
+  stage: upgrades in Debian unstable
+  image: debian:${RELEASE}
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -157,9 +157,9 @@ test upgrade sid:
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
 
-test upgrade stretch:
-  stage: test major upgrade
-  image: debian:stretch
+upgrade on stretch:
+  stage: upgrades in Debian stable
+  image: debian:stable
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -186,9 +186,9 @@ test upgrade stretch:
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;"
 
-test features:
+test basic features:
   stage: test quality
-  image: debian:sid
+  image: debian:${RELEASE}
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -231,11 +231,11 @@ test features:
     - mariadb -e "CALL db.p()"
     - mariadb -e "SELECT db.f()"
 
-# Build a piece of software that was designed bot libmysqlclient-dev using the
-# libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time
-test build Python-MySQLdb with mariadbclient:
+# Build a piece of software that was designed for libmysqlclient-dev but using the
+# libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time.
+build mariadbclient consumer Python-MySQLdb:
   stage: test quality
-  image: debian:sid
+  image: debian:${RELEASE}
   script:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - mkdir debug
@@ -247,9 +247,9 @@ test build Python-MySQLdb with mariadbclient:
     - apt-get purge -y libmariadb-dev # Not needed for run-time
     - python3 -c "import MySQLdb; print(MySQLdb.get_client_info())"
 
-test upgrade libmysql* to libmariadb*:
-  stage: test minor upgrade
-  image: debian:sid
+libmysql* to libmariadb* upgrade:
+  stage: upgrades in Debian unstable
+  image: debian:${RELEASE}
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -280,9 +280,9 @@ test upgrade libmysql* to libmariadb*:
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
 
-test upgrade default-libmysqlclient-dev:
-  stage: test minor upgrade
-  image: debian:testing
+default-libmysqlclient-dev on sid upgrade:
+  stage: upgrades in Debian unstable
+  image: debian:${RELEASE}
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -301,9 +301,9 @@ test upgrade default-libmysqlclient-dev:
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
 
-test upgrade stretch default-libmysqlclient-dev:
-  stage: test major upgrade
-  image: debian:stretch
+default-libmysqlclient-dev on stretch upgrade:
+  stage: upgrades in Debian stable
+  image: debian:stable
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -324,9 +324,9 @@ test upgrade stretch default-libmysqlclient-dev:
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
 
-test upgrade stretch mariadb-connector-c:
-  stage: test major upgrade
-  image: debian:stretch
+mariadb-connector-c on stretch upgrade:
+  stage: upgrades in Debian stable
+  image: debian:stable
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
@@ -347,8 +347,8 @@ test upgrade stretch mariadb-connector-c:
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
 
-test mysql-5.5 upgrade:
-  stage: test mysql upgrade
+mysql-5.5 to mariadb upgrade:
+  stage: upgrades in Debian stable
   image: debian:jessie
   artifacts:
     when: always
@@ -374,9 +374,9 @@ test mysql-5.5 upgrade:
 
 # Upgrading from MySQL 5.7 involves automatic renaming of auth_socket plugin
 # to unix_socket and automaticly re-adding Password column in user table.
-test mysql-5.7 upgrade:
-  stage: test mysql upgrade
-  image: debian:sid
+mysql-5.7 to mariadb upgrade:
+  stage: upgrades in Debian unstable
+  image: debian:${RELEASE}
   artifacts:
     when: always
     name: "$CI_BUILD_NAME"
