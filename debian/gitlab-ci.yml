@@ -89,10 +89,16 @@ run piuparts:
     - mkdir -p ${CHROOT_PATH}/etc-target/apt/sources.list.d ${CHROOT_PATH}/etc-target/apt/preferences.d
     - cp -aTv /etc/apt/sources.list.d  ${CHROOT_PATH}/etc-target/apt/sources.list.d
     - cp -aTv /etc/apt/preferences.d  ${CHROOT_PATH}/etc-target/apt/preferences.d
+    - mkdir /tmp/testdebs
+    - cp -a ${WORKING_DIR}/*.deb /tmp/testdebs
+    - apt-get update && apt-get install -y dpkg-dev
+    - (cd /tmp/testdebs && dpkg-scanpackages . > Packages)
     - |
-        for PACKAGE in $(ls ${WORKING_DIR}/*.deb); do
-            piuparts --scriptsdir /etc/piuparts/scripts --allow-database --warn-on-leftovers-after-purge --hard-link -e ${CHROOT_PATH} ${PACKAGE}
-        done
+      for PACKAGE in $(ls ${WORKING_DIR}/*.deb)
+      do
+        piuparts --scriptsdir /etc/piuparts/scripts --allow-database --warn-on-leftovers-after-purge \
+        --hard-link -e ${CHROOT_PATH} --bindmount /tmp/testdebs --testdebs-repo /tmp/testdebs ${PACKAGE}
+      done
   variables:
       GIT_STRATEGY: none
   allow_failure: true
