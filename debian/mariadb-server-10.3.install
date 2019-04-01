@@ -61,15 +61,6 @@ usr/lib/*/mariadb19/plugin/sql_errlog.so
 usr/lib/*/mariadb19/plugin/wsrep_info.so
 usr/share/doc/mariadb-server-10.3/mysqld.sym.gz
 usr/share/mysql/errmsg-utf8.txt
-usr/share/mysql/fill_help_tables.sql
-usr/share/mysql/maria_add_gis_sp.sql
-usr/share/mysql/maria_add_gis_sp_bootstrap.sql
-usr/share/mysql/mysql_performance_tables.sql
-usr/share/mysql/mysql_system_tables.sql
-usr/share/mysql/mysql_system_tables_data.sql
-usr/share/mysql/mysql_test_data_timezone.sql
-usr/share/mysql/mysql_test_db.sql
-usr/share/mysql/mysql_to_mariadb.sql
 usr/share/mysql/policy/apparmor/README
 usr/share/mysql/policy/apparmor/usr.sbin.mysqld
 usr/share/mysql/policy/apparmor/usr.sbin.mysqld.local
