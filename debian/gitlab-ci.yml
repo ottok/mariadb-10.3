@@ -172,7 +172,7 @@ upgrade on sid:
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - dpkg -l | grep -iE '"'"'maria|mysql|galera'"'"' || true
     - apt-get update
-    - apt-get install -y 'default-mysql*' 'mariadb-*' 'libmariadb*' # Install almost everything curently in Debian Sid
+    - apt-get install -y 'default-mysql*' 'mariadb-*' libmariadb3 'libmariadb-*' 'libmariadbd*' 'libmariadbclient-*' # Install almost everything curently in Debian Sid
     - service mysql status || true # Always proceed even if init failed
     - service mysql restart || true
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
