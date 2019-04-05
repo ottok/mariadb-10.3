@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2016 Oracle and/or its affiliates.
-   Copyright (c) 2009, 2018 MariaDB Corporation
+   Copyright (c) 2009, 2019 MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1184,7 +1184,7 @@ JOIN::prepare(TABLE_LIST *tables_init,
       select_lex->check_unrestricted_recursive(
                       thd->variables.only_standard_compliant_cte))
     DBUG_RETURN(-1);
-  if (select_lex->first_execution)
+  if (!(select_lex->changed_elements & TOUCHED_SEL_COND))
     select_lex->check_subqueries_with_recursive_references();
   
   int res= check_and_do_in_subquery_rewrites(this);
@@ -2833,7 +2833,7 @@ bool JOIN::make_aggr_tables_info()
 
         aggr_tables++;
         curr_tab= join_tab + exec_join_tab_cnt();
-        bzero(curr_tab, sizeof(JOIN_TAB));
+        bzero((void*)curr_tab, sizeof(JOIN_TAB));
         curr_tab->ref.key= -1;
         curr_tab->join= this;
 
@@ -2923,7 +2923,7 @@ bool JOIN::make_aggr_tables_info()
   {
     aggr_tables++;
     curr_tab= join_tab + exec_join_tab_cnt();
-    bzero(curr_tab, sizeof(JOIN_TAB));
+    bzero((void*)curr_tab, sizeof(JOIN_TAB));
     curr_tab->ref.key= -1;
     if (only_const_tables())
       first_select= sub_select_postjoin_aggr;
@@ -3051,7 +3051,7 @@ bool JOIN::make_aggr_tables_info()
 
       curr_tab++;
       aggr_tables++;
-      bzero(curr_tab, sizeof(JOIN_TAB));
+      bzero((void*)curr_tab, sizeof(JOIN_TAB));
       curr_tab->ref.key= -1;
 
       /* group data to new table */
@@ -4431,7 +4431,7 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
     DBUG_RETURN(1);
 
   /* The following should be optimized to only clear critical things */
-  bzero(stat, sizeof(JOIN_TAB)* table_count);
+  bzero((void*)stat, sizeof(JOIN_TAB)* table_count);
   /* Initialize POSITION objects */
   for (i=0 ; i <= table_count ; i++)
     (void) new ((char*) (join->positions + i)) POSITION;
@@ -6689,6 +6689,7 @@ void set_position(JOIN *join,uint idx,JOIN_TAB *table,KEYUSE *key)
     next=tmp;
   }
   join->best_ref[idx]=table;
+  join->positions[idx].spl_plan= 0;
 }
 
 
@@ -9584,7 +9585,7 @@ bool JOIN::get_best_combination()
         1. Put into main join order a JOIN_TAB that represents a lookup or scan
            in the temptable.
       */
-      bzero(j, sizeof(JOIN_TAB));
+      bzero((void*)j, sizeof(JOIN_TAB));
       j->join= this;
       j->table= NULL; //temporary way to tell SJM tables from others.
       j->ref.key = -1;
@@ -16370,7 +16371,7 @@ Item::remove_eq_conds(THD *thd, Item::cond_result *cond_value, bool top_level_ar
 {
   if (const_item() && !is_expensive())
   {
-    *cond_value= eval_const_cond(this) ? Item::COND_TRUE : Item::COND_FALSE;
+    *cond_value= eval_const_cond() ? Item::COND_TRUE : Item::COND_FALSE;
     return (COND*) 0;
   }
   *cond_value= Item::COND_OK;
@@ -16384,7 +16385,7 @@ Item_bool_func2::remove_eq_conds(THD *thd, Item::cond_result *cond_value,
 {
   if (const_item() && !is_expensive())
   {
-    *cond_value= eval_const_cond(this) ? Item::COND_TRUE : Item::COND_FALSE;
+    *cond_value= eval_const_cond() ? Item::COND_TRUE : Item::COND_FALSE;
     return (COND*) 0;
   }
   if ((*cond_value= eq_cmp_result()) != Item::COND_OK)
@@ -18002,7 +18003,7 @@ bool Virtual_tmp_table::init(uint field_count)
                         &bitmaps, bitmap_buffer_size(field_count) * 6,
                         NullS))
     DBUG_RETURN(true);
-  bzero(s, sizeof(*s));
+  s->reset();
   s->blob_field= blob_field;
   setup_tmp_table_column_bitmaps(this, bitmaps, field_count);
   m_alloced_field_count= field_count;
@@ -21263,7 +21264,8 @@ make_cond_for_table_from_pred(THD *thd, Item *root_cond, Item *cond,
           the new parent Item. This should not be expensive because all
 	  children of Item_cond_and should be fixed by now.
 	*/
-	new_cond->fix_fields(thd, 0);
+	if (new_cond->fix_fields(thd, 0))
+          return (COND*) 0;
 	new_cond->used_tables_cache=
 	  ((Item_cond_and*) cond)->used_tables_cache &
 	  tables;
@@ -23914,7 +23916,9 @@ setup_copy_fields(THD *thd, TMP_TABLE_PARAM *param,
 	      real_pos->type() == Item::COND_ITEM) &&
 	     !real_pos->with_sum_func)
     {						// Save for send fields
+      LEX_CSTRING real_name= pos->name;
       pos= real_pos;
+      pos->name= real_name;
       /* TODO:
 	 In most cases this result will be sent to the user.
 	 This should be changed to use copy_int or copy_real depending

@@ -1132,7 +1132,7 @@ bool parse_vcol_defs(THD *thd, MEM_ROOT *mem_root, TABLE *table,
   if (check_constraint_ptr)
     *check_constraint_ptr= 0;
 
-  /* Check that expressions aren't refering to not yet initialized fields */
+  /* Check that expressions aren't referring to not yet initialized fields */
   for (field_ptr= table->field; *field_ptr; field_ptr++)
   {
     Field *field= *field_ptr;
@@ -1781,7 +1781,7 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
       goto err;
     DBUG_PRINT("info", ("Columns with system versioning: [%d, %d]", row_start, row_end));
     versioned= VERS_TIMESTAMP;
-    vers_can_native= plugin_hton(se_plugin)->flags & HTON_NATIVE_SYS_VERSIONING;
+    vers_can_native= handler_file->vers_can_native(thd);
     row_start_field= row_start;
     row_end_field= row_end;
     status_var_increment(thd->status_var.feature_system_versioning);
@@ -8822,7 +8822,10 @@ bool TR_table::query(ulonglong trx_id)
     return false;
   select= make_select(table, 0, 0, conds, NULL, 0, &error);
   if (unlikely(error || !select))
+  {
+    my_error(ER_OUT_OF_RESOURCES, MYF(0));
     return false;
+  }
   // FIXME: (performance) force index 'transaction_id'
   error= init_read_record(&info, thd, table, select, NULL,
                           1 /* use_record_cache */, true /* print_error */,
@@ -8832,6 +8835,7 @@ bool TR_table::query(ulonglong trx_id)
     if (select->skip_record(thd) > 0)
       return true;
   }
+  my_error(ER_VERS_NO_TRX_ID, MYF(0), (longlong) trx_id);
   return false;
 }
 

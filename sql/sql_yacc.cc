@@ -2341,107 +2341,107 @@ static const yytype_uint16 yyrline[] =
    14606, 14609, 14611, 14612, 14616, 14632, 14633, 14637, 14636, 14646,
    14647, 14651, 14651, 14655, 14654, 14660, 14664, 14665, 14669, 14670,
    14678, 14677, 14688, 14692, 14696, 14709, 14708, 14723, 14724, 14725,
-   14728, 14729, 14730, 14731, 14739, 14743, 14752, 14758, 14770, 14781,
-   14792, 14805, 14769, 14813, 14814, 14818, 14819, 14823, 14824, 14832,
-   14836, 14837, 14838, 14841, 14843, 14847, 14848, 14852, 14857, 14864,
-   14869, 14876, 14878, 14882, 14883, 14887, 14892, 14900, 14901, 14904,
-   14906, 14914, 14915, 14919, 14920, 14921, 14925, 14927, 14932, 14933,
-   14942, 14943, 14947, 14948, 14952, 14965, 14970, 14975, 14980, 14988,
-   14996, 15001, 15014, 15023, 15039, 15046, 15052, 15062, 15063, 15071,
-   15072, 15073, 15074, 15088, 15094, 15100, 15106, 15112, 15118, 15137,
-   15147, 15157, 15163, 15170, 15180, 15188, 15196, 15208, 15209, 15218,
-   15217, 15236, 15237, 15242, 15243, 15250, 15248, 15275, 15276, 15282,
-   15287, 15296, 15311, 15312, 15316, 15321, 15329, 15334, 15342, 15347,
-   15352, 15357, 15363, 15368, 15376, 15381, 15386, 15391, 15397, 15405,
-   15406, 15417, 15425, 15429, 15435, 15441, 15451, 15457, 15466, 15476,
-   15477, 15481, 15482, 15483, 15487, 15495, 15503, 15511, 15519, 15520,
-   15528, 15529, 15537, 15538, 15543, 15552, 15553, 15561, 15562, 15570,
-   15571, 15572, 15576, 15589, 15619, 15629, 15629, 15631, 15641, 15642,
-   15643, 15644, 15645, 15646, 15647, 15648, 15653, 15654, 15655, 15656,
-   15657, 15658, 15659, 15660, 15661, 15669, 15670, 15671, 15672, 15676,
-   15677, 15678, 15679, 15680, 15681, 15682, 15683, 15687, 15688, 15689,
-   15690, 15691, 15692, 15693, 15694, 15695, 15699, 15700, 15701, 15702,
-   15703, 15704, 15705, 15706, 15719, 15720, 15721, 15722, 15723, 15724,
-   15725, 15726, 15727, 15728, 15729, 15730, 15731, 15732, 15733, 15734,
-   15735, 15736, 15737, 15738, 15739, 15740, 15741, 15742, 15743, 15744,
-   15745, 15746, 15747, 15748, 15749, 15750, 15751, 15752, 15753, 15754,
-   15755, 15756, 15757, 15758, 15759, 15760, 15761, 15762, 15763, 15764,
-   15765, 15766, 15767, 15768, 15769, 15770, 15771, 15772, 15813, 15814,
-   15815, 15816, 15817, 15818, 15829, 15830, 15831, 15832, 15833, 15834,
-   15835, 15836, 15837, 15838, 15842, 15843, 15844, 15851, 15852, 15853,
-   15857, 15858, 15859, 15868, 15869, 15870, 15871, 15872, 15873, 15874,
-   15875, 15876, 15877, 15878, 15879, 15880, 15881, 15882, 15883, 15884,
-   15885, 15886, 15887, 15888, 15889, 15890, 15891, 15892, 15893, 15894,
-   15895, 15896, 15897, 15898, 15899, 15900, 15901, 15909, 15910, 15911,
-   15912, 15913, 15914, 15915, 15916, 15917, 15918, 15919, 15920, 15921,
-   15922, 15923, 15924, 15925, 15926, 15927, 15928, 15929, 15930, 15931,
-   15932, 15933, 15934, 15935, 15936, 15937, 15938, 15939, 15940, 15941,
-   15942, 15943, 15944, 15945, 15946, 15947, 15948, 15949, 15950, 15951,
-   15952, 15953, 15954, 15955, 15960, 15961, 15962, 15963, 15964, 15965,
-   15966, 15967, 15968, 15969, 15970, 15971, 15972, 15973, 15974, 15975,
-   15976, 15977, 15978, 15979, 15980, 15981, 15982, 15983, 15984, 15985,
-   15986, 15987, 15988, 15989, 15990, 15991, 15992, 15993, 15994, 15995,
-   15996, 15997, 15998, 15999, 16000, 16001, 16002, 16003, 16004, 16005,
-   16006, 16007, 16008, 16009, 16010, 16011, 16012, 16013, 16014, 16015,
-   16016, 16017, 16018, 16019, 16020, 16021, 16022, 16023, 16024, 16025,
-   16026, 16027, 16028, 16029, 16030, 16031, 16032, 16033, 16034, 16035,
-   16036, 16037, 16038, 16039, 16040, 16041, 16042, 16043, 16044, 16045,
-   16046, 16047, 16048, 16049, 16050, 16051, 16052, 16053, 16054, 16055,
-   16056, 16057, 16058, 16059, 16060, 16061, 16062, 16063, 16064, 16065,
-   16066, 16067, 16068, 16069, 16070, 16071, 16072, 16073, 16074, 16075,
-   16076, 16077, 16078, 16079, 16080, 16081, 16082, 16083, 16084, 16085,
-   16086, 16087, 16088, 16089, 16090, 16091, 16092, 16093, 16094, 16095,
-   16096, 16097, 16098, 16099, 16100, 16101, 16102, 16103, 16104, 16105,
-   16106, 16107, 16108, 16109, 16110, 16111, 16112, 16113, 16114, 16115,
-   16116, 16117, 16118, 16119, 16120, 16121, 16122, 16123, 16124, 16125,
-   16126, 16127, 16128, 16129, 16130, 16131, 16132, 16133, 16134, 16135,
-   16136, 16137, 16138, 16139, 16140, 16141, 16142, 16143, 16144, 16145,
-   16146, 16147, 16148, 16149, 16150, 16151, 16152, 16153, 16154, 16155,
-   16156, 16157, 16158, 16159, 16160, 16161, 16162, 16163, 16164, 16165,
-   16166, 16167, 16168, 16169, 16170, 16171, 16172, 16173, 16174, 16175,
-   16176, 16177, 16178, 16179, 16180, 16181, 16182, 16183, 16184, 16185,
-   16186, 16187, 16188, 16189, 16190, 16191, 16192, 16193, 16194, 16195,
-   16196, 16197, 16198, 16199, 16200, 16201, 16202, 16203, 16204, 16205,
-   16206, 16207, 16208, 16209, 16210, 16211, 16212, 16213, 16214, 16215,
-   16216, 16217, 16218, 16219, 16220, 16221, 16222, 16223, 16224, 16225,
-   16226, 16238, 16237, 16247, 16251, 16246, 16268, 16269, 16275, 16274,
-   16281, 16280, 16290, 16289, 16300, 16299, 16305, 16313, 16315, 16320,
-   16320, 16329, 16328, 16342, 16341, 16346, 16350, 16351, 16352, 16356,
-   16357, 16358, 16359, 16363, 16364, 16365, 16366, 16371, 16376, 16381,
-   16390, 16395, 16400, 16405, 16410, 16415, 16420, 16425, 16439, 16450,
-   16469, 16487, 16499, 16507, 16512, 16528, 16529, 16530, 16531, 16535,
-   16554, 16572, 16573, 16577, 16578, 16579, 16580, 16584, 16599, 16603,
-   16604, 16605, 16615, 16616, 16617, 16623, 16629, 16641, 16640, 16654,
-   16655, 16661, 16670, 16671, 16675, 16676, 16680, 16696, 16697, 16698,
-   16703, 16704, 16709, 16708, 16725, 16735, 16746, 16745, 16777, 16778,
-   16782, 16783, 16787, 16788, 16789, 16790, 16792, 16791, 16804, 16805,
-   16806, 16807, 16808, 16814, 16819, 16825, 16831, 16837, 16844, 16851,
-   16855, 16862, 16871, 16873, 16878, 16883, 16890, 16897, 16904, 16911,
-   16918, 16925, 16937, 16938, 16941, 16942, 16945, 16950, 16958, 16968,
-   16987, 16990, 16992, 16996, 16997, 17004, 17006, 17010, 17011, 17016,
-   17015, 17019, 17018, 17022, 17021, 17025, 17024, 17027, 17028, 17029,
-   17030, 17031, 17032, 17033, 17034, 17035, 17036, 17037, 17038, 17039,
-   17040, 17041, 17042, 17043, 17044, 17045, 17046, 17047, 17048, 17049,
-   17050, 17051, 17052, 17053, 17057, 17058, 17062, 17063, 17067, 17074,
-   17081, 17091, 17101, 17110, 17119, 17132, 17137, 17145, 17150, 17158,
-   17163, 17170, 17170, 17171, 17171, 17174, 17181, 17186, 17192, 17198,
-   17204, 17208, 17212, 17213, 17217, 17245, 17247, 17251, 17255, 17259,
-   17266, 17272, 17278, 17284, 17290, 17299, 17300, 17304, 17305, 17310,
-   17311, 17315, 17316, 17320, 17321, 17325, 17326, 17331, 17330, 17340,
-   17349, 17350, 17354, 17355, 17360, 17361, 17362, 17367, 17368, 17369,
-   17373, 17385, 17394, 17400, 17409, 17418, 17431, 17433, 17435, 17440,
-   17441, 17446, 17445, 17462, 17461, 17473, 17473, 17494, 17495, 17502,
-   17510, 17511, 17512, 17516, 17517, 17522, 17521, 17543, 17550, 17551,
-   17555, 17556, 17560, 17561, 17562, 17567, 17575, 17596, 17623, 17625,
-   17629, 17630, 17634, 17635, 17643, 17644, 17645, 17646, 17652, 17658,
-   17668, 17669, 17674, 17687, 17703, 17704, 17705, 17709, 17710, 17714,
-   17715, 17720, 17721, 17725, 17731, 17740, 17740, 17765, 17766, 17767,
-   17768, 17769, 17770, 17771, 17775, 17776, 17777, 17778, 17788, 17790,
-   17796, 17802, 17812, 17821, 17827, 17832, 17836, 17810, 17888, 17906,
-   17905, 17923, 17932, 17921, 17948, 17956, 17947, 17970, 17974, 17978,
-   17982, 17986, 17990, 17998, 17999, 18015, 18022, 18029, 18039, 18040,
-   18041, 18045, 18046, 18047, 18051, 18052, 18057, 18059, 18058, 18064,
-   18065, 18069, 18076, 18086, 18092, 18103
+   14728, 14729, 14730, 14731, 14739, 14743, 14752, 14758, 14770, 14782,
+   14793, 14806, 14769, 14814, 14815, 14819, 14820, 14824, 14825, 14833,
+   14837, 14838, 14839, 14842, 14844, 14848, 14849, 14853, 14858, 14865,
+   14870, 14877, 14879, 14883, 14884, 14888, 14893, 14901, 14902, 14905,
+   14907, 14915, 14916, 14920, 14921, 14922, 14926, 14928, 14933, 14934,
+   14943, 14944, 14948, 14949, 14953, 14966, 14971, 14976, 14981, 14989,
+   14997, 15002, 15015, 15024, 15040, 15047, 15053, 15063, 15064, 15072,
+   15073, 15074, 15075, 15089, 15095, 15101, 15107, 15113, 15119, 15138,
+   15148, 15158, 15164, 15171, 15181, 15189, 15197, 15209, 15210, 15219,
+   15218, 15237, 15238, 15243, 15244, 15251, 15249, 15276, 15277, 15283,
+   15288, 15297, 15312, 15313, 15317, 15322, 15330, 15335, 15343, 15348,
+   15353, 15358, 15364, 15369, 15377, 15382, 15387, 15392, 15398, 15406,
+   15407, 15418, 15426, 15430, 15436, 15442, 15452, 15458, 15467, 15477,
+   15478, 15482, 15483, 15484, 15488, 15496, 15504, 15512, 15520, 15521,
+   15529, 15530, 15538, 15539, 15544, 15553, 15554, 15562, 15563, 15571,
+   15572, 15573, 15577, 15590, 15620, 15630, 15630, 15632, 15642, 15643,
+   15644, 15645, 15646, 15647, 15648, 15649, 15654, 15655, 15656, 15657,
+   15658, 15659, 15660, 15661, 15662, 15670, 15671, 15672, 15673, 15677,
+   15678, 15679, 15680, 15681, 15682, 15683, 15684, 15688, 15689, 15690,
+   15691, 15692, 15693, 15694, 15695, 15696, 15700, 15701, 15702, 15703,
+   15704, 15705, 15706, 15707, 15720, 15721, 15722, 15723, 15724, 15725,
+   15726, 15727, 15728, 15729, 15730, 15731, 15732, 15733, 15734, 15735,
+   15736, 15737, 15738, 15739, 15740, 15741, 15742, 15743, 15744, 15745,
+   15746, 15747, 15748, 15749, 15750, 15751, 15752, 15753, 15754, 15755,
+   15756, 15757, 15758, 15759, 15760, 15761, 15762, 15763, 15764, 15765,
+   15766, 15767, 15768, 15769, 15770, 15771, 15772, 15773, 15814, 15815,
+   15816, 15817, 15818, 15819, 15830, 15831, 15832, 15833, 15834, 15835,
+   15836, 15837, 15838, 15839, 15843, 15844, 15845, 15852, 15853, 15854,
+   15858, 15859, 15860, 15869, 15870, 15871, 15872, 15873, 15874, 15875,
+   15876, 15877, 15878, 15879, 15880, 15881, 15882, 15883, 15884, 15885,
+   15886, 15887, 15888, 15889, 15890, 15891, 15892, 15893, 15894, 15895,
+   15896, 15897, 15898, 15899, 15900, 15901, 15902, 15910, 15911, 15912,
+   15913, 15914, 15915, 15916, 15917, 15918, 15919, 15920, 15921, 15922,
+   15923, 15924, 15925, 15926, 15927, 15928, 15929, 15930, 15931, 15932,
+   15933, 15934, 15935, 15936, 15937, 15938, 15939, 15940, 15941, 15942,
+   15943, 15944, 15945, 15946, 15947, 15948, 15949, 15950, 15951, 15952,
+   15953, 15954, 15955, 15956, 15961, 15962, 15963, 15964, 15965, 15966,
+   15967, 15968, 15969, 15970, 15971, 15972, 15973, 15974, 15975, 15976,
+   15977, 15978, 15979, 15980, 15981, 15982, 15983, 15984, 15985, 15986,
+   15987, 15988, 15989, 15990, 15991, 15992, 15993, 15994, 15995, 15996,
+   15997, 15998, 15999, 16000, 16001, 16002, 16003, 16004, 16005, 16006,
+   16007, 16008, 16009, 16010, 16011, 16012, 16013, 16014, 16015, 16016,
+   16017, 16018, 16019, 16020, 16021, 16022, 16023, 16024, 16025, 16026,
+   16027, 16028, 16029, 16030, 16031, 16032, 16033, 16034, 16035, 16036,
+   16037, 16038, 16039, 16040, 16041, 16042, 16043, 16044, 16045, 16046,
+   16047, 16048, 16049, 16050, 16051, 16052, 16053, 16054, 16055, 16056,
+   16057, 16058, 16059, 16060, 16061, 16062, 16063, 16064, 16065, 16066,
+   16067, 16068, 16069, 16070, 16071, 16072, 16073, 16074, 16075, 16076,
+   16077, 16078, 16079, 16080, 16081, 16082, 16083, 16084, 16085, 16086,
+   16087, 16088, 16089, 16090, 16091, 16092, 16093, 16094, 16095, 16096,
+   16097, 16098, 16099, 16100, 16101, 16102, 16103, 16104, 16105, 16106,
+   16107, 16108, 16109, 16110, 16111, 16112, 16113, 16114, 16115, 16116,
+   16117, 16118, 16119, 16120, 16121, 16122, 16123, 16124, 16125, 16126,
+   16127, 16128, 16129, 16130, 16131, 16132, 16133, 16134, 16135, 16136,
+   16137, 16138, 16139, 16140, 16141, 16142, 16143, 16144, 16145, 16146,
+   16147, 16148, 16149, 16150, 16151, 16152, 16153, 16154, 16155, 16156,
+   16157, 16158, 16159, 16160, 16161, 16162, 16163, 16164, 16165, 16166,
+   16167, 16168, 16169, 16170, 16171, 16172, 16173, 16174, 16175, 16176,
+   16177, 16178, 16179, 16180, 16181, 16182, 16183, 16184, 16185, 16186,
+   16187, 16188, 16189, 16190, 16191, 16192, 16193, 16194, 16195, 16196,
+   16197, 16198, 16199, 16200, 16201, 16202, 16203, 16204, 16205, 16206,
+   16207, 16208, 16209, 16210, 16211, 16212, 16213, 16214, 16215, 16216,
+   16217, 16218, 16219, 16220, 16221, 16222, 16223, 16224, 16225, 16226,
+   16227, 16239, 16238, 16248, 16252, 16247, 16269, 16270, 16276, 16275,
+   16282, 16281, 16291, 16290, 16301, 16300, 16306, 16314, 16316, 16321,
+   16321, 16330, 16329, 16343, 16342, 16347, 16351, 16352, 16353, 16357,
+   16358, 16359, 16360, 16364, 16365, 16366, 16367, 16372, 16377, 16382,
+   16391, 16396, 16401, 16406, 16411, 16416, 16421, 16426, 16440, 16451,
+   16470, 16488, 16500, 16508, 16513, 16529, 16530, 16531, 16532, 16536,
+   16555, 16573, 16574, 16578, 16579, 16580, 16581, 16585, 16600, 16604,
+   16605, 16606, 16616, 16617, 16618, 16624, 16630, 16642, 16641, 16655,
+   16656, 16662, 16671, 16672, 16676, 16677, 16681, 16697, 16698, 16699,
+   16704, 16705, 16710, 16709, 16726, 16736, 16747, 16746, 16778, 16779,
+   16783, 16784, 16788, 16789, 16790, 16791, 16793, 16792, 16805, 16806,
+   16807, 16808, 16809, 16815, 16820, 16826, 16832, 16838, 16845, 16852,
+   16856, 16863, 16872, 16874, 16879, 16884, 16891, 16898, 16905, 16912,
+   16919, 16926, 16938, 16939, 16942, 16943, 16946, 16951, 16959, 16969,
+   16988, 16991, 16993, 16997, 16998, 17005, 17007, 17011, 17012, 17017,
+   17016, 17020, 17019, 17023, 17022, 17026, 17025, 17028, 17029, 17030,
+   17031, 17032, 17033, 17034, 17035, 17036, 17037, 17038, 17039, 17040,
+   17041, 17042, 17043, 17044, 17045, 17046, 17047, 17048, 17049, 17050,
+   17051, 17052, 17053, 17054, 17058, 17059, 17063, 17064, 17068, 17075,
+   17082, 17092, 17102, 17111, 17120, 17133, 17138, 17146, 17151, 17159,
+   17164, 17171, 17171, 17172, 17172, 17175, 17182, 17187, 17193, 17199,
+   17205, 17209, 17213, 17214, 17218, 17246, 17248, 17252, 17256, 17260,
+   17267, 17273, 17279, 17285, 17291, 17300, 17301, 17305, 17306, 17311,
+   17312, 17316, 17317, 17321, 17322, 17326, 17327, 17332, 17331, 17341,
+   17350, 17351, 17355, 17356, 17361, 17362, 17363, 17368, 17369, 17370,
+   17374, 17386, 17395, 17401, 17410, 17419, 17432, 17434, 17436, 17441,
+   17442, 17447, 17446, 17463, 17462, 17474, 17474, 17495, 17496, 17503,
+   17511, 17512, 17513, 17517, 17518, 17523, 17522, 17544, 17551, 17552,
+   17556, 17557, 17561, 17562, 17563, 17568, 17576, 17597, 17624, 17626,
+   17630, 17631, 17635, 17636, 17644, 17645, 17646, 17647, 17653, 17659,
+   17669, 17670, 17675, 17688, 17704, 17705, 17706, 17710, 17711, 17715,
+   17716, 17721, 17722, 17726, 17732, 17741, 17741, 17766, 17767, 17768,
+   17769, 17770, 17771, 17772, 17776, 17777, 17778, 17779, 17789, 17791,
+   17797, 17803, 17813, 17822, 17828, 17833, 17837, 17811, 17889, 17907,
+   17906, 17924, 17933, 17922, 17949, 17957, 17948, 17971, 17975, 17979,
+   17983, 17987, 17991, 17999, 18000, 18016, 18023, 18030, 18040, 18041,
+   18042, 18046, 18047, 18048, 18052, 18053, 18058, 18060, 18059, 18065,
+   18066, 18070, 18077, 18087, 18093, 18104
 };
 #endif
 
@@ -30952,7 +30952,7 @@ yyreduce:
               from the global list.
             */
             LEX *lex=Lex;
-            lex->create_info.merge_list= lex->select_lex.table_list;
+            lex->create_info.merge_list= lex->select_lex.table_list.first;
             lex->select_lex.table_list= lex->save_list;
             /*
               When excluding union list from the global list we assume that
@@ -30961,7 +30961,7 @@ yyreduce:
             */
             TABLE_LIST *last_non_sel_table= lex->create_last_non_select_table;
             DBUG_ASSERT(last_non_sel_table->next_global ==
-                        lex->create_info.merge_list.first);
+                        lex->create_info.merge_list);
             last_non_sel_table->next_global= 0;
             Lex->query_tables_last= &last_non_sel_table->next_global;
 
@@ -43226,6 +43226,7 @@ yyreduce:
 #line 14770 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
+            mysql_init_select(lex);
 
             if (unlikely(lex->sphead))
             {
@@ -43234,11 +43235,11 @@ yyreduce:
               MYSQL_YYABORT;
             }
           }
-#line 43238 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43239 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2419:
-#line 14781 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14782 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_LOAD;
@@ -43249,11 +43250,11 @@ yyreduce:
                          sql_exchange((yyvsp[0].lex_str).str, 0, (yyvsp[-5].filetype)))))
               MYSQL_YYABORT;
           }
-#line 43253 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43254 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2420:
-#line 14792 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14793 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(!Select->add_table_to_list(thd, (yyvsp[-1].table), NULL,
@@ -43266,53 +43267,53 @@ yyreduce:
             lex->value_list.empty();
             lex->many_values.empty();
           }
-#line 43270 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43271 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2421:
-#line 14805 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14806 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->exchange->cs= (yyvsp[0].charset); }
-#line 43276 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43277 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2422:
-#line 14809 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14810 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 43282 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43283 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2423:
-#line 14813 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14814 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.filetype)= FILETYPE_CSV; }
-#line 43288 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43289 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2424:
-#line 14814 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14815 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.filetype)= FILETYPE_XML; }
-#line 43294 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43295 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2425:
-#line 14818 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14819 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)=0;}
-#line 43300 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43301 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2426:
-#line 14819 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14820 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)=1;}
-#line 43306 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43307 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2427:
-#line 14823 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14824 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lock_type)= TL_WRITE_DEFAULT; }
-#line 43312 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43313 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2428:
-#line 14825 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14826 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             /*
               Ignore this option in SP to avoid problem with query cache and
@@ -43320,182 +43321,182 @@ yyreduce:
             */
             (yyval.lock_type)= (Lex->sphead ? TL_WRITE_DEFAULT : TL_WRITE_CONCURRENT_INSERT);
           }
-#line 43324 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43325 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2429:
-#line 14832 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14833 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lock_type)= TL_WRITE_LOW_PRIORITY; }
-#line 43330 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43331 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2430:
-#line 14836 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14837 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->duplicates=DUP_ERROR; }
-#line 43336 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43337 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2431:
-#line 14837 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14838 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->duplicates=DUP_REPLACE; }
-#line 43342 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43343 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2432:
-#line 14838 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14839 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ignore= 1; }
-#line 43348 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43349 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2437:
-#line 14853 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14854 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             DBUG_ASSERT(Lex->exchange != 0);
             Lex->exchange->field_term= (yyvsp[0].string);
           }
-#line 43357 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43358 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2438:
-#line 14858 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14859 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             DBUG_ASSERT(lex->exchange != 0);
             lex->exchange->enclosed= (yyvsp[0].string);
             lex->exchange->opt_enclosed= 1;
           }
-#line 43368 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43369 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2439:
-#line 14865 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14866 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             DBUG_ASSERT(Lex->exchange != 0);
             Lex->exchange->enclosed= (yyvsp[0].string);
           }
-#line 43377 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43378 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2440:
-#line 14870 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14871 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             DBUG_ASSERT(Lex->exchange != 0);
             Lex->exchange->escaped= (yyvsp[0].string);
           }
-#line 43386 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43387 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2445:
-#line 14888 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14889 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             DBUG_ASSERT(Lex->exchange != 0);
             Lex->exchange->line_term= (yyvsp[0].string);
           }
-#line 43395 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43396 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2446:
-#line 14893 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14894 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             DBUG_ASSERT(Lex->exchange != 0);
             Lex->exchange->line_start= (yyvsp[0].string);
           }
-#line 43404 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43405 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2447:
-#line 14900 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14901 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { }
-#line 43410 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43411 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2448:
-#line 14902 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14903 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->exchange->line_term = (yyvsp[0].string); }
-#line 43416 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43417 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2450:
-#line 14907 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14908 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             DBUG_ASSERT(Lex->exchange != 0);
             Lex->exchange->skip_lines= atol((yyvsp[-1].lex_str).str);
           }
-#line 43425 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43426 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2451:
-#line 14914 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14915 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { }
-#line 43431 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43432 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2452:
-#line 14915 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14916 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { }
-#line 43437 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43438 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2453:
-#line 14919 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14920 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 43443 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43444 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2454:
-#line 14920 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14921 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 43449 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43450 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2455:
-#line 14921 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14922 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 43455 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43456 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2456:
-#line 14926 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14927 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->field_list.push_back((yyvsp[0].item), thd->mem_root); }
-#line 43461 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43462 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2457:
-#line 14928 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14929 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->field_list.push_back((yyvsp[0].item), thd->mem_root); }
-#line 43467 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43468 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2458:
-#line 14932 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14933 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {(yyval.item)= (yyvsp[0].item);}
-#line 43473 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43474 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2459:
-#line 14934 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14935 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)= new (thd->mem_root) Item_user_var_as_out_param(thd, &(yyvsp[0].lex_str));
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 43483 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43484 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2460:
-#line 14942 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14943 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 43489 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43490 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2461:
-#line 14943 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14944 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 43495 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43496 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2464:
-#line 14953 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14954 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             if (unlikely(lex->update_list.push_back((yyvsp[-4].item), thd->mem_root)) ||
@@ -43503,47 +43504,47 @@ yyreduce:
                 MYSQL_YYABORT;
             (yyvsp[-1].item)->set_name_no_truncate(thd, (yyvsp[-2].simple_string), (uint) ((yyvsp[0].simple_string) - (yyvsp[-2].simple_string)), thd->charset());
           }
-#line 43507 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43508 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2465:
-#line 14966 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14967 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_basic_constant)= thd->make_string_literal((yyvsp[0].lex_string_with_metadata)))))
               MYSQL_YYABORT;
           }
-#line 43516 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43517 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2466:
-#line 14971 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14972 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_basic_constant)= thd->make_string_literal_nchar((yyvsp[0].lex_string_with_metadata)))))
               MYSQL_YYABORT;
           }
-#line 43525 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43526 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2467:
-#line 14976 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14977 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_basic_constant)= thd->make_string_literal_charset((yyvsp[0].lex_string_with_metadata), (yyvsp[-1].charset)))))
               MYSQL_YYABORT;
           }
-#line 43534 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43535 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2468:
-#line 14981 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14982 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_basic_constant)= (yyvsp[-1].item_basic_constant)->make_string_literal_concat(thd, &(yyvsp[0].lex_str)))))
               MYSQL_YYABORT;
           }
-#line 43543 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43544 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2469:
-#line 14989 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14990 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.string)= new (thd->mem_root) String((yyvsp[0].lex_str).str,
                                              (yyvsp[0].lex_str).length,
@@ -43551,17 +43552,17 @@ yyreduce:
             if (unlikely((yyval.string) == NULL))
               MYSQL_YYABORT;
           }
-#line 43555 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43556 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2470:
-#line 14996 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 14997 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.string)= (yyvsp[0].string); }
-#line 43561 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43562 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2471:
-#line 15002 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15003 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Item *tmp= new (thd->mem_root) Item_hex_hybrid(thd, (yyvsp[0].lex_str).str,
                                                            (yyvsp[0].lex_str).length);
@@ -43574,11 +43575,11 @@ yyreduce:
             tmp->quick_fix_field();
             (yyval.string)= tmp->val_str((String*) 0);
           }
-#line 43578 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43579 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2472:
-#line 15015 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15016 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Item *tmp= new (thd->mem_root) Item_hex_string(thd, (yyvsp[0].lex_str).str,
                                                            (yyvsp[0].lex_str).length);
@@ -43587,11 +43588,11 @@ yyreduce:
             tmp->quick_fix_field();
             (yyval.string)= tmp->val_str((String*) 0);
           }
-#line 43591 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43592 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2473:
-#line 15024 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15025 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Item *tmp= new (thd->mem_root) Item_bin_string(thd, (yyvsp[0].lex_str).str,
                                                            (yyvsp[0].lex_str).length);
@@ -43604,76 +43605,76 @@ yyreduce:
             tmp->quick_fix_field();
             (yyval.string)= tmp->val_str((String*) 0);
           }
-#line 43608 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43609 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2474:
-#line 15040 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15041 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_param)= Lex->add_placeholder(thd, &param_clex_str,
                                                     YYLIP->get_tok_start(),
                                                     YYLIP->get_tok_start() + 1))))
               MYSQL_YYABORT;
           }
-#line 43619 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43620 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2475:
-#line 15047 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15048 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_param)= Lex->add_placeholder(thd, &null_clex_str,
                                                     (yyvsp[-1].kwd).pos(), (yyvsp[0].ident_cli).end()))))
               MYSQL_YYABORT;
           }
-#line 43629 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43630 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2476:
-#line 15053 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15054 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item_param)= Lex->add_placeholder(thd, &null_clex_str,
                                                     (yyvsp[-1].kwd).pos(),
                                                     YYLIP->get_ptr()))))
               MYSQL_YYABORT;
           }
-#line 43640 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43641 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2477:
-#line 15062 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15063 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item) = (yyvsp[0].item_num); }
-#line 43646 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43647 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2478:
-#line 15064 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15065 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyvsp[0].item_num)->max_length++;
             (yyval.item)= (yyvsp[0].item_num)->neg(thd);
           }
-#line 43655 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43656 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2479:
-#line 15071 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15072 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item) = (yyvsp[0].item_basic_constant); }
-#line 43661 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43662 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2480:
-#line 15072 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15073 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item) = (yyvsp[0].item_num); }
-#line 43667 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43668 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2481:
-#line 15073 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15074 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item)= (yyvsp[0].item); }
-#line 43673 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43674 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2482:
-#line 15075 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15076 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             /*
               For the digest computation, in this context only,
@@ -43687,61 +43688,61 @@ yyreduce:
               MYSQL_YYABORT;
             YYLIP->next_state= MY_LEX_OPERATOR_OR_IDENT;
           }
-#line 43691 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43692 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2483:
-#line 15089 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15090 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)= new (thd->mem_root) Item_bool(thd, (char*) "FALSE",0);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 43701 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43702 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2484:
-#line 15095 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15096 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)= new (thd->mem_root) Item_bool(thd, (char*) "TRUE",1);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 43711 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43712 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2485:
-#line 15101 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15102 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)= new (thd->mem_root) Item_hex_hybrid(thd, (yyvsp[0].lex_str).str, (yyvsp[0].lex_str).length);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 43721 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43722 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2486:
-#line 15107 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15108 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)= new (thd->mem_root) Item_hex_string(thd, (yyvsp[0].lex_str).str, (yyvsp[0].lex_str).length);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 43731 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43732 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2487:
-#line 15113 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15114 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)= new (thd->mem_root) Item_bin_string(thd, (yyvsp[0].lex_str).str, (yyvsp[0].lex_str).length);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 43741 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43742 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2488:
-#line 15119 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15120 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Item_string_with_introducer *item_str;
             /*
@@ -43757,11 +43758,11 @@ yyreduce:
 
             (yyval.item)= item_str;
           }
-#line 43761 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43762 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2489:
-#line 15138 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15139 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             int error;
             (yyval.item_num)= new (thd->mem_root)
@@ -43771,11 +43772,11 @@ yyreduce:
             if (unlikely((yyval.item_num) == NULL))
               MYSQL_YYABORT;
           }
-#line 43775 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43776 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2490:
-#line 15148 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15149 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             int error;
             (yyval.item_num)= new (thd->mem_root)
@@ -43785,42 +43786,42 @@ yyreduce:
             if (unlikely((yyval.item_num) == NULL))
               MYSQL_YYABORT;
           }
-#line 43789 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43790 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2491:
-#line 15158 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15159 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item_num)= new (thd->mem_root) Item_uint(thd, (yyvsp[0].lex_str).str, (yyvsp[0].lex_str).length);
             if (unlikely((yyval.item_num) == NULL))
               MYSQL_YYABORT;
           }
-#line 43799 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43800 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2492:
-#line 15164 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15165 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item_num)= new (thd->mem_root) Item_decimal(thd, (yyvsp[0].lex_str).str, (yyvsp[0].lex_str).length,
                                                    thd->charset());
             if (unlikely((yyval.item_num) == NULL) || unlikely(thd->is_error()))
               MYSQL_YYABORT;
           }
-#line 43810 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43811 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2493:
-#line 15171 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15172 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item_num)= new (thd->mem_root) Item_float(thd, (yyvsp[0].lex_str).str, (yyvsp[0].lex_str).length);
             if (unlikely((yyval.item_num) == NULL) || unlikely(thd->is_error()))
               MYSQL_YYABORT;
           }
-#line 43820 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43821 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2494:
-#line 15181 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15182 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= create_temporal_literal(thd, (yyvsp[0].lex_string_with_metadata).str, (yyvsp[0].lex_string_with_metadata).length,
                                                        YYCSCL,
@@ -43828,11 +43829,11 @@ yyreduce:
                                                        true))))
               MYSQL_YYABORT;
           }
-#line 43832 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43833 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2495:
-#line 15189 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15190 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= create_temporal_literal(thd, (yyvsp[0].lex_string_with_metadata).str, (yyvsp[0].lex_string_with_metadata).length,
                                                        YYCSCL,
@@ -43840,11 +43841,11 @@ yyreduce:
                                                        true))))
               MYSQL_YYABORT;
           }
-#line 43844 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43845 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2496:
-#line 15197 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15198 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= create_temporal_literal(thd, (yyvsp[0].lex_string_with_metadata).str, (yyvsp[0].lex_string_with_metadata).length,
                                                        YYCSCL,
@@ -43852,25 +43853,25 @@ yyreduce:
                                                        true))))
               MYSQL_YYABORT;
           }
-#line 43856 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43857 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2497:
-#line 15208 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15209 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.with_clause)= 0; }
-#line 43862 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43863 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2498:
-#line 15210 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15211 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.with_clause)= (yyvsp[0].with_clause);
           }
-#line 43870 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43871 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2499:
-#line 15218 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15219 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
              With_clause *with_clause=
              new With_clause((yyvsp[0].num), Lex->curr_with_clause);
@@ -43880,43 +43881,43 @@ yyreduce:
              Lex->curr_with_clause= with_clause;
              with_clause->add_to_list(Lex->with_clauses_list_last_next);
           }
-#line 43884 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43885 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2500:
-#line 15228 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15229 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.with_clause)= Lex->curr_with_clause;
             Lex->curr_with_clause= Lex->curr_with_clause->pop();
           }
-#line 43893 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43894 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2501:
-#line 15236 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15237 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= 0; }
-#line 43899 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43900 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2502:
-#line 15237 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15238 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= 1; }
-#line 43905 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43906 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2505:
-#line 15250 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15251 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyvsp[0].lex_str_list)= new List<LEX_CSTRING> (Lex->with_column_list);
             if (unlikely((yyvsp[0].lex_str_list) == NULL))
               MYSQL_YYABORT;
             Lex->with_column_list.empty();
           }
-#line 43916 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43917 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2506:
-#line 15257 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15258 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
             const char *query_start= lex->sphead ? lex->sphead->m_tmp_query
@@ -43930,203 +43931,203 @@ yyreduce:
                                         spec_start - query_start))
               MYSQL_YYABORT;
 	  }
-#line 43934 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43935 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2507:
-#line 15275 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15276 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str_list)= NULL; }
-#line 43940 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43941 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2508:
-#line 15277 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15278 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str_list)= NULL; }
-#line 43946 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43947 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2509:
-#line 15283 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15284 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->with_column_list.push_back((LEX_CSTRING*)
                     thd->memdup(&(yyvsp[0].ident_sys), sizeof(LEX_CSTRING)));
 	  }
-#line 43955 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43956 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2510:
-#line 15288 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15289 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->with_column_list.push_back((LEX_CSTRING*)
                     thd->memdup(&(yyvsp[0].ident_sys), sizeof(LEX_CSTRING)));
           }
-#line 43964 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43965 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2511:
-#line 15297 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15298 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.lex_str_ptr)= (LEX_CSTRING *) thd->memdup(&(yyvsp[0].ident_sys), sizeof(LEX_CSTRING));
             if (unlikely((yyval.lex_str_ptr) == NULL))
               MYSQL_YYABORT;
           }
-#line 43974 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43975 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2512:
-#line 15311 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15312 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item)=(yyvsp[0].item); }
-#line 43980 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43981 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2513:
-#line 15312 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15313 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item)=(yyvsp[0].item); }
-#line 43986 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43987 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2514:
-#line 15317 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15318 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_qualified_asterisk(thd, &(yyvsp[-2].ident_sys)))))
               MYSQL_YYABORT;
           }
-#line 43995 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 43996 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2515:
-#line 15322 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15323 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_qualified_asterisk(thd, &(yyvsp[-4].ident_sys), &(yyvsp[-2].ident_sys)))))
               MYSQL_YYABORT;
           }
-#line 44004 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44005 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2516:
-#line 15330 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15331 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_qualified_asterisk(thd, &(yyvsp[-2].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44013 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44014 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2517:
-#line 15335 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15336 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_qualified_asterisk(thd, &(yyvsp[-4].ident_cli), &(yyvsp[-2].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44022 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44023 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2518:
-#line 15342 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15343 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item)=(yyvsp[0].item); }
-#line 44028 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44029 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2519:
-#line 15348 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15349 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_ident(thd, &(yyvsp[0].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44037 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44038 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2520:
-#line 15353 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15354 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_ident(thd, &(yyvsp[-2].ident_cli), &(yyvsp[0].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44046 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44047 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2521:
-#line 15358 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15359 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex_ident_cli empty((yyvsp[-2].ident_cli).pos(), 0);
             if (unlikely(!((yyval.item)= Lex->create_item_ident(thd, &empty, &(yyvsp[-2].ident_cli), &(yyvsp[0].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44056 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44057 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2522:
-#line 15364 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15365 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_ident(thd, &(yyvsp[-4].ident_cli), &(yyvsp[-2].ident_cli), &(yyvsp[0].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44065 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44066 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2523:
-#line 15369 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15370 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->make_item_colon_ident_ident(thd, &(yyvsp[-2].ident_cli), &(yyvsp[0].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44074 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44075 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2524:
-#line 15377 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15378 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_ident_nosp(thd, &(yyvsp[0].ident_sys)))))
               MYSQL_YYABORT;
           }
-#line 44083 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44084 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2525:
-#line 15382 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15383 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_ident_nospvar(thd, &(yyvsp[-2].ident_sys), &(yyvsp[0].ident_sys)))))
               MYSQL_YYABORT;
           }
-#line 44092 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44093 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2526:
-#line 15387 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15388 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->make_item_colon_ident_ident(thd, &(yyvsp[-2].ident_cli), &(yyvsp[0].ident_cli)))))
               MYSQL_YYABORT;
           }
-#line 44101 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44102 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2527:
-#line 15392 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15393 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex_ident_sys none;
             if (unlikely(!((yyval.item)= Lex->create_item_ident(thd, &none, &(yyvsp[-2].ident_sys), &(yyvsp[0].ident_sys)))))
               MYSQL_YYABORT;
           }
-#line 44111 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44112 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2528:
-#line 15398 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15399 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.item)= Lex->create_item_ident(thd, &(yyvsp[-4].ident_sys), &(yyvsp[-2].ident_sys), &(yyvsp[0].ident_sys)))))
               MYSQL_YYABORT;
           }
-#line 44120 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44121 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2529:
-#line 15405 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15406 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str)=(yyvsp[0].ident_sys);}
-#line 44126 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44127 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2530:
-#line 15407 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15408 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             TABLE_LIST *table= Select->table_list.first;
             if (unlikely(my_strcasecmp(table_alias_charset, (yyvsp[-4].ident_sys).str,
@@ -44137,11 +44138,11 @@ yyreduce:
               my_yyabort_error((ER_WRONG_TABLE_NAME, MYF(0), (yyvsp[-2].ident_sys).str));
             (yyval.lex_str)=(yyvsp[0].ident_sys);
           }
-#line 44141 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44142 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2531:
-#line 15418 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15419 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             TABLE_LIST *table= Select->table_list.first;
             if (unlikely(my_strcasecmp(table_alias_charset, (yyvsp[-2].ident_sys).str,
@@ -44149,193 +44150,193 @@ yyreduce:
               my_yyabort_error((ER_WRONG_TABLE_NAME, MYF(0), (yyvsp[-2].ident_sys).str));
             (yyval.lex_str)=(yyvsp[0].ident_sys);
           }
-#line 44153 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44154 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2532:
-#line 15425 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15426 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str)=(yyvsp[0].ident_sys);}
-#line 44159 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44160 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2533:
-#line 15430 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15431 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.table)= new (thd->mem_root) Table_ident(&(yyvsp[0].ident_sys));
             if (unlikely((yyval.table) == NULL))
               MYSQL_YYABORT;
           }
-#line 44169 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44170 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2534:
-#line 15436 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15437 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.table)= new (thd->mem_root) Table_ident(thd, &(yyvsp[-2].ident_sys), &(yyvsp[0].ident_sys), 0);
             if (unlikely((yyval.table) == NULL))
               MYSQL_YYABORT;
           }
-#line 44179 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44180 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2535:
-#line 15442 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15443 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             /* For Delphi */
             (yyval.table)= new (thd->mem_root) Table_ident(&(yyvsp[0].ident_sys));
             if (unlikely((yyval.table) == NULL))
               MYSQL_YYABORT;
           }
-#line 44190 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44191 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2536:
-#line 15452 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15453 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.table)= new (thd->mem_root) Table_ident(&(yyvsp[-1].ident_sys));
             if (unlikely((yyval.table) == NULL))
               MYSQL_YYABORT;
           }
-#line 44200 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44201 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2537:
-#line 15458 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15459 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.table)= new (thd->mem_root) Table_ident(thd, &(yyvsp[-3].ident_sys), &(yyvsp[-1].ident_sys), 0);
             if (unlikely((yyval.table) == NULL))
               MYSQL_YYABORT;
           }
-#line 44210 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44211 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2538:
-#line 15467 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15468 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX_CSTRING db={(char*) any_db,3};
             (yyval.table)= new (thd->mem_root) Table_ident(thd, &db, &(yyvsp[0].ident_sys), 0);
             if (unlikely((yyval.table) == NULL))
               MYSQL_YYABORT;
           }
-#line 44221 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44222 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2543:
-#line 15483 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15484 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.ident_cli)= (yyvsp[0].kwd); }
-#line 44227 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44228 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2544:
-#line 15488 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15489 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(thd->to_ident_sys_alloc(&(yyval.ident_sys), &(yyvsp[0].ident_cli))))
               MYSQL_YYABORT;
           }
-#line 44236 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44237 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2545:
-#line 15496 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15497 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (thd->make_text_string_sys(&(yyval.lex_str), &(yyvsp[0].lex_string_with_metadata)))
               MYSQL_YYABORT;
           }
-#line 44245 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44246 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2546:
-#line 15504 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15505 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (thd->make_text_string_connection(&(yyval.lex_str), &(yyvsp[0].lex_string_with_metadata)))
               MYSQL_YYABORT;
           }
-#line 44254 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44255 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2547:
-#line 15512 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15513 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (thd->make_text_string_filesystem(&(yyval.lex_str), &(yyvsp[0].lex_string_with_metadata)))
               MYSQL_YYABORT;
           }
-#line 44263 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44264 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2549:
-#line 15521 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15522 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely((yyval.ident_sys).copy_keyword(thd, &(yyvsp[0].kwd))))
               MYSQL_YYABORT;
           }
-#line 44272 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44273 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2551:
-#line 15530 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15531 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely((yyval.ident_sys).copy_keyword(thd, &(yyvsp[0].kwd))))
               MYSQL_YYABORT;
           }
-#line 44281 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44282 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2553:
-#line 15539 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15540 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely((yyval.ident_sys).copy_keyword(thd, &(yyvsp[0].kwd))))
               MYSQL_YYABORT;
           }
-#line 44290 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44291 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2554:
-#line 15544 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15545 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely((yyval.ident_sys).copy_sys(thd, &(yyvsp[0].lex_str))))
               MYSQL_YYABORT;
           }
-#line 44299 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44300 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2556:
-#line 15554 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15555 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely((yyval.ident_sys).copy_keyword(thd, &(yyvsp[0].kwd))))
               MYSQL_YYABORT;
           }
-#line 44308 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44309 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2558:
-#line 15563 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15564 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely((yyval.ident_sys).copy_keyword(thd, &(yyvsp[0].kwd))))
               MYSQL_YYABORT;
           }
-#line 44317 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44318 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2559:
-#line 15570 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15571 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str)=(yyvsp[0].ident_sys);}
-#line 44323 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44324 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2560:
-#line 15571 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15572 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str)=(yyvsp[0].lex_str);}
-#line 44329 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44330 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2561:
-#line 15572 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15573 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_str)=(yyvsp[0].lex_str);}
-#line 44335 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44336 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2562:
-#line 15577 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15578 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.lex_user)=(LEX_USER*) thd->alloc(sizeof(LEX_USER)))))
               MYSQL_YYABORT;
@@ -44348,11 +44349,11 @@ yyreduce:
                                                   system_charset_info, 0)))
               MYSQL_YYABORT;
           }
-#line 44352 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44353 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2563:
-#line 15590 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15591 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.lex_user)=(LEX_USER*) thd->alloc(sizeof(LEX_USER)))))
               MYSQL_YYABORT;
@@ -44382,11 +44383,11 @@ yyreduce:
               (yyval.lex_user)->host= host_not_specified;
             }
           }
-#line 44386 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44387 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2564:
-#line 15620 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15621 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.lex_user)=(LEX_USER*)thd->calloc(sizeof(LEX_USER)))))
               MYSQL_YYABORT;
@@ -44394,46 +44395,46 @@ yyreduce:
             (yyval.lex_user)->plugin= empty_clex_str;
             (yyval.lex_user)->auth= empty_clex_str;
           }
-#line 44398 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44399 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 2567:
-#line 15632 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 15633 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
            if ((yyvsp[0].lex_user)->user.str != current_user.str && (yyvsp[0].lex_user)->host.str == 0)
              (yyvsp[0].lex_user)->host= host_not_specified;
            (yyval.lex_user)= (yyvsp[0].lex_user);
          }
-#line 44408 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44409 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3041:
-#line 16238 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16239 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->set_stmt_init();
             lex->var_list.empty();
             sp_create_assignment_lex(thd, yychar == YYEMPTY);
           }
-#line 44419 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44420 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3042:
-#line 16245 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16246 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 44425 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44426 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3043:
-#line 16247 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16248 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->set_stmt_init();
           }
-#line 44433 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44434 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3044:
-#line 16251 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16252 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             if (unlikely(lex->table_or_sp_used()))
@@ -44441,267 +44442,267 @@ yyreduce:
             lex->stmt_var_list= lex->var_list;
             lex->var_list.empty();
           }
-#line 44445 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44446 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3045:
-#line 16259 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16260 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 44451 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44452 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3048:
-#line 16275 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16276 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(sp_create_assignment_instr(thd, yychar == YYEMPTY)))
               MYSQL_YYABORT;
           }
-#line 44460 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44461 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3050:
-#line 16281 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16282 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->option_type= OPT_DEFAULT;
           }
-#line 44468 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44469 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3051:
-#line 16285 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16286 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(sp_create_assignment_instr(thd, yychar == YYEMPTY)))
               MYSQL_YYABORT;
           }
-#line 44477 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44478 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3052:
-#line 16290 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16291 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->option_type= (yyvsp[0].var_type);
           }
-#line 44485 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44486 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3054:
-#line 16300 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16301 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(sp_create_assignment_instr(thd, yychar == YYEMPTY)))
               MYSQL_YYABORT;
           }
-#line 44494 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44495 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3056:
-#line 16306 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16307 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(sp_create_assignment_instr(thd, yychar == YYEMPTY)))
               MYSQL_YYABORT;
           }
-#line 44503 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44504 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3059:
-#line 16320 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16321 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             sp_create_assignment_lex(thd, yychar == YYEMPTY);
           }
-#line 44511 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44512 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3060:
-#line 16324 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16325 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(sp_create_assignment_instr(thd, yychar == YYEMPTY)))
               MYSQL_YYABORT;
           }
-#line 44520 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44521 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3061:
-#line 16329 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16330 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             sp_create_assignment_lex(thd, yychar == YYEMPTY);
           }
-#line 44528 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44529 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3062:
-#line 16333 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16334 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(sp_create_assignment_instr(thd, yychar == YYEMPTY)))
               MYSQL_YYABORT;
           }
-#line 44537 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44538 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3063:
-#line 16342 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16343 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->option_type= (yyvsp[0].var_type);
           }
-#line 44545 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44546 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3066:
-#line 16350 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16351 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_GLOBAL; }
-#line 44551 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44552 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3067:
-#line 16351 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16352 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44557 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44558 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3068:
-#line 16352 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16353 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44563 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44564 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3069:
-#line 16356 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16357 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44569 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44570 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3070:
-#line 16357 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16358 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_GLOBAL; }
-#line 44575 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44576 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3071:
-#line 16358 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16359 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44581 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44582 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3072:
-#line 16359 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16360 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44587 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44588 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3073:
-#line 16363 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16364 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_DEFAULT; }
-#line 44593 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44594 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3074:
-#line 16364 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16365 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_GLOBAL; }
-#line 44599 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44600 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3075:
-#line 16365 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16366 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44605 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44606 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3076:
-#line 16366 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16367 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.var_type)=OPT_SESSION; }
-#line 44611 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44612 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3077:
-#line 16372 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16373 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_system_variable(Lex->option_type, &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44620 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44621 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3078:
-#line 16377 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16378 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_system_variable(thd, Lex->option_type, &(yyvsp[-4].ident_sys), &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44629 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44630 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3079:
-#line 16382 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16383 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_default_system_variable(Lex->option_type, &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44638 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44639 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3080:
-#line 16391 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16392 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_variable(&(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44647 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44648 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3081:
-#line 16396 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16397 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_variable(&(yyvsp[-4].ident_sys), &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44656 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44657 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3082:
-#line 16401 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16402 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_default_system_variable(Lex->option_type, &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44665 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44666 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3083:
-#line 16406 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16407 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_user_variable(thd, &(yyvsp[-2].lex_str), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44674 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44675 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3084:
-#line 16411 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16412 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_system_variable((yyvsp[-3].var_type), &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44683 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44684 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3085:
-#line 16416 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16417 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_system_variable(thd, (yyvsp[-5].var_type), &(yyvsp[-4].ident_sys), &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44692 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44693 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3086:
-#line 16421 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16422 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_default_system_variable((yyvsp[-5].var_type), &(yyvsp[-2].ident_sys), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44701 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44702 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3087:
-#line 16426 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16427 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
             CHARSET_INFO *cs2;
@@ -44715,11 +44716,11 @@ yyreduce:
               MYSQL_YYABORT;
             lex->var_list.push_back(var, thd->mem_root);
           }
-#line 44719 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44720 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3088:
-#line 16440 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16441 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             sp_pcontext *spc= lex->spcont;
@@ -44730,11 +44731,11 @@ yyreduce:
               thd->parse_error();
             MYSQL_YYABORT;
           }
-#line 44734 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44735 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3089:
-#line 16451 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16452 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             CHARSET_INFO *cs2;
@@ -44753,11 +44754,11 @@ yyreduce:
                 unlikely(lex->var_list.push_back(var, thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 44757 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44758 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3090:
-#line 16470 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16471 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex = Lex;
             LEX_USER *user;
@@ -44775,11 +44776,11 @@ yyreduce:
             if (lex->sphead)
               lex->sphead->m_flags|= sp_head::HAS_SET_AUTOCOMMIT_STMT;
           }
-#line 44779 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44780 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3091:
-#line 16488 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16489 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex = Lex;
             set_var_default_role *var= (new (thd->mem_root)
@@ -44791,11 +44792,11 @@ yyreduce:
             if (lex->sphead)
               lex->sphead->m_flags|= sp_head::HAS_SET_AUTOCOMMIT_STMT;
           }
-#line 44795 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44796 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3092:
-#line 16500 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16501 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex = Lex;
             set_var_role *var= new (thd->mem_root) set_var_role((yyvsp[0].lex_str));
@@ -44803,20 +44804,20 @@ yyreduce:
                 unlikely(lex->var_list.push_back(var, thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 44807 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44808 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3093:
-#line 16508 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16509 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->set_variable(&(yyvsp[-2].kwd), (yyvsp[0].item))))
               MYSQL_YYABORT;
           }
-#line 44816 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44817 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3094:
-#line 16513 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16514 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex = Lex;
             set_var_password *var= (new (thd->mem_root)
@@ -44828,11 +44829,11 @@ yyreduce:
             if (lex->sphead)
               lex->sphead->m_flags|= sp_head::HAS_SET_AUTOCOMMIT_STMT;
           }
-#line 44832 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44833 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3099:
-#line 16536 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16537 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             Item *item= new (thd->mem_root) Item_int(thd, (int32) (yyvsp[0].num));
@@ -44848,11 +44849,11 @@ yyreduce:
             if (unlikely(lex->var_list.push_back(var, thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 44852 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44853 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3100:
-#line 16555 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16556 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             Item *item= new (thd->mem_root) Item_int(thd, (int32) (yyvsp[0].tx_isolation));
@@ -44867,47 +44868,47 @@ yyreduce:
                 unlikely(lex->var_list.push_back(var, thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 44871 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44872 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3101:
-#line 16572 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16573 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= true; }
-#line 44877 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44878 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3102:
-#line 16573 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16574 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= false; }
-#line 44883 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44884 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3103:
-#line 16577 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16578 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.tx_isolation)= ISO_READ_UNCOMMITTED; }
-#line 44889 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44890 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3104:
-#line 16578 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16579 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.tx_isolation)= ISO_READ_COMMITTED; }
-#line 44895 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44896 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3105:
-#line 16579 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16580 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.tx_isolation)= ISO_REPEATABLE_READ; }
-#line 44901 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44902 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3106:
-#line 16580 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16581 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.tx_isolation)= ISO_SERIALIZABLE; }
-#line 44907 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44908 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3107:
-#line 16585 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16586 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
             sp_pcontext *spc= lex->spcont;
@@ -44922,82 +44923,82 @@ yyreduce:
             lex->definer->plugin= empty_clex_str;
             lex->definer->auth=   empty_clex_str;
           }
-#line 44926 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44927 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3108:
-#line 16599 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16600 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->definer= (yyvsp[-1].lex_user); }
-#line 44932 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44933 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3109:
-#line 16603 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16604 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->definer->pwhash= (yyvsp[0].lex_string_with_metadata);}
-#line 44938 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44939 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3110:
-#line 16604 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16605 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->definer->pwtext= (yyvsp[-1].lex_string_with_metadata); }
-#line 44944 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44945 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3111:
-#line 16606 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16607 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->definer->pwtext= (yyvsp[-1].lex_string_with_metadata);
             Lex->definer->pwhash.str= Item_func_password::alloc(thd,
                                    (yyvsp[-1].lex_string_with_metadata).str, (yyvsp[-1].lex_string_with_metadata).length, Item_func_password::OLD);
             Lex->definer->pwhash.length=  SCRAMBLED_PASSWORD_CHAR_LENGTH_323;
           }
-#line 44955 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44956 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3112:
-#line 16615 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16616 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item)=(yyvsp[0].item); }
-#line 44961 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44962 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3113:
-#line 16616 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16617 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.item)=0; }
-#line 44967 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44968 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3114:
-#line 16618 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16619 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)=new (thd->mem_root) Item_string_sys(thd, "ON",  2);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 44977 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44978 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3115:
-#line 16624 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16625 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)=new (thd->mem_root) Item_string_sys(thd, "ALL", 3);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 44987 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44988 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3116:
-#line 16630 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16631 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.item)=new (thd->mem_root) Item_string_sys(thd, "binary", 6);
             if (unlikely((yyval.item) == NULL))
               MYSQL_YYABORT;
           }
-#line 44997 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 44998 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3117:
-#line 16641 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16642 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
 
@@ -45005,55 +45006,55 @@ yyreduce:
               my_yyabort_error((ER_SP_BADSTATEMENT, MYF(0), "LOCK"));
             lex->sql_command= SQLCOM_LOCK_TABLES;
           }
-#line 45009 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45010 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3118:
-#line 16649 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16650 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45015 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45016 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3119:
-#line 16654 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16655 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45021 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45022 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3120:
-#line 16656 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16657 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
           if (unlikely(set_statement_var_if_exists(thd, STRING_WITH_LEN("lock_wait_timeout"), (yyvsp[0].ulong_num))) ||
               unlikely(set_statement_var_if_exists(thd, STRING_WITH_LEN("innodb_lock_wait_timeout"), (yyvsp[0].ulong_num))))
             MYSQL_YYABORT;
         }
-#line 45031 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45032 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3121:
-#line 16662 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16663 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
           if (unlikely(set_statement_var_if_exists(thd, STRING_WITH_LEN("lock_wait_timeout"), 0)) ||
               unlikely(set_statement_var_if_exists(thd, STRING_WITH_LEN("innodb_lock_wait_timeout"), 0)))
             MYSQL_YYABORT;
         }
-#line 45041 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45042 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3122:
-#line 16670 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16671 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { }
-#line 45047 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45048 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3123:
-#line 16671 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16672 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { }
-#line 45053 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45054 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3126:
-#line 16681 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16682 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             thr_lock_type lock_type= (thr_lock_type) (yyvsp[0].num);
             bool lock_for_write= (lock_type >= TL_WRITE_ALLOW_WRITE);
@@ -45066,43 +45067,43 @@ yyreduce:
                                             MDL_SHARED_READ))))
               MYSQL_YYABORT;
           }
-#line 45070 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45071 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3127:
-#line 16696 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16697 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= TL_READ_NO_INSERT; }
-#line 45076 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45077 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3128:
-#line 16697 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16698 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= TL_WRITE_DEFAULT; }
-#line 45082 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45083 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3129:
-#line 16699 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16700 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.num)= (Lex->sphead ? TL_WRITE_DEFAULT : TL_WRITE_CONCURRENT_INSERT);
           }
-#line 45090 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45091 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3130:
-#line 16703 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16704 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= TL_WRITE_LOW_PRIORITY; }
-#line 45096 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45097 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3131:
-#line 16704 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16705 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= TL_READ; }
-#line 45102 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45103 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3132:
-#line 16709 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16710 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
 
@@ -45110,17 +45111,17 @@ yyreduce:
               my_yyabort_error((ER_SP_BADSTATEMENT, MYF(0), "UNLOCK"));
             lex->sql_command= SQLCOM_UNLOCK_TABLES;
           }
-#line 45114 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45115 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3133:
-#line 16717 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16718 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45120 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45121 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3134:
-#line 16726 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16727 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             if (unlikely(lex->sphead))
@@ -45130,11 +45131,11 @@ yyreduce:
                                                                  0)))
               MYSQL_YYABORT;
           }
-#line 45134 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45135 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3135:
-#line 16736 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16737 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             if (unlikely(lex->sphead))
@@ -45144,11 +45145,11 @@ yyreduce:
                                                                  0)))
               MYSQL_YYABORT;
           }
-#line 45148 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45149 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3136:
-#line 16746 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16747 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(lex->sphead))
@@ -45166,11 +45167,11 @@ yyreduce:
                                                                  0)))
               MYSQL_YYABORT;
           }
-#line 45170 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45171 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3137:
-#line 16764 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16765 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->expr_allows_subselect= TRUE;
             /* Stored functions are not supported for HANDLER READ. */
@@ -45181,59 +45182,59 @@ yyreduce:
               MYSQL_YYABORT;
             }
           }
-#line 45185 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45186 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3138:
-#line 16777 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16778 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ident= null_clex_str; }
-#line 45191 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45192 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3139:
-#line 16778 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16779 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ident= (yyvsp[-1].ident_sys); }
-#line 45197 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45198 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3140:
-#line 16782 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16783 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ha_read_mode = RFIRST; }
-#line 45203 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45204 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3141:
-#line 16783 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16784 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ha_read_mode = RNEXT;  }
-#line 45209 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45210 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3142:
-#line 16787 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16788 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ha_read_mode = RFIRST; }
-#line 45215 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45216 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3143:
-#line 16788 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16789 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ha_read_mode = RNEXT;  }
-#line 45221 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45222 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3144:
-#line 16789 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16790 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ha_read_mode = RPREV;  }
-#line 45227 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45228 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3145:
-#line 16790 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16791 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->ha_read_mode = RLAST;  }
-#line 45233 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45234 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3146:
-#line 16792 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16793 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->ha_read_mode = RKEY;
@@ -45241,211 +45242,211 @@ yyreduce:
             if (unlikely(!(lex->insert_list= new (thd->mem_root) List_item)))
               MYSQL_YYABORT;
           }
-#line 45245 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45246 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3147:
-#line 16800 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16801 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45251 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45252 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3148:
-#line 16804 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16805 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.ha_rkey_mode)=HA_READ_KEY_EXACT;   }
-#line 45257 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45258 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3149:
-#line 16805 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16806 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.ha_rkey_mode)=HA_READ_KEY_OR_NEXT; }
-#line 45263 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45264 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3150:
-#line 16806 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16807 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.ha_rkey_mode)=HA_READ_KEY_OR_PREV; }
-#line 45269 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45270 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3151:
-#line 16807 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16808 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.ha_rkey_mode)=HA_READ_AFTER_KEY;   }
-#line 45275 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45276 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3152:
-#line 16808 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16809 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.ha_rkey_mode)=HA_READ_BEFORE_KEY;  }
-#line 45281 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45282 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3153:
-#line 16815 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16816 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45287 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45288 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3154:
-#line 16820 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16821 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_REVOKE;
             lex->type= 0;
           }
-#line 45297 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45298 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3155:
-#line 16826 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16827 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_REVOKE,
                                                 TYPE_ENUM_FUNCTION)))
               MYSQL_YYABORT;
           }
-#line 45307 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45308 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3156:
-#line 16832 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16833 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_REVOKE,
                          TYPE_ENUM_PROCEDURE)))
               MYSQL_YYABORT;
           }
-#line 45317 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45318 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3157:
-#line 16839 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16840 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_REVOKE,
                                                 TYPE_ENUM_PACKAGE)))
               MYSQL_YYABORT;
           }
-#line 45327 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45328 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3158:
-#line 16846 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16847 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_REVOKE,
                                                 TYPE_ENUM_PACKAGE_BODY)))
               MYSQL_YYABORT;
           }
-#line 45337 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45338 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3159:
-#line 16852 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16853 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_REVOKE_ALL;
           }
-#line 45345 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45346 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3160:
-#line 16856 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16857 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->users_list.push_front ((yyvsp[-2].lex_user));
             lex->sql_command= SQLCOM_REVOKE;
             lex->type= TYPE_ENUM_PROXY;
           }
-#line 45356 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45357 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3161:
-#line 16863 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16864 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command= SQLCOM_REVOKE_ROLE;
             if (unlikely(Lex->users_list.push_front((yyvsp[-2].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45366 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45367 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3162:
-#line 16872 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16873 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->with_admin_option= true; (yyval.lex_user)= (yyvsp[0].lex_user); }
-#line 45372 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45373 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3163:
-#line 16874 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16875 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->with_admin_option= false; (yyval.lex_user)= (yyvsp[0].lex_user); }
-#line 45378 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45379 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3164:
-#line 16879 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16880 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45384 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45385 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3165:
-#line 16885 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16886 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_GRANT;
             lex->type= 0;
           }
-#line 45394 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45395 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3166:
-#line 16892 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16893 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_GRANT,
                                                 TYPE_ENUM_FUNCTION)))
               MYSQL_YYABORT;
           }
-#line 45404 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45405 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3167:
-#line 16899 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16900 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_GRANT,
                                                 TYPE_ENUM_PROCEDURE)))
               MYSQL_YYABORT;
           }
-#line 45414 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45415 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3168:
-#line 16906 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16907 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_GRANT,
                                                 TYPE_ENUM_PACKAGE)))
               MYSQL_YYABORT;
           }
-#line 45424 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45425 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3169:
-#line 16913 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16914 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_grant_command(thd, SQLCOM_GRANT,
                                                 TYPE_ENUM_PACKAGE_BODY)))
               MYSQL_YYABORT;
           }
-#line 45434 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45435 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3170:
-#line 16919 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16920 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->users_list.push_front ((yyvsp[-3].lex_user));
             lex->sql_command= SQLCOM_GRANT;
             lex->type= TYPE_ENUM_PROXY;
           }
-#line 45445 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45446 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3171:
-#line 16926 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16927 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_GRANT_ROLE;
@@ -45453,64 +45454,64 @@ yyreduce:
             if (unlikely(Lex->users_list.push_front((yyvsp[-3].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45457 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45458 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3172:
-#line 16937 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16938 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->definer = 0; }
-#line 45463 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45464 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3173:
-#line 16938 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16939 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->definer = (yyvsp[0].lex_user); }
-#line 45469 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45470 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3174:
-#line 16941 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16942 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->with_admin_option= false; }
-#line 45475 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45476 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3175:
-#line 16942 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16943 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->with_admin_option= true; }
-#line 45481 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45482 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3176:
-#line 16946 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16947 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45490 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45491 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3177:
-#line 16951 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16952 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45499 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45500 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3178:
-#line 16959 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16960 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(!((yyval.lex_user)=(LEX_USER*) thd->calloc(sizeof(LEX_USER)))))
               MYSQL_YYABORT;
             (yyval.lex_user)->user= current_role;
             (yyval.lex_user)->reset_auth();
           }
-#line 45510 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45511 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3179:
-#line 16969 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16970 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             CHARSET_INFO *cs= system_charset_info;
             /* trim end spaces (as they'll be lost in mysql.user anyway) */
@@ -45529,281 +45530,281 @@ yyreduce:
                                                   cs, 0)))
               MYSQL_YYABORT;
           }
-#line 45533 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45534 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3183:
-#line 16996 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16997 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45539 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45540 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3184:
-#line 16998 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 16999 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { 
             Lex->all_privileges= 1; 
             Lex->grant= GLOBAL_ACLS;
           }
-#line 45548 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45549 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3189:
-#line 17016 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17017 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->which_columns = SELECT_ACL;}
-#line 45554 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45555 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3190:
-#line 17017 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17018 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45560 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45561 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3191:
-#line 17019 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17020 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->which_columns = INSERT_ACL;}
-#line 45566 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45567 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3192:
-#line 17020 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17021 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45572 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45573 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3193:
-#line 17022 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17023 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->which_columns = UPDATE_ACL; }
-#line 45578 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45579 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3194:
-#line 17023 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17024 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45584 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45585 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3195:
-#line 17025 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17026 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->which_columns = REFERENCES_ACL;}
-#line 45590 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45591 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3196:
-#line 17026 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17027 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45596 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45597 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3197:
-#line 17027 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17028 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= DELETE_ACL;}
-#line 45602 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45603 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3198:
-#line 17028 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17029 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45608 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45609 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3199:
-#line 17029 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17030 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= INDEX_ACL;}
-#line 45614 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45615 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3200:
-#line 17030 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17031 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= ALTER_ACL;}
-#line 45620 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45621 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3201:
-#line 17031 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17032 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= CREATE_ACL;}
-#line 45626 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45627 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3202:
-#line 17032 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17033 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= DROP_ACL;}
-#line 45632 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45633 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3203:
-#line 17033 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17034 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= EXECUTE_ACL;}
-#line 45638 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45639 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3204:
-#line 17034 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17035 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= RELOAD_ACL;}
-#line 45644 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45645 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3205:
-#line 17035 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17036 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= SHUTDOWN_ACL;}
-#line 45650 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45651 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3206:
-#line 17036 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17037 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= PROCESS_ACL;}
-#line 45656 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45657 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3207:
-#line 17037 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17038 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= FILE_ACL;}
-#line 45662 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45663 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3208:
-#line 17038 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17039 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= GRANT_ACL;}
-#line 45668 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45669 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3209:
-#line 17039 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17040 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= SHOW_DB_ACL;}
-#line 45674 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45675 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3210:
-#line 17040 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17041 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= SUPER_ACL;}
-#line 45680 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45681 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3211:
-#line 17041 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17042 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= CREATE_TMP_ACL;}
-#line 45686 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45687 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3212:
-#line 17042 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17043 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= LOCK_TABLES_ACL; }
-#line 45692 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45693 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3213:
-#line 17043 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17044 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= REPL_SLAVE_ACL; }
-#line 45698 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45699 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3214:
-#line 17044 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17045 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= REPL_CLIENT_ACL; }
-#line 45704 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45705 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3215:
-#line 17045 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17046 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= CREATE_VIEW_ACL; }
-#line 45710 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45711 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3216:
-#line 17046 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17047 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= SHOW_VIEW_ACL; }
-#line 45716 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45717 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3217:
-#line 17047 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17048 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= CREATE_PROC_ACL; }
-#line 45722 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45723 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3218:
-#line 17048 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17049 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= ALTER_PROC_ACL; }
-#line 45728 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45729 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3219:
-#line 17049 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17050 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= CREATE_USER_ACL; }
-#line 45734 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45735 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3220:
-#line 17050 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17051 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= EVENT_ACL;}
-#line 45740 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45741 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3221:
-#line 17051 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17052 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= TRIGGER_ACL; }
-#line 45746 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45747 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3222:
-#line 17052 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17053 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= CREATE_TABLESPACE_ACL; }
-#line 45752 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45753 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3223:
-#line 17053 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17054 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= DELETE_HISTORY_ACL; }
-#line 45758 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45759 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3224:
-#line 17057 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17058 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45764 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45765 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3225:
-#line 17058 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17059 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 45770 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45771 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3228:
-#line 17068 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17069 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(lex->x509_subject))
               my_yyabort_error((ER_DUP_ARGUMENT, MYF(0), "SUBJECT"));
             lex->x509_subject=(yyvsp[0].lex_string_with_metadata).str;
           }
-#line 45781 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45782 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3229:
-#line 17075 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17076 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(lex->x509_issuer))
               my_yyabort_error((ER_DUP_ARGUMENT, MYF(0), "ISSUER"));
             lex->x509_issuer=(yyvsp[0].lex_string_with_metadata).str;
           }
-#line 45792 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45793 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3230:
-#line 17082 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17083 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(lex->ssl_cipher))
               my_yyabort_error((ER_DUP_ARGUMENT, MYF(0), "CIPHER"));
             lex->ssl_cipher=(yyvsp[0].lex_string_with_metadata).str;
           }
-#line 45803 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45804 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3231:
-#line 17092 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17093 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             if (unlikely(lex->copy_db_to(&lex->current_select->db)))
@@ -45813,11 +45814,11 @@ yyreduce:
             else if (unlikely(lex->columns.elements))
               my_yyabort_error((ER_ILLEGAL_GRANT_FOR_TABLE, MYF(0)));
           }
-#line 45817 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45818 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3232:
-#line 17102 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17103 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->current_select->db= (yyvsp[-2].ident_sys);
@@ -45826,11 +45827,11 @@ yyreduce:
             else if (unlikely(lex->columns.elements))
               my_yyabort_error((ER_ILLEGAL_GRANT_FOR_TABLE, MYF(0)));
           }
-#line 45830 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45831 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3233:
-#line 17111 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17112 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->current_select->db= null_clex_str;
@@ -45839,11 +45840,11 @@ yyreduce:
             else if (unlikely(lex->columns.elements))
               my_yyabort_error((ER_ILLEGAL_GRANT_FOR_TABLE, MYF(0)));
           }
-#line 45843 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45844 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3234:
-#line 17120 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17121 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(!lex->current_select->
@@ -45853,120 +45854,120 @@ yyreduce:
             if (lex->grant == GLOBAL_ACLS)
               lex->grant =  TABLE_ACLS & ~GRANT_ACL;
           }
-#line 45857 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45858 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3235:
-#line 17133 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17134 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45866 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45867 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3236:
-#line 17138 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17139 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45875 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45876 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3237:
-#line 17146 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17147 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45884 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45885 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3238:
-#line 17151 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17152 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45893 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45894 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3239:
-#line 17159 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17160 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45902 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45903 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3240:
-#line 17164 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17165 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->users_list.push_back((yyvsp[0].lex_user), thd->mem_root)))
               MYSQL_YYABORT;
           }
-#line 45911 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45912 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3245:
-#line 17175 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17176 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.lex_user)= (yyvsp[-3].lex_user);
             (yyvsp[-3].lex_user)->pwtext= (yyvsp[0].lex_string_with_metadata);
             if (unlikely(Lex->sql_command == SQLCOM_REVOKE))
               MYSQL_YYABORT;
           }
-#line 45922 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45923 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3246:
-#line 17182 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17183 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { 
             (yyval.lex_user)= (yyvsp[-4].lex_user); 
             (yyvsp[-4].lex_user)->pwhash= (yyvsp[0].lex_string_with_metadata);
           }
-#line 45931 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45932 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3247:
-#line 17187 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17188 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.lex_user)= (yyvsp[-3].lex_user);
             (yyvsp[-3].lex_user)->plugin= (yyvsp[0].lex_str);
             (yyvsp[-3].lex_user)->auth= empty_clex_str;
           }
-#line 45941 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45942 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3248:
-#line 17193 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17194 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.lex_user)= (yyvsp[-5].lex_user);
             (yyvsp[-5].lex_user)->plugin= (yyvsp[-2].lex_str);
             (yyvsp[-5].lex_user)->auth= (yyvsp[0].lex_str);
           }
-#line 45951 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45952 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3249:
-#line 17199 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17200 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.lex_user)= (yyvsp[0].lex_user); }
-#line 45957 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45958 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3250:
-#line 17204 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17205 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->grant |= lex->which_columns;
           }
-#line 45966 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45967 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3254:
-#line 17218 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17219 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             String *new_str= new (thd->mem_root) String((const char*) (yyvsp[0].ident_sys).str,(yyvsp[0].ident_sys).length,system_charset_info);
             if (unlikely(new_str == NULL))
@@ -45992,245 +45993,245 @@ yyreduce:
               lex->columns.push_back(col, thd->mem_root);
             }
           }
-#line 45996 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 45997 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3256:
-#line 17248 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17249 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->ssl_type=SSL_TYPE_SPECIFIED;
           }
-#line 46004 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46005 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3257:
-#line 17252 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17253 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->ssl_type=SSL_TYPE_ANY;
           }
-#line 46012 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46013 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3258:
-#line 17256 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17257 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->ssl_type=SSL_TYPE_X509;
           }
-#line 46020 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46021 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3259:
-#line 17260 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17261 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->ssl_type=SSL_TYPE_NONE;
           }
-#line 46028 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46029 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3260:
-#line 17267 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17268 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->mqh.questions=(yyvsp[0].ulong_num);
             lex->mqh.specified_limits|= USER_RESOURCES::QUERIES_PER_HOUR;
           }
-#line 46038 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46039 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3261:
-#line 17273 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17274 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->mqh.updates=(yyvsp[0].ulong_num);
             lex->mqh.specified_limits|= USER_RESOURCES::UPDATES_PER_HOUR;
           }
-#line 46048 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46049 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3262:
-#line 17279 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17280 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->mqh.conn_per_hour= (yyvsp[0].ulong_num);
             lex->mqh.specified_limits|= USER_RESOURCES::CONNECTIONS_PER_HOUR;
           }
-#line 46058 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46059 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3263:
-#line 17285 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17286 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->mqh.user_conn= (yyvsp[0].num);
             lex->mqh.specified_limits|= USER_RESOURCES::USER_CONNECTIONS;
           }
-#line 46068 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46069 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3264:
-#line 17291 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17292 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->mqh.max_statement_time= (yyvsp[0].item_num)->val_real();
             lex->mqh.specified_limits|= USER_RESOURCES::MAX_STATEMENT_TIME;
           }
-#line 46078 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46079 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3265:
-#line 17299 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17300 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46084 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46085 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3266:
-#line 17300 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17301 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46090 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46091 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3267:
-#line 17304 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17305 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46096 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46097 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3269:
-#line 17310 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17311 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46102 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46103 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3270:
-#line 17311 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17312 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46108 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46109 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3271:
-#line 17315 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17316 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46114 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46115 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3272:
-#line 17316 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17317 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= GRANT_ACL;}
-#line 46120 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46121 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3273:
-#line 17320 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17321 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46126 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46127 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3274:
-#line 17321 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17322 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46132 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46133 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3275:
-#line 17325 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17326 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->grant |= GRANT_ACL;}
-#line 46138 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46139 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3276:
-#line 17326 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17327 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46144 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46145 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3277:
-#line 17331 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17332 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command = SQLCOM_BEGIN;
             lex->start_transaction_opt= 0;
           }
-#line 46154 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46155 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3278:
-#line 17336 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17337 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46160 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46161 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3279:
-#line 17341 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17342 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command= SQLCOM_COMPOUND;
             Lex->sphead->set_stmt_end(thd);
             Lex->sphead->restore_thd_mem_root(thd);
           }
-#line 46170 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46171 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3280:
-#line 17349 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17350 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= 0; }
-#line 46176 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46177 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3281:
-#line 17350 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17351 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= 1; }
-#line 46182 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46183 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3282:
-#line 17354 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17355 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46188 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46189 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3283:
-#line 17355 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17356 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46194 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46195 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3284:
-#line 17360 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17361 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.m_yes_no_unk)= TVL_UNKNOWN; }
-#line 46200 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46201 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3285:
-#line 17361 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17362 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.m_yes_no_unk)= TVL_NO; }
-#line 46206 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46207 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3286:
-#line 17362 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17363 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.m_yes_no_unk)= TVL_YES; }
-#line 46212 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46213 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3287:
-#line 17367 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17368 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.m_yes_no_unk)= TVL_UNKNOWN; }
-#line 46218 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46219 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3288:
-#line 17368 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17369 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.m_yes_no_unk)= TVL_YES; }
-#line 46224 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46225 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3289:
-#line 17369 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17370 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.m_yes_no_unk)= TVL_NO; }
-#line 46230 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46231 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3290:
-#line 17374 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17375 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_COMMIT;
@@ -46239,11 +46240,11 @@ yyreduce:
             lex->tx_chain= (yyvsp[-1].m_yes_no_unk);
             lex->tx_release= (yyvsp[0].m_yes_no_unk);
           }
-#line 46243 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46244 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3291:
-#line 17386 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17387 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_ROLLBACK;
@@ -46252,84 +46253,84 @@ yyreduce:
             lex->tx_chain= (yyvsp[-1].m_yes_no_unk);
             lex->tx_release= (yyvsp[0].m_yes_no_unk);
           }
-#line 46256 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46257 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3292:
-#line 17395 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17396 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_ROLLBACK_TO_SAVEPOINT;
             lex->ident= (yyvsp[0].ident_sys);
           }
-#line 46266 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46267 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3293:
-#line 17401 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17402 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_ROLLBACK_TO_SAVEPOINT;
             lex->ident= (yyvsp[0].ident_sys);
           }
-#line 46276 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46277 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3294:
-#line 17410 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17411 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_SAVEPOINT;
             lex->ident= (yyvsp[0].ident_sys);
           }
-#line 46286 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46287 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3295:
-#line 17419 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17420 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             lex->sql_command= SQLCOM_RELEASE_SAVEPOINT;
             lex->ident= (yyvsp[0].ident_sys);
           }
-#line 46296 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46297 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3296:
-#line 17432 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17433 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.unit_type)= UNION_TYPE; }
-#line 46302 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46303 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3297:
-#line 17434 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17435 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.unit_type)= INTERSECT_TYPE; }
-#line 46308 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46309 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3298:
-#line 17436 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17437 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.unit_type)= EXCEPT_TYPE; }
-#line 46314 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46315 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3299:
-#line 17440 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17441 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46320 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46321 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3301:
-#line 17446 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17447 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_select_to_union_list((bool)(yyvsp[0].num), (yyvsp[-1].unit_type), TRUE)))
               MYSQL_YYABORT;
           }
-#line 46329 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46330 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3302:
-#line 17451 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17452 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             /*
               Remove from the name resolution context stack the context of the
@@ -46337,28 +46338,28 @@ yyreduce:
             */
             Lex->pop_context();
           }
-#line 46341 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46342 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3303:
-#line 17462 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17463 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_select_to_union_list((bool)(yyvsp[0].num), (yyvsp[-1].unit_type), TRUE)))
               MYSQL_YYABORT;
           }
-#line 46350 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46351 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3304:
-#line 17467 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17468 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->pop_context();
           }
-#line 46358 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46359 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3305:
-#line 17473 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17474 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
             DBUG_ASSERT(lex->current_select->linkage != GLOBAL_OPTIONS_TYPE);
@@ -46372,136 +46373,136 @@ yyreduce:
             }
             thd->where= "global ORDER clause";
           }
-#line 46376 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46377 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3306:
-#line 17487 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17488 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             thd->lex->current_select->no_table_names_allowed= 0;
             thd->where= "";
           }
-#line 46385 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46386 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3309:
-#line 17503 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17504 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_select_to_union_list((bool)(yyvsp[0].num), (yyvsp[-1].unit_type), FALSE)))
               MYSQL_YYABORT;
           }
-#line 46394 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46395 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3310:
-#line 17510 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17511 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)=1; }
-#line 46400 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46401 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3311:
-#line 17511 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17512 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)=1; }
-#line 46406 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46407 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3312:
-#line 17512 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17513 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)=0; }
-#line 46412 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46413 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3313:
-#line 17516 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17517 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[0].select_lex); }
-#line 46418 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46419 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3314:
-#line 17517 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17518 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[0].select_lex); }
-#line 46424 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46425 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3315:
-#line 17522 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17523 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->tvc_start();
 	  }
-#line 46432 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46433 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3316:
-#line 17526 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17527 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.select_lex)= Lex->current_select;
             if (Lex->tvc_finalize())
               MYSQL_YYABORT;
 	  }
-#line 46442 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46443 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3317:
-#line 17544 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17545 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             (yyval.select_lex)= Lex->current_select->master_unit()->first_select();
           }
-#line 46450 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46451 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3318:
-#line 17550 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17551 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[-2].select_lex); }
-#line 46456 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46457 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3319:
-#line 17551 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17552 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[-2].select_lex); }
-#line 46462 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46463 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3320:
-#line 17555 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17556 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[-1].select_lex); }
-#line 46468 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46469 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3321:
-#line 17556 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17557 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[-1].select_lex); }
-#line 46474 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46475 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3322:
-#line 17560 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17561 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[0].select_lex); }
-#line 46480 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46481 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3323:
-#line 17561 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17562 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[0].select_lex); }
-#line 46486 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46487 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3324:
-#line 17562 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17563 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.select_lex)= (yyvsp[-1].select_lex); }
-#line 46492 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46493 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3325:
-#line 17568 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17569 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { 
             (yyvsp[-1].select_lex)->set_with_clause((yyvsp[-2].with_clause));
             (yyval.select_lex)= (yyvsp[-1].select_lex);
           }
-#line 46501 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46502 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3326:
-#line 17575 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17576 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
             if (unlikely(!lex->expr_allows_subselect ||
@@ -46520,11 +46521,11 @@ yyreduce:
             if (unlikely(mysql_new_select(Lex, 1, NULL)))
               MYSQL_YYABORT;
           }
-#line 46524 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46525 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3327:
-#line 17596 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17597 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex=Lex;
 
@@ -46550,17 +46551,17 @@ yyreduce:
                 temp->select_n_having_items;
             }
           }
-#line 46554 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46555 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3332:
-#line 17634 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17635 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Select->options|= SELECT_STRAIGHT_JOIN; }
-#line 46560 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46561 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3333:
-#line 17636 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17637 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->check_simple_select(&(yyvsp[0].kwd))))
               MYSQL_YYABORT;
@@ -46568,55 +46569,55 @@ yyreduce:
             YYPS->m_mdl_type= MDL_SHARED_READ;
             Select->options|= SELECT_HIGH_PRIORITY;
           }
-#line 46572 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46573 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3334:
-#line 17643 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17644 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Select->options|= SELECT_DISTINCT; }
-#line 46578 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46579 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3335:
-#line 17644 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17645 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Select->options|= SELECT_SMALL_RESULT; }
-#line 46584 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46585 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3336:
-#line 17645 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17646 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Select->options|= SELECT_BIG_RESULT; }
-#line 46590 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46591 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3337:
-#line 17647 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17648 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->check_simple_select(&(yyvsp[0].kwd))))
               MYSQL_YYABORT;
             Select->options|= OPTION_BUFFER_RESULT;
           }
-#line 46600 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46601 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3338:
-#line 17653 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17654 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->check_simple_select(&(yyvsp[0].kwd))))
               MYSQL_YYABORT;
             Select->options|= OPTION_FOUND_ROWS;
           }
-#line 46610 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46611 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3339:
-#line 17658 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17659 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Select->options|= SELECT_ALL; }
-#line 46616 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46617 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3342:
-#line 17674 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17675 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             /*
               We have to distinguish missing DEFINER-clause from case when
@@ -46627,100 +46628,100 @@ yyreduce:
             */
             thd->lex->definer= 0;
           }
-#line 46631 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46632 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3343:
-#line 17688 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17689 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->definer= (yyvsp[0].lex_user);
             Lex->ssl_type= SSL_TYPE_NOT_SPECIFIED;
             Lex->ssl_cipher= Lex->x509_subject= Lex->x509_issuer= 0;
             bzero(&(Lex->mqh), sizeof(Lex->mqh));
           }
-#line 46642 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46643 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3344:
-#line 17703 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17704 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= DTYPE_ALGORITHM_UNDEFINED; }
-#line 46648 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46649 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3345:
-#line 17704 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17705 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= VIEW_ALGORITHM_MERGE; }
-#line 46654 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46655 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3346:
-#line 17705 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17706 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= VIEW_ALGORITHM_TMPTABLE; }
-#line 46660 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46661 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3347:
-#line 17709 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17710 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.view_suid)= VIEW_SUID_DEFAULT; }
-#line 46666 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46667 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3348:
-#line 17710 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17711 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.view_suid)= (yyvsp[0].view_suid); }
-#line 46672 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46673 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3349:
-#line 17714 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17715 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.view_suid)= VIEW_SUID_DEFINER; }
-#line 46678 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46679 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3350:
-#line 17715 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17716 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.view_suid)= VIEW_SUID_INVOKER; }
-#line 46684 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46685 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3351:
-#line 17720 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17721 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 46690 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46691 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3353:
-#line 17726 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17727 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->view_list.push_back((LEX_CSTRING*)
                                      thd->memdup(&(yyvsp[0].ident_sys), sizeof(LEX_CSTRING)),
                                      thd->mem_root);
           }
-#line 46700 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46701 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3354:
-#line 17732 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17733 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->view_list.push_back((LEX_CSTRING*)
                                      thd->memdup(&(yyvsp[0].ident_sys), sizeof(LEX_CSTRING)),
                                      thd->mem_root);
           }
-#line 46710 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46711 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3355:
-#line 17740 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17741 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->parsing_options.allows_variable= FALSE;
             lex->create_view->select.str= (char *) YYLIP->get_cpp_ptr();
           }
-#line 46720 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46721 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3356:
-#line 17746 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17747 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             size_t len= YYLIP->get_cpp_ptr() - lex->create_view->select.str;
@@ -46733,99 +46734,99 @@ yyreduce:
             lex->parsing_options.allows_variable= TRUE;
             lex->current_select->set_with_clause((yyvsp[-2].with_clause));
           }
-#line 46737 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46738 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3364:
-#line 17775 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17776 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= VIEW_CHECK_NONE; }
-#line 46743 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46744 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3365:
-#line 17776 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17777 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= VIEW_CHECK_CASCADED; }
-#line 46749 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46750 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3366:
-#line 17777 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17778 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= VIEW_CHECK_CASCADED; }
-#line 46755 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46756 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3367:
-#line 17778 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17779 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= VIEW_CHECK_LOCAL; }
-#line 46761 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46762 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3368:
-#line 17789 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17790 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.trigger_action_order_type)= TRG_ORDER_FOLLOWS; }
-#line 46767 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46768 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3369:
-#line 17791 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17792 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.trigger_action_order_type)= TRG_ORDER_PRECEDES; }
-#line 46773 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46774 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3370:
-#line 17796 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17797 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
               (yyval.trg_execution_order).ordering_clause= TRG_ORDER_NONE;
               (yyval.trg_execution_order).anchor_trigger_name.str= NULL;
               (yyval.trg_execution_order).anchor_trigger_name.length= 0;
             }
-#line 46783 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46784 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3371:
-#line 17803 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17804 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
               (yyval.trg_execution_order).ordering_clause= (yyvsp[-1].trigger_action_order_type);
               (yyval.trg_execution_order).anchor_trigger_name= (yyvsp[0].lex_str);
             }
-#line 46792 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46793 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3372:
-#line 17812 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17813 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->add_create_options_with_check((yyvsp[0].object_ddl_options))))
               MYSQL_YYABORT;
           }
-#line 46801 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46802 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3373:
-#line 17821 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17822 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { /* $9 */
             Lex->raw_trg_on_table_name_begin= YYLIP->get_tok_start();
           }
-#line 46809 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46810 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3374:
-#line 17827 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17828 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { /* $13 */
             Lex->raw_trg_on_table_name_end= YYLIP->get_tok_start();
           }
-#line 46817 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46818 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3375:
-#line 17832 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17833 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->trg_chistics.ordering_clause_begin= YYLIP->get_cpp_ptr();
           }
-#line 46825 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46826 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3376:
-#line 17836 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17837 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { /* $18 */
             LEX *lex= thd->lex;
             Lex_input_stream *lip= YYLIP;
@@ -46845,11 +46846,11 @@ yyreduce:
 
             lex->sphead->set_body_start(thd, lip->get_cpp_tok_start());
           }
-#line 46849 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46850 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3377:
-#line 17856 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17857 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { /* $20 */
             LEX *lex= Lex;
             sp_head *sp= lex->sphead;
@@ -46873,11 +46874,11 @@ yyreduce:
                                            MDL_SHARED_NO_WRITE)))
               MYSQL_YYABORT;
           }
-#line 46877 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46878 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3378:
-#line 17890 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17891 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
             if (unlikely(lex->add_create_options_with_check((yyvsp[-5].object_ddl_options))))
@@ -46889,43 +46890,43 @@ yyreduce:
             lex->udf.returns= (Item_result) (yyvsp[-2].num);
             lex->udf.dl= (yyvsp[0].lex_str).str;
           }
-#line 46893 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46894 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3379:
-#line 17906 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17907 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->init_last_field(&lex->sphead->m_return_field_def,
                                  &empty_clex_str,
                                  thd->variables.collation_database);
           }
-#line 46904 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46905 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3380:
-#line 17913 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17914 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->sphead->fill_field_definition(thd,
                                                             Lex->last_field)))
               MYSQL_YYABORT;
           }
-#line 46914 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46915 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3381:
-#line 17923 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17924 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command= SQLCOM_CREATE_SPFUNCTION;
             if (unlikely(!Lex->make_sp_head_no_recursive(thd, (yyvsp[-1].object_ddl_options), (yyvsp[0].spname),
                                                          &sp_handler_function)))
               MYSQL_YYABORT;
           }
-#line 46925 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46926 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3382:
-#line 17932 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17933 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= thd->lex;
             Lex_input_stream *lip= YYLIP;
@@ -46933,104 +46934,104 @@ yyreduce:
             lex->sphead->set_chistics(lex->sp_chistics);
             lex->sphead->set_body_start(thd, lip->get_cpp_tok_start());
           }
-#line 46937 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46938 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3383:
-#line 17940 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17941 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->sp_body_finalize_function(thd)))
               MYSQL_YYABORT;
           }
-#line 46946 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46947 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3384:
-#line 17948 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17949 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command= SQLCOM_CREATE_PROCEDURE;
             if (unlikely(!Lex->make_sp_head_no_recursive(thd, (yyvsp[-1].object_ddl_options), (yyvsp[0].spname),
                                                          &sp_handler_procedure)))
               MYSQL_YYABORT;
           }
-#line 46957 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46958 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3385:
-#line 17956 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17957 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sphead->set_chistics(Lex->sp_chistics);
             Lex->sphead->set_body_start(thd, YYLIP->get_cpp_tok_start());
           }
-#line 46966 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46967 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3386:
-#line 17961 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17962 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (unlikely(Lex->sp_body_finalize_procedure(thd)))
               MYSQL_YYABORT;
           }
-#line 46975 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46976 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3387:
-#line 17971 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17972 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_XA_START;
           }
-#line 46983 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46984 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3388:
-#line 17975 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17976 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_XA_END;
           }
-#line 46991 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 46992 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3389:
-#line 17979 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17980 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_XA_PREPARE;
           }
-#line 46999 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47000 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3390:
-#line 17983 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17984 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_XA_COMMIT;
           }
-#line 47007 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47008 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3391:
-#line 17987 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17988 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_XA_ROLLBACK;
           }
-#line 47015 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47016 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3392:
-#line 17991 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17992 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             Lex->sql_command = SQLCOM_XA_RECOVER;
             Lex->verbose= (yyvsp[0].num);
           }
-#line 47024 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47025 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3393:
-#line 17998 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 17999 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { (yyval.num)= false; }
-#line 47030 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47031 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3394:
-#line 18000 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18001 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             if (lex_string_eq(&(yyvsp[0].lex_str), STRING_WITH_LEN("SQL")))
               (yyval.num)= true;
@@ -47043,167 +47044,167 @@ yyreduce:
               (yyval.num)= false;
             }
           }
-#line 47047 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47048 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3395:
-#line 18016 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18017 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             MYSQL_YYABORT_UNLESS((yyvsp[0].string)->length() <= MAXGTRIDSIZE);
             if (unlikely(!(Lex->xid=(XID *)thd->alloc(sizeof(XID)))))
               MYSQL_YYABORT;
             Lex->xid->set(1L, (yyvsp[0].string)->ptr(), (yyvsp[0].string)->length(), 0, 0);
           }
-#line 47058 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47059 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3396:
-#line 18023 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18024 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             MYSQL_YYABORT_UNLESS((yyvsp[-2].string)->length() <= MAXGTRIDSIZE && (yyvsp[0].string)->length() <= MAXBQUALSIZE);
             if (unlikely(!(Lex->xid=(XID *)thd->alloc(sizeof(XID)))))
               MYSQL_YYABORT;
             Lex->xid->set(1L, (yyvsp[-2].string)->ptr(), (yyvsp[-2].string)->length(), (yyvsp[0].string)->ptr(), (yyvsp[0].string)->length());
           }
-#line 47069 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47070 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3397:
-#line 18030 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18031 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             MYSQL_YYABORT_UNLESS((yyvsp[-4].string)->length() <= MAXGTRIDSIZE && (yyvsp[-2].string)->length() <= MAXBQUALSIZE);
             if (unlikely(!(Lex->xid=(XID *)thd->alloc(sizeof(XID)))))
               MYSQL_YYABORT;
             Lex->xid->set((yyvsp[0].ulong_num), (yyvsp[-4].string)->ptr(), (yyvsp[-4].string)->length(), (yyvsp[-2].string)->ptr(), (yyvsp[-2].string)->length());
           }
-#line 47080 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47081 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3398:
-#line 18039 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18040 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 47086 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47087 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3399:
-#line 18040 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18041 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 47092 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47093 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3400:
-#line 18041 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18042 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 47098 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47099 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3401:
-#line 18045 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18046 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_NONE;        }
-#line 47104 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47105 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3402:
-#line 18046 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18047 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_JOIN;        }
-#line 47110 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47111 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3403:
-#line 18047 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18048 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_RESUME;      }
-#line 47116 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47117 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3404:
-#line 18051 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18052 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_NONE;        }
-#line 47122 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47123 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3405:
-#line 18052 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18053 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_ONE_PHASE;   }
-#line 47128 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47129 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3406:
-#line 18057 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18058 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_NONE;        }
-#line 47134 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47135 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3407:
-#line 18059 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18060 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_SUSPEND;     }
-#line 47140 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47141 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3409:
-#line 18064 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18065 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {}
-#line 47146 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47147 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3410:
-#line 18065 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18066 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     { Lex->xa_opt=XA_FOR_MIGRATE; }
-#line 47152 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47153 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3411:
-#line 18070 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18071 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_INSTALL_PLUGIN;
             lex->comment= (yyvsp[-2].ident_sys);
             lex->ident= (yyvsp[0].lex_str);
           }
-#line 47163 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47164 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3412:
-#line 18077 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18078 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_INSTALL_PLUGIN;
             lex->comment= null_clex_str;
             lex->ident= (yyvsp[0].lex_str);
           }
-#line 47174 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47175 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3413:
-#line 18087 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18088 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_UNINSTALL_PLUGIN;
             lex->comment= (yyvsp[0].ident_sys);
           }
-#line 47184 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47185 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3414:
-#line 18093 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18094 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
             LEX *lex= Lex;
             lex->sql_command= SQLCOM_UNINSTALL_PLUGIN;
             lex->comment= null_clex_str;
             lex->ident= (yyvsp[0].lex_str);
           }
-#line 47195 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47196 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
   case 3415:
-#line 18104 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
+#line 18105 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
 	  YYERROR;
 	}
-#line 47203 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47204 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;
 
 
-#line 47207 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
+#line 47208 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
       default: break;
     }
   /* User semantic actions sometimes alter yychar, and that requires

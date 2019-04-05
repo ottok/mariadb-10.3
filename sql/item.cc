@@ -992,7 +992,7 @@ bool Item_field::register_field_in_write_map(void *arg)
 }
 
 /**
-  Check that we are not refering to any not yet initialized fields
+  Check that we are not referring to any not yet initialized fields
 
   Fields are initialized in this order:
   - All fields that have default value as a constant are initialized first.
@@ -2401,7 +2401,6 @@ void Item::split_sum_func2(THD *thd, Ref_ptr_array ref_pointer_array,
     }
 
     if (unlikely((!(used_tables() & ~PARAM_TABLE_BIT) ||
-                  type() == SUBSELECT_ITEM ||
                   (type() == REF_ITEM &&
                    ((Item_ref*)this)->ref_type() != Item_ref::VIEW_REF))))
         return;

@@ -1993,7 +1993,7 @@ public:
                        TABLE_LIST &src_table, TABLE_LIST &table);
   bool check_sys_fields(const Lex_table_name &table_name,
                         const Lex_table_name &db,
-                        Alter_info *alter_info, bool native);
+                        Alter_info *alter_info);
 
   /**
      At least one field was specified 'WITH/WITHOUT SYSTEM VERSIONING'.
@@ -2072,11 +2072,10 @@ struct Table_scope_and_contents_source_pod_st // For trivial members
   /* The following is used to remember the old state for CREATE OR REPLACE */
   TABLE *table;
   TABLE_LIST *pos_in_locked_tables;
+  TABLE_LIST *merge_list;
   MDL_ticket *mdl_ticket;
   bool table_was_deleted;
   sequence_definition *seq_create_info;
-
-  bool vers_native(THD *thd) const;
 
   void init()
   {
@@ -2099,14 +2098,11 @@ struct Table_scope_and_contents_source_pod_st // For trivial members
 struct Table_scope_and_contents_source_st:
          public Table_scope_and_contents_source_pod_st
 {
-  SQL_I_List<TABLE_LIST> merge_list;
-
   Vers_parse_info vers_info;
 
   void init()
   {
     Table_scope_and_contents_source_pod_st::init();
-    merge_list.empty();
     vers_info.init();
   }
 
@@ -3458,6 +3454,10 @@ public:
             ha_pre_index_end() :
             pre_inited == RND ? ha_pre_rnd_end() : 0 );
   }
+  virtual bool vers_can_native(THD *thd)
+  {
+    return ht->flags & HTON_NATIVE_SYS_VERSIONING;
+  }
 
   /**
      @brief
@@ -4615,7 +4615,6 @@ public:
   virtual int enable_indexes(uint mode) { return HA_ERR_WRONG_COMMAND; }
   virtual int discard_or_import_tablespace(my_bool discard)
   { return (my_errno=HA_ERR_WRONG_COMMAND); }
-  virtual void prepare_for_alter() { return; }
   virtual void drop_table(const char *name);
   virtual int create(const char *name, TABLE *form, HA_CREATE_INFO *info)=0;
 

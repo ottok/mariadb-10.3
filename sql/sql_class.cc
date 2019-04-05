@@ -787,6 +787,7 @@ THD::THD(my_thread_id id, bool is_wsrep_applier, bool skip_global_sys_var_lock)
   wsrep_affected_rows     = 0;
   wsrep_replicate_GTID    = false;
   wsrep_skip_wsrep_GTID   = false;
+  wsrep_split_flag        = false;
 #endif
   /* Call to init() below requires fully initialized Open_tables_state. */
   reset_open_tables_state(this);
@@ -1239,6 +1240,7 @@ void THD::init(bool skip_lock)
   wsrep_affected_rows     = 0;
   wsrep_replicate_GTID    = false;
   wsrep_skip_wsrep_GTID   = false;
+  wsrep_split_flag        = false;
 #endif /* WITH_WSREP */
 
   if (variables.sql_log_bin)
@@ -2586,17 +2588,15 @@ CHANGED_TABLE_LIST* THD::changed_table_dup(const char *key, size_t key_length)
 }
 
 
-void THD::prepare_explain_fields(select_result *result,
-                                 List<Item> *field_list,
-                                 uint8 explain_flags,
-                                 bool is_analyze)
+int THD::prepare_explain_fields(select_result *result, List<Item> *field_list,
+                                 uint8 explain_flags, bool is_analyze)
 {
   if (lex->explain_json)
     make_explain_json_field_list(*field_list, is_analyze);
   else
     make_explain_field_list(*field_list, explain_flags, is_analyze);
 
-  result->prepare(*field_list, NULL);
+  return result->prepare(*field_list, NULL);
 }
 
 
@@ -2606,11 +2606,10 @@ int THD::send_explain_fields(select_result *result,
 {
   List<Item> field_list;
   int rc;
-  prepare_explain_fields(result, &field_list, explain_flags, is_analyze);
-  rc= result->send_result_set_metadata(field_list,
-                                       Protocol::SEND_NUM_ROWS |
-                                       Protocol::SEND_EOF);
-  return(rc);
+  rc= prepare_explain_fields(result, &field_list, explain_flags, is_analyze) ||
+      result->send_result_set_metadata(field_list, Protocol::SEND_NUM_ROWS |
+                                                   Protocol::SEND_EOF);
+  return rc;
 }
 
 
@@ -2685,7 +2684,7 @@ void THD::make_explain_field_list(List<Item> &field_list, uint8 explain_flags,
   if (is_analyze)
   {
     field_list.push_back(item= new (mem_root)
-                         Item_float(this, "r_rows", 0.1234, 10, 4),
+                         Item_float(this, "r_rows", 0.1234, 2, 4),
                          mem_root);
     item->maybe_null=1;
   }
@@ -6062,16 +6061,18 @@ int THD::decide_logging_format(TABLE_LIST *tables)
 
       replicated_tables_count++;
 
-      if (table->lock_type <= TL_READ_NO_INSERT &&
-          table->prelocking_placeholder != TABLE_LIST::PRELOCK_FK)
-        has_read_tables= true;
-      else if (table->table->found_next_number_field &&
-                (table->lock_type >= TL_WRITE_ALLOW_WRITE))
+      if (table->prelocking_placeholder != TABLE_LIST::PRELOCK_FK)
       {
-        has_auto_increment_write_tables= true;
-        has_auto_increment_write_tables_not_first= found_first_not_own_table;
-        if (table->table->s->next_number_keypart != 0)
-          has_write_table_auto_increment_not_first_in_pk= true;
+        if (table->lock_type <= TL_READ_NO_INSERT)
+          has_read_tables= true;
+        else if (table->table->found_next_number_field &&
+                 (table->lock_type >= TL_WRITE_ALLOW_WRITE))
+        {
+          has_auto_increment_write_tables= true;
+          has_auto_increment_write_tables_not_first= found_first_not_own_table;
+          if (table->table->s->next_number_keypart != 0)
+            has_write_table_auto_increment_not_first_in_pk= true;
+        }
       }
 
       if (table->lock_type >= TL_WRITE_ALLOW_WRITE)

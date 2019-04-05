@@ -6281,7 +6281,7 @@ int spider_open_all_tables(
   }
 
   SPD_INIT_ALLOC_ROOT(&mem_root, 4096, 0, MYF(MY_WME));
-  memset(&tmp_share, 0, sizeof(SPIDER_SHARE));
+  memset((void*)&tmp_share, 0, sizeof(SPIDER_SHARE));
   memset(&tmp_connect_info, 0,
     sizeof(char *) * SPIDER_TMP_SHARE_CHAR_PTR_COUNT);
   memset(tmp_connect_info_length, 0,
@@ -6415,7 +6415,7 @@ int spider_open_all_tables(
         free_root(&mem_root, MYF(0));
         DBUG_RETURN(HA_ERR_OUT_OF_MEM);
       }
-      memcpy(share, &tmp_share, sizeof(*share));
+      memcpy((void*)share, &tmp_share, sizeof(*share));
       spider_set_tmp_share_pointer(share, connect_info,
         connect_info_length, long_info, longlong_info);
       memcpy(connect_info, &tmp_connect_info, sizeof(char *) *
@@ -7684,7 +7684,7 @@ int spider_get_sts(
   int sts_sync_level,
   uint flag
 ) {
-  int get_type;
+  int get_type __attribute__ ((unused));
   int error_num = 0;
   bool need_to_get = TRUE;
   DBUG_ENTER("spider_get_sts");
@@ -7841,7 +7841,7 @@ int spider_get_crd(
 #endif
   int crd_sync_level
 ) {
-  int get_type;
+  int get_type __attribute__ ((unused));
   int error_num = 0;
   bool need_to_get = TRUE;
   DBUG_ENTER("spider_get_crd");
@@ -9253,7 +9253,7 @@ int spider_discover_table_structure(
 #endif
   Open_tables_backup open_tables_backup;
   TABLE *table_tables;
-  uint str_len;
+  uint str_len __attribute__ ((unused));
   char buf[MAX_FIELD_WIDTH];
   spider_string str(buf, sizeof(buf), system_charset_info);
   DBUG_ENTER("spider_discover_table_structure");

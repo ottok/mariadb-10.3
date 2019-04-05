@@ -6694,6 +6694,20 @@ testcase
 drop view v1;
 drop table t1;
 #
+# MDEV-18502: Server crash in find_field_in_tables upon 2nd execution of SP which causes ER_WRONG_GROUP_FIELD
+#
+CREATE TABLE t1 (id INT, f VARCHAR(1));
+CREATE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES (1,'a'),(2,'b');
+CREATE PROCEDURE sp() SELECT f AS f1, MAX(id) AS f2 FROM v1 GROUP BY f1, f2 ORDER BY f1;
+CALL sp;
+ERROR 42000: Can't group on 'f2'
+CALL sp;
+ERROR 42000: Can't group on 'f2'
+DROP PROCEDURE sp;
+DROP VIEW v1;
+DROP TABLE t1;
+#
 # End of 10.2 tests
 #
 #
@@ -6704,6 +6718,28 @@ drop table t1;
 #
 ALTER VIEW IF NOT EXISTS v1 AS SELECT 1;
 ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'IF NOT EXISTS v1 AS SELECT 1' at line 1
+#
+# MDEV-18605: Loss of column aliases by using view and group
+#
+CREATE TABLE t1 (id int, foo int);
+CREATE VIEW v1 AS  SELECT id, IFNULL(foo,'') AS foo FROM t1;
+INSERT INTO t1 (id, foo) VALUES (1,1),(2,2);
+SELECT v.id, v.foo AS bar  FROM v1 v
+WHERE id = 2;
+id	bar
+2	2
+SELECT v.id, v.foo AS bar  FROM v1 v
+GROUP BY v.id;
+id	bar
+1	1
+2	2
+SELECT v.id, v.foo AS bar  FROM v1 v
+WHERE id = 2
+GROUP BY v.id;
+id	bar
+2	2
+Drop View v1;
+Drop table t1;
 #
 # End of 10.3 tests
 #

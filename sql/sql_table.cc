@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2018, MariaDB
+   Copyright (c) 2010, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -8164,11 +8164,6 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
     }
     if (alter)
     {
-      if (def->real_field_type() == MYSQL_TYPE_BLOB)
-      {
-        my_error(ER_BLOB_CANT_HAVE_DEFAULT, MYF(0), def->change.str);
-        goto err;
-      }
       if ((def->default_value= alter->default_value)) // Use new default
         def->flags&= ~NO_DEFAULT_VALUE_FLAG;
       else
@@ -9857,6 +9852,8 @@ do_continue:;
       new_table->file->get_foreign_key_list(thd, &fk_list);
       while ((fk= fk_list_it++))
       {
+        MDL_request mdl_request;
+
         if (lower_case_table_names)
         {
          char buf[NAME_LEN];
@@ -9868,19 +9865,14 @@ do_continue:;
          len = my_casedn_str(files_charset_info, buf);
          thd->make_lex_string(fk->referenced_table, buf, len);
         }
-        if (table_already_fk_prelocked(table_list, fk->referenced_db,
-                                       fk->referenced_table, TL_READ_NO_INSERT))
-          continue;
 
-        TABLE_LIST *tl= (TABLE_LIST *) thd->alloc(sizeof(TABLE_LIST));
-        tl->init_one_table_for_prelocking(fk->referenced_db, fk->referenced_table,
-                           NULL, TL_READ_NO_INSERT, TABLE_LIST::PRELOCK_FK,
-                           NULL, 0, &thd->lex->query_tables_last);
+        mdl_request.init(MDL_key::TABLE,
+                         fk->referenced_db->str, fk->referenced_table->str,
+                         MDL_SHARED_NO_WRITE, MDL_TRANSACTION);
+        if (thd->mdl_context.acquire_lock(&mdl_request,
+                                          thd->variables.lock_wait_timeout))
+          goto err_new_table_cleanup;
       }
-
-      if (open_tables(thd, &table_list->next_global, &tables_opened, 0,
-                      &alter_prelocking_strategy))
-        goto err_new_table_cleanup;
     }
   }
 
@@ -10342,11 +10334,14 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
         to->file->ha_table_flags() & HA_TABLE_SCAN_ON_INDEX)
     {
       char warn_buff[MYSQL_ERRMSG_SIZE];
+      bool save_abort_on_warning= thd->abort_on_warning;
+      thd->abort_on_warning= false;
       my_snprintf(warn_buff, sizeof(warn_buff), 
                   "ORDER BY ignored as there is a user-defined clustered index"
                   " in the table '%-.192s'", from->s->table_name.str);
       push_warning(thd, Sql_condition::WARN_LEVEL_WARN, ER_UNKNOWN_ERROR,
                    warn_buff);
+      thd->abort_on_warning= save_abort_on_warning;
     }
     else
     {
@@ -10626,8 +10621,6 @@ bool mysql_recreate_table(THD *thd, TABLE_LIST *table_list, bool table_copy)
 
   if (table_copy)
     alter_info.requested_algorithm= Alter_info::ALTER_TABLE_ALGORITHM_COPY;
-
-  thd->prepare_logs_for_admin_command();
 
   bool res= mysql_alter_table(thd, &null_clex_str, &null_clex_str, &create_info,
                                 table_list, &alter_info, 0,
