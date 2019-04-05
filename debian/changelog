@@ -1,8 +1,13 @@
-mariadb-10.3 (1:10.3.13-3) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.14-1) UNRELEASED; urgency=medium
 
-  * Open new entry. This will later be replaced by 'gbp dch'.
+  [ Otto Kekäläinen ]
+  * Rename and re-organize gitlab-ci.yml stages
+  * New upstream version 10.3.14
 
- -- Otto Kekäläinen <otto@debian.org>  Tue, 02 Apr 2019 00:06:48 +0300
+  [ Andreas Beckmann ]
+  * Use piuparts with --testdebs-repo so dependencies of each install resolve
+
+ -- Otto Kekäläinen <otto@debian.org>  Fri, 05 Apr 2019 14:49:44 +0300
 
 mariadb-10.3 (1:10.3.13-2) unstable; urgency=medium
 
