@@ -30090,7 +30090,7 @@ yyreduce:
               from the global list.
             */
             LEX *lex=Lex;
-            lex->create_info.merge_list= lex->select_lex.table_list;
+            lex->create_info.merge_list= lex->select_lex.table_list.first;
             lex->select_lex.table_list= lex->save_list;
             /*
               When excluding union list from the global list we assume that
@@ -30099,7 +30099,7 @@ yyreduce:
             */
             TABLE_LIST *last_non_sel_table= lex->create_last_non_select_table;
             DBUG_ASSERT(last_non_sel_table->next_global ==
-                        lex->create_info.merge_list.first);
+                        lex->create_info.merge_list);
             last_non_sel_table->next_global= 0;
             Lex->query_tables_last= &last_non_sel_table->next_global;
 

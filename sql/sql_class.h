@@ -581,6 +581,16 @@ typedef struct system_variables
   ha_rows max_join_size;
   ha_rows expensive_subquery_limit;
   ulong auto_increment_increment, auto_increment_offset;
+#ifdef WITH_WSREP
+  /*
+    Stored values of the auto_increment_increment and auto_increment_offset
+    that are will be restored when wsrep_auto_increment_control will be set
+    to 'OFF', because the setting it to 'ON' leads to overwriting of the
+    original values (which are set by the user) by calculated ones (which
+    are based on the cluster size):
+  */
+  ulong saved_auto_increment_increment, saved_auto_increment_offset;
+#endif /* WITH_WSREP */
   uint eq_range_index_dive_limit;
   ulong column_compression_zlib_strategy;
   ulong lock_wait_timeout;
@@ -3791,8 +3801,8 @@ public:
   void add_changed_table(TABLE *table);
   void add_changed_table(const char *key, size_t key_length);
   CHANGED_TABLE_LIST * changed_table_dup(const char *key, size_t key_length);
-  void prepare_explain_fields(select_result *result, List<Item> *field_list,
-                              uint8 explain_flags, bool is_analyze);
+  int prepare_explain_fields(select_result *result, List<Item> *field_list,
+                             uint8 explain_flags, bool is_analyze);
   int send_explain_fields(select_result *result, uint8 explain_flags,
                           bool is_analyze);
   void make_explain_field_list(List<Item> &field_list, uint8 explain_flags,
@@ -4717,6 +4727,14 @@ public:
   ulong                     wsrep_affected_rows;
   bool                      wsrep_replicate_GTID;
   bool                      wsrep_skip_wsrep_GTID;
+  /* This flag is set when innodb do an intermediate commit to
+  processing the LOAD DATA INFILE statement by splitting it into 10K
+  rows chunks. If flag is set, then binlog rotation is not performed
+  while intermediate transaction try to commit, because in this case
+  rotation causes unregistration of innodb handler. Later innodb handler
+  registered again, but replication of last chunk of rows is skipped
+  by the innodb engine: */
+  bool                      wsrep_split_flag;
 #endif /* WITH_WSREP */
 
   /* Handling of timeouts for commands */
@@ -4826,13 +4844,6 @@ public:
   Item *sp_fix_func_item(Item **it_addr);
   Item *sp_prepare_func_item(Item **it_addr, uint cols= 1);
   bool sp_eval_expr(Field *result_field, Item **expr_item_ptr);
-
-  inline void prepare_logs_for_admin_command()
-  {
-    enable_slow_log&= !MY_TEST(variables.log_slow_disabled_statements &
-                               LOG_SLOW_DISABLE_ADMIN);
-    query_plan_flags|= QPLAN_ADMIN;
-  }
 };
 
 inline void add_to_active_threads(THD *thd)
@@ -4937,6 +4948,7 @@ public:
   void reset(THD *thd_arg) { thd= thd_arg; }
 };
 
+class select_result_interceptor;
 
 /*
   Interface for sending tabular data, together with some other stuff:
@@ -5035,11 +5047,10 @@ public:
 
   /*
     This returns
-    - FALSE if the class sends output row to the client
-    - TRUE if the output is set elsewhere (a file, @variable, or table).
-    Currently all intercepting classes derive from select_result_interceptor.
+    - NULL if the class sends output row to the client
+    - this if the output is set elsewhere (a file, @variable, or table).
   */
-  virtual bool is_result_interceptor()=0;
+  virtual select_result_interceptor *result_interceptor()=0;
 
   /*
     This method is used to distinguish an normal SELECT from the cursor
@@ -5115,7 +5126,7 @@ public:
   }              /* Remove gcc warning */
   uint field_count(List<Item> &fields) const { return 0; }
   bool send_result_set_metadata(List<Item> &fields, uint flag) { return FALSE; }
-  bool is_result_interceptor() { return true; }
+  select_result_interceptor *result_interceptor() { return this; }
 
   /*
     Instruct the object to not call my_ok(). Client output will be handled
@@ -5249,7 +5260,7 @@ public:
   virtual bool check_simple_select() const { return FALSE; }
   void abort_result_set();
   virtual void cleanup();
-  bool is_result_interceptor() { return false; }
+  select_result_interceptor *result_interceptor() { return NULL; }
 };
 
 
@@ -6289,21 +6300,26 @@ public:
 #define CF_UPDATES_DATA (1U << 18)
 
 /**
+  Not logged into slow log as "admin commands"
+*/
+#define CF_ADMIN_COMMAND (1U << 19)
+
+/**
   SP Bulk execution safe
 */
-#define CF_SP_BULK_SAFE (1U << 19)
+#define CF_SP_BULK_SAFE (1U << 20)
 /**
   SP Bulk execution optimized
 */
-#define CF_SP_BULK_OPTIMIZED (1U << 20)
+#define CF_SP_BULK_OPTIMIZED (1U << 21)
 /**
   If command creates or drops a table
 */
-#define CF_SCHEMA_CHANGE (1U << 21)
+#define CF_SCHEMA_CHANGE (1U << 22)
 /**
   If command creates or drops a database
 */
-#define CF_DB_CHANGE (1U << 22)
+#define CF_DB_CHANGE (1U << 23)
 
 /* Bits in server_command_flags */
 

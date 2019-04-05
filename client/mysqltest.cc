@@ -193,6 +193,7 @@ static char TMPDIR[FN_REFLEN];
 static char global_subst_from[200];
 static char global_subst_to[200];
 static char *global_subst= NULL;
+static char *read_command_buf= NULL;
 static MEM_ROOT require_file_root;
 static const my_bool my_true= 1;
 static const my_bool my_false= 0;
@@ -1532,6 +1533,7 @@ void free_used_memory()
   free_defaults(default_argv);
   free_root(&require_file_root, MYF(0));
   free_re();
+  my_free(read_command_buf);
 #ifdef _WIN32
   free_tmp_sh_file();
   free_win_path_patterns();
@@ -6583,7 +6585,6 @@ static inline bool is_escape_char(char c, char in_string)
 
 */
 
-static char *read_command_buf= NULL;
 static size_t read_command_buflen= 0;
 static const size_t max_multibyte_length= 6;
 
@@ -8301,6 +8302,12 @@ void run_query_stmt(struct st_connection *cn, struct st_command *command,
   DBUG_ENTER("run_query_stmt");
   DBUG_PRINT("query", ("'%-.60s'", query));
 
+  if (!mysql)
+  {
+    handle_no_active_connection(command, cn, ds);
+    DBUG_VOID_RETURN;
+  }
+
   /*
     Init a new stmt if it's not already one created for this connection
   */
@@ -8838,18 +8845,56 @@ void init_re(void)
   */
   const char *ps_re_str =
     "^("
-    "[[:space:]]*REPLACE[[:space:]]|"
-    "[[:space:]]*INSERT[[:space:]]|"
-    "[[:space:]]*UPDATE[[:space:]]|"
-    "[[:space:]]*DELETE[[:space:]]|"
-    "[[:space:]]*SELECT[[:space:]]|"
+    "[[:space:]]*ALTER[[:space:]]+SEQUENCE[[:space:]]|"
+    "[[:space:]]*ALTER[[:space:]]+TABLE[[:space:]]|"
+    "[[:space:]]*ALTER[[:space:]]+USER[[:space:]]|"
+    "[[:space:]]*ANALYZE[[:space:]]|"
+    "[[:space:]]*ASSIGN[[:space:]]|"
+    //"[[:space:]]*CALL[[:space:]]|" // XXX run_query_stmt doesn't read multiple result sets
+    "[[:space:]]*CHANGE[[:space:]]|"
+    "[[:space:]]*CHECKSUM[[:space:]]|"
+    "[[:space:]]*COMMIT[[:space:]]|"
+    "[[:space:]]*COMPOUND[[:space:]]|"
+    "[[:space:]]*CREATE[[:space:]]+DATABASE[[:space:]]|"
+    "[[:space:]]*CREATE[[:space:]]+INDEX[[:space:]]|"
+    "[[:space:]]*CREATE[[:space:]]+ROLE[[:space:]]|"
+    "[[:space:]]*CREATE[[:space:]]+SEQUENCE[[:space:]]|"
     "[[:space:]]*CREATE[[:space:]]+TABLE[[:space:]]|"
+    "[[:space:]]*CREATE[[:space:]]+USER[[:space:]]|"
+    "[[:space:]]*CREATE[[:space:]]+VIEW[[:space:]]|"
+    "[[:space:]]*DELETE[[:space:]]|"
     "[[:space:]]*DO[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+DATABASE[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+INDEX[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+ROLE[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+SEQUENCE[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+TABLE[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+USER[[:space:]]|"
+    "[[:space:]]*DROP[[:space:]]+VIEW[[:space:]]|"
+    "[[:space:]]*FLUSH[[:space:]]|"
+    "[[:space:]]*GRANT[[:space:]]|"
     "[[:space:]]*HANDLER[[:space:]]+.*[[:space:]]+READ[[:space:]]|"
+    "[[:space:]]*INSERT[[:space:]]|"
+    "[[:space:]]*INSTALL[[:space:]]+|"
+    "[[:space:]]*KILL[[:space:]]|"
+    "[[:space:]]*OPTIMIZE[[:space:]]|"
+    "[[:space:]]*PRELOAD[[:space:]]|"
+    "[[:space:]]*RENAME[[:space:]]+TABLE[[:space:]]|"
+    "[[:space:]]*RENAME[[:space:]]+USER[[:space:]]|"
+    "[[:space:]]*REPAIR[[:space:]]|"
+    "[[:space:]]*REPLACE[[:space:]]|"
+    "[[:space:]]*RESET[[:space:]]|"
+    "[[:space:]]*REVOKE[[:space:]]|"
+    "[[:space:]]*ROLLBACK[[:space:]]|"
+    "[[:space:]]*SELECT[[:space:]]|"
     "[[:space:]]*SET[[:space:]]+OPTION[[:space:]]|"
-    "[[:space:]]*DELETE[[:space:]]+MULTI[[:space:]]|"
-    "[[:space:]]*UPDATE[[:space:]]+MULTI[[:space:]]|"
-    "[[:space:]]*INSERT[[:space:]]+SELECT[[:space:]])";
+    "[[:space:]]*SHOW[[:space:]]|"
+    "[[:space:]]*SHUTDOWN[[:space:]]|"
+    "[[:space:]]*SLAVE[[:space:]]|"
+    "[[:space:]]*TRUNCATE[[:space:]]|"
+    "[[:space:]]*UNINSTALL[[:space:]]+|"
+    "[[:space:]]*UPDATE[[:space:]]"
+    ")";
 
   /*
     Filter for queries that can be run using the

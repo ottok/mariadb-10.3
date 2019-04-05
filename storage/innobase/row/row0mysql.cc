@@ -705,8 +705,7 @@ handle_new_error:
 	switch (err) {
 	case DB_LOCK_WAIT_TIMEOUT:
 		if (row_rollback_on_timeout) {
-			trx_rollback_to_savepoint(trx, NULL);
-			break;
+			goto rollback;
 		}
 		/* fall through */
 	case DB_DUPLICATE_KEY:
@@ -725,6 +724,7 @@ handle_new_error:
 	case DB_TABLE_NOT_FOUND:
 	case DB_DECRYPTION_FAILED:
 	case DB_COMPUTE_VALUE_FAILED:
+	rollback_to_savept:
 		DBUG_EXECUTE_IF("row_mysql_crash_if_error", {
 					log_buffer_flush_to_disk();
 					DBUG_SUICIDE(); });
@@ -751,6 +751,7 @@ handle_new_error:
 
 	case DB_DEADLOCK:
 	case DB_LOCK_TABLE_FULL:
+	rollback:
 		/* Roll back the whole transaction; this resolution was added
 		to version 3.23.43 */
 
@@ -772,19 +773,19 @@ handle_new_error:
 			" tablespace. If the mysqld server crashes after"
 			" the startup or when you dump the tables. "
 			<< FORCE_RECOVERY_MSG;
-		break;
+		goto rollback_to_savept;
 	case DB_FOREIGN_EXCEED_MAX_CASCADE:
 		ib::error() << "Cannot delete/update rows with cascading"
 			" foreign key constraints that exceed max depth of "
 			<< FK_MAX_CASCADE_DEL << ". Please drop excessive"
 			" foreign constraints and try again";
-		break;
+		goto rollback_to_savept;
 	case DB_UNSUPPORTED:
 		ib::error() << "Cannot delete/update rows with cascading"
 			" foreign key constraints in timestamp-based temporal"
 			" table. Please drop excessive"
 			" foreign constraints and try again";
-		break;
+		goto rollback_to_savept;
 	default:
 		ib::fatal() << "Unknown error code " << err << ": "
 			<< ut_strerr(err);
@@ -2685,10 +2686,15 @@ next:
 		goto next;
 	}
 
+	char* name = mem_strdup(table->name.m_name);
+
 	dict_table_close(table, FALSE, FALSE);
 
-	if (DB_SUCCESS != row_drop_table_for_mysql_in_background(
-		    table->name.m_name)) {
+	dberr_t err = row_drop_table_for_mysql_in_background(name);
+
+	ut_free(name);
+
+	if (err != DB_SUCCESS) {
 		/* If the DROP fails for some table, we return, and let the
 		main thread retry later */
 		return(n_tables + n_tables_dropped);
@@ -3027,7 +3033,7 @@ row_discard_tablespace(
 	}
 
 	/* Update the index root pages in the system tables, on disk */
-	err = row_import_update_index_root(trx, table, true, true);
+	err = row_import_update_index_root(trx, table, true);
 
 	if (err != DB_SUCCESS) {
 		return(err);
@@ -4358,11 +4364,12 @@ row_rename_table_for_mysql(
 
 	if (!new_is_tmp) {
 		/* Rename all constraints. */
-		char	new_table_name[MAX_TABLE_NAME_LEN] = "";
-		char	old_table_utf8[MAX_TABLE_NAME_LEN] = "";
+		char	new_table_name[MAX_TABLE_NAME_LEN + 1];
+		char	old_table_utf8[MAX_TABLE_NAME_LEN + 1];
 		uint	errors = 0;
 
 		strncpy(old_table_utf8, old_name, MAX_TABLE_NAME_LEN);
+		old_table_utf8[MAX_TABLE_NAME_LEN] = '\0';
 		innobase_convert_to_system_charset(
 			strchr(old_table_utf8, '/') + 1,
 			strchr(old_name, '/') +1,
@@ -4373,6 +4380,7 @@ row_rename_table_for_mysql(
 			my_charset_filename to UTF-8. This means that the
 			table name is already in UTF-8 (#mysql#50). */
 			strncpy(old_table_utf8, old_name, MAX_TABLE_NAME_LEN);
+			old_table_utf8[MAX_TABLE_NAME_LEN] = '\0';
 		}
 
 		info = pars_info_create();
@@ -4383,6 +4391,7 @@ row_rename_table_for_mysql(
 					  old_table_utf8);
 
 		strncpy(new_table_name, new_name, MAX_TABLE_NAME_LEN);
+		new_table_name[MAX_TABLE_NAME_LEN] = '\0';
 		innobase_convert_to_system_charset(
 			strchr(new_table_name, '/') + 1,
 			strchr(new_name, '/') +1,
@@ -4393,6 +4402,7 @@ row_rename_table_for_mysql(
 			my_charset_filename to UTF-8. This means that the
 			table name is already in UTF-8 (#mysql#50). */
 			strncpy(new_table_name, new_name, MAX_TABLE_NAME_LEN);
+			new_table_name[MAX_TABLE_NAME_LEN] = '\0';
 		}
 
 		pars_info_add_str_literal(info, "new_table_utf8", new_table_name);

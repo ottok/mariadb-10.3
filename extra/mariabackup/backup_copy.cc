@@ -512,7 +512,8 @@ datafile_open(const char *file, datafile_cur_t *cursor, uint thread_n)
 	5.6+. We want to make "local" copies for the backup. */
 	strncpy(cursor->rel_path,
 		xb_get_relative_path(cursor->abs_path, FALSE),
-		sizeof(cursor->rel_path));
+		(sizeof cursor->rel_path) - 1);
+	cursor->rel_path[(sizeof cursor->rel_path) - 1] = '\0';
 
 	cursor->file = os_file_create_simple_no_error_handling(
 		0, cursor->abs_path,
@@ -1209,6 +1210,7 @@ copy_or_move_file(const char *src_file_path,
 
 			if (!directory_exists(dst_dir, true)) {
 				ret = false;
+				free(link_filepath);
 				goto cleanup;
 			}
 
@@ -2348,7 +2350,8 @@ static void rocksdb_copy_back() {
 		return;
 	char rocksdb_home_dir[FN_REFLEN];
         if (xb_rocksdb_datadir && is_abs_path(xb_rocksdb_datadir)) {
-		strncpy(rocksdb_home_dir, xb_rocksdb_datadir, sizeof(rocksdb_home_dir));
+		strncpy(rocksdb_home_dir, xb_rocksdb_datadir, sizeof rocksdb_home_dir - 1);
+		rocksdb_home_dir[sizeof rocksdb_home_dir - 1] = '\0';
 	} else {
 	   snprintf(rocksdb_home_dir, sizeof(rocksdb_home_dir), "%s/%s", mysql_data_home, 
 		xb_rocksdb_datadir?trim_dotslash(xb_rocksdb_datadir): ROCKSDB_BACKUP_DIR);

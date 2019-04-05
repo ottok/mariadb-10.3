@@ -938,6 +938,7 @@ buf_page_is_corrupted(
 	const void* 	 	space)
 #endif
 {
+	ut_ad(page_size.logical() == srv_page_size);
 #ifndef UNIV_INNOCHECKSUM
 	DBUG_EXECUTE_IF("buf_page_import_corrupt_failure", return(true); );
 #endif
@@ -1031,26 +1032,31 @@ buf_page_is_corrupted(
 
 	compile_time_assert(!(FIL_PAGE_LSN % 8));
 
-	/* declare empty pages non-corrupted */
-	if (checksum_field1 == 0
-	    && checksum_field2 == 0
-	    && *reinterpret_cast<const ib_uint64_t*>(
-		    read_buf + FIL_PAGE_LSN) == 0) {
-
-		/* make sure that the page is really empty */
-		for (ulint i = 0; i < page_size.logical(); i++) {
-			if (read_buf[i] != 0) {
-				return(true);
+	/* A page filled with NUL bytes is considered not corrupted.
+	The FIL_PAGE_FILE_FLUSH_LSN field may be written nonzero for
+	the first page of each file of the system tablespace.
+	Ignore it for the system tablespace. */
+	if (!checksum_field1 && !checksum_field2) {
+		ulint i = 0;
+		do {
+			if (read_buf[i]) {
+				return true;
 			}
+		} while (++i < FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION);
+
+#ifndef UNIV_INNOCHECKSUM
+		if (!space || !space->id) {
+			/* Skip FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION
+			in the system tablespace. */
+			i += 8;
 		}
-#ifdef UNIV_INNOCHECKSUM
-		if (log_file) {
-			fprintf(log_file, "Page::%llu"
-				" is empty and uncorrupted\n",
-				cur_page_num);
-		}
-#endif /* UNIV_INNOCHECKSUM */
-		return(false);
+#endif
+		do {
+			if (read_buf[i]) {
+				return true;
+			}
+		} while (++i < srv_page_size);
+		return false;
 	}
 
 	switch (curr_algo) {
@@ -1571,8 +1577,7 @@ buf_chunk_init(
 
 	DBUG_EXECUTE_IF("ib_buf_chunk_init_fails", return(NULL););
 
-	chunk->mem = buf_pool->allocator.allocate_large(mem_size,
-							&chunk->mem_pfx, true);
+	chunk->mem = buf_pool->allocator.allocate_large_dontdump(mem_size, &chunk->mem_pfx);
 
 	if (UNIV_UNLIKELY(chunk->mem == NULL)) {
 
@@ -1865,9 +1870,8 @@ buf_pool_init_instance(
 							&block->debug_latch));
 					}
 
-					buf_pool->allocator.deallocate_large(
-						chunk->mem, &chunk->mem_pfx, chunk->mem_size(),
-						true);
+					buf_pool->allocator.deallocate_large_dodump(
+						chunk->mem, &chunk->mem_pfx, chunk->mem_size());
 				}
 				ut_free(buf_pool->chunks);
 				buf_pool_mutex_exit(buf_pool);
@@ -2014,8 +2018,8 @@ buf_pool_free_instance(
 			ut_d(rw_lock_free(&block->debug_latch));
 		}
 
-		buf_pool->allocator.deallocate_large(
-			chunk->mem, &chunk->mem_pfx, true);
+		buf_pool->allocator.deallocate_large_dodump(
+			chunk->mem, &chunk->mem_pfx, chunk->mem_size());
 	}
 
 	for (ulint i = BUF_FLUSH_LRU; i < BUF_FLUSH_N_TYPES; ++i) {
@@ -2892,8 +2896,8 @@ withdraw_retry:
 						&block->debug_latch));
 				}
 
-				buf_pool->allocator.deallocate_large(
-					chunk->mem, &chunk->mem_pfx, true);
+				buf_pool->allocator.deallocate_large_dodump(
+					chunk->mem, &chunk->mem_pfx, chunk->mem_size());
 
 				sum_freed += chunk->size;
 
@@ -3827,18 +3831,10 @@ err_exit:
 	ut_ad(!buf_pool_watch_is_sentinel(buf_pool, bpage));
 
 	switch (buf_page_get_state(bpage)) {
-	case BUF_BLOCK_POOL_WATCH:
-	case BUF_BLOCK_NOT_USED:
-	case BUF_BLOCK_READY_FOR_USE:
-	case BUF_BLOCK_MEMORY:
-	case BUF_BLOCK_REMOVE_HASH:
-		ut_error;
-
 	case BUF_BLOCK_ZIP_PAGE:
 	case BUF_BLOCK_ZIP_DIRTY:
 		buf_block_fix(bpage);
 		block_mutex = &buf_pool->zip_mutex;
-		mutex_enter(block_mutex);
 		goto got_block;
 	case BUF_BLOCK_FILE_PAGE:
 		/* Discard the uncompressed page frame if possible. */
@@ -3853,16 +3849,16 @@ err_exit:
 				      __FILE__, __LINE__);
 
 		block_mutex = &((buf_block_t*) bpage)->mutex;
-
-		mutex_enter(block_mutex);
-
 		goto got_block;
+	default:
+		break;
 	}
 
 	ut_error;
 	goto err_exit;
 
 got_block:
+	mutex_enter(block_mutex);
 	must_read = buf_page_get_io_fix(bpage) == BUF_IO_READ;
 
 	rw_lock_s_unlock(hash_lock);
@@ -4968,10 +4964,7 @@ buf_page_optimistic_get(
 	}
 
 	if (!success) {
-		buf_page_mutex_enter(block);
 		buf_block_buf_fix_dec(block);
-		buf_page_mutex_exit(block);
-
 		return(FALSE);
 	}
 
@@ -4985,10 +4978,7 @@ buf_page_optimistic_get(
 			rw_lock_x_unlock(&block->lock);
 		}
 
-		buf_page_mutex_enter(block);
 		buf_block_buf_fix_dec(block);
-		buf_page_mutex_exit(block);
-
 		return(FALSE);
 	}
 
@@ -5091,10 +5081,7 @@ buf_page_get_known_nowait(
 	}
 
 	if (!success) {
-		buf_page_mutex_enter(block);
 		buf_block_buf_fix_dec(block);
-		buf_page_mutex_exit(block);
-
 		return(FALSE);
 	}
 
@@ -5188,10 +5175,7 @@ buf_page_try_get_func(
 	}
 
 	if (!success) {
-		buf_page_mutex_enter(block);
 		buf_block_buf_fix_dec(block);
-		buf_page_mutex_exit(block);
-
 		return(NULL);
 	}
 

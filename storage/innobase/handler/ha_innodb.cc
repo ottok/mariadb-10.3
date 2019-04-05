@@ -147,15 +147,12 @@ void close_thread_tables(THD* thd);
 #include <mysql/service_md5.h>
 #include "wsrep_sst.h"
 
-extern MYSQL_PLUGIN_IMPORT MYSQL_BIN_LOG mysql_bin_log;
-
 static inline wsrep_ws_handle_t*
 wsrep_ws_handle(THD* thd, const trx_t* trx) {
 	return wsrep_ws_handle_for_trx(wsrep_thd_ws_handle(thd),
 				       (wsrep_trx_id_t)trx->id);
 }
 
-extern TC_LOG* tc_log;
 extern void wsrep_cleanup_transaction(THD *thd);
 static int
 wsrep_abort_transaction(handlerton* hton, THD *bf_thd, THD *victim_thd,
@@ -252,12 +249,6 @@ static
 void set_my_errno(int err)
 {
 	errno = err;
-}
-
-static uint omits_virtual_cols(const TABLE_SHARE &share)
-{
-	return share.frm_version < FRM_VER_EXPRESSSIONS &&
-	       share.virtual_fields;
 }
 
 /** Checks whether the file name belongs to a partition of a table.
@@ -718,9 +709,25 @@ static MYSQL_THDVAR_BOOL(compression_default, PLUGIN_VAR_OPCMDARG,
   "Is compression the default for new tables", 
   NULL, NULL, FALSE);
 
+/** Update callback for SET [SESSION] innodb_default_encryption_key_id */
+static void
+innodb_default_encryption_key_id_update(THD* thd, st_mysql_sys_var* var,
+					void* var_ptr, const void *save)
+{
+	uint key_id = *static_cast<const uint*>(save);
+	if (key_id != FIL_DEFAULT_ENCRYPTION_KEY
+	    && !encryption_key_id_exists(key_id)) {
+		push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+				    ER_WRONG_ARGUMENTS,
+				    "innodb_default_encryption_key=%u"
+				    " is not available", key_id);
+	}
+	*static_cast<uint*>(var_ptr) = key_id;
+}
+
 static MYSQL_THDVAR_UINT(default_encryption_key_id, PLUGIN_VAR_RQCMDARG,
 			 "Default encryption key id used for table encryption.",
-			 NULL, NULL,
+			 NULL, innodb_default_encryption_key_id_update,
 			 FIL_DEFAULT_ENCRYPTION_KEY, 1, UINT_MAX32, 0);
 
 /**
@@ -2898,7 +2905,6 @@ ha_innobase::ha_innobase(
 	TABLE_SHARE*	table_arg)
 	:handler(hton, table_arg),
 	m_prebuilt(),
-	m_prebuilt_ptr(&m_prebuilt),
 	m_user_thd(),
 	m_int_table_flags(HA_REC_NOT_IN_SEQ
 			  | HA_NULL_IN_KEY
@@ -5849,7 +5855,7 @@ innobase_build_v_templ(
 		Field*  field = table->field[i];
 
 		/* Build template for virtual columns */
-		if (innobase_is_v_fld(field)) {
+		if (!field->stored_in_db()) {
 #ifdef UNIV_DEBUG
 			const char*	name;
 
@@ -7290,7 +7296,8 @@ build_template_needs_field(
 {
 	const Field*	field	= table->field[i];
 
-	if (innobase_is_v_fld(field) && omits_virtual_cols(*table->s)) {
+	if (!field->stored_in_db()
+	    && ha_innobase::omits_virtual_cols(*table->s)) {
 		return NULL;
 	}
 
@@ -7370,7 +7377,7 @@ build_template_field(
 
 	templ = prebuilt->mysql_template + prebuilt->n_template++;
 	UNIV_MEM_INVALID(templ, sizeof *templ);
-	templ->is_virtual = innobase_is_v_fld(field);
+	templ->is_virtual = !field->stored_in_db();
 
 	if (!templ->is_virtual) {
 		templ->col_no = i;
@@ -7447,7 +7454,7 @@ build_template_field(
 						&templ->rec_prefix_field_no);
 		}
 	} else {
-		ut_ad(!omits_virtual_cols(*table->s));
+		DBUG_ASSERT(!ha_innobase::omits_virtual_cols(*table->s));
 		col = &dict_table_get_nth_v_col(index->table, v_no)->m_col;
 		templ->clust_rec_field_no = v_no;
 		templ->rec_prefix_field_no = ULINT_UNDEFINED;
@@ -7616,7 +7623,7 @@ ha_innobase::build_template(
 		/* Push down an index condition or an end_range check. */
 		for (ulint i = 0; i < n_fields; i++) {
 			const Field* field = table->field[i];
-			const bool is_v = innobase_is_v_fld(field);
+			const bool is_v = !field->stored_in_db();
 			if (is_v && skip_virtual) {
 				num_v++;
 				continue;
@@ -7754,9 +7761,8 @@ ha_innobase::build_template(
 		/* Include the fields that are not needed in index condition
 		pushdown. */
 		for (ulint i = 0; i < n_fields; i++) {
-			mysql_row_templ_t*	templ;
 			const Field*		field = table->field[i];
-			const bool is_v = innobase_is_v_fld(field);
+			const bool is_v = !field->stored_in_db();
 			if (is_v && skip_virtual) {
 				num_v++;
 				continue;
@@ -7785,7 +7791,8 @@ ha_innobase::build_template(
 					}
 				}
 
-				templ = build_template_field(
+				ut_d(mysql_row_templ_t*	templ =)
+				build_template_field(
 					m_prebuilt, clust_index, index,
 					table, field, i - num_v, num_v);
 				ut_ad(templ->is_virtual == (ulint)is_v);
@@ -7799,14 +7806,13 @@ ha_innobase::build_template(
 		m_prebuilt->idx_cond = this;
 	} else {
 no_icp:
-		mysql_row_templ_t*	templ;
 		/* No index condition pushdown */
 		m_prebuilt->idx_cond = NULL;
 		ut_ad(num_v == 0);
 
 		for (ulint i = 0; i < n_fields; i++) {
 			const Field*	field = table->field[i];
-			const bool is_v = innobase_is_v_fld(field);
+			const bool is_v = !field->stored_in_db();
 
 			if (whole_row) {
 				if (is_v && skip_virtual) {
@@ -7837,7 +7843,8 @@ no_icp:
 					contain = dict_index_contains_col_or_prefix(
 						index, i - num_v,
 						false);
-				} else if (dict_index_is_clust(index)) {
+				} else if (skip_virtual
+					   || dict_index_is_clust(index)) {
 					num_v++;
 					continue;
 				} else {
@@ -7859,7 +7866,8 @@ no_icp:
 				}
 			}
 
-			templ = build_template_field(
+			ut_d(mysql_row_templ_t* templ =)
+			build_template_field(
 				m_prebuilt, clust_index, index,
 				table, field, i - num_v, num_v);
 			ut_ad(templ->is_virtual == (ulint)is_v);
@@ -8007,6 +8015,16 @@ ha_innobase::write_row(
 		++trx->will_lock;
 	}
 
+#ifdef WITH_WSREP
+	if (wsrep_is_load_multi_commit(m_user_thd))
+	{
+		/* Note that this transaction is still active. */
+		trx_register_for_2pc(m_prebuilt->trx);
+		/* We will need an IX lock on the destination table. */
+		m_prebuilt->sql_stat_start = TRUE;
+	}
+#endif /* WITH_WSREP */
+
 	ins_mode_t	vers_set_fields;
 	/* Handling of Auto-Increment Columns. */
 	if (table->next_number_field && record == table->record[0]) {
@@ -8077,8 +8095,8 @@ ha_innobase::write_row(
 
 		/* We need the upper limit of the col type to check for
 		whether we update the table autoinc counter or not. */
-		col_max_value = innobase_get_int_col_max_value(
-			table->next_number_field);
+		col_max_value =
+			table->next_number_field->get_max_int_value();
 
 		/* Get the value that MySQL attempted to store in the table.*/
 		auto_inc = table->next_number_field->val_uint();
@@ -8153,15 +8171,32 @@ set_max_autoinc:
 				/* This should filter out the negative
 				values set explicitly by the user. */
 				if (auto_inc <= col_max_value) {
-					ut_a(m_prebuilt->autoinc_increment > 0);
 
 					ulonglong	offset;
 					ulonglong	increment;
 					dberr_t		err;
-
-					offset = m_prebuilt->autoinc_offset;
-					increment = m_prebuilt->autoinc_increment;
-
+#ifdef WITH_WSREP
+					/* Applier threads which are processing
+					ROW events and don't go through server
+					level autoinc processing, therefore
+					m_prebuilt autoinc values don't get
+					properly assigned. Fetch values from
+					server side. */
+					if (wsrep_on(m_user_thd) &&
+					    wsrep_thd_exec_mode(m_user_thd) == REPL_RECV)
+					{
+					    wsrep_thd_auto_increment_variables(
+						m_user_thd, &offset, &increment);
+					}
+					else
+					{
+#endif /* WITH_WSREP */
+					    ut_a(m_prebuilt->autoinc_increment > 0);
+					    offset = m_prebuilt->autoinc_offset;
+					    increment = m_prebuilt->autoinc_increment;
+#ifdef WITH_WSREP
+					}
+#endif /* WITH_WSREP */
 					auto_inc = innobase_next_autoinc(
 						auto_inc,
 						1, increment, offset,
@@ -8306,7 +8341,7 @@ calc_row_difference(
 	trx_t* const	trx = prebuilt->trx;
 	doc_id_t	doc_id = FTS_NULL_DOC_ID;
 	ulint		num_v = 0;
-	const bool 	skip_virtual = omits_virtual_cols(*table->s);
+	const bool skip_virtual = ha_innobase::omits_virtual_cols(*table->s);
 
 	ut_ad(!srv_read_only_mode);
 
@@ -8318,8 +8353,9 @@ calc_row_difference(
 
 	for (uint i = 0; i < table->s->fields; i++) {
 		field = table->field[i];
-		const bool is_virtual = innobase_is_v_fld(field);
+		const bool is_virtual = !field->stored_in_db();
 		if (is_virtual && skip_virtual) {
+			num_v++;
 			continue;
 		}
 		dict_col_t* col = is_virtual
@@ -8691,7 +8727,7 @@ wsrep_calc_row_hash(
 		byte true_byte=1;
 
 		const Field* field = table->field[i];
-		if (innobase_is_v_fld(field)) {
+		if (!field->stored_in_db()) {
 			continue;
 		}
 
@@ -8849,12 +8885,33 @@ ha_innobase::update_row(
 		/* A value for an AUTO_INCREMENT column
 		was specified in the UPDATE statement. */
 
+		ulonglong	offset;
+		ulonglong	increment;
+#ifdef WITH_WSREP
+		/* Applier threads which are processing
+		ROW events and don't go through server
+		level autoinc processing, therefore
+		m_prebuilt autoinc values don't get
+		properly assigned. Fetch values from
+		server side. */
+		if (wsrep_on(m_user_thd) &&
+		    wsrep_thd_exec_mode(m_user_thd) == REPL_RECV)
+		{
+		    wsrep_thd_auto_increment_variables(
+			m_user_thd, &offset, &increment);
+		}
+		else
+		{
+#endif /* WITH_WSREP */
+		    offset = m_prebuilt->autoinc_offset;
+		    increment = m_prebuilt->autoinc_increment;
+#ifdef WITH_WSREP
+		}
+#endif /* WITH_WSREP */
+
 		autoinc = innobase_next_autoinc(
-			autoinc, 1,
-			m_prebuilt->autoinc_increment,
-			m_prebuilt->autoinc_offset,
-			innobase_get_int_col_max_value(
-				table->found_next_number_field));
+			autoinc, 1, increment, offset,
+			table->found_next_number_field->get_max_int_value());
 
 		error = innobase_set_max_autoinc(autoinc);
 
@@ -10624,8 +10681,6 @@ create_table_check_doc_id_col(
 					ULINT_UNDEFINED if column is of the
 					wrong type/name/size */
 {
-	ut_ad(!omits_virtual_cols(*form->s));
-
 	for (ulint i = 0; i < form->s->fields; i++) {
 		const Field*	field;
 		ulint		col_type;
@@ -10765,10 +10820,8 @@ innodb_base_col_setup_for_stored(
 	for (uint i= 0; i < field->table->s->fields; ++i) {
 		const Field* base_field = field->table->field[i];
 
-		if (!innobase_is_s_fld(base_field)
-		    && !innobase_is_v_fld(base_field)
-		    && bitmap_is_set(&field->table->tmp_set,
-				     i)) {
+		if (!base_field->vcol_info
+		    && bitmap_is_set(&field->table->tmp_set, i)) {
 			ulint	z;
 			for (z = 0; z < table->n_cols; z++) {
 				const char* name = dict_table_get_col_name(
@@ -10799,7 +10852,6 @@ int
 create_table_info_t::create_table_def()
 {
 	dict_table_t*	table;
-	ulint		n_cols;
 	ulint		col_type;
 	ulint		col_len;
 	ulint		nulls_allowed;
@@ -10807,13 +10859,10 @@ create_table_info_t::create_table_def()
 	ulint		binary_type;
 	ulint		long_true_varchar;
 	ulint		charset_no;
-	ulint		i;
 	ulint		j = 0;
 	ulint		doc_id_col = 0;
 	ibool		has_doc_id_col = FALSE;
 	mem_heap_t*	heap;
-	ulint		num_v = 0;
-	ulint		actual_n_cols;
 	ha_table_option_struct *options= m_form->s->option_struct;
 	dberr_t		err = DB_SUCCESS;
 
@@ -10844,14 +10893,15 @@ create_table_info_t::create_table_def()
 		DBUG_RETURN(ER_WRONG_TABLE_NAME);
 	}
 
-	n_cols = m_form->s->fields;
+	/* Find out the number of virtual columns. */
+	ulint num_v = 0;
+	const bool omit_virtual = ha_innobase::omits_virtual_cols(*m_form->s);
+	const ulint n_cols = omit_virtual
+		? m_form->s->stored_fields : m_form->s->fields;
 
-	/* Find out any virtual column */
-	for (i = 0; i < n_cols; i++) {
-		Field*	field = m_form->field[i];
-
-		if (innobase_is_v_fld(field)) {
-			num_v++;
+	if (!omit_virtual) {
+		for (ulint i = 0; i < n_cols; i++) {
+			num_v += !m_form->field[i]->stored_in_db();
 		}
 	}
 
@@ -10867,10 +10917,8 @@ create_table_info_t::create_table_def()
 	}
 
 	/* Adjust the number of columns for the FTS hidden field */
-	actual_n_cols = n_cols;
-	if (m_flags2 & DICT_TF2_FTS && !has_doc_id_col) {
-		actual_n_cols += 1;
-	}
+	const ulint actual_n_cols = n_cols
+		+ (m_flags2 & DICT_TF2_FTS && !has_doc_id_col);
 
 	table = dict_mem_table_create(m_table_name, NULL,
 				      actual_n_cols, num_v, m_flags, m_flags2);
@@ -10893,10 +10941,7 @@ create_table_info_t::create_table_def()
 
 	heap = mem_heap_create(1000);
 
-	for (i = 0; i < n_cols; i++) {
-		ulint	is_virtual;
-		bool	is_stored = false;
-
+	for (ulint i = 0; i < n_cols; i++) {
 		Field*	field = m_form->field[i];
 		ulint vers_row = 0;
 
@@ -10974,9 +11019,6 @@ create_table_info_t::create_table_def()
 			}
 		}
 
-		is_virtual = (innobase_is_v_fld(field)) ? DATA_VIRTUAL : 0;
-		is_stored = innobase_is_s_fld(field);
-
 		/* First check whether the column to be added has a
 		system reserved name. */
 		if (dict_col_name_is_reserved(field->field_name.str)){
@@ -10989,6 +11031,8 @@ err_col:
 			DBUG_RETURN(HA_ERR_GENERIC);
 		}
 
+		ulint is_virtual = !field->stored_in_db() ? DATA_VIRTUAL : 0;
+
 		if (!is_virtual) {
 			dict_mem_table_add_col(table, heap,
 				field->field_name.str, col_type,
@@ -10999,7 +11043,7 @@ err_col:
 					| vers_row,
 					charset_no),
 				col_len);
-		} else {
+		} else if (!omit_virtual) {
 			dict_mem_table_add_v_col(table, heap,
 				field->field_name.str, col_type,
 				dtype_form_prtype(
@@ -11012,7 +11056,7 @@ err_col:
 				col_len, i, 0);
 		}
 
-		if (is_stored) {
+		if (innobase_is_s_fld(field)) {
 			ut_ad(!is_virtual);
 			/* Added stored column in m_s_cols list. */
 			dict_mem_table_add_s_col(
@@ -11021,12 +11065,12 @@ err_col:
 	}
 
 	if (num_v) {
-		for (i = 0; i < n_cols; i++) {
+		for (ulint i = 0; i < n_cols; i++) {
 			dict_v_col_t*	v_col;
 
-			Field*	field = m_form->field[i];
+			const Field* field = m_form->field[i];
 
-			if (!innobase_is_v_fld(field)) {
+			if (field->stored_in_db()) {
 				continue;
 			}
 
@@ -11040,8 +11084,7 @@ err_col:
 
 	/** Fill base columns for the stored column present in the list. */
 	if (table->s_cols && table->s_cols->size()) {
-
-		for (i = 0; i < n_cols; i++) {
+		for (ulint i = 0; i < n_cols; i++) {
 			Field*  field = m_form->field[i];
 
 			if (!innobase_is_s_fld(field)) {
@@ -11082,8 +11125,8 @@ err_col:
 		if (err == DB_SUCCESS) {
 			err = row_create_table_for_mysql(
 				table, m_trx,
-				(fil_encryption_t)options->encryption,
-				(uint32_t)options->encryption_key_id);
+				fil_encryption_t(options->encryption),
+				uint32_t(options->encryption_key_id));
 			m_drop_before_rollback = (err == DB_SUCCESS);
 		}
 
@@ -11155,17 +11198,17 @@ create_index(
 					      key->user_defined_key_parts);
 
 		for (ulint i = 0; i < key->user_defined_key_parts; i++) {
-			KEY_PART_INFO*	key_part = key->key_part + i;
+			const Field* field = key->key_part[i].field;
 
 			/* We do not support special (Fulltext or Spatial)
 			index on virtual columns */
-			if (innobase_is_v_fld(key_part->field)) {
+			if (!field->stored_in_db()) {
 				ut_ad(0);
 				DBUG_RETURN(HA_ERR_UNSUPPORTED);
 			}
 
-			dict_mem_index_add_field(
-				index, key_part->field->field_name.str, 0);
+			dict_mem_index_add_field(index, field->field_name.str,
+						 0);
 		}
 
 		DBUG_RETURN(convert_error_code_to_mysql(
@@ -11252,7 +11295,7 @@ create_index(
 
 		field_lengths[i] = key_part->length;
 
-		if (innobase_is_v_fld(key_part->field)) {
+		if (!key_part->field->stored_in_db()) {
 			index->type |= DICT_VIRTUAL;
 		}
 
@@ -11503,39 +11546,68 @@ const char*
 create_table_info_t::check_table_options()
 {
 	enum row_type row_format = m_create_info->row_type;
-	ha_table_option_struct *options= m_form->s->option_struct;
-	fil_encryption_t encrypt = (fil_encryption_t)options->encryption;
-	bool should_encrypt = (encrypt == FIL_ENCRYPTION_ON);
+	const ha_table_option_struct *options= m_form->s->option_struct;
 
-	/* Currently we do not support encryption for
-	spatial indexes thus do not allow creating table with forced
-	encryption */
-	for(ulint i = 0; i < m_form->s->keys; i++) {
-		const KEY* key = m_form->key_info + i;
-		if (key->flags & HA_SPATIAL && should_encrypt) {
-			push_warning_printf(m_thd, Sql_condition::WARN_LEVEL_WARN,
-				HA_ERR_UNSUPPORTED,
-				"InnoDB: ENCRYPTED=ON not supported for table because "
-				"it contains spatial index.");
-			return "ENCRYPTED";
+	switch (options->encryption) {
+	case FIL_ENCRYPTION_OFF:
+		if (options->encryption_key_id != FIL_DEFAULT_ENCRYPTION_KEY) {
+			push_warning(
+				m_thd, Sql_condition::WARN_LEVEL_WARN,
+				HA_WRONG_CREATE_OPTION,
+				"InnoDB: ENCRYPTED=NO implies"
+				" ENCRYPTION_KEY_ID=1");
+			compile_time_assert(FIL_DEFAULT_ENCRYPTION_KEY == 1);
+		}
+		if (srv_encrypt_tables != 2) {
+			break;
+		}
+		push_warning(
+			m_thd, Sql_condition::WARN_LEVEL_WARN,
+			HA_WRONG_CREATE_OPTION,
+			"InnoDB: ENCRYPTED=NO cannot be used with"
+			" innodb_encrypt_tables=FORCE");
+		return "ENCRYPTED";
+	case FIL_ENCRYPTION_DEFAULT:
+		if (!srv_encrypt_tables) {
+			break;
+		}
+		/* fall through */
+	case FIL_ENCRYPTION_ON:
+		const uint32_t key_id = uint32_t(options->encryption_key_id);
+		if (!encryption_key_id_exists(key_id)) {
+			push_warning_printf(
+				m_thd, Sql_condition::WARN_LEVEL_WARN,
+				HA_WRONG_CREATE_OPTION,
+				"InnoDB: ENCRYPTION_KEY_ID %u not available",
+				key_id);
+			return "ENCRYPTION_KEY_ID";
+		}
+
+		/* Currently we do not support encryption for spatial indexes.
+		Do not allow ENCRYPTED=YES if any SPATIAL INDEX exists. */
+		if (options->encryption != FIL_ENCRYPTION_ON) {
+			break;
+		}
+		for (ulint i = 0; i < m_form->s->keys; i++) {
+			if (m_form->key_info[i].flags & HA_SPATIAL) {
+				push_warning(m_thd,
+					     Sql_condition::WARN_LEVEL_WARN,
+					     HA_ERR_UNSUPPORTED,
+					     "InnoDB: ENCRYPTED=YES is not"
+					     " supported for SPATIAL INDEX");
+				return "ENCRYPTED";
+			}
 		}
 	}
 
-	if (encrypt != FIL_ENCRYPTION_DEFAULT && !m_allow_file_per_table) {
+	if (!m_allow_file_per_table
+	    && options->encryption != FIL_ENCRYPTION_DEFAULT) {
 		push_warning(
 			m_thd, Sql_condition::WARN_LEVEL_WARN,
 			HA_WRONG_CREATE_OPTION,
 			"InnoDB: ENCRYPTED requires innodb_file_per_table");
 		return "ENCRYPTED";
  	}
-
-	if (encrypt == FIL_ENCRYPTION_OFF && srv_encrypt_tables == 2) {
-		push_warning(
-			m_thd, Sql_condition::WARN_LEVEL_WARN,
-			HA_WRONG_CREATE_OPTION,
-			"InnoDB: ENCRYPTED=OFF cannot be used when innodb_encrypt_tables=FORCE");
-		return "ENCRYPTED";
-	}
 
 	/* Check page compression requirements */
 	if (options->page_compressed) {
@@ -11607,46 +11679,6 @@ create_table_info_t::check_table_options()
 				options->page_compression_level);
 			return "PAGE_COMPRESSION_LEVEL";
 		}
-	}
-
-	/* If encryption is set up make sure that used key_id is found */
-	if (encrypt == FIL_ENCRYPTION_ON ||
-		(encrypt == FIL_ENCRYPTION_DEFAULT && srv_encrypt_tables)) {
-		if (!encryption_key_id_exists((unsigned int)options->encryption_key_id)) {
-			push_warning_printf(
-				m_thd, Sql_condition::WARN_LEVEL_WARN,
-				HA_WRONG_CREATE_OPTION,
-				"InnoDB: ENCRYPTION_KEY_ID %u not available",
-				(uint)options->encryption_key_id
-			);
-			return "ENCRYPTION_KEY_ID";
-		}
-	}
-
-	/* Ignore nondefault key_id if encryption is set off */
-	if (encrypt == FIL_ENCRYPTION_OFF &&
-		options->encryption_key_id != THDVAR(m_thd, default_encryption_key_id)) {
-		push_warning_printf(
-			m_thd, Sql_condition::WARN_LEVEL_WARN,
-			HA_WRONG_CREATE_OPTION,
-			"InnoDB: Ignored ENCRYPTION_KEY_ID %u when encryption is disabled",
-			(uint)options->encryption_key_id
-		);
-		options->encryption_key_id = FIL_DEFAULT_ENCRYPTION_KEY;
-	}
-
-	/* If default encryption is used and encryption is disabled, you may
-	not use nondefault encryption_key_id as it is not stored anywhere. */
-	if (encrypt == FIL_ENCRYPTION_DEFAULT
-	    && !srv_encrypt_tables
-	    && options->encryption_key_id != FIL_DEFAULT_ENCRYPTION_KEY) {
-		compile_time_assert(FIL_DEFAULT_ENCRYPTION_KEY == 1);
-		push_warning_printf(
-			m_thd, Sql_condition::WARN_LEVEL_WARN,
-			HA_WRONG_CREATE_OPTION,
-			"InnoDB: innodb_encrypt_tables=OFF only allows ENCRYPTION_KEY_ID=1"
-			);
-		return "ENCRYPTION_KEY_ID";
 	}
 
 	return NULL;
@@ -12226,19 +12258,17 @@ create_table_info_t::gcols_in_fulltext_or_spatial()
 {
 	for (ulint i = 0; i < m_form->s->keys; i++) {
 		const KEY*	key = m_form->key_info + i;
-		if (key->flags & (HA_SPATIAL | HA_FULLTEXT)) {
-			for (ulint j = 0; j < key->user_defined_key_parts; j++) {
-				const KEY_PART_INFO*	key_part = key->key_part + j;
-
-				/* We do not support special (Fulltext or
-				Spatial) index on virtual columns */
-				if (innobase_is_v_fld(key_part->field)) {
-					my_error(ER_UNSUPPORTED_ACTION_ON_GENERATED_COLUMN, MYF(0));
-					return true;
-				}
+		if (!(key->flags & (HA_SPATIAL | HA_FULLTEXT))) {
+			continue;
+		}
+		for (ulint j = 0; j < key->user_defined_key_parts; j++) {
+			/* We do not support special (Fulltext or
+			Spatial) index on virtual columns */
+			if (!key->key_part[j].field->stored_in_db()) {
+				my_error(ER_UNSUPPORTED_ACTION_ON_GENERATED_COLUMN, MYF(0));
+				return true;
 			}
 		}
-
 	}
 	return false;
 }
@@ -12519,7 +12549,7 @@ create_table_info_t::create_table_update_dict()
 	}
 
 	if (const Field* ai = m_form->found_next_number_field) {
-		ut_ad(!innobase_is_v_fld(ai));
+		ut_ad(ai->stored_in_db());
 
 		ib_uint64_t	autoinc = m_create_info->auto_increment_value;
 
@@ -12957,8 +12987,6 @@ inline int ha_innobase::delete_table(const char* name, enum_sql_command sqlcom)
 		}
 	}
 
-	/* TODO: remove this when the conversion tool from ha_partition to
-	native innodb partitioning is completed */
 	if (err == DB_TABLE_NOT_FOUND
 	    && innobase_get_lower_case_table_names() == 1) {
 		char*	is_part = is_partition(norm_name);
@@ -13306,12 +13334,26 @@ int ha_innobase::truncate()
 	if (!err) {
 		/* Reopen the newly created table, and drop the
 		original table that was renamed to temp_name. */
-		close();
+
+		row_prebuilt_t* prebuilt = m_prebuilt;
+		uchar* upd_buf = m_upd_buf;
+		ulint upd_buf_size = m_upd_buf_size;
+		/* Mimic ha_innobase::close(). */
+		m_prebuilt = NULL;
+		m_upd_buf = NULL;
+		m_upd_buf_size = 0;
 		err = open(name, 0, 0);
 		if (!err) {
 			m_prebuilt->stored_select_lock_type = stored_lock;
 			m_prebuilt->table->update_time = update_time;
+			row_prebuilt_free(prebuilt, FALSE);
 			delete_table(temp_name, SQLCOM_TRUNCATE);
+			my_free(upd_buf);
+		} else {
+			/* Revert to the old table before truncation. */
+			m_prebuilt = prebuilt;
+			m_upd_buf = upd_buf;
+			m_upd_buf_size = upd_buf_size;
 		}
 	}
 
@@ -14469,8 +14511,11 @@ ha_innobase::check(
 	/* We must run the index record counts at an isolation level
 	>= READ COMMITTED, because a dirty read can see a wrong number
 	of records in some index; to play safe, we use always
-	REPEATABLE READ here */
-	m_prebuilt->trx->isolation_level = TRX_ISO_REPEATABLE_READ;
+	REPEATABLE READ here (except when undo logs are unavailable) */
+	m_prebuilt->trx->isolation_level = srv_force_recovery
+		>= SRV_FORCE_NO_UNDO_LOG_SCAN
+		? TRX_ISO_READ_UNCOMMITTED
+		: TRX_ISO_REPEATABLE_READ;
 
 	ut_ad(!m_prebuilt->table->corrupted);
 
@@ -16479,7 +16524,8 @@ ha_innobase::get_auto_increment(
 
 	/* We need the upper limit of the col type to check for
 	whether we update the table autoinc counter or not. */
-	ulonglong	col_max_value = innobase_get_int_col_max_value(table->next_number_field);
+	ulonglong col_max_value =
+			table->next_number_field->get_max_int_value();
 
 	/** The following logic is needed to avoid duplicate key error
 	for autoincrement column.
@@ -16560,10 +16606,9 @@ ha_innobase::get_auto_increment(
 			if (!wsrep_on(m_user_thd)) {
 				current = autoinc
 					- m_prebuilt->autoinc_increment;
+				current = innobase_next_autoinc(
+					current, 1, increment, offset, col_max_value);
 			}
-
-			current = innobase_next_autoinc(
-				current, 1, increment, offset, col_max_value);
 
 			dict_table_autoinc_initialize(
 				m_prebuilt->table, current);

@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2018, MariaDB
+   Copyright (c) 2008, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -545,12 +545,14 @@ void init_update_queries(void)
                                             CF_REEXECUTION_FRAGILE |
                                             CF_AUTO_COMMIT_TRANS |
                                             CF_SCHEMA_CHANGE);
-  sql_command_flags[SQLCOM_CREATE_INDEX]=   CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS;
+  sql_command_flags[SQLCOM_CREATE_INDEX]=   CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS |
+                                            CF_ADMIN_COMMAND | CF_REPORT_PROGRESS;
   sql_command_flags[SQLCOM_ALTER_TABLE]=    CF_CHANGES_DATA | CF_WRITE_LOGS_COMMAND |
                                             CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS |
-                                            CF_INSERTS_DATA;
+                                            CF_INSERTS_DATA | CF_ADMIN_COMMAND;
   sql_command_flags[SQLCOM_ALTER_SEQUENCE]= CF_CHANGES_DATA | CF_WRITE_LOGS_COMMAND |
-                                            CF_AUTO_COMMIT_TRANS | CF_SCHEMA_CHANGE;
+                                            CF_AUTO_COMMIT_TRANS | CF_SCHEMA_CHANGE |
+                                            CF_ADMIN_COMMAND;
   sql_command_flags[SQLCOM_TRUNCATE]=       CF_CHANGES_DATA | CF_WRITE_LOGS_COMMAND |
                                             CF_AUTO_COMMIT_TRANS;
   sql_command_flags[SQLCOM_DROP_TABLE]=     CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS | CF_SCHEMA_CHANGE;
@@ -566,8 +568,9 @@ void init_update_queries(void)
   sql_command_flags[SQLCOM_DROP_PACKAGE_BODY]= CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
   sql_command_flags[SQLCOM_ALTER_DB_UPGRADE]= CF_AUTO_COMMIT_TRANS;
   sql_command_flags[SQLCOM_ALTER_DB]=       CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS | CF_DB_CHANGE;
-  sql_command_flags[SQLCOM_RENAME_TABLE]=   CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
-  sql_command_flags[SQLCOM_DROP_INDEX]=     CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS;
+  sql_command_flags[SQLCOM_RENAME_TABLE]=   CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS | CF_ADMIN_COMMAND;
+  sql_command_flags[SQLCOM_DROP_INDEX]=     CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS |
+                                            CF_REPORT_PROGRESS | CF_ADMIN_COMMAND;
   sql_command_flags[SQLCOM_CREATE_VIEW]=    CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_AUTO_COMMIT_TRANS;
   sql_command_flags[SQLCOM_DROP_VIEW]=      CF_CHANGES_DATA | CF_AUTO_COMMIT_TRANS;
@@ -747,10 +750,14 @@ void init_update_queries(void)
     The following admin table operations are allowed
     on log tables.
   */
-  sql_command_flags[SQLCOM_REPAIR]=    CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS;
-  sql_command_flags[SQLCOM_OPTIMIZE]|= CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS;
-  sql_command_flags[SQLCOM_ANALYZE]=   CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS;
-  sql_command_flags[SQLCOM_CHECK]=     CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS | CF_REPORT_PROGRESS;
+  sql_command_flags[SQLCOM_REPAIR]=    CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS |
+                                       CF_REPORT_PROGRESS | CF_ADMIN_COMMAND;
+  sql_command_flags[SQLCOM_OPTIMIZE]|= CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS |
+                                       CF_REPORT_PROGRESS | CF_ADMIN_COMMAND;
+  sql_command_flags[SQLCOM_ANALYZE]=   CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS |
+                                       CF_REPORT_PROGRESS | CF_ADMIN_COMMAND;
+  sql_command_flags[SQLCOM_CHECK]=     CF_WRITE_LOGS_COMMAND | CF_AUTO_COMMIT_TRANS |
+                                       CF_REPORT_PROGRESS | CF_ADMIN_COMMAND;
   sql_command_flags[SQLCOM_CHECKSUM]=  CF_REPORT_PROGRESS;
 
   sql_command_flags[SQLCOM_CREATE_USER]|=       CF_AUTO_COMMIT_TRANS;
@@ -1638,11 +1645,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     thd->reset_for_next_command();
   thd->set_command(command);
 
-  /*
-    thd->variables.log_slow_disabled_statements defines which statements
-    are logged to slow log
-  */
-  thd->enable_slow_log= thd->variables.sql_log_slow;
+  thd->enable_slow_log= true;
   thd->query_plan_flags= QPLAN_INIT;
   thd->lex->sql_command= SQLCOM_END; /* to avoid confusing VIEW detectors */
   thd->reset_kill_query();
@@ -2086,7 +2089,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
 
       status_var_increment(thd->status_var.com_other);
 
-      thd->prepare_logs_for_admin_command();
+      thd->query_plan_flags|= QPLAN_ADMIN;
       if (check_global_access(thd, REPL_SLAVE_ACL))
 	break;
 
@@ -2442,6 +2445,11 @@ com_multi_end:
     thd->packet.shrink(thd->variables.net_buffer_length); // Reclaim some memory
 
   thd->reset_kill_query();  /* Ensure that killed_errmsg is released */
+  /*
+    LEX::m_sql_cmd can point to Sql_cmd allocated on thd->mem_root.
+    Unlink it now, before freeing the root.
+  */
+  thd->lex->m_sql_cmd= NULL;
   free_root(thd->mem_root,MYF(MY_KEEP_PREALLOC));
 
 #if defined(ENABLED_PROFILING)
@@ -2465,6 +2473,10 @@ com_multi_end:
   DBUG_RETURN(error);
 }
 
+static bool slow_filter_masked(THD *thd, ulonglong mask)
+{
+  return thd->variables.log_slow_filter && !(thd->variables.log_slow_filter & mask);
+}
 
 /*
   Log query to slow queries, if it passes filtering
@@ -2484,35 +2496,63 @@ void log_slow_statement(THD *thd)
   */
   if (unlikely(thd->in_sub_stmt))
     goto end;                           // Don't set time for sub stmt
-  if (!thd->enable_slow_log || !global_system_variables.sql_log_slow)
-    goto end;
+  /*
+    Skip both long_query_count increment and logging if the current
+    statement forces slow log suppression (e.g. an SP statement).
+
+    Note, we don't check for global_system_variables.sql_log_slow here.
+    According to the manual, the "Slow_queries" status variable does not require
+    sql_log_slow to be ON. So even if sql_log_slow is OFF, we still need to
+    continue and increment long_query_count (and skip only logging, see below):
+  */
+  if (!thd->enable_slow_log)
+    goto end; // E.g. SP statement
+
+  DBUG_EXECUTE_IF("simulate_slow_query", {
+                  if (thd->get_command() == COM_QUERY ||
+                      thd->get_command() == COM_STMT_EXECUTE)
+                    thd->server_status|= SERVER_QUERY_WAS_SLOW;
+                  });
 
   if ((thd->server_status &
        (SERVER_QUERY_NO_INDEX_USED | SERVER_QUERY_NO_GOOD_INDEX_USED)) &&
-      !(sql_command_flags[thd->last_sql_command] & CF_STATUS_COMMAND) &&
-      (!thd->variables.log_slow_filter ||
-       (thd->variables.log_slow_filter & QPLAN_NOT_USING_INDEX)))
+      !(thd->query_plan_flags & QPLAN_STATUS) &&
+      !slow_filter_masked(thd, QPLAN_NOT_USING_INDEX))
   {
     thd->query_plan_flags|= QPLAN_NOT_USING_INDEX;
     /* We are always logging no index queries if enabled in filter */
     thd->server_status|= SERVER_QUERY_WAS_SLOW;
   }
 
-  /* Follow the slow log filter configuration. */ 
-  if (thd->variables.log_slow_filter &&
-      !(thd->variables.log_slow_filter & thd->query_plan_flags))
-    goto end; 
-
   if ((thd->server_status & SERVER_QUERY_WAS_SLOW) &&
       thd->get_examined_row_count() >= thd->variables.min_examined_row_limit)
   {
     thd->status_var.long_query_count++;
+
+    /*
+      until log_slow_disabled_statements=admin is removed, it
+      duplicates slow_log_filter=admin
+    */
+    if ((thd->query_plan_flags & QPLAN_ADMIN) &&
+        (thd->variables.log_slow_disabled_statements & LOG_SLOW_DISABLE_ADMIN))
+      goto end;
+
+    if (!global_system_variables.sql_log_slow || !thd->variables.sql_log_slow)
+      goto end;
+
     /*
       If rate limiting of slow log writes is enabled, decide whether to log
       this query to the log or not.
     */ 
     if (thd->variables.log_slow_rate_limit > 1 &&
         (global_query_id % thd->variables.log_slow_rate_limit) != 0)
+      goto end;
+
+    /*
+      Follow the slow log filter configuration:
+      skip logging if the current statement matches the filter.
+    */
+    if (slow_filter_masked(thd, thd->query_plan_flags))
       goto end;
 
     THD_STAGE_INFO(thd, stage_logging_slow_query);
@@ -3682,6 +3722,11 @@ mysql_execute_command(THD *thd)
       goto error;
   }
 
+  if (sql_command_flags[lex->sql_command] & CF_STATUS_COMMAND)
+    thd->query_plan_flags|= QPLAN_STATUS;
+  if (sql_command_flags[lex->sql_command] & CF_ADMIN_COMMAND)
+    thd->query_plan_flags|= QPLAN_ADMIN;
+
   /* Start timeouts */
   thd->set_query_timer();
 
@@ -3745,12 +3790,16 @@ mysql_execute_command(THD *thd)
   case SQLCOM_SHOW_PROFILE:
   case SQLCOM_SELECT:
    {
-#ifdef WITH_WSREP
       if (lex->sql_command == SQLCOM_SELECT)
-        WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_READ)
+        WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_READ);
       else
-        WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_SHOW)
-#endif /* WITH_WSREP */
+      {
+        WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_SHOW);
+#ifdef ENABLED_PROFILING
+        if (lex->sql_command == SQLCOM_SHOW_PROFILE)
+          thd->profiling.discard_current_query();
+#endif
+      }
 
     thd->status_var.last_query_cost= 0.0;
 
@@ -4323,12 +4372,6 @@ end_with_restore_list:
     if (check_one_table_access(thd, INDEX_ACL, all_tables))
       goto error; /* purecov: inspected */
     WSREP_TO_ISOLATION_BEGIN(first_table->db.str, first_table->table_name.str, NULL);
-    /*
-      Currently CREATE INDEX or DROP INDEX cause a full table rebuild
-      and thus classify as slow administrative statements just like
-      ALTER TABLE.
-    */
-    thd->prepare_logs_for_admin_command();
 
     bzero((char*) &create_info, sizeof(create_info));
     create_info.db_type= 0;
@@ -4491,48 +4534,6 @@ end_with_restore_list:
       DBUG_PRINT("debug", ("lex->only_view: %d, table: %s.%s",
                            lex->table_type == TABLE_TYPE_VIEW,
                            first_table->db.str, first_table->table_name.str));
-      if (lex->table_type == TABLE_TYPE_VIEW)
-      {
-        if (check_table_access(thd, SELECT_ACL, first_table, FALSE, 1, FALSE))
-        {
-          DBUG_PRINT("debug", ("check_table_access failed"));
-          my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0),
-                  "SHOW", thd->security_ctx->priv_user,
-                  thd->security_ctx->host_or_ip, first_table->alias.str);
-          goto error;
-        }
-        DBUG_PRINT("debug", ("check_table_access succeeded"));
-
-        /* Ignore temporary tables if this is "SHOW CREATE VIEW" */
-        first_table->open_type= OT_BASE_ONLY;
-      }
-      else
-      {
-        /*
-          Temporary tables should be opened for SHOW CREATE TABLE, but not
-          for SHOW CREATE VIEW.
-        */
-        if (thd->open_temporary_tables(all_tables))
-          goto error;
-
-        /*
-          The fact that check_some_access() returned FALSE does not mean that
-          access is granted. We need to check if first_table->grant.privilege
-          contains any table-specific privilege.
-        */
-        DBUG_PRINT("debug", ("first_table->grant.privilege: %lx",
-                             first_table->grant.privilege));
-        if (check_some_access(thd, SHOW_CREATE_TABLE_ACLS, first_table) ||
-            (first_table->grant.privilege & SHOW_CREATE_TABLE_ACLS) == 0)
-        {
-          my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0),
-                  "SHOW", thd->security_ctx->priv_user,
-                  thd->security_ctx->host_or_ip, first_table->alias.str);
-          goto error;
-        }
-      }
-
-      /* Access is granted. Execute the command.  */
       res= mysqld_show_create(thd, first_table);
       break;
 #endif
@@ -4580,8 +4581,7 @@ end_with_restore_list:
                                   select_lex->order_list.elements,
                                   select_lex->order_list.first,
                                   unit->select_limit_cnt,
-                                  lex->duplicates, lex->ignore,
-                                  &found, &updated);
+                                  lex->ignore, &found, &updated);
     MYSQL_UPDATE_DONE(res, found, updated);
     /* mysql_update return 2 if we need to switch to multi-update */
     if (up_result != 2)
@@ -4885,7 +4885,7 @@ end_with_restore_list:
   case SQLCOM_DELETE:
   {
     WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_UPDATE_DELETE);
-    select_result *sel_result=lex->result;
+    select_result *sel_result= NULL;
     DBUG_ASSERT(first_table == all_tables && first_table != 0);
     if (WSREP_CLIENT(thd) &&
         wsrep_sync_wait(thd, WSREP_SYNC_WAIT_BEFORE_UPDATE_DELETE))
@@ -4916,16 +4916,15 @@ end_with_restore_list:
       }
       else
       {
-        if (!(sel_result= lex->result) &&
-            !(sel_result= new (thd->mem_root) select_send(thd)))
-          return 1;
+        if (!lex->result && !(sel_result= new (thd->mem_root) select_send(thd)))
+          goto error;
       }
     }
 
     res = mysql_delete(thd, all_tables, 
                        select_lex->where, &select_lex->order_list,
                        unit->select_limit_cnt, select_lex->options,
-                       sel_result);
+                       lex->result ? lex->result : sel_result);
 
     if (replaced_protocol)
     {
@@ -6278,8 +6277,6 @@ end_with_restore_list:
       DBUG_ASSERT(first_table == all_tables && first_table != 0);
     /* fall through */
   case SQLCOM_ALTER_SEQUENCE:
-      thd->query_plan_flags|= QPLAN_ADMIN;
-    /* fall through */
   case SQLCOM_SIGNAL:
   case SQLCOM_RESIGNAL:
   case SQLCOM_GET_DIAGNOSTICS:
@@ -6532,8 +6529,8 @@ static bool execute_sqlcom_select(THD *thd, TABLE_LIST *all_tables)
       Protocol *save_protocol= NULL;
       if (lex->analyze_stmt)
       {
-        if (result && result->is_result_interceptor())
-          ((select_result_interceptor*)result)->disable_my_ok_calls();
+        if (result && result->result_interceptor())
+          result->result_interceptor()->disable_my_ok_calls();
         else 
         {
           DBUG_ASSERT(thd->protocol);
@@ -6671,7 +6668,7 @@ static bool check_rename_table(THD *thd, TABLE_LIST *first_table,
                      0, 0))
       return 1;
 
-    /* check if these are refering to temporary tables */
+    /* check if these are referring to temporary tables */
     table->table= find_temporary_table_for_rename(thd, first_table, table);
     table->next_local->table= table->table;
 
@@ -7090,7 +7087,7 @@ static bool check_show_access(THD *thd, TABLE_LIST *table)
       Check_grant will grant access if there is any column privileges on
       all of the tables thanks to the fourth parameter (bool show_table).
     */
-    if (check_grant(thd, SELECT_ACL, dst_table, TRUE, UINT_MAX, FALSE))
+    if (check_grant(thd, SELECT_ACL, dst_table, TRUE, 1, FALSE))
       return TRUE; /* Access denied */
 
     close_thread_tables(thd);
@@ -7655,7 +7652,7 @@ void THD::reset_for_next_command(bool do_clear_error)
   if (opt_bin_log)
     reset_dynamic(&user_var_events);
   DBUG_ASSERT(user_var_events_alloc == &main_mem_root);
-  enable_slow_log= variables.sql_log_slow;
+  enable_slow_log= true;
   get_stmt_da()->reset_for_next_command();
   rand_used= 0;
   m_sent_row_count= m_examined_row_count= 0;
@@ -7737,7 +7734,6 @@ mysql_new_select(LEX *lex, bool move_down, SELECT_LEX *select_lex)
   if (move_down)
   {
     SELECT_LEX_UNIT *unit;
-    lex->subqueries= TRUE;
     /* first select_lex of subselect or derived table */
     if (!(unit= new (thd->mem_root) SELECT_LEX_UNIT()))
       DBUG_RETURN(1);
@@ -9617,7 +9613,7 @@ bool create_table_precheck(THD *thd, TABLE_LIST *tables,
     goto err;
 
   /* If it is a merge table, check privileges for merge children. */
-  if (lex->create_info.merge_list.first)
+  if (lex->create_info.merge_list)
   {
     /*
       The user must have (SELECT_ACL | UPDATE_ACL | DELETE_ACL) on the
@@ -9655,8 +9651,7 @@ bool create_table_precheck(THD *thd, TABLE_LIST *tables,
     */
 
     if (check_table_access(thd, SELECT_ACL | UPDATE_ACL | DELETE_ACL,
-                           lex->create_info.merge_list.first,
-                           FALSE, UINT_MAX, FALSE))
+                           lex->create_info.merge_list, FALSE, UINT_MAX, FALSE))
       goto err;
   }
 
@@ -10084,8 +10079,7 @@ bool parse_sql(THD *thd, Parser_state *parser_state,
     /* Start Digest */
     parser_state->m_digest_psi= MYSQL_DIGEST_START(thd->m_statement_psi);
 
-    if (parser_state->m_input.m_compute_digest ||
-       (parser_state->m_digest_psi != NULL))
+    if (parser_state->m_digest_psi != NULL)
     {
       /*
         If either:

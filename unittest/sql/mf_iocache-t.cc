@@ -50,6 +50,12 @@ uint encryption_key_get_func(uint, uint, uchar* key, uint* size)
   return 0;
 }
 
+uint encryption_ctx_size_func(unsigned int, unsigned int)
+{
+  return MY_AES_CTX_SIZE;
+}
+
+
 #ifdef HAVE_EncryptAes128Gcm
 enum my_aes_mode aes_mode= MY_AES_GCM;
 #else
@@ -73,7 +79,7 @@ struct encryption_service_st encryption_handler=
 {
   encryption_key_get_latest_version_func,
   encryption_key_get_func,
-  (uint (*)(unsigned int, unsigned int))my_aes_ctx_size,
+  encryption_ctx_size_func,
   encryption_ctx_init_func,
   my_aes_crypt_update,
   my_aes_crypt_finish,
@@ -352,7 +358,7 @@ void mdev17133()
       // random size 2nd read
       res= my_b_read(&info, buf_i + total + MY_MIN(19, curr_read_size),
                      19 >= curr_read_size ? 0 : curr_read_size - 19);
-      ok(res == 0, "rest of read %lu", curr_read_size - 19);
+      ok(res == 0, "rest of read %zu", curr_read_size - 19);
       // mark read bytes in the used part of the cache buffer
       memset(info.buffer, 0, info.read_pos - info.buffer);
 

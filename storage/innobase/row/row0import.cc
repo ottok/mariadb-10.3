@@ -661,7 +661,7 @@ dberr_t FetchIndexRootPages::operator()(buf_block_t* block) UNIV_NOTHROW
 		return set_current_xdes(block->page.id.page_no(), page);
 	} else if (fil_page_index_page_check(page)
 		   && !is_free(block->page.id.page_no())
-		   && page_is_root(page)) {
+		   && !page_has_siblings(page)) {
 
 		index_id_t	id = btr_page_get_index_id(page);
 
@@ -1819,9 +1819,9 @@ PageConverter::update_index_page(
 		page, m_page_zip_ptr, m_index->m_srv_index->id, 0);
 
 	if (dict_index_is_clust(m_index->m_srv_index)) {
-		if (page_is_root(page)) {
-			dict_index_t* index = const_cast<dict_index_t*>(
-				m_index->m_srv_index);
+		dict_index_t* index = const_cast<dict_index_t*>(
+			m_index->m_srv_index);
+		if (block->page.id.page_no() == index->page) {
 			/* Preserve the PAGE_ROOT_AUTO_INC. */
 			if (index->table->supports_instant()) {
 				if (btr_cur_instant_root_init(index, page)) {
@@ -1855,7 +1855,7 @@ PageConverter::update_index_page(
 	if (page_is_empty(page)) {
 
 		/* Only a root page can be empty. */
-		if (!page_is_root(page)) {
+		if (page_has_siblings(page)) {
 			// TODO: We should relax this and skip secondary
 			// indexes. Mark them as corrupt because they can
 			// always be rebuilt.
@@ -3066,23 +3066,13 @@ row_import_read_cfg(
 	return(err);
 }
 
-/*****************************************************************//**
-Update the <space, root page> of a table's indexes from the values
-in the data dictionary.
+/** Update the root page numbers and tablespace ID of a table.
+@param[in,out]	trx	dictionary transaction
+@param[in,out]	table	persistent table
+@param[in]	reset	whether to reset the fields to FIL_NULL
 @return DB_SUCCESS or error code */
 dberr_t
-row_import_update_index_root(
-/*=========================*/
-	trx_t*			trx,		/*!< in/out: transaction that
-						covers the update */
-	const dict_table_t*	table,		/*!< in: Table for which we want
-						to set the root page_no */
-	bool			reset,		/*!< in: if true then set to
-						FIL_NUL */
-	bool			dict_locked)	/*!< in: Set to true if the
-						caller already owns the
-						dict_sys_t:: mutex. */
-
+row_import_update_index_root(trx_t* trx, dict_table_t* table, bool reset)
 {
 	const dict_index_t*	index;
 	que_t*			graph = 0;
@@ -3100,9 +3090,7 @@ row_import_update_index_root(
 		"WHERE TABLE_ID = :table_id AND ID = :index_id;\n"
 		"END;\n"};
 
-	if (!dict_locked) {
-		mutex_enter(&dict_sys->mutex);
-	}
+	table->def_trx_id = trx->id;
 
 	for (index = dict_table_get_first_index(table);
 	     index != 0;
@@ -3176,10 +3164,6 @@ row_import_update_index_root(
 	}
 
 	que_graph_free(graph);
-
-	if (!dict_locked) {
-		mutex_exit(&dict_sys->mutex);
-	}
 
 	return(err);
 }
@@ -4115,7 +4099,7 @@ row_import_for_mysql(
 	row_mysql_lock_data_dictionary(trx);
 
 	/* Update the root pages of the table's indexes. */
-	err = row_import_update_index_root(trx, table, false, true);
+	err = row_import_update_index_root(trx, table, false);
 
 	if (err != DB_SUCCESS) {
 		return(row_import_error(prebuilt, trx, err));

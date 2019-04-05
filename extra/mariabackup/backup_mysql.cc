@@ -56,8 +56,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "encryption_plugin.h"
 #include <sstream>
 #include <sql_error.h>
-#include <ut0ut.h>
-
+#include "page0zip.h"
 
 char *tool_name;
 char tool_args[2048];
@@ -69,7 +68,6 @@ unsigned long mysql_server_version = 0;
 /* server capabilities */
 bool have_changed_page_bitmaps = false;
 bool have_backup_locks = false;
-bool have_backup_safe_binlog_info = false;
 bool have_lock_wait_timeout = false;
 bool have_galera_enabled = false;
 bool have_flush_engine_logs = false;
@@ -337,7 +335,6 @@ get_mysql_vars(MYSQL *connection)
 	char *version_comment_var = NULL;
 	char *innodb_version_var = NULL;
 	char *have_backup_locks_var = NULL;
-	char *have_backup_safe_binlog_info_var = NULL;
 	char *log_bin_var = NULL;
 	char *lock_wait_timeout_var= NULL;
 	char *wsrep_on_var = NULL;
@@ -353,6 +350,7 @@ get_mysql_vars(MYSQL *connection)
 	char *innodb_undo_directory_var = NULL;
 	char *innodb_page_size_var = NULL;
 	char *innodb_undo_tablespaces_var = NULL;
+	char *page_zip_level_var = NULL;
 	char *endptr;
 	unsigned long server_version = mysql_get_server_version(connection);
 
@@ -360,8 +358,6 @@ get_mysql_vars(MYSQL *connection)
 
 	mysql_variable mysql_vars[] = {
 		{"have_backup_locks", &have_backup_locks_var},
-		{"have_backup_safe_binlog_info",
-		 &have_backup_safe_binlog_info_var},
 		{"log_bin", &log_bin_var},
 		{"lock_wait_timeout", &lock_wait_timeout_var},
 		{"gtid_mode", &gtid_mode_var},
@@ -382,6 +378,7 @@ get_mysql_vars(MYSQL *connection)
 		{"innodb_undo_directory", &innodb_undo_directory_var},
 		{"innodb_page_size", &innodb_page_size_var},
 		{"innodb_undo_tablespaces", &innodb_undo_tablespaces_var},
+		{"innodb_compression_level", &page_zip_level_var},
 		{NULL, NULL}
 	};
 
@@ -393,21 +390,10 @@ get_mysql_vars(MYSQL *connection)
 	}
 
 	if (opt_binlog_info == BINLOG_INFO_AUTO) {
-
-		if (have_backup_safe_binlog_info_var != NULL)
-			opt_binlog_info = BINLOG_INFO_LOCKLESS;
-		else if (log_bin_var != NULL && !strcmp(log_bin_var, "ON"))
+		if (log_bin_var != NULL && !strcmp(log_bin_var, "ON"))
 			opt_binlog_info = BINLOG_INFO_ON;
 		else
 			opt_binlog_info = BINLOG_INFO_OFF;
-	}
-
-	if (have_backup_safe_binlog_info_var == NULL &&
-	    opt_binlog_info == BINLOG_INFO_LOCKLESS) {
-
-		msg("Error: --binlog-info=LOCKLESS is not supported by the "
-		    "server");
-		return(false);
 	}
 
 	if (lock_wait_timeout_var != NULL) {
@@ -515,7 +501,13 @@ get_mysql_vars(MYSQL *connection)
 	}
 
 	if (innodb_undo_tablespaces_var) {
-		srv_undo_tablespaces = strtoul(innodb_undo_tablespaces_var, &endptr, 10);
+		srv_undo_tablespaces = strtoul(innodb_undo_tablespaces_var,
+					       &endptr, 10);
+		ut_ad(*endptr == 0);
+	}
+
+	if (page_zip_level_var != NULL) {
+		page_zip_level = strtoul(page_zip_level_var, &endptr, 10);
 		ut_ad(*endptr == 0);
 	}
 
@@ -1663,6 +1655,7 @@ bool write_backup_config_file()
 		"innodb_page_size=%lu\n"
 		"innodb_undo_directory=%s\n"
 		"innodb_undo_tablespaces=%lu\n"
+		"innodb_compression_level=%u\n"
 		"%s%s\n"
 		"%s\n",
 		innodb_checksum_algorithm_names[srv_checksum_algorithm],
@@ -1672,6 +1665,7 @@ bool write_backup_config_file()
 		srv_page_size,
 		srv_undo_dir,
 		srv_undo_tablespaces,
+		page_zip_level,
 		innobase_buffer_pool_filename ?
 			"innodb_buffer_pool_filename=" : "",
 		innobase_buffer_pool_filename ?
@@ -1813,4 +1807,3 @@ mdl_unlock_all()
   mysql_close(mdl_con);
   spaceid_to_tablename.clear();
 }
-

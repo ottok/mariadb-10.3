@@ -520,7 +520,7 @@ class Rewritable_query_parameter
     Value of 0 means that this object doesn't have to be replaced
     (for example SP variables in control statements)
   */
-  uint pos_in_query;
+  my_ptrdiff_t pos_in_query;
 
   /*
     Byte length of parameter name in the statement.  This is not
@@ -1208,6 +1208,13 @@ public:
   }
   virtual String *val_nodeset(String*) { return 0; }
 
+  bool eval_const_cond()
+  {
+    DBUG_ASSERT(const_item());
+    DBUG_ASSERT(!is_expensive());
+    return val_bool();
+  }
+
   /*
     save_val() is method of val_* family which stores value in the given
     field.
@@ -1409,6 +1416,16 @@ public:
                      LOWEST_PRECEDENCE);
   }
   virtual void print(String *str, enum_query_type query_type);
+
+  class Print: public String
+  {
+  public:
+    Print(Item *item, enum_query_type type)
+    {
+      item->print(this, type);
+    }
+  };
+
   void print_item_w_name(String *str, enum_query_type query_type);
   void print_value(String *str);
 

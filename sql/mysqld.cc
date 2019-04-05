@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2017, MariaDB Corporation.
+   Copyright (c) 2008, 2019, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -4369,6 +4369,8 @@ static int init_common_variables()
   if (IS_SYSVAR_AUTOSIZE(&server_version_ptr))
     set_server_version(server_version, sizeof(server_version));
 
+  mysql_real_data_home_len= uint(strlen(mysql_real_data_home));
+
   if (!opt_abort)
   {
     if (IS_SYSVAR_AUTOSIZE(&server_version_ptr))
@@ -4761,6 +4763,20 @@ static int init_common_variables()
   }
 
   global_system_variables.in_subquery_conversion_threshold= IN_SUBQUERY_CONVERSION_THRESHOLD;
+
+#ifdef WITH_WSREP
+  /*
+    We need to initialize auxiliary variables, that will be
+    further keep the original values of auto-increment options
+    as they set by the user. These variables used to restore
+    user-defined values of the auto-increment options after
+    setting of the wsrep_auto_increment_control to 'OFF'.
+  */
+  global_system_variables.saved_auto_increment_increment=
+    global_system_variables.auto_increment_increment;
+  global_system_variables.saved_auto_increment_offset=
+    global_system_variables.auto_increment_offset;
+#endif /* WITH_WSREP */
 
   return 0;
 }
@@ -9291,7 +9307,8 @@ mysqld_get_one_option(int optid, const struct my_option *opt, char *argument)
     val= p--;
     while (my_isspace(mysqld_charset, *p) && p > argument)
       *p-- = 0;
-    if (p == argument)
+    /* Db name can be one char also */
+    if (p == argument && my_isspace(mysqld_charset, *p))
     {
       sql_print_error("Bad syntax in replicate-rewrite-db - empty FROM db!\n");
       return 1;
@@ -9753,7 +9770,7 @@ static int get_options(int *argc_ptr, char ***argv_ptr)
     global_system_variables.binlog_format= BINLOG_FORMAT_ROW;
   }
 
-  if (!opt_bootstrap && WSREP_PROVIDER_EXISTS &&
+  if (!opt_bootstrap && WSREP_PROVIDER_EXISTS && WSREP_ON &&
       global_system_variables.binlog_format != BINLOG_FORMAT_ROW)
   {
 
