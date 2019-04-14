@@ -266,21 +266,20 @@ test basic features:
     - mariadb -e "CALL db.p()"
     - mariadb -e "SELECT db.f()"
 
-# Autopkgtest must be disabled, because the test 'upstream' will be skipped and
-# thus the command returns exit code 2 and is considered failed by Gitlab CI.
-# Removing 'breaks-testbed' stanza from tests/control will result in that the
-# test is run on Gitlab CI, but then it will fail in multiple tests as it cannot
-# bind to network interfaces and other needes stuff inside Gitlab CI containers.
-#
+# Stanza 'breaks-testbed' must be removed because the test 'upstream' will otherwise be skipped and
+# thus the command would return exit code 2, and be considered failed by Gitlab CI.
 run autopkgtest:
   stage: test quality
   dependencies:
     - build package
   image: registry.salsa.debian.org/salsa-ci-team/images/autopkgtest:${RELEASE}
   script:
-    - eatmydata autopkgtest -U ${WORKING_DIR}/*.changes -- null || [ $? -eq 8 ]
-  variables:
-      GIT_STRATEGY: none
+    - sed s/breaks-testbed//g -i debian/tests/control
+    - cat debian/tests/control
+    - eatmydata autopkgtest -U --override-control=debian/tests/control ${WORKING_DIR}/*.changes -- null || [ $? -eq 8 ]
+  # Repo needs to be checked out so the debian/tests/control fiel can be modified on-the-fly.
+  #variables:
+  #  GIT_STRATEGY: none
 
 run blhc:
   stage: test extras
@@ -290,7 +289,7 @@ run blhc:
   script:
     - blhc --debian --line-numbers --color ${WORKING_DIR}/*.build || [ $? -eq 1 ]
   variables:
-      GIT_STRATEGY: none
+    GIT_STRATEGY: none
   allow_failure: true
 
 # Build a piece of software that was designed for libmysqlclient-dev but using the
