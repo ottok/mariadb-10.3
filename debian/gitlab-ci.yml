@@ -144,6 +144,7 @@ fresh install:
     paths:
       - ${WORKING_DIR}/debug
   script:
+    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - apt-get update
     # Install MariaDB built in this commit
@@ -151,8 +152,7 @@ fresh install:
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - mariadb --version # Client version
-    - service mysql restart || true # Always proceed even if init failed
-    - service mysql status || true
+    - service mysql status
     - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
@@ -174,14 +174,14 @@ mariadb-10.3.x to mariadb-10.3.y upgrade:
     paths:
       - ${WORKING_DIR}/debug
   script:
+    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - apt-get update
     # Install almost everything currently in Debian Buster
     - apt-get install -y 'default-mysql*' 'mariadb-*' libmariadb3 'libmariadb-*' 'libmariadbd*' 'libmariadbclient-*'
     # Verify installation of MariaDB currently in Debian Buster
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
-    - service mysql status || true # Always proceed even if init failed
-    - service mysql restart || true
+    - service mysql status
     - mariadb --skip-column-names -e "select @@version, @@version_comment"
     - echo 'SHOW DATABASES;' | mysql
     # Install MariaDB built in this commit
@@ -189,8 +189,7 @@ mariadb-10.3.x to mariadb-10.3.y upgrade:
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - mariadb --version # Client version
-    - service mysql restart || true # Always proceed even if init failed
-    - service mysql status || true
+    - service mysql status
     - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
@@ -212,14 +211,14 @@ mariadb-10.1 to mariadb-10.3 upgrade:
     paths:
       - ${WORKING_DIR}/debug
   script:
+    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - apt-get update
     # Install almost everything currently in Debian Stretch
     - apt-get install -y 'default-mysql*' 'mariadb-*' 'libmariadbd*' 'libmariadbclient*'
     # Verify installation of MariaDB from Stretch
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
-    - service mysql status || true # Always proceed even if init failed
-    - service mysql restart || true
+    - service mysql status
     - mysql --skip-column-names -e "select @@version, @@version_comment"
     - echo 'SHOW DATABASES;' | mysql
     # Install MariaDB built in this commit
@@ -228,8 +227,7 @@ mariadb-10.1 to mariadb-10.3 upgrade:
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - mariadb --version # Client version
-    - service mysql restart || true # Always proceed even if init failed
-    - service mysql status || true
+    - service mysql status
     - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
@@ -251,6 +249,7 @@ test basic features:
     paths:
       - ${WORKING_DIR}/debug
   script:
+    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - apt-get update
     # Install MariaDB built in this commit
@@ -258,8 +257,7 @@ test basic features:
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - mariadb --version # Client version
-    - service mysql restart || true # Always proceed even if init failed
-    - service mysql status || true
+    - service mysql status
     - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
@@ -458,13 +456,13 @@ mysql-5.5 to mariadb-10.3 upgrade:
     paths:
       - ${WORKING_DIR}/debug
   script:
+    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - apt-get update
     - apt-get install -y mysql-server
     # Verify installation of MySQL from Jessie
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
-    - service mysql status || true # Always proceed even if init failed
-    - service mysql restart || true
+    - service mysql status
     - mysql --skip-column-names -e "select @@version, @@version_comment"
     - echo 'SHOW DATABASES;' | mysql
     # Install MariaDB built in this commit
@@ -474,8 +472,7 @@ mysql-5.5 to mariadb-10.3 upgrade:
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - mariadb --version # Client version
-    - service mysql restart || true # Always proceed even if init failed
-    - service mysql status || true
+    - service mysql status
     - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
@@ -499,13 +496,13 @@ mysql-5.7 to mariadb-10.3 upgrade:
     paths:
       - ${WORKING_DIR}/debug
   script:
+    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
     - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
     - apt-get update
     - apt-get install -y mysql-server
     # Verify installation of MySQL from Sid
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
-    - service mysql status || true # Always proceed even if init failed
-    - service mysql restart || true
+    - service mysql status
     - mysql --skip-column-names -e "select @@version, @@version_comment"
     - echo 'SHOW DATABASES;' | mysql
     # Install MariaDB built in this commit
@@ -513,8 +510,7 @@ mysql-5.7 to mariadb-10.3 upgrade:
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - mariadb --version # Client version
-    - service mysql restart || true # Always proceed even if init failed
-    - service mysql status || true
+    - service mysql status
     - mkdir -p debug # Ensure dir exists before using it
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
