@@ -503,7 +503,9 @@ mysql-5.7 to mariadb-10.3 upgrade:
     # Verify installation of MySQL from Sid
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
     - service mysql status
-    - mysql --skip-column-names -e "select @@version, @@version_comment"
+    - mysql --skip-column-names -e "SELECT @@version, @@version_comment"
+    - mysql -e "SELECT Host,User,plugin,authentication_string FROM user;" mysql
+    - mysql -e "SELECT * FROM plugin;" mysql
     - echo 'SHOW DATABASES;' | mysql
     # Install MariaDB built in this commit
     - apt-get install -y ./*.deb || true # Allow to proceed so debug artifacts get collected
@@ -515,7 +517,10 @@ mysql-5.7 to mariadb-10.3 upgrade:
     - find /var/lib/mysql -ls > debug/var-lib-mysql.list
     - cp -ra /etc/mysql debug/etc-mysql
     - cp -ra /var/log/mysql debug/var-log-mysql
-    - mariadb --skip-column-names -e "select @@version, @@version_comment" # Show version
+    - sleep 5 # Give the mysql_upgrade a bit of time to complete before querying the server
+    - mysql --skip-column-names -e "SELECT @@version, @@version_comment"
+    - mysql -e "SELECT Host,User,plugin,authentication_string FROM user;" mysql
+    - mysql -e "SELECT * FROM plugin;" mysql
     - echo 'SHOW DATABASES;' | mariadb # List databases before upgrade are still there
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:

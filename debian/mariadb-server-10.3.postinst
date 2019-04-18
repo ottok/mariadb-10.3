@@ -111,11 +111,13 @@ EOF
                                    $ERR_LOGGER
     set -e
 
-
-    # Create the credentials file if not present. On all new installs the
-    # root account can be used directly for maintenance authenticated by
-    # unix socket and on new installs there is no need to define a
-    # separate Debian maintenance user account.
+    # On new installations root user can connect via unix_socket.
+    # But on upgrades, scripts rely on debian-sys-maint user and
+    # credentials in /etc/mysql/debian.cnf
+    # All tools use --defaults-file=/etc/mysql/debian.cnf
+    # And while it's not needed for new installations, we keep using
+    # --defaults-file option for tools (for the sake of upgrades)
+    # and thus need /etc/mysql/debian.cnf to exist, even if it's empty.
     dc=$mysql_cfgdir/debian.cnf;
     if [ ! -d "$mysql_cfgdir" ]; then
       install -o 0 -g 0 -m 0755 -d $mysql_cfgdir
@@ -137,20 +139,9 @@ EOF
       echo "socket   = $mysql_rundir/mysqld.sock"                        >>$dc
       echo "basedir  = /usr"                                             >>$dc
     fi
-    # If this dir chmod go+w then the admin did it. But this file should not.
+    # Keep it only root-readable, as it always was
     chown 0:0 $dc
     chmod 0600 $dc
-
-    # Update password column format
-    # Rename auth_socket potentially left over from a MySQL installation
-    password_column_fix_query=`/bin/echo -e \
-      "USE mysql;\n" \
-      "SET sql_log_bin=0;\n" \
-      "UPDATE user SET plugin='unix_socket' WHERE plugin='auth_socket';\n" \
-      "ALTER TABLE user CHANGE Password Password char(41) character set latin1 collate latin1_bin DEFAULT '' NOT NULL;"`
-
-    # NOTE: $MYSQL_BOOTSTRAP requires one SQL statement per line, semicolon at the end.
-    echo "$password_column_fix_query" | $MYSQL_BOOTSTRAP 2>&1 | $ERR_LOGGER
 
   ;;
 
