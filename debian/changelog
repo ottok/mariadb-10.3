@@ -1,13 +1,17 @@
-mariadb-10.3 (1:10.3.14-1) unstable; urgency=medium
+mariadb-10.3 (1:10.3.14-1) UNRELEASED; urgency=medium
 
   [ Otto Kekäläinen ]
   * Rename and re-organize gitlab-ci.yml stages
+  * Refactor gitlab-ci.yml to be optimal for a life in Buster
   * Ensure cmake builds also apply CPPFLAGS flags for hardening to fully work
   * New upstream version 10.3.14. Includes MariaDB Connector C 3.0.10 which
     includes an improved impelemntation of mysql_real_connect() that respects
     the my.cnf "host" option (Closes: #921599). This upstream release also
     fixes an indexes problem on import dump SQL (MDEV-18577) and many other
     InnoDB corruption issues (Closes: #924498).
+  * Enable automatic restarts from maint scripts in gitlab-ci.yml
+  * Automate renaming MySQL auth_socket correctly in mysql_upgrade
+    (Closes: #926231)
 
   [ Andreas Beckmann ]
   * Use piuparts with --testdebs-repo so dependencies of each install resolve
