@@ -1,4 +1,4 @@
-mariadb-10.3 (1:10.3.14-1) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.14-1) unstable; urgency=medium
 
   [ Otto Kekäläinen ]
   * Rename and re-organize gitlab-ci.yml stages
@@ -16,7 +16,7 @@ mariadb-10.3 (1:10.3.14-1) UNRELEASED; urgency=medium
   [ Andreas Beckmann ]
   * Use piuparts with --testdebs-repo so dependencies of each install resolve
 
- -- Otto Kekäläinen <otto@debian.org>  Mon, 15 Apr 2019 09:29:26 +0300
+ -- Otto Kekäläinen <otto@debian.org>  Fri, 19 Apr 2019 14:38:26 +0300
 
 mariadb-10.3 (1:10.3.13-2) unstable; urgency=medium
 
