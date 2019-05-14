@@ -831,7 +831,8 @@ bool st_select_lex_unit::prepare(TABLE_LIST *derived_arg,
   bool is_union_select;
   bool have_except= FALSE, have_intersect= FALSE;
   bool instantiate_tmp_table= false;
-  bool single_tvc= !first_sl->next_select() && first_sl->tvc;
+  bool single_tvc= !first_sl->next_select() && first_sl->tvc &&
+                   !fake_select_lex;
   DBUG_ENTER("st_select_lex_unit::prepare");
   DBUG_ASSERT(thd == current_thd);
 
@@ -986,7 +987,23 @@ bool st_select_lex_unit::prepare(TABLE_LIST *derived_arg,
   {
     if (sl->tvc)
     {
-      if (sl->tvc->prepare(thd, sl, tmp_result, this))
+      if (sl->tvc->to_be_wrapped_as_with_tail() &&
+          !(thd->lex->context_analysis_only & CONTEXT_ANALYSIS_ONLY_VIEW))
+
+      {
+        st_select_lex *wrapper_sl= wrap_tvc_with_tail(thd, sl);
+        if (!wrapper_sl)
+          goto err;
+
+        if (sl == first_sl)
+          first_sl= wrapper_sl;
+        sl= wrapper_sl;
+
+        if (prepare_join(thd, sl, tmp_result, additional_options,
+                         is_union_select))
+	  goto err;
+      }
+      else if (sl->tvc->prepare(thd, sl, tmp_result, this))
 	goto err;
     }
     else if (prepare_join(thd, sl, tmp_result, additional_options,
@@ -2048,4 +2065,44 @@ void st_select_lex_unit::set_unique_exclude()
       unit->set_unique_exclude();
     }
   }
+}
+
+/**
+  @brief
+  Check if the derived table is guaranteed to have distinct rows because of
+  UNION operations used to populate it.
+
+  @detail
+    UNION operation removes duplicate rows from its output. That is, a query like
+
+      select * from t1 UNION select * from t2
+
+    will not produce duplicate rows in its output, even if table t1 (and/or t2)
+    contain duplicate rows. EXCEPT and INTERSECT operations also have this
+    property.
+
+    On the other hand, UNION ALL operation doesn't remove duplicates. (The SQL
+    standard also defines EXCEPT ALL and INTERSECT ALL, but we don't support
+    them).
+
+    st_select_lex_unit computes its value left to right. That is, if there is
+     a st_select_lex_unit object describing
+
+      (select #1) OP1 (select #2) OP2 (select #3)
+
+    then ((select #1) OP1 (select #2)) is computed first, and OP2 is computed
+    second.
+
+    How can one tell if st_select_lex_unit is guaranteed to have distinct
+    output rows? This depends on whether the last operation was duplicate-
+    removing or not:
+    - UNION ALL is not duplicate-removing
+    - all other operations are duplicate-removing
+*/
+
+bool st_select_lex_unit::check_distinct_in_union()
+{
+  if (union_distinct && !union_distinct->next_select())
+    return true;
+  return false;
 }

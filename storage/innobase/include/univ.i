@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2018, MariaDB Corporation.
+Copyright (c) 2013, 2019, MariaDB Corporation.
 Copyright (c) 2008, Google Inc.
 
 Portions of this file contain modifications contributed and copyrighted by
@@ -52,8 +52,6 @@ component, i.e. we show M.N.P as M.N */
 	IB_TO_STR(MYSQL_VERSION_MAJOR) "."	\
 	IB_TO_STR(MYSQL_VERSION_MINOR) "."	\
 	IB_TO_STR(MYSQL_VERSION_PATCH)
-
-#define REFMAN "http://dev.mysql.com/doc/refman/5.7/en/"
 
 /** How far ahead should we tell the service manager the timeout
 (time in seconds) */
@@ -205,9 +203,6 @@ using the call command. */
 this will break redo log file compatibility, but it may be useful when
 debugging redo log application problems. */
 #define UNIV_IBUF_DEBUG				/* debug the insert buffer */
-#define UNIV_IBUF_COUNT_DEBUG			/* debug the insert buffer;
-this limits the database to IBUF_COUNT_N_SPACES and IBUF_COUNT_N_PAGES,
-and the insert buffer must be empty when the database is started */
 #define UNIV_PERF_DEBUG                         /* debug flag that enables
                                                 light weight performance
                                                 related stuff. */

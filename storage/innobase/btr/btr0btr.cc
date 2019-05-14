@@ -237,7 +237,7 @@ btr_root_block_get(
 			"Table %s in file %s is encrypted but encryption service or"
 			" used key_id is not available. "
 			" Can't continue reading table.",
-			index->table->name,
+			index->table->name.m_name,
 			UT_LIST_GET_FIRST(index->table->space->chain)->name);
 
 		return NULL;
@@ -273,11 +273,6 @@ btr_root_get(
 	And block the segment list access by others.*/
 	buf_block_t* root = btr_root_block_get(index, RW_SX_LATCH,
 					       mtr);
-
-	if (root && root->page.encrypted == true) {
-		root = NULL;
-	}
-
 	return(root ? buf_block_get_frame(root) : NULL);
 }
 
@@ -719,159 +714,56 @@ btr_page_free_for_ibuf(
 			    mtr));
 }
 
-/**************************************************************//**
-Frees a file page used in an index tree. Can be used also to (BLOB)
-external storage pages. */
-void
-btr_page_free_low(
-/*==============*/
-	dict_index_t*	index,	/*!< in: index tree */
-	buf_block_t*	block,	/*!< in: block to be freed, x-latched */
-	ulint		level,	/*!< in: page level (ULINT_UNDEFINED=BLOB) */
-	bool		blob,   /*!< in: blob page */
-	mtr_t*		mtr)	/*!< in: mtr */
+/** Free an index page.
+@param[in,out]	index	index tree
+@param[in,out]	block	block to be freed
+@param[in,out]	mtr	mini-transaction
+@param[in]	blob	whether this is freeing a BLOB page */
+void btr_page_free(dict_index_t* index, buf_block_t* block, mtr_t* mtr,
+		   bool blob)
 {
-	fseg_header_t*	seg_header;
-	page_t*		root;
-
 	ut_ad(mtr_memo_contains(mtr, block, MTR_MEMO_PAGE_X_FIX));
+#ifdef BTR_CUR_HASH_ADAPT
+	ut_ad(!block->index || !blob);
+	ut_ad(!block->index || page_is_leaf(block->frame));
+#endif
+	ut_ad(index->table->space_id == block->page.id.space());
+	/* The root page is freed by btr_free_root(). */
+	ut_ad(block->page.id.page_no() != index->page);
+	ut_ad(mtr->is_named_space(index->table->space));
+
 	/* The page gets invalid for optimistic searches: increment the frame
 	modify clock */
 
 	buf_block_modify_clock_inc(block);
 
-	if (blob) {
-		ut_a(level == 0);
-	}
-
-	bool scrub = srv_immediate_scrub_data_uncompressed;
-	/* scrub page */
-	if (scrub && blob) {
-		/* blob page: scrub entire page */
-		// TODO(jonaso): scrub only what is actually needed
-		page_t* page = buf_block_get_frame(block);
-		memset(page + PAGE_HEADER, 0,
-		       srv_page_size - PAGE_HEADER);
-#ifdef UNIV_DEBUG_SCRUBBING
-		fprintf(stderr,
-			"btr_page_free_low: scrub blob page %lu/%lu\n",
-			buf_block_get_space(block),
-			buf_block_get_page_no(block));
-#endif /* UNIV_DEBUG_SCRUBBING */
-	} else if (scrub) {
-		/* scrub records on page */
-
-		/* TODO(jonaso): in theory we could clear full page
-		* but, since page still remains in buffer pool, and
-		* gets flushed etc. Lots of routines validates consistency
-		* of it. And in order to remain structurally consistent
-		* we clear each record by it own
-		*
-		* NOTE: The TODO below mentions removing page from buffer pool
-		* and removing redo entries, once that is done, clearing full
-		* pages should be possible
-		*/
-		uint cnt = 0;
-		ulint bytes = 0;
-		page_t* page = buf_block_get_frame(block);
-		mem_heap_t* heap = NULL;
-		ulint* offsets = NULL;
-		rec_t* rec = page_rec_get_next(page_get_infimum_rec(page));
-		while (!page_rec_is_supremum(rec)) {
-			offsets = rec_get_offsets(rec, index, offsets,
-						  page_is_leaf(page),
-						  ULINT_UNDEFINED,
-						  &heap);
-			ulint size = rec_offs_data_size(offsets);
-			memset(rec, 0, size);
-			rec = page_rec_get_next(rec);
-			cnt++;
-			bytes += size;
-		}
-#ifdef UNIV_DEBUG_SCRUBBING
-		fprintf(stderr,
-			"btr_page_free_low: scrub %lu/%lu - "
-			"%u records " ULINTPF " bytes\n",
-			buf_block_get_space(block),
-			buf_block_get_page_no(block),
-			cnt, bytes);
-#endif /* UNIV_DEBUG_SCRUBBING */
-		if (heap) {
-			mem_heap_free(heap);
-		}
-	}
-
-#ifdef UNIV_DEBUG_SCRUBBING
-	if (scrub == false) {
-		fprintf(stderr,
-			"btr_page_free_low %lu/%lu blob: %u\n",
-			buf_block_get_space(block),
-			buf_block_get_page_no(block),
-			blob);
-	}
-#endif /* UNIV_DEBUG_SCRUBBING */
-
 	if (dict_index_is_ibuf(index)) {
-
 		btr_page_free_for_ibuf(index, block, mtr);
-
 		return;
 	}
 
-	root = btr_root_get(index, mtr);
-
-	if (level == 0 || level == ULINT_UNDEFINED) {
-		seg_header = root + PAGE_HEADER + PAGE_BTR_SEG_LEAF;
-	} else {
-		seg_header = root + PAGE_HEADER + PAGE_BTR_SEG_TOP;
-	}
-
-#ifdef UNIV_GIS_DEBUG
-	if (dict_index_is_spatial(index)) {
-		fprintf(stderr, "GIS_DIAG: Freed  %ld\n",
-			(long) block->page.id.page_no());
-	}
-#endif
-
-	if (scrub) {
-		/**
-		* Reset page type so that scrub thread won't try to scrub it
-		*/
-		mlog_write_ulint(buf_block_get_frame(block) + FIL_PAGE_TYPE,
-				 FIL_PAGE_TYPE_ALLOCATED, MLOG_2BYTES, mtr);
-	}
-
+	/* TODO: Discard any operations for block from mtr->log.
+	The page will be freed, so previous changes to it by this
+	mini-transaction should not matter. */
+	page_t* root = btr_root_get(index, mtr);
+	fseg_header_t* seg_header = &root[blob || page_is_leaf(block->frame)
+					  ? PAGE_HEADER + PAGE_BTR_SEG_LEAF
+					  : PAGE_HEADER + PAGE_BTR_SEG_TOP];
 	fseg_free_page(seg_header,
-		       block->page.id.space(),
-		       block->page.id.page_no(),
-		       level != ULINT_UNDEFINED, mtr);
+		       index->table->space, block->page.id.page_no(),
+		       block->index != NULL, mtr);
 
 	/* The page was marked free in the allocation bitmap, but it
-	should remain buffer-fixed until mtr_commit(mtr) or until it
+	should remain exclusively latched until mtr_t::commit() or until it
 	is explicitly freed from the mini-transaction. */
 	ut_ad(mtr_memo_contains(mtr, block, MTR_MEMO_PAGE_X_FIX));
-	/* TODO: Discard any operations on the page from the redo log
-	and remove the block from the flush list and the buffer pool.
-	This would free up buffer pool earlier and reduce writes to
-	both the tablespace and the redo log. */
-}
 
-/**************************************************************//**
-Frees a file page used in an index tree. NOTE: cannot free field external
-storage pages because the page must contain info on its level. */
-void
-btr_page_free(
-/*==========*/
-	dict_index_t*	index,	/*!< in: index tree */
-	buf_block_t*	block,	/*!< in: block to be freed, x-latched */
-	mtr_t*		mtr)	/*!< in: mtr */
-{
-	const page_t*	page	= buf_block_get_frame(block);
-	ulint		level	= btr_page_get_level(page);
-
-	ut_ad(fil_page_index_page_check(block->frame));
-	ut_ad(level != ULINT_UNDEFINED);
-	btr_page_free_low(index, block, level, false, mtr);
+	if (srv_immediate_scrub_data_uncompressed) {
+		/* In MDEV-15528 this call must be removed, and we should
+		zero out the page after the redo log for this mini-transaction
+		has been durably written. */
+		fsp_init_file_page(index->table->space, block, mtr);
+	}
 }
 
 /**************************************************************//**
@@ -1081,17 +973,17 @@ void btr_page_get_father(dict_index_t* index, buf_block_t* block, mtr_t* mtr,
 	mem_heap_free(heap);
 }
 
+/** PAGE_INDEX_ID value for freed index B-trees */
+static const index_id_t	BTR_FREED_INDEX_ID = 0;
+
 /** Free a B-tree root page. btr_free_but_not_root() must already
 have been called.
 In a persistent tablespace, the caller must invoke fsp_init_file_page()
 before mtr.commit().
-@param[in,out]	block	index root page
-@param[in,out]	mtr	mini-transaction */
-static
-void
-btr_free_root(
-	buf_block_t*	block,
-	mtr_t*		mtr)
+@param[in,out]	block		index root page
+@param[in,out]	mtr		mini-transaction
+@param[in]	invalidate	whether to invalidate PAGE_INDEX_ID */
+static void btr_free_root(buf_block_t* block, mtr_t* mtr, bool invalidate)
 {
 	fseg_header_t*	header;
 
@@ -1105,29 +997,16 @@ btr_free_root(
 #ifdef UNIV_BTR_DEBUG
 	ut_a(btr_root_fseg_validate(header, block->page.id.space()));
 #endif /* UNIV_BTR_DEBUG */
+	if (invalidate) {
+		btr_page_set_index_id(
+			buf_block_get_frame(block),
+			buf_block_get_page_zip(block),
+			BTR_FREED_INDEX_ID, mtr);
+	}
 
 	while (!fseg_free_step(header, true, mtr)) {
 		/* Free the entire segment in small steps. */
 	}
-}
-
-/** PAGE_INDEX_ID value for freed index B-trees */
-static const index_id_t	BTR_FREED_INDEX_ID = 0;
-
-/** Invalidate an index root page so that btr_free_root_check()
-will not find it.
-@param[in,out]	block	index root page
-@param[in,out]	mtr	mini-transaction */
-static
-void
-btr_free_root_invalidate(
-	buf_block_t*	block,
-	mtr_t*		mtr)
-{
-	btr_page_set_index_id(
-		buf_block_get_frame(block),
-		buf_block_get_page_zip(block),
-		BTR_FREED_INDEX_ID, mtr);
 }
 
 /** Prepare to free a B-tree.
@@ -1247,11 +1126,8 @@ btr_create(
 				 PAGE_HEADER + PAGE_BTR_SEG_LEAF, mtr)) {
 			/* Not enough space for new segment, free root
 			segment before return. */
-			btr_free_root(block, mtr);
-			if (!index->table->is_temporary()) {
-				btr_free_root_invalidate(block, mtr);
-			}
-
+			btr_free_root(block, mtr,
+				      !index->table->is_temporary());
 			return(FIL_NULL);
 		}
 
@@ -1424,8 +1300,7 @@ btr_free_if_exists(
 
 	btr_free_but_not_root(root, mtr->get_log_mode());
 	mtr->set_named_space_id(page_id.space());
-	btr_free_root(root, mtr);
-	btr_free_root_invalidate(root, mtr);
+	btr_free_root(root, mtr, true);
 }
 
 /** Free an index tree in a temporary tablespace or during TRUNCATE TABLE.
@@ -1445,7 +1320,7 @@ btr_free(
 
 	if (block) {
 		btr_free_but_not_root(block, MTR_LOG_NO_REDO);
-		btr_free_root(block, &mtr);
+		btr_free_root(block, &mtr, false);
 	}
 	mtr.commit();
 }
@@ -4917,13 +4792,6 @@ btr_validate_level(
 	block = btr_root_block_get(index, RW_SX_LATCH, &mtr);
 	page = buf_block_get_frame(block);
 
-#ifdef UNIV_DEBUG
-	if (dict_index_is_spatial(index)) {
-		fprintf(stderr, "Root page no: %lu\n",
-			(ulong) page_get_page_no(page));
-	}
-#endif
-
 	fil_space_t*		space	= index->table->space;
 	const page_size_t	table_page_size(
 		dict_table_page_size(index->table));
@@ -5430,8 +5298,8 @@ btr_validate_index(
 
 	page_t*	root = btr_root_get(index, &mtr);
 
-	if (root == NULL && !index->is_readable()) {
-		err = DB_DECRYPTION_FAILED;
+	if (!root) {
+		err = DB_CORRUPTION;
 		mtr_commit(&mtr);
 		return err;
 	}

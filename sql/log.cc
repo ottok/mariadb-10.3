@@ -7903,6 +7903,7 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
     */
     for (current= queue; current != NULL; current= current->next)
     {
+      set_current_thd(current->thd);
       binlog_cache_mngr *cache_mngr= current->cache_mngr;
 
       /*
@@ -7938,6 +7939,7 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
         cache_mngr->delayed_error= false;
       }
     }
+    set_current_thd(leader->thd);
 
     bool synced= 0;
     if (unlikely(flush_and_sync(&synced)))
@@ -8642,14 +8644,14 @@ void sql_perror(const char *message)
   redirect stdout and stderr to a file. The streams are reopened
   only for appending (writing at end of file).
 */
-extern "C" my_bool reopen_fstreams(const char *filename,
-                                   FILE *outstream, FILE *errstream)
+bool reopen_fstreams(const char *filename, FILE *outstream, FILE *errstream)
 {
-  if (outstream && !my_freopen(filename, "a", outstream))
+  if ((outstream && !my_freopen(filename, "a", outstream)) ||
+      (errstream && !my_freopen(filename, "a", errstream)))
+  {
+    my_error(ER_CANT_CREATE_FILE, MYF(0), filename, errno);
     return TRUE;
-
-  if (errstream && !my_freopen(filename, "a", errstream))
-    return TRUE;
+  }
 
   /* The error stream must be unbuffered. */
   if (errstream)
