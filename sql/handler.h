@@ -1,8 +1,8 @@
 #ifndef HANDLER_INCLUDED
 #define HANDLER_INCLUDED
 /*
-   Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2018, MariaDB
+   Copyright (c) 2000, 2019, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License
@@ -2219,6 +2219,7 @@ public:
   inplace_alter_handler_ctx() {}
 
   virtual ~inplace_alter_handler_ctx() {}
+  virtual void set_shared_data(const inplace_alter_handler_ctx& ctx) {}
 };
 
 
@@ -2780,6 +2781,7 @@ public:
   time_t check_time;
   time_t update_time;
   uint block_size;			/* index block size */
+  ha_checksum checksum;
 
   /*
     number of buffer bytes that native mrr implementation needs,
@@ -3804,7 +3806,7 @@ public:
   virtual uint max_supported_key_part_length() const { return 255; }
   virtual uint min_record_length(uint options) const { return 1; }
 
-  virtual uint checksum() const { return 0; }
+  virtual int calculate_checksum();
   virtual bool is_crashed() const  { return 0; }
   virtual bool auto_repair(int error) const { return 0; }
 

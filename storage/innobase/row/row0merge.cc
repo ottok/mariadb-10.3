@@ -453,7 +453,7 @@ row_merge_buf_redundant_convert(
 	ut_ad(field_len <= len);
 
 	if (row_field->ext) {
-		const byte*	field_data = static_cast<byte*>(
+		const byte*	field_data = static_cast<const byte*>(
 			dfield_get_data(row_field));
 		ulint		ext_len;
 
@@ -483,7 +483,7 @@ row_merge_buf_redundant_convert(
 @param[in]	old_table	original table
 @param[in]	new_table	new table
 @param[in,out]	psort_info	parallel sort info
-@param[in]	row		table row
+@param[in,out]	row		table row
 @param[in]	ext		cache of externally stored
 				column prefixes, or NULL
 @param[in,out]	doc_id		Doc ID if we are creating
@@ -505,7 +505,7 @@ row_merge_buf_add(
 	const dict_table_t*	old_table,
 	const dict_table_t*	new_table,
 	fts_psort_t*		psort_info,
-	const dtuple_t*		row,
+	dtuple_t*		row,
 	const row_ext_t*	ext,
 	doc_id_t*		doc_id,
 	mem_heap_t*		conv_heap,
@@ -642,7 +642,7 @@ row_merge_buf_add(
 						row,
 						index->table->fts->doc_col);
 					*doc_id = (doc_id_t) mach_read_from_8(
-						static_cast<byte*>(
+						static_cast<const byte*>(
 						dfield_get_data(doc_field)));
 
 					if (*doc_id == 0) {
@@ -1094,7 +1094,7 @@ row_merge_read(
 	DBUG_EXECUTE_IF("row_merge_read_failure", DBUG_RETURN(FALSE););
 
 	IORequest	request(IORequest::READ);
-	const bool	success = os_file_read_no_error_handling(
+	const bool	success = DB_SUCCESS == os_file_read_no_error_handling(
 		request, fd, buf, ofs, srv_sort_buf_size, 0);
 
 	/* If encryption is enabled decrypt buffer */
@@ -1156,7 +1156,7 @@ row_merge_write(
 	}
 
 	IORequest	request(IORequest::WRITE);
-	const bool	success = os_file_write(
+	const bool	success = DB_SUCCESS == os_file_write(
 		request, "(merge)", fd, out_buf, ofs, buf_len);
 
 #ifdef POSIX_FADV_DONTNEED
@@ -1935,7 +1935,7 @@ row_merge_read_clustered_index(
 		const rec_t*	rec;
 		trx_id_t	rec_trx_id;
 		ulint*		offsets;
-		const dtuple_t*	row;
+		dtuple_t*	row;
 		row_ext_t*	ext;
 		page_cur_t*	cur	= btr_pcur_get_page_cur(&pcur);
 
@@ -2244,9 +2244,8 @@ end_of_index:
 				history_row = dfield->vers_history_row();
 			}
 
-			dfield_t*	dfield;
-
-			dfield = dtuple_get_nth_field(row, add_autoinc);
+			dfield_t* dfield = dtuple_get_nth_field(row,
+								add_autoinc);
 
 			if (new_table->versioned()) {
 				if (history_row) {
@@ -2871,9 +2870,7 @@ wait_again:
 				     false, true, false);
 
 		if (err == DB_SUCCESS) {
-			fts_update_next_doc_id(
-				0, new_table,
-				old_table->name.m_name, max_doc_id);
+			fts_update_next_doc_id(NULL, new_table, max_doc_id);
 		}
 	}
 
@@ -4208,7 +4205,6 @@ row_merge_rename_index_to_add(
 		"WHERE TABLE_ID = :tableid AND ID = :indexid;\n"
 		"END;\n";
 
-	ut_ad(trx);
 	ut_a(trx->dict_operation_lock_mode == RW_X_LATCH);
 	ut_ad(trx_get_dict_operation(trx) == TRX_DICT_OP_INDEX);
 
@@ -4262,7 +4258,6 @@ row_merge_rename_index_to_drop(
 		"WHERE TABLE_ID = :tableid AND ID = :indexid;\n"
 		"END;\n";
 
-	ut_ad(trx);
 	ut_a(trx->dict_operation_lock_mode == RW_X_LATCH);
 	ut_ad(trx_get_dict_operation(trx) == TRX_DICT_OP_INDEX);
 
@@ -4521,17 +4516,14 @@ row_merge_drop_table(
 that redo-logging of individual index pages was disabled, and
 the flushing of such pages to the data files was completed.
 @param[in]	index	an index tree on which redo logging was disabled */
-static
-void
-row_merge_write_redo(
-	const dict_index_t*	index)
+void row_merge_write_redo(const dict_index_t* index)
 {
-	mtr_t	mtr;
-	byte*	log_ptr;
-
 	ut_ad(!index->table->is_temporary());
+	ut_ad(!(index->type & (DICT_SPATIAL | DICT_FTS)));
+
+	mtr_t mtr;
 	mtr.start();
-	log_ptr = mlog_open(&mtr, 11 + 8);
+	byte* log_ptr = mlog_open(&mtr, 11 + 8);
 	log_ptr = mlog_write_initial_log_record_low(
 		MLOG_INDEX_LOAD,
 		index->table->space_id, index->page, log_ptr, &mtr);
@@ -4938,23 +4930,28 @@ wait_again:
 		if (indexes[i]->type & DICT_FTS) {
 			row_fts_psort_info_destroy(psort_info, merge_info);
 			fts_psort_initiated = false;
-		} else if (error != DB_SUCCESS || !online) {
-			/* Do not apply any online log. */
+		} else if (dict_index_is_spatial(indexes[i])) {
+			/* We never disable redo logging for
+			creating SPATIAL INDEX. Avoid writing any
+			unnecessary MLOG_INDEX_LOAD record. */
 		} else if (old_table != new_table) {
 			ut_ad(!sort_idx->online_log);
 			ut_ad(sort_idx->online_status
 			      == ONLINE_INDEX_COMPLETE);
-		} else {
-			if (dict_index_is_spatial(indexes[i])) {
-				/* We never disable redo logging for
-				creating SPATIAL INDEX. Avoid writing any
-				unnecessary MLOG_INDEX_LOAD record. */
-			} else if (FlushObserver* flush_observer =
-					trx->get_flush_observer()) {
-				flush_observer->flush();
-				row_merge_write_redo(indexes[i]);
+		} else if (FlushObserver* flush_observer =
+			   trx->get_flush_observer()) {
+			if (error != DB_SUCCESS) {
+				flush_observer->interrupted();
 			}
+			flush_observer->flush();
+			row_merge_write_redo(indexes[i]);
+		}
 
+		if (old_table != new_table
+		    || (indexes[i]->type & (DICT_FTS | DICT_SPATIAL))
+		    || error != DB_SUCCESS || !online) {
+			/* Do not apply any online log. */
+		} else {
 			if (global_system_variables.log_warnings > 2) {
 				sql_print_information(
 					"InnoDB: Online DDL : Applying"
@@ -5061,19 +5058,22 @@ func_exit:
 
 		flush_observer->flush();
 
-		trx->remove_flush_observer();
-
-		if (trx_is_interrupted(trx)) {
-			error = DB_INTERRUPTED;
-		}
-
-		if (error == DB_SUCCESS && old_table != new_table) {
+		if (old_table != new_table) {
 			for (const dict_index_t* index
 				     = dict_table_get_first_index(new_table);
 			     index != NULL;
 			     index = dict_table_get_next_index(index)) {
-				row_merge_write_redo(index);
+				if (!(index->type
+				      & (DICT_FTS | DICT_SPATIAL))) {
+					row_merge_write_redo(index);
+				}
 			}
+		}
+
+		trx->remove_flush_observer();
+
+		if (trx_is_interrupted(trx)) {
+			error = DB_INTERRUPTED;
 		}
 	}
 

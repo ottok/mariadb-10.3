@@ -203,6 +203,7 @@ sp_get_flags_for_command(LEX *lex)
   case SQLCOM_SHOW_EXPLAIN:
   case SQLCOM_SHOW_FIELDS:
   case SQLCOM_SHOW_FUNC_CODE:
+  case SQLCOM_SHOW_GENERIC:
   case SQLCOM_SHOW_GRANTS:
   case SQLCOM_SHOW_ENGINE_STATUS:
   case SQLCOM_SHOW_ENGINE_LOGS:
@@ -1495,7 +1496,7 @@ sp_head::execute(THD *thd, bool merge_da_on_success)
       NULL. In this case, mysql_change_db() would generate an error.
     */
 
-    err_status|= mysql_change_db(thd, (LEX_CSTRING*) &saved_cur_db_name, TRUE);
+    err_status|= mysql_change_db(thd, (LEX_CSTRING*)&saved_cur_db_name, TRUE) != 0;
   }
   m_flags&= ~IS_INVOKED;
   if (m_parent)
@@ -3209,7 +3210,7 @@ sp_head::show_routine_code(THD *thd)
       const char *format= "Instruction at position %u has m_ip=%u";
       char tmp[sizeof(format) + 2*SP_INSTR_UINT_MAXLEN + 1];
 
-      sprintf(tmp, format, ip, i->m_ip);
+      my_snprintf(tmp, sizeof(tmp), format, ip, i->m_ip);
       /*
         Since this is for debugging purposes only, we don't bother to
         introduce a special error code for it.

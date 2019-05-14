@@ -235,6 +235,15 @@ public:
 	}
 	bool operator!=(const page_id_t& rhs) const { return !(*this == rhs); }
 
+	bool operator<(const page_id_t& rhs) const
+	{
+		if (m_space == rhs.m_space) {
+			return m_page_no < rhs.m_page_no;
+		}
+
+		return m_space < rhs.m_space;
+	}
+
 	/** Retrieve the tablespace id.
 	@return tablespace id */
 	uint32_t space() const { return m_space; }
@@ -2418,8 +2427,7 @@ struct	CheckInLRUList {
 
 	static void validate(const buf_pool_t* buf_pool)
 	{
-		CheckInLRUList	check;
-		ut_list_validate(buf_pool->LRU, check);
+		ut_list_validate(buf_pool->LRU, CheckInLRUList());
 	}
 };
 
@@ -2432,8 +2440,7 @@ struct	CheckInFreeList {
 
 	static void validate(const buf_pool_t* buf_pool)
 	{
-		CheckInFreeList	check;
-		ut_list_validate(buf_pool->free, check);
+		ut_list_validate(buf_pool->free, CheckInFreeList());
 	}
 };
 
@@ -2446,8 +2453,8 @@ struct	CheckUnzipLRUAndLRUList {
 
 	static void validate(const buf_pool_t* buf_pool)
 	{
-		CheckUnzipLRUAndLRUList	check;
-		ut_list_validate(buf_pool->unzip_LRU, check);
+		ut_list_validate(buf_pool->unzip_LRU,
+				 CheckUnzipLRUAndLRUList());
 	}
 };
 #endif /* UNIV_DEBUG || defined UNIV_BUF_DEBUG */

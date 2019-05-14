@@ -615,7 +615,8 @@ void init_update_queries(void)
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_INSERTS_DATA | CF_SP_BULK_SAFE;
+                                            CF_INSERTS_DATA | CF_SP_BULK_SAFE |
+                                            CF_SP_BULK_OPTIMIZED;
   sql_command_flags[SQLCOM_REPLACE_SELECT]= CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
@@ -2964,15 +2965,14 @@ static bool do_execute_sp(THD *thd, sp_head *sp)
       my_error(ER_SP_BADSELECT, MYF(0), ErrConvDQName(sp).ptr());
       return 1;
     }
-    /*
-      If SERVER_MORE_RESULTS_EXISTS is not set,
-      then remember that it should be cleared
-    */
-    bits_to_be_cleared= (~thd->server_status &
-                         SERVER_MORE_RESULTS_EXISTS);
-    thd->server_status|= SERVER_MORE_RESULTS_EXISTS;
   }
-
+  /*
+    If SERVER_MORE_RESULTS_EXISTS is not set,
+    then remember that it should be cleared
+  */
+  bits_to_be_cleared= (~thd->server_status &
+                       SERVER_MORE_RESULTS_EXISTS);
+  thd->server_status|= SERVER_MORE_RESULTS_EXISTS;
   ha_rows select_limit= thd->variables.select_limit;
   thd->variables.select_limit= HA_POS_ERROR;
 
@@ -3406,9 +3406,6 @@ mysql_execute_command(THD *thd)
         my_message(ER_SLAVE_IGNORED_TABLE, ER_THD(thd, ER_SLAVE_IGNORED_TABLE),
                    MYF(0));
       }
-      
-      for (table=all_tables; table; table=table->next_global)
-        table->updating= TRUE;
     }
     
     /*
@@ -4602,6 +4599,16 @@ end_with_restore_list:
       res= 0;
 
     unit->set_limit(select_lex);
+    /*
+      We can not use mysql_explain_union() because of parameters of
+      mysql_select in mysql_multi_update so just set the option if needed
+    */
+    if (thd->lex->describe)
+    {
+      select_lex->set_explain_type(FALSE);
+      select_lex->options|= SELECT_DESCRIBE;
+    }
+
     res= mysql_multi_update_prepare(thd);
 
 #ifdef HAVE_REPLICATION
@@ -8304,7 +8311,6 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
   ptr->derived=	    table->sel;
   if (!ptr->derived && is_infoschema_db(&ptr->db))
   {
-    ST_SCHEMA_TABLE *schema_table;
     if (ptr->updating &&
         /* Special cases which are processed by commands itself */
         lex->sql_command != SQLCOM_CHECK &&
@@ -8316,20 +8322,8 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
                INFORMATION_SCHEMA_NAME.str);
       DBUG_RETURN(0);
     }
+    ST_SCHEMA_TABLE *schema_table;
     schema_table= find_schema_table(thd, &ptr->table_name);
-    if (unlikely(!schema_table) ||
-        (schema_table->hidden && 
-         ((sql_command_flags[lex->sql_command] & CF_STATUS_COMMAND) == 0 || 
-          /*
-            this check is used for show columns|keys from I_S hidden table
-          */
-          lex->sql_command == SQLCOM_SHOW_FIELDS ||
-          lex->sql_command == SQLCOM_SHOW_KEYS)))
-    {
-      my_error(ER_UNKNOWN_TABLE, MYF(0),
-               ptr->table_name.str, INFORMATION_SCHEMA_NAME.str);
-      DBUG_RETURN(0);
-    }
     ptr->schema_table_name= ptr->table_name;
     ptr->schema_table= schema_table;
   }
@@ -8693,9 +8687,8 @@ bool st_select_lex::add_window_spec(THD *thd,
     query
 */
 
-void st_select_lex::set_lock_for_tables(thr_lock_type lock_type)
+void st_select_lex::set_lock_for_tables(thr_lock_type lock_type, bool for_update)
 {
-  bool for_update= lock_type >= TL_READ_NO_INSERT;
   DBUG_ENTER("set_lock_for_tables");
   DBUG_PRINT("enter", ("lock_type: %d  for_update: %d", lock_type,
 		       for_update));

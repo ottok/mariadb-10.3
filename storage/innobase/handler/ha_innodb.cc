@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2018, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2000, 2019, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, 2009 Google Inc.
 Copyright (c) 2009, Percona Inc.
 Copyright (c) 2012, Facebook Inc.
@@ -4013,12 +4013,6 @@ static int innodb_init_params()
 	innodb_log_checksums = innodb_log_checksums_func_update(
 		NULL, innodb_log_checksums);
 
-#ifdef HAVE_LINUX_LARGE_PAGES
-	if ((os_use_large_pages = my_use_large_pages)) {
-		os_large_page_size = opt_large_page_size;
-	}
-#endif
-
 	row_rollback_on_timeout = (ibool) innobase_rollback_on_timeout;
 
 	srv_locks_unsafe_for_binlog = (ibool) innobase_locks_unsafe_for_binlog;
@@ -4039,7 +4033,7 @@ static int innodb_init_params()
 	if (innobase_open_files > open_files_limit) {
 		ib::warn() << "innodb_open_files " << innobase_open_files
 			   << " should not be greater"
-			   << "than the open_files_limit " << open_files_limit;
+			   << " than the open_files_limit " << open_files_limit;
 		if (innobase_open_files > tc_size) {
 			innobase_open_files = tc_size;
 		}
@@ -6141,9 +6135,9 @@ no_such_table:
 			<< n_cols << " user"
 			" defined columns in InnoDB, but " << n_fields
 			<< " columns in MariaDB. Please check"
-			" INFORMATION_SCHEMA.INNODB_SYS_COLUMNS and " REFMAN
-			"innodb-troubleshooting.html for how to resolve the"
-			" issue.";
+			" INFORMATION_SCHEMA.INNODB_SYS_COLUMNS and"
+			" https://mariadb.com/kb/en/innodb-data-dictionary-troubleshooting/"
+			" for how to resolve the issue.";
 
 		/* Mark this table as corrupted, so the drop table
 		or force recovery can still use it, but not others. */
@@ -10820,7 +10814,7 @@ innodb_base_col_setup_for_stored(
 	for (uint i= 0; i < field->table->s->fields; ++i) {
 		const Field* base_field = field->table->field[i];
 
-		if (!base_field->vcol_info
+		if (base_field->stored_in_db()
 		    && bitmap_is_set(&field->table->tmp_set, i)) {
 			ulint	z;
 			for (z = 0; z < table->n_cols; z++) {
@@ -12970,10 +12964,8 @@ inline int ha_innobase::delete_table(const char* name, enum_sql_command sqlcom)
 		err = row_drop_database_for_mysql(norm_name, trx,
 			&num_partitions);
 		norm_name[len] = 0;
-		if (num_partitions == 0
-		    && !row_is_mysql_tmp_table_name(norm_name)) {
-			table_name_t tbl_name;
-			tbl_name.m_name = norm_name;
+		table_name_t tbl_name(norm_name);
+		if (num_partitions == 0 && !tbl_name.is_temporary()) {
 			ib::error() << "Table " << tbl_name <<
 				" does not exist in the InnoDB"
 				" internal data dictionary though MariaDB is"
@@ -14407,7 +14399,7 @@ ha_innobase::optimize(
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    uint(err),
 				"InnoDB: Cannot defragment table %s: returned error code %d\n",
-				m_prebuilt->table->name, err);
+				m_prebuilt->table->name.m_name, err);
 
 			if(err == ER_SP_ALREADY_EXISTS) {
 				try_alter = false;
@@ -14817,6 +14809,10 @@ get_foreign_key_info(
 	const char*		ptr;
 	LEX_CSTRING*		referenced_key_name;
 	LEX_CSTRING*		name = NULL;
+
+	if (dict_table_t::is_temporary_name(foreign->foreign_table_name)) {
+		return NULL;
+	}
 
 	ptr = dict_remove_db_name(foreign->id);
 	f_key_info.foreign_id = thd_make_lex_string(
@@ -18333,7 +18329,7 @@ checkpoint_now_set(THD*, st_mysql_sys_var*, void*, const void* save)
 		       + (log_sys.append_on_checkpoint != NULL
 			  ? log_sys.append_on_checkpoint->size() : 0)
 		       < log_sys.lsn) {
-			log_make_checkpoint_at(LSN_MAX, TRUE);
+			log_make_checkpoint_at(LSN_MAX);
 			fil_flush_file_spaces(FIL_TYPE_LOG);
 		}
 
@@ -20841,7 +20837,7 @@ void innobase_free_row_for_vcol(VCOL_STORAGE *storage)
 to store the value in passed in "my_rec" */
 dfield_t*
 innobase_get_computed_value(
-	const dtuple_t*		row,
+	dtuple_t*		row,
 	const dict_v_col_t*	col,
 	const dict_index_t*	index,
 	mem_heap_t**		local_heap,
@@ -21158,11 +21154,11 @@ ib_errf(
 /* Keep the first 16 characters as-is, since the url is sometimes used
 as an offset from this.*/
 const char*	TROUBLESHOOTING_MSG =
-	"Please refer to " REFMAN "innodb-troubleshooting.html"
+	"Please refer to https://mariadb.com/kb/en/innodb-troubleshooting/"
 	" for how to resolve the issue.";
 
 const char*	TROUBLESHOOT_DATADICT_MSG =
-	"Please refer to " REFMAN "innodb-troubleshooting-datadict.html"
+	"Please refer to https://mariadb.com/kb/en/innodb-data-dictionary-troubleshooting/"
 	" for how to resolve the issue.";
 
 const char*	BUG_REPORT_MSG =
@@ -21172,9 +21168,6 @@ const char*	FORCE_RECOVERY_MSG =
 	"Please refer to "
 	"https://mariadb.com/kb/en/library/innodb-recovery-modes/"
 	" for information about forcing recovery.";
-
-const char*	ERROR_CREATING_MSG =
-	"Please refer to " REFMAN "error-creating-innodb.html";
 
 const char*	OPERATING_SYSTEM_ERROR_MSG =
 	"Some operating system error numbers are described at"
@@ -21459,16 +21452,6 @@ innodb_encrypt_tables_validate(
 		return 1;
 	}
 
-	if (!srv_fil_crypt_rotate_key_age) {
-		const char *msg = (encrypt_tables ? "enable" : "disable");
-		push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
-				    HA_ERR_UNSUPPORTED,
-				    "InnoDB: cannot %s encryption, "
-				    "innodb_encryption_rotate_key_age=0"
-				    " i.e. key rotation disabled", msg);
-		return 1;
-	}
-
 	return 0;
 }
 
@@ -21563,8 +21546,7 @@ ib_push_frm_error(
 			" Have you mixed up "
 			".frm files from different "
 			"installations? See "
-			REFMAN
-			"innodb-troubleshooting.html\n",
+			"https://mariadb.com/kb/en/innodb-troubleshooting/\n",
 			ib_table->name.m_name);
 
 		if (push_warning) {
@@ -21607,8 +21589,7 @@ ib_push_frm_error(
 			" Have you mixed up "
 			".frm files from different "
 			"installations? See "
-			REFMAN
-			"innodb-troubleshooting.html\n",
+			"https://mariadb.com/kb/en/innodb-troubleshooting/\n",
 			ib_table->name.m_name, n_keys,
 			table->s->keys);
 

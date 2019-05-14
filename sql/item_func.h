@@ -2404,7 +2404,6 @@ class Item_func_set_user_var :public Item_func_user_var
        user variable it the first connection context).
   */
   my_thread_id entry_thread_id;
-  char buffer[MAX_FIELD_WIDTH];
   String value;
   my_decimal decimal_buff;
   bool null_item;
@@ -2467,6 +2466,7 @@ public:
   void cleanup();
   Item *get_copy(THD *thd)
   { return get_item_copy<Item_func_set_user_var>(thd, this); }
+  bool excl_dep_on_table(table_map tab_map) { return false; }
 };
 
 

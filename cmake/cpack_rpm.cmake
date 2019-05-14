@@ -85,6 +85,8 @@ SET(CPACK_RPM_SPEC_MORE_DEFINE "
 %define restart_flag %{restart_flag_dir}/need-restart
 
 %{?filter_setup:
+%filter_provides_in \\\\.\\\\(test\\\\|result\\\\|h\\\\|cc\\\\|c\\\\|inc\\\\|opt\\\\|ic\\\\|cnf\\\\|rdiff\\\\|cpp\\\\)$
+%filter_requires_in \\\\.\\\\(test\\\\|result\\\\|h\\\\|cc\\\\|c\\\\|inc\\\\|opt\\\\|ic\\\\|cnf\\\\|rdiff\\\\|cpp\\\\)$
 %filter_from_provides /perl(\\\\(mtr\\\\|My::\\\\)/d
 %filter_from_requires /\\\\(lib\\\\(ft\\\\|lzma\\\\|tokuportability\\\\)\\\\)\\\\|\\\\(perl(\\\\(.*mtr\\\\|My::\\\\|.*HandlerSocket\\\\|Mysql\\\\)\\\\)/d
 %filter_setup
@@ -275,7 +277,6 @@ IF(CMAKE_VERSION VERSION_GREATER "3.9.99")
 
 SET(CPACK_SOURCE_GENERATOR "RPM")
 SETA(CPACK_RPM_SOURCE_PKG_BUILD_PARAMS
-  "-DBUILD_CONFIG=mysql_release"
   "-DRPM=${RPM}"
   "-DCPACK_RPM_BUILD_SOURCE_DIRS_PREFIX=/usr/src/debug/${CPACK_RPM_PACKAGE_NAME}-${VERSION}"
   )
@@ -286,6 +287,7 @@ MACRO(ADDIF var)
   ENDIF()
 ENDMACRO()
 
+ADDIF(CMAKE_BUILD_TYPE)
 ADDIF(BUILD_CONFIG)
 ADDIF(WITH_SSL)
 

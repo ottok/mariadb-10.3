@@ -38,6 +38,7 @@
 #include "thr_timer.h"
 #include "thr_malloc.h"
 #include "log_slow.h"      /* LOG_SLOW_DISABLE_... */
+#include <my_tree.h>
 
 #include "sql_digest_stream.h"            // sql_digest_state
 
@@ -2443,6 +2444,9 @@ public:
   */ 
   bool create_tmp_table_for_derived;
 
+  /* The flag to force reading statistics from EITS tables */
+  bool force_read_stats;
+
   bool save_prep_leaf_list;
 
   /* container for handler's private per-connection data */
@@ -3260,17 +3264,12 @@ public:
   /**
     @param id                thread identifier
     @param is_wsrep_applier  thread type
-    @param skip_lock         instruct whether @c LOCK_global_system_variables
-                             is already locked, to not acquire it then.
   */
-  THD(my_thread_id id, bool is_wsrep_applier= false, bool skip_lock= false);
+  THD(my_thread_id id, bool is_wsrep_applier= false);
 
   ~THD();
-  /**
-    @param skip_lock         instruct whether @c LOCK_global_system_variables
-                             is already locked, to not acquire it then.
-  */
-  void init(bool skip_lock= false);
+
+  void init();
   /*
     Initialize memory roots necessary for query processing and (!)
     pre-allocate memory for it. We can't do that in THD constructor because
