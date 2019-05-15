@@ -1,10 +1,12 @@
 mariadb-10.3 (1:10.3.15-1) UNRELEASED; urgency=medium
 
   [ Otto Kekäläinen ]
-  * New upstream version 10.3.15. Includes security fixes for:
+  * New upstream version 10.3.15. Includes security fixes for (Closes: #928393):
     - CVE-2019-2628
     - CVE-2019-2627
     - CVE-2019-2614
+  * Includes upstream fix for MDEV-18721: Host option in configuration file is
+    ignored (Closes: #921599)
 
   [ Gregor Riepl ]
   * Extend mariadb/mysql_config to support --libmysqld-libs (Closes: #928230)
