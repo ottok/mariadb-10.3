@@ -22,9 +22,9 @@ Therefore maintainers should check that the git contents match what has been
 uploaded to Debian/Ubuntu before making new changes on git.
 
 This can be done by using dgit. The example command below will fetch the latest
-mariadb-10.0 package available in Ubuntu 16.04 (Xenial) base archive or security
-archive (whichever has a newer version):
-  dgit -d ubuntu clone mariadb-10.0 xenial,-security
+mariadb-10.0 package available in Ubuntu 16.04 (Xenial) base archive, security
+archive or updates archive (whichever has a newer version):
+  dgit -d ubuntu clone mariadb-10.0 xenial,-security,-updates
   cp -ra mariadb-10.0/* .
 
 You can then compare these two directories with a recursive diff or `git diff`.
@@ -60,8 +60,9 @@ Checkout master into working dir and finish up manually what needs to be done
   git checkout master
 
 Eventually commit and push, build, test binaries, test packages etc..
+  gbp push # Pushed upstream and pristine-tar branches
   git commit -m "Created Debian packaging using git-buildpackage for easy maintenance"
-  git push --all
+  git push --all # Pushes the actual packaging branches
   git push --tags
 
 
@@ -184,13 +185,11 @@ needs to be tested on the Ubuntu release which most closely matches the Debian
 release in question. The following matrix maps what package should be tested
 where:
 
-- 10.4 for sid on launchpad disco
+- 10.4 for sid on launchpad eoan
 - 10.3 for buster on launchpad disco
 - 10.1 for bionic on launchpad bionic
 - 10.0 for xenial on launchpad xenial
 - 10.1 for stretch on launchpad xenial
-- 10.0 for jessie on launchpad trusty
-- 5.5. for trusty on launchpad trusty
 
 ## Uploading to Ubuntu security releases ##
 
@@ -198,7 +197,7 @@ See example with documented procedure:
  * https://bugs.launchpad.net/ubuntu/+source/mariadb-5.5/+bug/1464895
 
 Probably the most optimal work-flow would be to create a git branch (e.g.
-ubuntu-14.04) with custom gbp.conf and maintaining it by importing upstream in
+ubuntu-16.04) with custom gbp.conf and maintaining it by importing upstream in
 one commit, and updating changelog and other stuff, including refreshing
 patches in another commits, so that it would be easy to produce a patch file
 that Ubuntu security team can apply upon the mix of previous debian/ contents
@@ -222,9 +221,6 @@ for 10.1
 for 10.0
 - debian jessie
 - ubuntu xenial
-
-for 5.5
-- ubuntu trusty
 
 ## Comparison to other distributions ##
 
