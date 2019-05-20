@@ -482,6 +482,10 @@ mysql-5.5 to mariadb-10.3 upgrade:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  allow_failure: true
+# Temporairly allow failure in the test above since there seems to be a bug in udev
+# upgrades that are not related to MariaDB:
+#   Starting hotplug events dispatcher: systemd-udevdstart-stop-daemon: unrecognized option '--notify-await'
 
 # Upgrading from MySQL 5.7 involves automatic renaming of auth_socket plugin
 # to unix_socket and automaticly re-adding Password column in user table.
