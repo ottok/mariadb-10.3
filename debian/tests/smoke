@@ -20,6 +20,8 @@ set -ex
 #
 # 2) Creates a test table and checks it appears to operate normally
 # using the test user and test database.
+#
+# 3) Checks compression support for InnoDB & RocksDB engine.
 
 # Start the deamon if it was not running. For example in Docker testing
 # environments there might not be any systemd et al and the service needs to
@@ -62,3 +64,22 @@ mysql <<EOT
 DROP DATABASE testdatabase;
 DROP USER 'testuser'@'localhost';
 EOT
+
+mysql <<EOT
+SET GLOBAL innodb_compression_algorithm=lz4;
+SET GLOBAL innodb_compression_algorithm=snappy;
+SET GLOBAL innodb_compression_algorithm=zlib;
+SET GLOBAL innodb_compression_algorithm=none;
+EOT
+
+# Same condition as in debian/rules
+if [ "`dpkg-architecture -qDEB_HOST_ARCH_BITS`" != 32 ]; then
+  LOG=/var/lib/mysql/#rocksdb/LOG
+  # XXX: The server may only be started during the install of
+  #      mariadb-server-10.3, which happens before that of the plugin.
+  [ -e $LOG ] || mysql -e "INSTALL PLUGIN RocksDB SONAME 'ha_rocksdb';"
+  # XXX: rocksdb_supported_compression_types variable does not report ZSTD.
+  for a in LZ4 Snappy Zlib ZSTD; do
+    grep -qE "k$a(Compression)? supported: 1" $LOG
+  done
+fi
