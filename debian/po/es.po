@@ -1,7 +1,7 @@
 # mariadb translation to spanish
 # Copyright (C) 2005-2016 Software in the Public Interest, SPI Inc.
 # This file is distributed under the same license as the mariadb package.
-# 
+#
 # Changes:
 # - Initial translation
 #       Jesus Aneiros, 2006
@@ -14,26 +14,26 @@
 #       Ricardo Mones
 #       Carlos Galisteo
 #       Javier Fernandez-Sanguino
-# 
-# 
+#
+#
 #  Traductores, si no conoce el formato PO, merece la pena leer la
 #  documentación de gettext, especialmente las secciones dedicadas a este
 #  formato, por ejemplo ejecutando:
 #         info -n '(gettext)PO Files'
 #         info -n '(gettext)Header Entry'
-# 
+#
 # Equipo de traducción al español, por favor lean antes de traducir
 # los siguientes documentos:
-# 
+#
 # - El proyecto de traducción de Debian al español
 #   http://www.debian.org/intl/spanish/
 #   especialmente las notas y normas de traducción en
 #   http://www.debian.org/intl/spanish/notas
-# 
+#
 # - La guía de traducción de po's de debconf:
 #   /usr/share/doc/po-debconf/README-trans
 #   o http://www.debian.org/intl/l10n/po-debconf/README-trans
-# 
+#
 # Si tiene dudas o consultas sobre esta traducción consulte con el último
 # traductor (campo Last-Translator) y ponga en copia a la lista de
 # traducción de Debian al español (<debian-l10n-spanish@lists.debian.org>)
@@ -142,95 +142,3 @@ msgstr ""
 "Debería mantener los datos si tiene planificado instalar una versión de "
 "MariaDB más reciente o si hay un paquete «mariadb-server» distinto que los "
 "está utilizando."
-
-#~ msgid "A file named /var/lib/mysql/debian-*.flag exists on this system."
-#~ msgstr ""
-#~ "Existe un archivo con el nombre /var/lib/mysql/debian-*.flag en este "
-#~ "sistema."
-
-#~ msgid "Really proceed with downgrade?"
-#~ msgstr "¿Desea realmente continuar con la desactualización?"
-
-#~ msgid ""
-#~ "Such a file is an indication that a mariadb-server package with a higher "
-#~ "version has been installed previously."
-#~ msgstr ""
-#~ "Este fichero indica que se instaló previamente una versión superior del "
-#~ "paquete mariadb-server."
-
-#~ msgid ""
-#~ "There is no guarantee that the version you're currently installing will "
-#~ "be able to use the current databases."
-#~ msgstr ""
-#~ "No se puede garantizar que la versión que está instalando pueda usar la "
-#~ "base de datos actual."
-
-#~ msgid "Really migrate to MariaDB?"
-#~ msgstr "¿Realmente desea migrar a MariaDB?"
-
-#~ msgid ""
-#~ "MariaDB is a drop-in replacement for MySQL. It will use your current "
-#~ "configuration file (my.cnf) and current databases."
-#~ msgstr ""
-#~ "MariaDB es un reemplazo de MySQL. Utilizará su archivo de configuración "
-#~ "actual (my.cnf) y sus bases de datos actuales."
-
-#~ msgid ""
-#~ "Note that MariaDB has some enhanced features, which do not exist in MySQL "
-#~ "and thus migration back to MySQL might not always work, at least not as "
-#~ "automatically as migrating from MySQL to MariaDB."
-#~ msgstr ""
-#~ "Tenga en cuenta que MariaDB tiene algunas funcionalidades avanzadas que "
-#~ "no existen en MySQL. Por ello, la marcha atrás a MySQL no siempre "
-#~ "funcionará o, al menos, no será tan automática como la migración de MySQL "
-#~ "a MariaDB."
-
-#~ msgid "Unable to set password for the MariaDB \"root\" user"
-#~ msgstr "No se pudo fijar la contraseña para el usuario «root» de MariaDB"
-
-#~ msgid ""
-#~ "An error occurred while setting the password for the MariaDB "
-#~ "administrative user. This may have happened because the account already "
-#~ "has a password, or because of a communication problem with the MariaDB "
-#~ "server."
-#~ msgstr ""
-#~ "Se produjo un error mientras intentaba fijar la contraseña para el "
-#~ "usuario administrador de MariaDB. Esto puede haber sucedido porque la "
-#~ "cuenta ya tenía una contraseña o porque se produjo un error de "
-#~ "comunicación con el servidor MariaDB."
-
-#~ msgid ""
-#~ "You should check the account's password after the package installation."
-#~ msgstr ""
-#~ "Debería comprobar la contraseña de la cuenta después de la instalación "
-#~ "del paquete."
-
-#~ msgid ""
-#~ "Please read the /usr/share/doc/mariadb-server-10.3/README.Debian file for "
-#~ "more information."
-#~ msgstr ""
-#~ "Consulte /usr/share/doc/mariadb-server-10.3/README.Debian para más "
-#~ "información."
-
-#~ msgid "New password for the MariaDB \"root\" user:"
-#~ msgstr "Nueva contraseña para el usuario «root» de MariaDB:"
-
-#~ msgid ""
-#~ "While not mandatory, it is highly recommended that you set a password for "
-#~ "the MariaDB administrative \"root\" user."
-#~ msgstr ""
-#~ "Se recomienda que configure una contraseña para el usuario "
-#~ "«root» (administrador) de MariaDB, aunque no es obligatorio."
-
-#~ msgid "If this field is left blank, the password will not be changed."
-#~ msgstr "No se modificará la contraseña si deja este campo en blanco."
-
-#~ msgid "Repeat password for the MariaDB \"root\" user:"
-#~ msgstr "Repita la contraseña para el usuario «root» de MariaDB:"
-
-#~ msgid "Password input error"
-#~ msgstr "Error en la entrada de contraseña"
-
-#~ msgid "The two passwords you entered were not the same. Please try again."
-#~ msgstr ""
-#~ "Las contraseñas introducidas no coinciden. Por favor, inténtelo de nuevo."

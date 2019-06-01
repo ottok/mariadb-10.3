@@ -107,4 +107,3 @@ msgstr ""
 "Hvis du fjerner MariaDB-pakken for senere at installere en nyere version, "
 "eller hvis en anden mariadb-server-pakke allerede benytter den, bør dataene "
 "bevares."
-

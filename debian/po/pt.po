@@ -107,4 +107,3 @@ msgstr ""
 "Se está a remover o pacote MariaDB de forma a posteriormente instalar uma "
 "versão mais recente ou se um pacote mariadb-server já o está a utilizar, "
 "então os dados devem ser mantidos."
-
