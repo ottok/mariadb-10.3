@@ -290,20 +290,26 @@ test basic features:
   variables:
       GIT_STRATEGY: none
 
-# Stanza 'breaks-testbed' must be removed because the test 'upstream' will otherwise be skipped and
-# thus the command would return exit code 2, and be considered failed by Gitlab CI.
 run autopkgtest:
   stage: test quality
   dependencies:
     - build package
-  image: registry.salsa.debian.org/salsa-ci-team/images/autopkgtest:${RELEASE}
+  image: registry.salsa.debian.org/salsa-ci-team/images/autopkgtest
   script:
-    - sed s/breaks-testbed//g -i debian/tests/control
-    - cat debian/tests/control
-    - eatmydata autopkgtest -U --override-control=debian/tests/control ${WORKING_DIR}/*.changes -- null || [ $? -eq 8 ]
-  # Repo needs to be checked out so the debian/tests/control fiel can be modified on-the-fly.
-  #variables:
-  #  GIT_STRATEGY: none
+    - wget https://salsa.debian.org/salsa-ci-team/autopkgtest-lxc/-/jobs/artifacts/master/raw/artifacts/lxc.tar?job=${RELEASE} -O lxc.tar
+    - mkdir ${SCI_LXC_PATH} && tar xf lxc.tar -C ${SCI_LXC_PATH}
+    - sed -i "s@salsa-ci-team/autopkgtest-lxc@${CI_PROJECT_PATH}@" ${SCI_LXC_PATH}/autopkgtest-${RELEASE}-amd64/config
+    - |
+        cat >/etc/lxc/lxc.conf <<EOT
+        lxc.lxcpath=${SCI_LXC_PATH}
+        EOT
+    - umount -R /sys/fs/cgroup && mount -a
+    - /etc/init.d/lxc-net start
+    - /etc/init.d/lxc start
+    - debci localtest $CI_PROJECT_DIR/debian/output/*.changes --suite ${RELEASE}
+  variables:
+      GIT_STRATEGY: none
+      SCI_LXC_PATH: ${CI_PROJECT_DIR}/lxc
 
 run blhc:
   stage: test extras
