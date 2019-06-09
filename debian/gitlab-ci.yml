@@ -311,6 +311,27 @@ run autopkgtest:
       GIT_STRATEGY: none
       SCI_LXC_PATH: ${CI_PROJECT_DIR}/lxc
 
+run backported autopkgtest:
+  stage: test quality
+  dependencies:
+    - build backported package
+  image: registry.salsa.debian.org/salsa-ci-team/images/autopkgtest
+  script:
+    - wget https://salsa.debian.org/salsa-ci-team/autopkgtest-lxc/-/jobs/artifacts/master/raw/artifacts/lxc.tar?job=${RELEASE} -O lxc.tar
+    - mkdir ${SCI_LXC_PATH} && tar xf lxc.tar -C ${SCI_LXC_PATH}
+    - sed -i "s@salsa-ci-team/autopkgtest-lxc@${CI_PROJECT_PATH}@" ${SCI_LXC_PATH}/autopkgtest-${RELEASE}-amd64/config
+    - |
+        cat >/etc/lxc/lxc.conf <<EOT
+        lxc.lxcpath=${SCI_LXC_PATH}
+        EOT
+    - umount -R /sys/fs/cgroup && mount -a
+    - /etc/init.d/lxc-net start
+    - /etc/init.d/lxc start
+    - debci localtest $CI_PROJECT_DIR/debian/output/*.changes --suite ${RELEASE}
+  variables:
+      GIT_STRATEGY: none
+      SCI_LXC_PATH: ${CI_PROJECT_DIR}/lxc
+
 run blhc:
   stage: test extras
   dependencies:
