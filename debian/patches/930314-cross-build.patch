@@ -1,0 +1,10 @@
+--- a/cmake/systemd.cmake
++++ b/cmake/systemd.cmake
+@@ -19,6 +19,7 @@ MACRO(CHECK_SYSTEMD)
+     # http://www.cmake.org/cmake/help/v3.0/module/FindPkgConfig.html
+     INCLUDE(CheckFunctionExists)
+     INCLUDE(CheckIncludeFiles)
++    INCLUDE(CheckLibraryExists)
+ 
+     SET(WITH_SYSTEMD "auto" CACHE STRING "Enable systemd scripts and notification support")
+     IF(WITH_SYSTEMD STREQUAL "yes" OR WITH_SYSTEMD STREQUAL "auto")

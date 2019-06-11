@@ -66,7 +66,7 @@ override_dh_auto_clean:
 	rm -f storage/mroonga/mysql-test/mroonga/storage/r/variable_version.result
 	rm -f debian/mariadb-server-10.3.mariadb.service
 	rm -f debian/mariadb-server-10.3.mariadb@.service
-	rm -rf $(BUILDDIR)
+	rm -rf $(BUILDDIR) builddir-native
 
 	[ ! -f debian/mysql-test-unstable-tests.orig ] || \
 	    mv debian/mysql-test-unstable-tests.orig mysql-test/unstable-tests
@@ -84,6 +84,11 @@ ifneq (,$(filter $(DEB_HOST_ARCH), kfreebsd-i386 kfreebsd-amd64))
 	rm debian/libmariadb3.symbols
 endif
 
+ifneq ($(DEB_BUILD_ARCH),$(DEB_HOST_ARCH))
+	dpkg-architecture -a$(DEB_BUILD_ARCH) -f -c dh_auto_configure --builddirectory=builddir-native
+	dh_auto_build --builddirectory=builddir-native -- import_executables
+endif
+
 	# Remove -DWITH_SSL=bundle if you want to use system OpenSSL, otherwise
 	# the server will use YaSSL and Connector/C will use GnuTLS
 	mkdir -p $(BUILDDIR) && cd $(BUILDDIR) && \
@@ -92,6 +97,7 @@ endif
 	    	CXX=${CXX} \
 	    cmake -DCMAKE_INSTALL_PREFIX=/usr \
 	    $(CMAKEFLAGS) \
+	    $(if $(filter $(DEB_BUILD_ARCH),$(DEB_HOST_ARCH)),,-DIMPORT_EXECUTABLES=$(CURDIR)/builddir-native/import_executables.cmake) \
 	    -DCOMPILATION_COMMENT="$(DEB_VENDOR) $(RELEASE)" \
 	    -DMYSQL_SERVER_SUFFIX="-$(DEB_VERSION_REVISION)" \
 	    -DSYSTEM_TYPE="debian-$(DEB_HOST_GNU_SYSTEM)" \
