@@ -1,8 +1,9 @@
-mariadb-10.3 (1:10.3.15-3) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.16-1) unstable; urgency=medium
 
-  * Open new entry. This will later be replaced by 'gbp dch'.
+  * New upstream version 10.3.16
+  * Make libzstd dependency versioned as RocksDB need at least 1.3.3
 
- -- Otto Kekäläinen <otto@debian.org>  Mon, 10 Jun 2019 09:35:12 +0300
+ -- Otto Kekäläinen <otto@debian.org>  Tue, 18 Jun 2019 09:28:07 +0300
 
 mariadb-10.3 (1:10.3.15-2) unstable; urgency=medium
 
