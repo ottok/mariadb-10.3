@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -63,13 +63,14 @@ buf_read_page_handle_error(
 	buf_pool_t*	buf_pool = buf_pool_from_bpage(bpage);
 	const bool	uncompressed = (buf_page_get_state(bpage)
 					== BUF_BLOCK_FILE_PAGE);
+	const page_id_t	old_page_id = bpage->id;
 
 	/* First unfix and release lock on the bpage */
 	buf_pool_mutex_enter(buf_pool);
 	mutex_enter(buf_page_get_mutex(bpage));
 	ut_ad(buf_page_get_io_fix(bpage) == BUF_IO_READ);
-	ut_ad(bpage->buf_fix_count == 0);
 
+	bpage->id.set_corrupt_id();
 	/* Set BUF_IO_NONE before we remove the block from LRU list */
 	buf_page_set_io_fix(bpage, BUF_IO_NONE);
 
@@ -82,7 +83,7 @@ buf_read_page_handle_error(
 	mutex_exit(buf_page_get_mutex(bpage));
 
 	/* remove the block from LRU list */
-	buf_LRU_free_one_page(bpage);
+	buf_LRU_free_one_page(bpage, old_page_id);
 
 	ut_ad(buf_pool->n_pend_reads > 0);
 	buf_pool->n_pend_reads--;

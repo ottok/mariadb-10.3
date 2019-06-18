@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA */
 
 #include "sql_plugin.h"                         // Includes mariadb.h
 #include "sql_priv.h"
@@ -7831,7 +7831,6 @@ struct my_option my_long_options[]=
   MYSQL_TO_BE_IMPLEMENTED_OPTION("optimizer-trace-offset"),       // OPTIMIZER_TRACE
   MYSQL_TO_BE_IMPLEMENTED_OPTION("optimizer-trace-limit"),        // OPTIMIZER_TRACE
   MYSQL_TO_BE_IMPLEMENTED_OPTION("optimizer-trace-max-mem-size"), // OPTIMIZER_TRACE
-  MYSQL_TO_BE_IMPLEMENTED_OPTION("eq-range-index-dive-limit"),
   MYSQL_COMPATIBILITY_OPTION("server-id-bits"),
   MYSQL_TO_BE_IMPLEMENTED_OPTION("slave-rows-search-algorithms"), // HAVE_REPLICATION
   MYSQL_TO_BE_IMPLEMENTED_OPTION("slave-allow-batching"),         // HAVE_REPLICATION
@@ -9412,8 +9411,10 @@ mysqld_get_one_option(int optid, const struct my_option *opt, char *argument)
     opt_specialflag|= SPECIAL_NO_HOST_CACHE;
     break;
   case (int) OPT_SKIP_RESOLVE:
-    opt_skip_name_resolve= 1;
-    opt_specialflag|=SPECIAL_NO_RESOLVE;
+    if ((opt_skip_name_resolve= (argument != disabled_my_option)))
+      opt_specialflag|= SPECIAL_NO_RESOLVE;
+    else
+      opt_specialflag&= ~SPECIAL_NO_RESOLVE;
     break;
   case (int) OPT_WANT_CORE:
     test_flags |= TEST_CORE_ON_SIGNAL;
@@ -9472,6 +9473,8 @@ mysqld_get_one_option(int optid, const struct my_option *opt, char *argument)
     break;
   case OPT_PLUGIN_LOAD:
     free_list(opt_plugin_load_list_ptr);
+    if (argument == disabled_my_option)
+      break;                                    // Resets plugin list
     /* fall through */
   case OPT_PLUGIN_LOAD_ADD:
     opt_plugin_load_list_ptr->push_back(new i_string(argument));

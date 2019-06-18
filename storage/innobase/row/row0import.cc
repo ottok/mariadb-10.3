@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -3416,8 +3416,12 @@ page_corrupted:
 					   FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION
 					   + src)) {
 not_encrypted:
-				if (!page_compressed
-				    && !block->page.zip.data) {
+				if (block->page.id.page_no() == 0
+				    && block->page.zip.data) {
+					block->page.zip.data = src;
+					frame_changed = true;
+				} else if (!page_compressed
+					   && !block->page.zip.data) {
 					block->frame = src;
 					frame_changed = true;
 				} else {
@@ -3508,7 +3512,11 @@ not_encrypted:
 			}
 
 			if (frame_changed) {
-				block->frame = dst;
+				if (block->page.zip.data) {
+					block->page.zip.data = dst;
+				} else {
+					block->frame = dst;
+				}
 			}
 
 			src =  io_buffer + (i * size);
@@ -3815,7 +3823,7 @@ row_import_for_mysql(
 
 	/* Prevent DDL operations while we are checking. */
 
-	rw_lock_s_lock_func(dict_operation_lock, 0, __FILE__, __LINE__);
+	rw_lock_s_lock_func(&dict_operation_lock, 0, __FILE__, __LINE__);
 
 	row_import	cfg;
 
@@ -3840,14 +3848,14 @@ row_import_for_mysql(
 			autoinc = cfg.m_autoinc;
 		}
 
-		rw_lock_s_unlock_gen(dict_operation_lock, 0);
+		rw_lock_s_unlock_gen(&dict_operation_lock, 0);
 
 		DBUG_EXECUTE_IF("ib_import_set_index_root_failure",
 				err = DB_TOO_MANY_CONCURRENT_TRXS;);
 
 	} else if (cfg.m_missing) {
 
-		rw_lock_s_unlock_gen(dict_operation_lock, 0);
+		rw_lock_s_unlock_gen(&dict_operation_lock, 0);
 
 		/* We don't have a schema file, we will have to discover
 		the index root pages from the .ibd file and skip the schema
@@ -3879,7 +3887,7 @@ row_import_for_mysql(
 		space_flags = fetchIndexRootPages.get_space_flags();
 
 	} else {
-		rw_lock_s_unlock_gen(dict_operation_lock, 0);
+		rw_lock_s_unlock_gen(&dict_operation_lock, 0);
 	}
 
 	if (err != DB_SUCCESS) {

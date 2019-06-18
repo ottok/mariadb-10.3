@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2018, MariaDB Corporation.
+Copyright (c) 2013, 2019, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -214,77 +214,6 @@ struct buf_pools_list_size_t {
 	ulint	flush_list_bytes;	/*!< flush_list size in bytes */
 };
 #endif /* !UNIV_INNOCHECKSUM */
-
-/** Page identifier. */
-class page_id_t {
-public:
-
-	/** Constructor from (space, page_no).
-	@param[in]	space	tablespace id
-	@param[in]	page_no	page number */
-	page_id_t(ulint space, ulint page_no)
-		: m_space(uint32_t(space)), m_page_no(uint32(page_no))
-	{
-		ut_ad(space <= 0xFFFFFFFFU);
-		ut_ad(page_no <= 0xFFFFFFFFU);
-	}
-
-	bool operator==(const page_id_t& rhs) const
-	{
-		return m_space == rhs.m_space && m_page_no == rhs.m_page_no;
-	}
-	bool operator!=(const page_id_t& rhs) const { return !(*this == rhs); }
-
-	bool operator<(const page_id_t& rhs) const
-	{
-		if (m_space == rhs.m_space) {
-			return m_page_no < rhs.m_page_no;
-		}
-
-		return m_space < rhs.m_space;
-	}
-
-	/** Retrieve the tablespace id.
-	@return tablespace id */
-	uint32_t space() const { return m_space; }
-
-	/** Retrieve the page number.
-	@return page number */
-	uint32_t page_no() const { return m_page_no; }
-
-	/** Retrieve the fold value.
-	@return fold value */
-	ulint fold() const { return (m_space << 20) + m_space + m_page_no; }
-
-	/** Reset the page number only.
-	@param[in]	page_no	page number */
-	inline void set_page_no(ulint page_no)
-	{
-		m_page_no = uint32_t(page_no);
-
-		ut_ad(page_no <= 0xFFFFFFFFU);
-	}
-
-private:
-
-	/** Tablespace id. */
-	uint32_t	m_space;
-
-	/** Page number. */
-	uint32_t	m_page_no;
-
-	/** Declare the overloaded global operator<< as a friend of this
-	class. Refer to the global declaration for further details.  Print
-	the given page_id_t object.
-	@param[in,out]	out	the output stream
-	@param[in]	page_id	the page_id_t object to be printed
-	@return the output stream */
-        friend
-        std::ostream&
-        operator<<(
-                std::ostream&           out,
-                const page_id_t        page_id);
-};
 
 /** Print the given page_id_t object.
 @param[in,out]	out	the output stream
@@ -680,31 +609,27 @@ buf_block_buf_fix_inc_func(
 @return the count */
 UNIV_INLINE
 ulint
-buf_block_fix(
-	buf_page_t*	bpage);
+buf_block_fix(buf_page_t* bpage);
 
 /** Increments the bufferfix count.
 @param[in,out]	block	block to bufferfix
 @return the count */
 UNIV_INLINE
 ulint
-buf_block_fix(
-	buf_block_t*	block);
+buf_block_fix(buf_block_t* block);
 
 /** Decrements the bufferfix count.
 @param[in,out]	bpage	block to bufferunfix
 @return	the remaining buffer-fix count */
 UNIV_INLINE
 ulint
-buf_block_unfix(
-	buf_page_t*	bpage);
+buf_block_unfix(buf_page_t* bpage);
 /** Decrements the bufferfix count.
 @param[in,out]	block	block to bufferunfix
 @return	the remaining buffer-fix count */
 UNIV_INLINE
 ulint
-buf_block_unfix(
-	buf_block_t*	block);
+buf_block_unfix(buf_block_t* block);
 
 # ifdef UNIV_DEBUG
 /** Increments the bufferfix count.
@@ -1506,7 +1431,7 @@ public:
 	page_size_t	size;
 
 	/** Count of how manyfold this block is currently bufferfixed. */
-	ib_uint32_t	buf_fix_count;
+	int32		buf_fix_count;
 
 	/** type of pending I/O operation; also protected by
 	buf_pool->mutex for writes only */

@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA */
 
 /***************************************************************************
  This is a test sample to test the new features in MySQL client-server
@@ -2348,6 +2348,12 @@ static void test_ps_query_cache()
                           "(2, 'hh', 'hh'), (1, 'ii', 'ii'), (2, 'ii', 'ii')");
   myquery(rc);
 
+  rc= mysql_query(mysql,
+                  "set @save_query_cache_type="
+                  "@@global.query_cache_type,"
+                  "@save_query_cache_size="
+                  "@@global.query_cache_size");
+  myquery(rc);
   rc= mysql_query(lmysql, "set global query_cache_type=ON");
   myquery(rc);
   rc= mysql_query(lmysql, "set local query_cache_type=ON");
@@ -2504,9 +2510,9 @@ static void test_ps_query_cache()
   if (lmysql != mysql)
     mysql_close(lmysql);
 
-  rc= mysql_query(mysql, "set global query_cache_size=default");
+  rc= mysql_query(mysql, "set global query_cache_size=@save_query_cache_size");
   myquery(rc);
-  rc= mysql_query(mysql, "set global query_cache_type=default");
+  rc= mysql_query(mysql, "set global query_cache_type=@save_query_cache_type");
   myquery(rc);
 }
 
@@ -8397,6 +8403,26 @@ static void test_list_fields()
 }
 
 
+/* Test mysql_list_fields() with information_schema */
+
+static void test_list_information_schema_fields()
+{
+  MYSQL_RES *result;
+  int rc;
+  myheader("test_list_information_schema_fields");
+
+  rc= mysql_select_db(mysql, "information_schema");
+  myquery(rc);
+  result= mysql_list_fields(mysql, "all_plugins", NULL);
+  mytest(result);
+  rc= my_process_result_set(result);
+  DIE_UNLESS(rc == 0);
+  mysql_free_result(result);
+  rc= mysql_select_db(mysql, current_db);
+  myquery(rc);
+}
+
+
 static void test_list_fields_default()
 {
   int rc, i;
@@ -13421,6 +13447,12 @@ static void test_open_cursor_prepared_statement_query_cache()
     return;
   }
 
+  rc= mysql_query(mysql,
+                  "set @save_query_cache_type="
+                  "@@global.query_cache_type,"
+                  "@save_query_cache_size="
+                  "@@global.query_cache_size");
+  myquery(rc);
   rc= mysql_query(mysql, "set global query_cache_type=ON");
   myquery(rc);
   rc= mysql_query(mysql, "set local query_cache_type=ON");
@@ -13447,9 +13479,9 @@ static void test_open_cursor_prepared_statement_query_cache()
   check_execute(stmt, rc);
   mysql_stmt_close(stmt);
 
-  rc= mysql_query(mysql, "set global query_cache_type=default");
+  rc= mysql_query(mysql, "set global query_cache_type=@save_query_cache_type");
   myquery(rc);
-  rc= mysql_query(mysql, "set global query_cache_size=default");
+  rc= mysql_query(mysql, "set global query_cache_size=@save_query_cache_size");
   myquery(rc);
 }
 
@@ -18234,6 +18266,12 @@ static void test_bug36326()
   myquery(rc);
   rc= mysql_query(mysql, "INSERT INTO t1 VALUES (1)");
   myquery(rc);
+  rc= mysql_query(mysql,
+                  "set @save_query_cache_type="
+                  "@@global.query_cache_type,"
+                  "@save_query_cache_size="
+                  "@@global.query_cache_size");
+  myquery(rc);
   rc= mysql_query(mysql, "SET GLOBAL query_cache_type = 1");
   myquery(rc);
   rc= mysql_query(mysql, "SET LOCAL query_cache_type = 1");
@@ -18261,8 +18299,8 @@ static void test_bug36326()
   DIE_UNLESS(rc == 1);
   rc= mysql_query(mysql, "DROP TABLE t1");
   myquery(rc);
-  rc= mysql_query(mysql, "SET GLOBAL query_cache_size = default");
-  rc= mysql_query(mysql, "SET GLOBAL query_cache_type = default");
+  rc= mysql_query(mysql, "SET GLOBAL query_cache_size = @save_query_cache_size");
+  rc= mysql_query(mysql, "SET GLOBAL query_cache_type = @save_query_cache_type");
   myquery(rc);
 
   DBUG_VOID_RETURN;
@@ -20865,6 +20903,7 @@ static struct my_tests_st my_tests[]= {
   { "test_fetch_column", test_fetch_column },
   { "test_mem_overun", test_mem_overun },
   { "test_list_fields", test_list_fields },
+  { "test_list_information_schema_fields", test_list_information_schema_fields },
   { "test_list_fields_default", test_list_fields_default },
   { "test_free_result", test_free_result },
   { "test_free_store_result", test_free_store_result },

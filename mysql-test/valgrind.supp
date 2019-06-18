@@ -13,7 +13,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335  USA
 
 #
 # Suppress some common (not fatal) errors in system libraries found by valgrind
@@ -1779,3 +1779,24 @@
    fun:CRYPTO_malloc
    fun:ENGINE_new
 }
+
+#
+# OpenSSL 1.0.1l problems
+#
+
+{
+   OpenSSL 1.0.1l wrong jump
+   Memcheck:Cond
+   fun:bcmp
+   obj:/usr/lib64/libcrypto.so*
+   fun:FIPS_selftest
+}
+
+{
+   OpenSSL 1.0.1l wrong jump 2
+   Memcheck:Cond
+   obj:/usr/lib64/libcrypto.so*
+   fun:FIPS_mode_set
+   obj:/usr/lib64/libcrypto.so*
+}
+
