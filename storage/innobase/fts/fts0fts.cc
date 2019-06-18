@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -87,11 +87,6 @@ static const ulint FTS_CACHE_SIZE_UPPER_LIMIT_IN_MB = 1024;
 
 /** Time to sleep after DEADLOCK error before retrying operation. */
 static const ulint FTS_DEADLOCK_RETRY_WAIT = 100000;
-
-/** variable to record innodb_fts_internal_tbl_name for information
-schema table INNODB_FTS_INSERTED etc. */
-char* fts_internal_tbl_name		= NULL;
-char* fts_internal_tbl_name2		= NULL;
 
 /** InnoDB default stopword list:
 There are different versions of stopwords, the stop words listed
@@ -2836,21 +2831,6 @@ fts_doc_ids_create(void)
 		fts_doc_ids->self_heap, sizeof(fts_update_t), 32));
 
 	return(fts_doc_ids);
-}
-
-/*********************************************************************//**
-Free a fts_doc_ids_t. */
-void
-fts_doc_ids_free(
-/*=============*/
-	fts_doc_ids_t*	fts_doc_ids)
-{
-	mem_heap_t*	heap = static_cast<mem_heap_t*>(
-		fts_doc_ids->self_heap->arg);
-
-	memset(fts_doc_ids, 0, sizeof(*fts_doc_ids));
-
-	mem_heap_free(heap);
 }
 
 /*********************************************************************//**

@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 /**
   @file
@@ -711,11 +711,14 @@ bool Item_subselect::exec()
   DBUG_ASSERT(fixed);
 
   DBUG_EXECUTE_IF("Item_subselect",
-                  push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
-                  ER_UNKNOWN_ERROR, "DBUG: Item_subselect::exec %s",
-                  Item::Print(this,
-                              enum_query_type(QT_TO_SYSTEM_CHARSET |
-                                              QT_WITHOUT_INTRODUCERS)).ptr()););
+    Item::Print print(this,
+      enum_query_type(QT_TO_SYSTEM_CHARSET |
+        QT_WITHOUT_INTRODUCERS));
+
+    push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
+       ER_UNKNOWN_ERROR, "DBUG: Item_subselect::exec %.*s",
+       print.length(),print.ptr());
+  );
   /*
     Do not execute subselect in case of a fatal error
     or if the query has been killed.
@@ -3874,7 +3877,6 @@ int subselect_single_select_engine::exec()
               tab->save_read_record= tab->read_record.read_record_func;
               tab->read_record.read_record_func= rr_sequential;
               tab->read_first_record= read_first_record_seq;
-              tab->read_record.record= tab->table->record[0];
               tab->read_record.thd= join->thd;
               tab->read_record.ref_length= tab->table->file->ref_length;
               tab->read_record.unlock_row= rr_unlock_row;
@@ -3892,7 +3894,6 @@ int subselect_single_select_engine::exec()
     for (JOIN_TAB **ptab= changed_tabs; ptab != last_changed_tab; ptab++)
     {
       JOIN_TAB *tab= *ptab;
-      tab->read_record.record= 0;
       tab->read_record.ref_length= 0;
       tab->read_first_record= tab->save_read_first_record;
       tab->read_record.read_record_func= tab->save_read_record;

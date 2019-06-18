@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA */
 
 /**
   @file
@@ -2199,6 +2199,9 @@ inline bool statistics_for_command_is_needed(THD *thd)
   case SQLCOM_DELETE_MULTI:
   case SQLCOM_REPLACE:
   case SQLCOM_REPLACE_SELECT:
+  case SQLCOM_CREATE_TABLE:
+  case SQLCOM_SET_OPTION:
+  case SQLCOM_DO:
     break;
   default: 
     return FALSE;

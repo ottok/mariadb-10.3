@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 
 #ifdef USE_PRAGMA_IMPLEMENTATION
@@ -10153,12 +10153,22 @@ longlong Item_cache_real::val_int()
 }
 
 
-String* Item_cache_real::val_str(String *str)
+String* Item_cache_double::val_str(String *str)
 {
   DBUG_ASSERT(fixed == 1);
   if (!has_value())
     return NULL;
   str->set_real(value, decimals, default_charset());
+  return str;
+}
+
+
+String* Item_cache_float::val_str(String *str)
+{
+  DBUG_ASSERT(fixed == 1);
+  if (!has_value())
+    return NULL;
+  Float(value).to_string(str, decimals);
   return str;
 }
 

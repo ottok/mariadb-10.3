@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 
 /* A lexical scanner on a temporary buffer with a yacc interface */
@@ -4745,7 +4745,10 @@ void SELECT_LEX::increase_derived_records(ha_rows records)
     break;
   default:
     // usual UNION
-    result->est_records+= records;
+    if (HA_ROWS_MAX - records > result->est_records)
+      result->est_records+= records;
+    else
+      result->est_records= HA_ROWS_MAX;
     break;
   }
 }

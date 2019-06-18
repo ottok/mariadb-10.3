@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA */
 
 
 /* Basic functions needed by many modules */
@@ -586,6 +586,12 @@ bool close_cached_connection_tables(THD *thd, LEX_CSTRING *connection)
     Marks all tables in the list which were used by current substatement
     (they are marked by its query_id) as free for reuse.
 
+    Clear 'check_table_binlog_row_based_done' flag. For tables which were used
+    by current substatement the flag is cleared as part of 'ha_reset()' call.
+    For the rest of the open tables not used by current substament if this
+    flag is enabled as part of current substatement execution, clear the flag
+    explicitly.
+
   NOTE
     The reason we reset query_id is that it's not enough to just test
     if table->query_id != thd->query_id to know if a table is in use.
@@ -607,6 +613,8 @@ static void mark_used_tables_as_free_for_reuse(THD *thd, TABLE *table)
       table->query_id= 0;
       table->file->ha_reset();
     }
+    else if (table->file->check_table_binlog_row_based_done)
+      table->file->clear_cached_table_binlog_row_based_flag();
   }
 }
 
@@ -3494,8 +3502,7 @@ open_and_process_table(THD *thd, TABLE_LIST *tables, uint *counter, uint flags,
       Check whether the information schema contains a table
       whose name is tables->schema_table_name
     */
-    ST_SCHEMA_TABLE *schema_table;
-    schema_table= find_schema_table(thd, &tables->schema_table_name);
+    ST_SCHEMA_TABLE *schema_table= tables->schema_table;
     if (!schema_table ||
         (schema_table->hidden &&
          ((sql_command_flags[lex->sql_command] & CF_STATUS_COMMAND) == 0 ||
@@ -3506,7 +3513,7 @@ open_and_process_table(THD *thd, TABLE_LIST *tables, uint *counter, uint flags,
           lex->sql_command == SQLCOM_SHOW_KEYS)))
     {
       my_error(ER_UNKNOWN_TABLE, MYF(0),
-               tables->schema_table_name.str, INFORMATION_SCHEMA_NAME.str);
+               tables->table_name.str, INFORMATION_SCHEMA_NAME.str);
       DBUG_RETURN(1);
     }
   }
@@ -4038,8 +4045,7 @@ open_tables_check_upgradable_mdl(THD *thd, TABLE_LIST *tables_start,
 */
 
 bool open_tables(THD *thd, const DDL_options_st &options,
-                 TABLE_LIST **start, uint *counter,
-                 Sroutine_hash_entry **sroutine_to_open_list, uint flags,
+                 TABLE_LIST **start, uint *counter, uint flags,
                  Prelocking_strategy *prelocking_strategy)
 {
   /*
@@ -4082,9 +4088,10 @@ restart:
 
   has_prelocking_list= thd->lex->requires_prelocking();
   table_to_open= start;
-  sroutine_to_open= sroutine_to_open_list;
+  sroutine_to_open= &thd->lex->sroutines_list.first;
   *counter= 0;
   THD_STAGE_INFO(thd, stage_opening_tables);
+  prelocking_strategy->reset(thd);
 
   /*
     If we are executing LOCK TABLES statement or a DDL statement
@@ -4142,8 +4149,7 @@ restart:
     elements in prelocking list/set.
   */
   while (*table_to_open  ||
-         (thd->locked_tables_mode <= LTM_LOCK_TABLES &&
-          *sroutine_to_open))
+         (thd->locked_tables_mode <= LTM_LOCK_TABLES && *sroutine_to_open))
   {
     /*
       For every table in the list of tables to open, try to find or open
@@ -4263,6 +4269,8 @@ restart:
         }
       }
     }
+    if ((error= prelocking_strategy->handle_end(thd)))
+      goto error;
   }
 
   /*
