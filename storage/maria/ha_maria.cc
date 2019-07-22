@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA */
 
 
 #ifdef USE_PRAGMA_IMPLEMENTATION
@@ -2724,9 +2724,12 @@ int ha_maria::external_lock(THD *thd, int lock_type)
       }
     }
   } /* if transactional table */
-  DBUG_RETURN(maria_lock_database(file, !table->s->tmp_table ?
+  int result = maria_lock_database(file, !table->s->tmp_table ?
                                   lock_type : ((lock_type == F_UNLCK) ?
-                                               F_UNLCK : F_EXTRA_LCK)));
+                                               F_UNLCK : F_EXTRA_LCK));
+  if (!file->s->base.born_transactional)
+    file->state= &file->s->state.state;         // Restore state if clone
+  DBUG_RETURN(result);
 }
 
 int ha_maria::start_stmt(THD *thd, thr_lock_type lock_type)

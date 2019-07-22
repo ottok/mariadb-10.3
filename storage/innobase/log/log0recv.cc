@@ -14,7 +14,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -2171,6 +2171,32 @@ skip_log:
 				INNODB_EXTEND_TIMEOUT_INTERVAL, "To recover: " ULINTPF " pages from log", n);
 		}
 	}
+}
+
+/** Reduces recv_sys->n_addrs for the corrupted page.
+This function should called when srv_force_recovery > 0.
+@param[in]	page_id	page id of the corrupted page */
+void recv_recover_corrupt_page(page_id_t page_id)
+{
+	ut_ad(srv_force_recovery);
+	mutex_enter(&recv_sys->mutex);
+
+	if (!recv_sys->apply_log_recs) {
+		mutex_exit(&recv_sys->mutex);
+		return;
+	}
+
+	recv_addr_t* recv_addr = recv_get_fil_addr_struct(
+			page_id.space(), page_id.page_no());
+
+	ut_ad(recv_addr->state != RECV_WILL_NOT_READ);
+
+	if (recv_addr->state != RECV_BEING_PROCESSED
+	    && recv_addr->state != RECV_PROCESSED) {
+		recv_sys->n_addrs--;
+	}
+
+	mutex_exit(&recv_sys->mutex);
 }
 
 /** Apply any buffered redo log to a page that was just read from a data file.

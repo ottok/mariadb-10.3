@@ -18,7 +18,7 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
-Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA
 
 *******************************************************
 
@@ -36,8 +36,8 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
-this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+this program; if not, write to the Free Software Foundation, Inc., 51 Franklin
+Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *******************************************************/
 
@@ -4132,9 +4132,12 @@ reread_log_header:
 
 	log_header_read(max_cp_field);
 
-	if (checkpoint_no_start != mach_read_from_8(buf + LOG_CHECKPOINT_NO)) {
+	if (checkpoint_no_start != mach_read_from_8(buf + LOG_CHECKPOINT_NO)
+	    || checkpoint_lsn_start
+	    != mach_read_from_8(buf + LOG_CHECKPOINT_LSN)
+	    || log_sys.log.get_lsn_offset()
+	    != mach_read_from_8(buf + LOG_CHECKPOINT_OFFSET))
 		goto reread_log_header;
-	}
 
 	log_mutex_exit();
 
@@ -4154,42 +4157,39 @@ reread_log_header:
 	}
 
 	/* label it */
-	byte MY_ALIGNED(OS_FILE_LOG_BLOCK_SIZE) log_hdr[OS_FILE_LOG_BLOCK_SIZE];
-	memset(log_hdr, 0, sizeof log_hdr);
-	mach_write_to_4(LOG_HEADER_FORMAT + log_hdr, log_sys.log.format);
-	mach_write_to_4(LOG_HEADER_SUBFORMAT + log_hdr, log_sys.log.subformat);
-	mach_write_to_8(LOG_HEADER_START_LSN + log_hdr, checkpoint_lsn_start);
-	strcpy(reinterpret_cast<char*>(LOG_HEADER_CREATOR + log_hdr),
-	       "Backup " MYSQL_SERVER_VERSION);
-	log_block_set_checksum(log_hdr,
-			       log_block_calc_checksum_crc32(log_hdr));
+	byte MY_ALIGNED(OS_FILE_LOG_BLOCK_SIZE) log_hdr_buf[LOG_FILE_HDR_SIZE];
+	memset(log_hdr_buf, 0, sizeof log_hdr_buf);
 
-	/* Write the log header. */
-	if (ds_write(dst_log_file, log_hdr, sizeof log_hdr)) {
-	log_write_fail:
-		msg("error: write to logfile failed");
-		goto fail;
-	}
-	/* Adjust the checkpoint page. */
-	memcpy(log_hdr, buf, OS_FILE_LOG_BLOCK_SIZE);
-	mach_write_to_8(log_hdr + LOG_CHECKPOINT_OFFSET,
-			(checkpoint_lsn_start & (OS_FILE_LOG_BLOCK_SIZE - 1))
-			| LOG_FILE_HDR_SIZE);
+	byte *log_hdr_field = log_hdr_buf;
+	mach_write_to_4(LOG_HEADER_FORMAT + log_hdr_field, log_sys.log.format);
+	mach_write_to_4(LOG_HEADER_SUBFORMAT + log_hdr_field, log_sys.log.subformat);
+	mach_write_to_8(LOG_HEADER_START_LSN + log_hdr_field, checkpoint_lsn_start);
+	strcpy(reinterpret_cast<char*>(LOG_HEADER_CREATOR + log_hdr_field),
+		"Backup " MYSQL_SERVER_VERSION);
+	log_block_set_checksum(log_hdr_field,
+		log_block_calc_checksum_crc32(log_hdr_field));
+
+	/* copied from log_group_checkpoint() */
+	log_hdr_field +=
+		(log_sys.next_checkpoint_no & 1) ? LOG_CHECKPOINT_2 : LOG_CHECKPOINT_1;
 	/* The least significant bits of LOG_CHECKPOINT_OFFSET must be
 	stored correctly in the copy of the ib_logfile. The most significant
 	bits, which identify the start offset of the log block in the file,
 	we did choose freely, as LOG_FILE_HDR_SIZE. */
 	ut_ad(!((log_sys.log.get_lsn() ^ checkpoint_lsn_start)
 		& (OS_FILE_LOG_BLOCK_SIZE - 1)));
-	log_block_set_checksum(log_hdr,
-			       log_block_calc_checksum_crc32(log_hdr));
-	/* Write checkpoint page 1 and two empty log pages before the
-	payload. */
-	if (ds_write(dst_log_file, log_hdr, OS_FILE_LOG_BLOCK_SIZE)
-	    || !memset(log_hdr, 0, sizeof log_hdr)
-	    || ds_write(dst_log_file, log_hdr, sizeof log_hdr)
-	    || ds_write(dst_log_file, log_hdr, sizeof log_hdr)) {
-		goto log_write_fail;
+	/* Adjust the checkpoint page. */
+	memcpy(log_hdr_field, log_sys.checkpoint_buf, OS_FILE_LOG_BLOCK_SIZE);
+	mach_write_to_8(log_hdr_field + LOG_CHECKPOINT_OFFSET,
+		(checkpoint_lsn_start & (OS_FILE_LOG_BLOCK_SIZE - 1))
+		| LOG_FILE_HDR_SIZE);
+	log_block_set_checksum(log_hdr_field,
+			log_block_calc_checksum_crc32(log_hdr_field));
+
+	/* Write log header*/
+	if (ds_write(dst_log_file, log_hdr_buf, sizeof(log_hdr_buf))) {
+		msg("error: write to logfile failed");
+		goto fail;
 	}
 
 	log_copying_running = true;
@@ -5189,7 +5189,11 @@ next_file_item_1:
 		        goto next_datadir_item;
 		}
 
-		snprintf(dbpath, sizeof(dbpath)-1, "%s/%s", path, dbinfo.name);
+		snprintf(dbpath, sizeof(dbpath), "%.*s/%.*s",
+                         OS_FILE_MAX_PATH/2-1,
+                         path,
+                         OS_FILE_MAX_PATH/2-1,
+                         dbinfo.name);
 
 		os_normalize_path(dbpath);
 

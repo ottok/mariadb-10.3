@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA
 */
 
 /* mysqldump.c  - Dump a tables contents and format to an ASCII file
@@ -978,6 +978,10 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
       sf_leaking_memory= 1; /* no memory leak reports here */
       exit(1);
     }
+    break;
+  case (int) OPT_DEFAULT_CHARSET:
+    if (default_charset == disabled_my_option)
+      default_charset= (char *)mysql_universal_client_charset;
     break;
   }
   return 0;
