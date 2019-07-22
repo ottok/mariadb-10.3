@@ -30,8 +30,6 @@ build package:
     paths:
       - ${WORKING_DIR}/
   script:
-    - |
-      curl https://prittiau.debian.net/post -X POST --data "{\"project_id\":$CI_PROJECT_ID, \"pipeline_id\":$CI_PIPELINE_ID}" --header "Content-Type: application/json"
     - mkdir -p ${CCACHE_WORK_DIR}
     - mv ${CCACHE_WORK_DIR} ${CCACHE_TMP_DIR}
     - gbp pull --ignore-branch --pristine-tar --track-missing
