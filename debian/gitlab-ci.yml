@@ -70,7 +70,7 @@ run lintian:
   image: registry.salsa.debian.org/salsa-ci-team/images/lintian:${RELEASE}
   script:
     - lintian ${WORKING_DIR}/*.changes | tee lintian.output
-    - cat lintian.output | /root/go/bin/lintian2junit > ${WORKING_DIR}/lintian.xml
+    - lintian2junit.py --lintian-file lintian.output > ${WORKING_DIR}/lintian.xml
   variables:
       GIT_STRATEGY: none
   artifacts:
