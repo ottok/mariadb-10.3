@@ -74,6 +74,6 @@ function check_root_accounts() {
 
   ret=$( echo "SELECT count(*) FROM mysql.user WHERE user='root' and password='' and plugin='';" | $MYSQL --skip-column-names )
   if [ "$ret" -ne "0" ]; then
-    logger -p daemon.warn -i -t$0 "WARNING: mysql.user contains $ret root accounts without password or plugin!"
+    logger -p daemon.warn -i -t$0 "WARNING: mysql.user contains $ret root accounts without password!"
   fi
 }
