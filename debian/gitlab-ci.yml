@@ -21,6 +21,21 @@ stages:
 
 build:
   extends: .build-package
+  script:
+    - apt-get update
+    - mkdir -p ${CCACHE_WORK_DIR}
+    - mv ${CCACHE_WORK_DIR} ${CCACHE_TMP_DIR}
+    - gbp pull --ignore-branch --pristine-tar --track-missing
+    - |
+      mkdir -p ${WORKING_DIR}
+      # Check if we can obtain the orig from the git branches
+      if ! gbp export-orig --pristine-tar --tarball-dir=${WORKING_DIR}; then
+        # Fallback using origtargz
+        origtargz -dt
+        mv ../*.orig.* ${WORKING_DIR}
+      fi
+    - gbp buildpackage --git-ignore-branch --git-ignore-new --git-no-create-orig --git-overlay --git-export-dir=${WORKING_DIR} --git-builder="docker-build.sh ${SALSA_CI_IMAGES_DOCKERBUILDER}" | (head -n 5000 ; echo "==== Output supressed to avoid hitting Gitlab-CI 4 MB log limit ===="; tail -n 5000)
+    - mv ${CCACHE_TMP_DIR} ${CCACHE_WORK_DIR}
 
 # Backports build not here as we cannot build MariaDB 10.3 backport for Stretch
 # due to unmet build dependencies.
