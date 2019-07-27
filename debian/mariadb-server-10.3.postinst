@@ -142,6 +142,20 @@ EOF
     chown 0:0 $dc
     chmod 0600 $dc
 
+    # If there is a real AppArmor profile, we reload it.
+    # If the default empty profile is installed, then we remove any old
+    # profile that may be loaded.
+    # This allows upgrade from old versions (that have an apparmor profile
+    # on by default) to work both to disable a default profile, and to keep
+    # any profile installed and maintained by users themselves.
+    profile="/etc/apparmor.d/usr.sbin.mysqld"
+    if [ -f "$profile" ] && aa-status --enabled 2>/dev/null; then
+        if grep -q /usr/sbin/mysqld "$profile" 2>/dev/null ; then
+            apparmor_parser -r "$profile" || true
+        else
+            echo "/usr/sbin/mysqld { }" | apparmor_parser --remove 2>/dev/null || true
+	fi
+    fi
   ;;
 
   abort-upgrade|abort-remove|abort-configure)
