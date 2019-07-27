@@ -9,6 +9,37 @@ MAJOR_VER="${DPKG_MAINTSCRIPT_PACKAGE#mariadb-server-}"
 if [ -n "$DEBIAN_SCRIPT_DEBUG" ]; then set -v -x; DEBIAN_SCRIPT_TRACE=1; fi
 ${DEBIAN_SCRIPT_TRACE:+ echo "#42#DEBUG# RUNNING $0 $*" 1>&2 }
 
+MYADMIN="/usr/bin/mysqladmin --defaults-file=/etc/mysql/debian.cnf"
+
+# Try to stop the server in a sane way. If it does not success let the admin
+# do it himself. No database directories should be removed while the server
+# is running!
+stop_server() {
+  set +e
+  invoke-rc.d mysql stop
+  errno=$?
+  set -e
+
+  if [ "$?" != 0 ]; then
+    echo "Trying to stop the MySQL server resulted in exitcode $?." 1>&2
+    echo "Stop it yourself and try again!" 1>&2
+    exit 1
+  fi
+}
+
+case "$1" in
+  purge|remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    if [ -n "`$MYADMIN ping 2>/dev/null`" ]; then
+      stop_server
+      sleep 2
+    fi
+  ;;
+  *)
+    echo "postrm called with unknown argument '$1'" 1>&2
+    exit 1
+  ;;
+esac
+
 #
 # - Purge logs and data only if they are ours (#307473)
 # - Remove the mysql user only after all his owned files are purged.

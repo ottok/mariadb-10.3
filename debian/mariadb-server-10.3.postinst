@@ -22,6 +22,12 @@ MYSQL_BOOTSTRAP="/usr/sbin/mysqld --bootstrap --user=mysql --disable-log-bin --s
 
 case "$1" in
   configure)
+    # This is needed because mysql_install_db removes the pid file in /var/run
+    # and because changed configuration options should take effect immediately.
+    # In case the server wasn't running at all it should be ok if the stop
+    # script fails. I can't tell at this point because of the cleaned /var/run.
+    set +e; invoke-rc.d mysql stop; set -e
+
     mysql_statedir=/usr/share/mysql
     mysql_datadir=/var/lib/mysql
     mysql_logdir=/var/log/mysql

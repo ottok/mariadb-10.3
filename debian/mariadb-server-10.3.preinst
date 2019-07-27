@@ -24,6 +24,29 @@ export PATH=$PATH:/sbin:/usr/sbin:/bin:/usr/bin
 mysql_datadir=/var/lib/mysql
 mysql_upgradedir=/var/lib/mysql-upgrade
 
+# Try to stop the server in a sane way. If it does not success let the admin
+# do it himself. No database directories should be removed while the server
+# is running! Another mysqld in e.g. a different chroot is fine for us.
+stop_server() {
+    # Return immediately if there are no mysql processes running
+    # as there is no point in trying to shutdown in that case.
+    if ! pgrep -x mysqld > /dev/null; then return; fi
+
+    set +e
+    systemctl stop mysql
+    errno=$?
+    set -e
+
+    # 0=ok, 100=no init script (fresh install)
+    if [ "$errno" != 0 -a "$errno" != 100 ]; then
+      echo "'systemctl stop mysql' returned $errno" 1>&2
+      echo "There is a MySQL server running, but we failed in our attempts to stop it." 1>&2
+      echo "Stop it yourself and try again!" 1>&2
+      db_stop
+      exit 1
+    fi
+}
+
 ################################ main() ##########################
 
 this_version=$MAJOR_VER
@@ -102,6 +125,9 @@ then
   # no longer valid
   mv -f /etc/mysql/debian.cnf "/etc/mysql/debian.cnf-$found_version"
 fi
+
+# to be sure
+stop_server
 
 # If we use NIS then errors should be tolerated. It's up to the
 # user to ensure that the mysql user is correctly setup.
