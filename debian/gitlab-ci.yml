@@ -355,7 +355,8 @@ mysql-5.5 to mariadb-10.3 upgrade:
     - echo 'SHOW DATABASES;' | mysql
     # Install MariaDB built in this commit
     - sed 's/jessie/buster/g' -i /etc/apt/sources.list # Enable next Debian release
-    - apt-get update; apt-get install -y apt # Install apt 1.4.9 so the wildcard command below works
+    - apt-get update; apt-get install -y apt || true # Install apt 1.4.9 so the wildcard command below works
+    - apt-get dist-upgrade -y || true # Upgrade all to avoid udev/systemd failures
     - apt-get install -y ./*.deb || true # Allow to proceed so debug artifacts get collected
     # Verify installation of MariaDB built in this commit
     - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
