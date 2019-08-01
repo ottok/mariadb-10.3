@@ -11,22 +11,22 @@
 // the last "sync". It then checks for data loss errors by purposely dropping
 // file data (or entire files) not protected by a "sync".
 
-#include "db/db_impl.h"
+#include "db/db_impl/db_impl.h"
 #include "db/log_format.h"
 #include "db/version_set.h"
 #include "env/mock_env.h"
+#include "file/filename.h"
+#include "logging/logging.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/table.h"
 #include "rocksdb/write_batch.h"
-#include "util/fault_injection_test_env.h"
-#include "util/filename.h"
-#include "util/logging.h"
+#include "test_util/fault_injection_test_env.h"
+#include "test_util/sync_point.h"
+#include "test_util/testharness.h"
+#include "test_util/testutil.h"
 #include "util/mutexlock.h"
-#include "util/sync_point.h"
-#include "util/testharness.h"
-#include "util/testutil.h"
 
 namespace rocksdb {
 
@@ -70,7 +70,7 @@ class FaultInjectionTest
   std::unique_ptr<Env> base_env_;
   FaultInjectionTestEnv* env_;
   std::string dbname_;
-  shared_ptr<Cache> tiny_cache_;
+  std::shared_ptr<Cache> tiny_cache_;
   Options options_;
   DB* db_;
 
@@ -83,7 +83,7 @@ class FaultInjectionTest
         env_(nullptr),
         db_(nullptr) {}
 
-  ~FaultInjectionTest() {
+  ~FaultInjectionTest() override {
     rocksdb::SyncPoint::GetInstance()->DisableProcessing();
     rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
   }
@@ -107,18 +107,18 @@ class FaultInjectionTest
     Options options;
     switch (option_config_) {
       case kWalDir:
-        options.wal_dir = test::TmpDir(env_) + "/fault_test_wal";
+        options.wal_dir = test::PerThreadDBPath(env_, "fault_test_wal");
         break;
       case kDifferentDataDir:
-        options.db_paths.emplace_back(test::TmpDir(env_) + "/fault_test_data",
-                                      1000000U);
+        options.db_paths.emplace_back(
+            test::PerThreadDBPath(env_, "fault_test_data"), 1000000U);
         break;
       case kSyncWal:
         sync_use_wal_ = true;
         sync_use_compact_ = false;
         break;
       case kWalDirSyncWal:
-        options.wal_dir = test::TmpDir(env_) + "/fault_test_wal";
+        options.wal_dir = test::PerThreadDBPath(env_, "/fault_test_wal");
         sync_use_wal_ = true;
         sync_use_compact_ = false;
         break;
@@ -158,7 +158,7 @@ class FaultInjectionTest
     table_options.block_cache = tiny_cache_;
     options_.table_factory.reset(NewBlockBasedTableFactory(table_options));
 
-    dbname_ = test::TmpDir() + "/fault_test";
+    dbname_ = test::PerThreadDBPath("fault_test");
 
     EXPECT_OK(DestroyDB(dbname_, options_));
 

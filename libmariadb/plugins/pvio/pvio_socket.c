@@ -504,6 +504,14 @@ int pvio_socket_wait_io_or_timeout(MARIADB_PVIO *pvio, my_bool is_read, int time
   if (!pvio || !pvio->data)
     return 0;
 
+  if (pvio->mysql->options.extension && 
+      pvio->mysql->options.extension->io_wait != NULL) {
+    my_socket handle;
+    if (pvio_socket_get_handle(pvio, &handle))
+      return 0;
+    return pvio->mysql->options.extension->io_wait(handle, is_read, timeout);
+  }
+
   csock= (struct st_pvio_socket *)pvio->data;
   {
 #ifndef _WIN32
@@ -772,7 +780,7 @@ my_bool pvio_socket_connect(MARIADB_PVIO *pvio, MA_PVIO_CINFO *cinfo)
     /* Abstract socket */
     if (cinfo->unix_socket[0] == '@')
     {
-      strncpy(UNIXaddr.sun_path + 1, cinfo->unix_socket + 1, 107);
+      strncpy(UNIXaddr.sun_path + 1, cinfo->unix_socket + 1, 106);
       port_length+= offsetof(struct sockaddr_un, sun_path);
     }
     else

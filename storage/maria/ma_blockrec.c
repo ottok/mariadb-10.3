@@ -5244,6 +5244,8 @@ my_bool _ma_scan_init_block_record(MARIA_HA *info)
 {
   MARIA_SHARE *share= info->s;
   DBUG_ENTER("_ma_scan_init_block_record");
+  DBUG_ASSERT(info->dfile.file == share->bitmap.file.file);
+
   /*
     bitmap_buff may already be allocated if this is the second call to
     rnd_init() without a rnd_end() in between, see sql/handler.h
@@ -7547,7 +7549,7 @@ void _ma_print_block_info(MARIA_SHARE *share, uchar *buff)
 {
   LSN lsn= lsn_korr(buff);
 
-  printf("LSN:" LSN_FMT " type: %u  dir_entries: %u  dir_free: %u  empty_space: %u\n",
+  printf("LSN: " LSN_FMT "  type: %u  dir_entries: %u  dir_free: %u  empty_space: %u\n",
          LSN_IN_PARTS(lsn),
          (uint)buff[PAGE_TYPE_OFFSET],
          (uint)buff[DIR_COUNT_OFFSET],

@@ -567,14 +567,14 @@ inline bool is_system_table_name(const char *name, size_t length)
   
   SYNOPSIS
   open_table_def()
-  thd		Thread handler
+  thd		  Thread handler
   share		Fill this with table definition
-  db_flags	Bit mask of the following flags: OPEN_VIEW
+  flags	  Bit mask of the following flags: OPEN_VIEW
 
   NOTES
     This function is called when the table definition is not cached in
     table definition cache
-    The data is returned in 'share', which is alloced by
+    The data is returned in 'share', which is allocated by
     alloc_table_share().. The code assumes that share is initialized.
 */
 
@@ -4653,6 +4653,7 @@ void TABLE::init(THD *thd, TABLE_LIST *tl)
   created= TRUE;
   cond_selectivity= 1.0;
   cond_selectivity_sampling_explain= NULL;
+  vers_write= s->versioned;
 #ifdef HAVE_REPLICATION
   /* used in RBR Triggers */
   master_had_triggers= 0;
@@ -7875,6 +7876,7 @@ int TABLE::update_virtual_fields(handler *h, enum_vcol_update_mode update_mode)
 
 int TABLE::update_virtual_field(Field *vf)
 {
+  DBUG_ASSERT(!in_use->is_error());
   Query_arena backup_arena;
   DBUG_ENTER("TABLE::update_virtual_field");
   in_use->set_n_backup_active_arena(expr_arena, &backup_arena);

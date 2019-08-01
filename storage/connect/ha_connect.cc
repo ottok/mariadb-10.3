@@ -3069,7 +3069,7 @@ PCFIL ha_connect::CheckCond(PGLOBAL g, PCFIL filp, const Item *cond)
                 strncat(s, res->ptr(), res->length());
 
                 if (res->length() < 19)
-                  strcat(s, "1970-01-01 00:00:00" + res->length());
+                  strcat(s, &"1970-01-01 00:00:00"[res->length()]);
 
                 strcat(s, "'}");
                 break;
@@ -3099,7 +3099,7 @@ PCFIL ha_connect::CheckCond(PGLOBAL g, PCFIL filp, const Item *cond)
                     strncat(s, res->ptr(), res->length());
 
                     if (res->length() < 19)
-                      strcat(s, "1970-01-01 00:00:00" + res->length());
+                      strcat(s, &"1970-01-01 00:00:00"[res->length()]);
 
                     strcat(s, "'}");
                     break;
@@ -6681,6 +6681,7 @@ int ha_connect::create(const char *name, TABLE *table_arg,
   if (trace(1))
     htrc("xchk=%p createas=%d\n", g->Xchk, g->Createas);
 
+#if defined(ZIP_SUPPORT)
 	if (options->zipped) {
 		// Check whether the zip entry must be made from a file
 		PCSZ fn = GetListOption(g, "Load", options->oplist, NULL);
@@ -6710,6 +6711,7 @@ int ha_connect::create(const char *name, TABLE *table_arg,
 		}	// endif fn
 
 	}	// endif zipped
+#endif // ZIP_SUPPORT
 
   // To check whether indexes have to be made or remade
   if (!g->Xchk) {

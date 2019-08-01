@@ -1292,7 +1292,7 @@ btr_cur_search_to_nth_level_func(
 	}
 # endif /* BTR_CUR_HASH_ADAPT */
 #endif /* BTR_CUR_ADAPT */
-	btr_cur_n_non_sea++;
+	my_atomic_addlint(&btr_cur_n_non_sea, 1);
 
 	/* If the hash search did not succeed, do binary search down the
 	tree */
@@ -4693,7 +4693,7 @@ btr_cur_pessimistic_update(
 		ut_ad(dict_index_is_clust(index));
 		ut_ad(thr_get_trx(thr)->in_rollback);
 
-		DBUG_EXECUTE_IF("ib_blob_update_rollback", DBUG_SUICIDE(););
+		DEBUG_SYNC_C("blob_rollback_middle");
 
 		btr_rec_free_updated_extern_fields(
 			index, rec, page_zip, *offsets, update, true, mtr);
