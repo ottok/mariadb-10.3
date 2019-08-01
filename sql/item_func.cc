@@ -360,6 +360,7 @@ Item_func::fix_fields(THD *thd, Item **ref)
       with_window_func= with_window_func || item->with_window_func;
       with_field= with_field || item->with_field;
       used_tables_and_const_cache_join(item);
+      not_null_tables_cache|= item->not_null_tables();
       m_with_subquery|= item->with_subquery();
     }
   }
@@ -6906,9 +6907,9 @@ longlong Item_func_lastval::val_int()
 /*
   Sets next value to be returned from sequences
 
-  SELECT setval('foo', 42, 0);           Next nextval will return 43
-  SELECT setval('foo', 42, 0, true);     Same as above
-  SELECT setval('foo', 42, 0, false);    Next nextval will return 42
+  SELECT setval(foo, 42, 0);           Next nextval will return 43
+  SELECT setval(foo, 42, 0, true);     Same as above
+  SELECT setval(foo, 42, 0, false);    Next nextval will return 42
 */
 
 longlong Item_func_setval::val_int()

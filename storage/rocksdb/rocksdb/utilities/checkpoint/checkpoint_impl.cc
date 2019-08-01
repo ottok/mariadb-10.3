@@ -11,24 +11,20 @@
 
 #include "utilities/checkpoint/checkpoint_impl.h"
 
-#ifndef __STDC_FORMAT_MACROS
-#define __STDC_FORMAT_MACROS
-#endif
-
-#include <inttypes.h>
+#include <cinttypes>
 #include <algorithm>
 #include <string>
 #include <vector>
 
 #include "db/wal_manager.h"
+#include "file/file_util.h"
+#include "file/filename.h"
 #include "port/port.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/transaction_log.h"
 #include "rocksdb/utilities/checkpoint.h"
-#include "util/file_util.h"
-#include "util/filename.h"
-#include "util/sync_point.h"
+#include "test_util/sync_point.h"
 
 namespace rocksdb {
 
@@ -120,7 +116,8 @@ Status CheckpointImpl::CreateCheckpoint(const std::string& checkpoint_dir,
         } /* copy_file_cb */,
         [&](const std::string& fname, const std::string& contents, FileType) {
           ROCKS_LOG_INFO(db_options.info_log, "Creating %s", fname.c_str());
-          return CreateFile(db_->GetEnv(), full_private_path + fname, contents);
+          return CreateFile(db_->GetEnv(), full_private_path + fname, contents,
+                            db_options.use_fsync);
         } /* create_file_cb */,
         &sequence_number, log_size_for_flush);
     // we copied all the files, enable file deletions
@@ -132,7 +129,7 @@ Status CheckpointImpl::CreateCheckpoint(const std::string& checkpoint_dir,
     s = db_->GetEnv()->RenameFile(full_private_path, checkpoint_dir);
   }
   if (s.ok()) {
-    unique_ptr<Directory> checkpoint_directory;
+    std::unique_ptr<Directory> checkpoint_directory;
     db_->GetEnv()->NewDirectory(checkpoint_dir, &checkpoint_directory);
     if (checkpoint_directory != nullptr) {
       s = checkpoint_directory->Fsync();

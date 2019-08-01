@@ -1037,6 +1037,9 @@ struct dict_index_t{
 		return DICT_CLUSTERED == (type & (DICT_CLUSTERED | DICT_IBUF));
 	}
 
+	/** @return whether this is a spatial index */
+	bool is_spatial() const { return UNIV_UNLIKELY(type & DICT_SPATIAL); }
+
 	/** @return whether the index includes virtual columns */
 	bool has_virtual() const { return type & DICT_VIRTUAL; }
 
@@ -1117,6 +1120,12 @@ struct dict_index_t{
 	@return true on error */
 	bool
 	vers_history_row(const rec_t* rec, bool &history_row);
+
+	/** If a record of this index might not fit on a single B-tree page,
+	  return true.
+	@param[in]	strict	issue error or warning
+	@return true if the index record could become too big */
+	bool rec_potentially_too_big(bool strict) const;
 };
 
 /** Detach a column from an index.
@@ -1567,6 +1576,9 @@ struct dict_table_t {
 		ut_ad(fk_checks > 0);
 	}
 
+	/** For overflow fields returns potential max length stored inline */
+	size_t get_overflow_field_local_len() const;
+
 	/** Id of the table. */
 	table_id_t				id;
 	/** Hash chain node. */
@@ -1763,7 +1775,7 @@ struct dict_table_t {
 	unsigned				stat_initialized:1;
 
 	/** Timestamp of last recalc of the stats. */
-	ib_time_t				stats_last_recalc;
+	time_t					stats_last_recalc;
 
 	/** The two bits below are set in the 'stat_persistent' member. They
 	have the following meaning:
