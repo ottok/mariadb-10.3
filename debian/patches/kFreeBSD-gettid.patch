@@ -8,7 +8,7 @@ Subject: kFreeBSD-gettid
 
 --- a/storage/tokudb/PerconaFT/portability/portability.cc
 +++ b/storage/tokudb/PerconaFT/portability/portability.cc
-@@ -118,6 +118,10 @@ toku_os_gettid(void) {
+@@ -120,6 +120,10 @@ toku_os_gettid(void) {
      return syscall(SYS_gettid);
  #elif defined(HAVE_PTHREAD_GETTHREADID_NP)
      return pthread_getthreadid_np();
