@@ -1,4 +1,4 @@
-mariadb-10.3 (1:10.3.17-1) UNRELEASED; urgency=high
+mariadb-10.3 (1:10.3.17-1) unstable; urgency=high
 
   * New upstream version 10.3.17. Includes security fixes for:
     - CVE-2019-2737
@@ -8,8 +8,11 @@ mariadb-10.3 (1:10.3.17-1) UNRELEASED; urgency=high
     - CVE-2019-2805
   * Multiple Gitlab-CI/Salsa-CI improvements
   * Dependency in resolveip is still included (Closes: #910902)
+  * Update libmariadb3 symbols to match MariaDB Connector C 3.1 API
+  * Add Lintian override for new test binary wsrep_check_version
+  * Gitlab-CI: Clean away one excess comment left from b9d633b38
 
- -- Otto Kekäläinen <otto@debian.org>  Thu, 01 Aug 2019 21:15:41 +0100
+ -- Otto Kekäläinen <otto@debian.org>  Fri, 02 Aug 2019 17:53:22 +0100
 
 mariadb-10.3 (1:10.3.16-1) unstable; urgency=medium
 
