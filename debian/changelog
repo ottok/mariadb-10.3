@@ -1,8 +1,14 @@
-mariadb-10.3 (1:10.3.16-0+deb9u1) buster; urgency=medium
+mariadb-10.3 (1:10.3.17-0+deb9u1) buster; urgency=high
 
-  * New upstream version 10.3.16
+  * New upstream version 10.3.17. Includes security fixes for:
+    - CVE-2019-2737
+    - CVE-2019-2739
+    - CVE-2019-2740
+    - CVE-2019-2758
+    - CVE-2019-2805
+  * Multiple Gitlab-CI/Salsa-CI improvements
 
- -- Otto Kekäläinen <otto@debian.org>  Mon, 22 Jul 2019 15:46:54 -0300
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 01 Aug 2019 21:15:41 +0100
 
 mariadb-10.3 (1:10.3.15-1) unstable; urgency=high
 

@@ -9,7 +9,7 @@ Subject: mips-groonga-atomic
 
 --- a/storage/mroonga/vendor/groonga/CMakeLists.txt
 +++ b/storage/mroonga/vendor/groonga/CMakeLists.txt
-@@ -238,6 +238,8 @@ endmacro()
+@@ -237,6 +237,8 @@ endmacro()
  include(build/ac_macros/check_headers.m4)
  include(build/ac_macros/check_functions.m4)
  
