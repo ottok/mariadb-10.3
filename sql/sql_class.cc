@@ -629,6 +629,9 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
    waiting_on_group_commit(FALSE), has_waiter(FALSE),
    spcont(NULL),
    m_parser_state(NULL),
+#ifndef EMBEDDED_LIBRARY
+   audit_plugin_version(-1),
+#endif
 #if defined(ENABLED_DEBUG_SYNC)
    debug_sync_control(0),
 #endif /* defined(ENABLED_DEBUG_SYNC) */
@@ -4743,6 +4746,11 @@ void reset_thd(MYSQL_THD thd)
 unsigned long long thd_get_query_id(const MYSQL_THD thd)
 {
   return((unsigned long long)thd->query_id);
+}
+
+void thd_clear_error(MYSQL_THD thd)
+{
+  thd->clear_error();
 }
 
 extern "C" const struct charset_info_st *thd_charset(MYSQL_THD thd)

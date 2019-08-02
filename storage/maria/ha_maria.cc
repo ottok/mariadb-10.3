@@ -355,10 +355,12 @@ static PSI_file_info all_aria_files[]=
   { &key_file_control, "control", PSI_FLAG_GLOBAL}
 };
 
+# ifdef HAVE_PSI_STAGE_INTERFACE
 static PSI_stage_info *all_aria_stages[]=
 {
   & stage_waiting_for_a_resource
 };
+# endif /* HAVE_PSI_STAGE_INTERFACE */
 
 static void init_aria_psi_keys(void)
 {
@@ -379,9 +381,10 @@ static void init_aria_psi_keys(void)
 
   count= array_elements(all_aria_files);
   mysql_file_register(category, all_aria_files, count);
-
+# ifdef HAVE_PSI_STAGE_INTERFACE
   count= array_elements(all_aria_stages);
   mysql_stage_register(category, all_aria_stages, count);
+# endif /* HAVE_PSI_STAGE_INTERFACE */
 }
 #else
 #define init_aria_psi_keys() /* no-op */
@@ -1217,6 +1220,7 @@ int ha_maria::check(THD * thd, HA_CHECK_OPT * check_opt)
 
   if (!file || !param) return HA_ADMIN_INTERNAL_ERROR;
 
+  unmap_file(file);
   maria_chk_init(param);
   param->thd= thd;
   param->op_name= "check";
@@ -1437,6 +1441,7 @@ int ha_maria::zerofill(THD * thd, HA_CHECK_OPT *check_opt)
   if (!file || !param)
     return HA_ADMIN_INTERNAL_ERROR;
 
+  unmap_file(file);
   old_trn= file->trn;
   maria_chk_init(param);
   param->thd= thd;
@@ -1535,6 +1540,7 @@ int ha_maria::repair(THD *thd, HA_CHECK *param, bool do_optimize)
   param->out_flag= 0;
   share->state.dupp_key= MI_MAX_KEY;
   strmov(fixed_name, share->open_file_name.str);
+  unmap_file(file);
 
   /*
     Don't lock tables if we have used LOCK TABLE or if we come from
@@ -1713,7 +1719,6 @@ int ha_maria::assign_to_keycache(THD * thd, HA_CHECK_OPT *check_opt)
   ulonglong map;
   TABLE_LIST *table_list= table->pos_in_table_list;
   DBUG_ENTER("ha_maria::assign_to_keycache");
-
 
   table->keys_in_use_for_query.clear_all();
 
@@ -2669,7 +2674,8 @@ int ha_maria::external_lock(THD *thd, int lock_type)
     }
     else
     {
-      TRN *trn= (file->trn != &dummy_transaction_object ? file->trn : 0);
+      /* We have to test for THD_TRN to protect against implicit commits */
+      TRN *trn= (file->trn != &dummy_transaction_object && THD_TRN ? file->trn : 0);
       /* End of transaction */
 
       /*
@@ -2705,7 +2711,7 @@ int ha_maria::external_lock(THD *thd, int lock_type)
             changes to commit (rollback shouldn't be tested).
           */
           DBUG_ASSERT(!thd->get_stmt_da()->is_sent() ||
-                      thd->killed == KILL_CONNECTION);
+                      thd->killed);
           /* autocommit ? rollback a transaction */
 #ifdef MARIA_CANNOT_ROLLBACK
           if (ma_commit(trn))

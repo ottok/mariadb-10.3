@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2016, Oracle and/or its affiliates.
+   Copyright (c) 2000, 2019, Oracle and/or its affiliates.
    Copyright (c) 2010, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or modify
@@ -2118,6 +2118,11 @@ bool mysql_rm_table(THD *thd,TABLE_LIST *tables, bool if_exists,
     }
   }
 
+  DBUG_EXECUTE_IF("ib_purge_virtual_mdev_16222_1",
+                  DBUG_ASSERT(!debug_sync_set_action(
+                                thd,
+                                STRING_WITH_LEN("now SIGNAL drop_started"))););
+
   /* mark for close and remove all cached entries */
   thd->push_internal_handler(&err_handler);
   error= mysql_rm_table_no_locks(thd, tables, if_exists, drop_temporary,
@@ -2306,7 +2311,7 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
   for (table= tables; table; table= table->next_local)
   {
     bool is_trans= 0;
-    bool table_creation_was_logged= 1;
+    bool table_creation_was_logged= 0;
     LEX_CSTRING db= table->db;
     handlerton *table_type= 0;
 
@@ -2569,8 +2574,7 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
                          table->table ?  table->table->s :  NULL));
   }
   DEBUG_SYNC(thd, "rm_table_no_locks_before_binlog");
-  thd->thread_specific_used|= (trans_tmp_table_deleted ||
-                               non_trans_tmp_table_deleted);
+  thd->thread_specific_used= TRUE;
   error= 0;
 err:
   if (wrong_tables.length())
@@ -7549,6 +7553,7 @@ static bool mysql_inplace_alter_table(THD *thd,
   if (res)
     goto rollback;
 
+  DEBUG_SYNC(thd, "alter_table_inplace_before_lock_upgrade");
   // Upgrade to EXCLUSIVE before commit.
   if (wait_while_table_is_used(thd, table, HA_EXTRA_PREPARE_FOR_RENAME))
     goto rollback;
@@ -9845,6 +9850,8 @@ do_continue:;
 
     DEBUG_SYNC(thd, "alter_table_copy_after_lock_upgrade");
   }
+  else
+    thd->close_unused_temporary_table_instances(table_list);
 
   // It's now safe to take the table level lock.
   if (lock_tables(thd, table_list, alter_ctx.tables_opened,

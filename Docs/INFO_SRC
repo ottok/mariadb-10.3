@@ -1,8 +1,8 @@
-commit: 0789a1a18f0e780c0412667e7b6e0a9970aa6905
-date: 2019-06-15 01:21:40 +0300
-build-date: 2019-06-14 22:25:18 +0000 
-short: 0789a1a
+commit: 4b5a14d0fe3d6945a0a9516261f563dcfd1f2c9c
+date: 2019-07-28 03:14:33 +0300
+build-date: 2019-07-28 00:18:33 +0000 
+short: 4b5a14d
 branch: HEAD
 
 
-MariaDB source 10.3.16
+MariaDB source 10.3.17

@@ -8,6 +8,7 @@
 typedef struct st_mysql_client_plugin_AUTHENTICATION auth_plugin_t;
 static int client_mpvio_write_packet(struct st_plugin_vio*, const uchar*, size_t);
 static int native_password_auth_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql);
+static int dummy_fallback_auth_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql __attribute__((unused)));
 extern void read_user_name(char *name);
 extern char *ma_send_connect_attr(MYSQL *mysql, unsigned char *buffer);
 extern int ma_read_ok_packet(MYSQL *mysql, uchar *pos, ulong length);
@@ -92,6 +93,46 @@ static int native_password_auth_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql)
       return CR_ERROR;
 
   return CR_OK;
+}
+
+auth_plugin_t dummy_fallback_client_plugin=
+{
+  MYSQL_CLIENT_AUTHENTICATION_PLUGIN,
+  MYSQL_CLIENT_AUTHENTICATION_PLUGIN_INTERFACE_VERSION,
+  "dummy_fallback_auth",
+  "Sergei Golubchik",
+  "Dummy fallback plugin",
+  {1, 0, 0},
+  "LGPL",
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  dummy_fallback_auth_client
+};
+
+
+static int dummy_fallback_auth_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql __attribute__((unused)))
+{
+  char last_error[MYSQL_ERRMSG_SIZE];
+  unsigned int i, last_errno= ((MCPVIO_EXT *)vio)->mysql->net.last_errno;
+  if (last_errno)
+    strncpy(last_error, ((MCPVIO_EXT *)vio)->mysql->net.last_error,
+            sizeof(last_error));
+
+  /* safety-wise we only do 10 round-trips */
+  for (i=0; i < 10; i++)
+  {
+    uchar *pkt;
+    if (vio->read_packet(vio, &pkt) < 0)
+      break;
+    if (vio->write_packet(vio, 0, 0))
+      break;
+  }
+  if (last_errno)
+    strncpy(((MCPVIO_EXT *)vio)->mysql->net.last_error, last_error,
+            sizeof(((MCPVIO_EXT *)vio)->mysql->net.last_error));
+  return CR_ERROR;
 }
 
 static int send_change_user_packet(MCPVIO_EXT *mpvio,
@@ -353,7 +394,9 @@ static int client_mpvio_read_packet(struct st_plugin_vio *mpv, uchar **buf)
   }
 
   /* otherwise read the data */
-  pkt_len= ma_net_safe_read(mysql);
+  if ((pkt_len= ma_net_safe_read(mysql)) == packet_error)
+    return (int)packet_error;
+
   mpvio->last_read_packet_len= pkt_len;
   *buf= mysql->net.read_pos;
 
@@ -510,7 +553,7 @@ int run_plugin_auth(MYSQL *mysql, char *data, uint data_len,
     auth_plugin_name= mysql->options.extension->default_auth;
     if (!(auth_plugin= (auth_plugin_t*) mysql_client_find_plugin(mysql,
                        auth_plugin_name, MYSQL_CLIENT_AUTHENTICATION_PLUGIN)))
-      return 1; /* oops, not found */
+      auth_plugin= &dummy_fallback_client_plugin;
   }
   else
   {
@@ -520,7 +563,7 @@ int run_plugin_auth(MYSQL *mysql, char *data, uint data_len,
     {
       if (!(auth_plugin= (auth_plugin_t*)mysql_client_find_plugin(mysql,
                          "mysql_old_password", MYSQL_CLIENT_AUTHENTICATION_PLUGIN)))
-        return 1; /* not found */
+        auth_plugin= &dummy_fallback_client_plugin;
     }
     auth_plugin_name= auth_plugin->name;
   }
@@ -543,11 +586,15 @@ int run_plugin_auth(MYSQL *mysql, char *data, uint data_len,
   mpvio.mysql= mysql;
   mpvio.packets_read= mpvio.packets_written= 0;
   mpvio.db= db;
+
+retry:
   mpvio.plugin= auth_plugin;
 
+  mysql->net.read_pos[0]= 0;
   res= auth_plugin->authenticate_user((struct st_plugin_vio *)&mpvio, mysql);
 
-  if (res > CR_OK && mysql->net.read_pos[0] != 254)
+  if ((res == CR_ERROR && !mysql->net.buff) ||
+      (res > CR_OK && mysql->net.read_pos[0] != 254))
   {
     /*
       the plugin returned an error. write it down in mysql,
@@ -566,7 +613,7 @@ int run_plugin_auth(MYSQL *mysql, char *data, uint data_len,
   /* read the OK packet (or use the cached value in mysql->net.read_pos */
   if (res == CR_OK)
     pkt_length= ma_net_safe_read(mysql);
-  else /* res == CR_OK_HANDSHAKE_COMPLETE */
+  else /* res == CR_OK_HANDSHAKE_COMPLETE or an error */
     pkt_length= mpvio.last_read_packet_len;
 
   if (pkt_length == packet_error)
@@ -599,34 +646,10 @@ int run_plugin_auth(MYSQL *mysql, char *data, uint data_len,
     }
     if (!(auth_plugin= (auth_plugin_t *) mysql_client_find_plugin(mysql,
                          auth_plugin_name, MYSQL_CLIENT_AUTHENTICATION_PLUGIN)))
-      return 1;
+      auth_plugin= &dummy_fallback_client_plugin;
 
-    mpvio.plugin= auth_plugin;
-    res= auth_plugin->authenticate_user((struct st_plugin_vio *)&mpvio, mysql);
+    goto retry;
 
-    if (res > CR_OK)
-    {
-      if (res > CR_ERROR)
-        my_set_error(mysql, res, SQLSTATE_UNKNOWN, 0);
-      else
-        if (!mysql->net.last_errno)
-          my_set_error(mysql, CR_UNKNOWN_ERROR, SQLSTATE_UNKNOWN, 0);
-      return 1;
-    }
-
-    if (res != CR_OK_HANDSHAKE_COMPLETE)
-    {
-      /* Read what server thinks about out new auth message report */
-      if (ma_net_safe_read(mysql) == packet_error)
-      {
-        if (mysql->net.last_errno == CR_SERVER_LOST)
-          my_set_error(mysql, CR_SERVER_LOST, SQLSTATE_UNKNOWN,
-                              ER(CR_SERVER_LOST_EXTENDED),
-                              "reading final connect information",
-                              errno);
-        return 1;
-      }
-    }
   }
   /*
     net->read_pos[0] should always be 0 here if the server implements

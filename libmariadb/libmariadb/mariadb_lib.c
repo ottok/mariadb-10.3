@@ -133,8 +133,6 @@ struct st_mariadb_methods MARIADB_DEFAULT_METHODS;
 
 #include <mysql/client_plugin.h>
 
-#define native_password_plugin_name "mysql_native_password"
-
 #define IS_CONNHDLR_ACTIVE(mysql)\
   ((mysql)->extension && (mysql)->extension->conn_hdlr)
 
@@ -623,6 +621,8 @@ struct st_default_options mariadb_defaults[] =
   {MYSQL_OPT_SSL_CERT, MARIADB_OPTION_STR,"ssl-cert"},
   {MYSQL_OPT_SSL_CA, MARIADB_OPTION_STR,"ssl-ca"},
   {MYSQL_OPT_SSL_CAPATH, MARIADB_OPTION_STR,"ssl-capath"},
+  {MYSQL_OPT_SSL_CRL, MARIADB_OPTION_STR,"ssl-crl"},
+  {MYSQL_OPT_SSL_CRLPATH, MARIADB_OPTION_STR,"ssl-crlpath"},
   {MYSQL_OPT_SSL_VERIFY_SERVER_CERT, MARIADB_OPTION_BOOL,"ssl-verify-server-cert"},
   {MYSQL_SET_CHARSET_DIR, MARIADB_OPTION_STR, "character-sets-dir"},
   {MYSQL_SET_CHARSET_NAME, MARIADB_OPTION_STR, "default-character-set"},
@@ -647,9 +647,10 @@ struct st_default_options mariadb_defaults[] =
   {MARIADB_OPT_SSL_FP_LIST, MARIADB_OPTION_STR, "ssl-fp-list"},
   {MARIADB_OPT_SSL_FP_LIST, MARIADB_OPTION_STR, "ssl-fplist"},
   {MARIADB_OPT_TLS_PASSPHRASE, MARIADB_OPTION_STR, "ssl-passphrase"},
-  {MARIADB_OPT_TLS_VERSION, MARIADB_OPTION_STR, "tls_version"},
-  {MYSQL_SERVER_PUBLIC_KEY, MARIADB_OPTION_STR, "server_public_key"},
+  {MARIADB_OPT_TLS_VERSION, MARIADB_OPTION_STR, "tls-version"},
+  {MYSQL_SERVER_PUBLIC_KEY, MARIADB_OPTION_STR, "server-public-key"},
   {MYSQL_OPT_BIND, MARIADB_OPTION_STR, "bind-address"},
+  {MYSQL_OPT_SSL_ENFORCE, MARIADB_OPTION_BOOL, "ssl-enforce"},
   {0, 0, NULL}
 };
 
@@ -700,6 +701,11 @@ my_bool _mariadb_set_conf_option(MYSQL *mysql, const char *config_option, const 
   if (config_option)
   {
     int i;
+    char *c;
+    
+    /* CONC-395: replace underscore "_" by dash "-" */
+    while ((c= strchr(config_option, '_')))
+      *c= '-';
 
     for (i=0; mariadb_defaults[i].conf_key; i++)
     {
@@ -3036,6 +3042,10 @@ mysql_optionsv(MYSQL *mysql,enum mysql_option option, ...)
   case MYSQL_OPT_TLS_VERSION:
     OPT_SET_EXTENDED_VALUE_STR(&mysql->options, tls_version, (char *)arg1);
     break;
+  case MARIADB_OPT_IO_WAIT:
+    CHECK_OPT_EXTENSION_SET(&mysql->options);
+    mysql->options.extension->io_wait = (int(*)(my_socket, my_bool, int))arg1;
+    break;
   default:
     va_end(ap);
     SET_CLIENT_ERROR(mysql, CR_NOT_IMPLEMENTED, SQLSTATE_UNKNOWN, 0);
@@ -3248,6 +3258,9 @@ mysql_get_optionv(MYSQL *mysql, enum mysql_option option, void *arg, ...)
   case MARIADB_OPT_CONNECTION_HANDLER:
     *((char **)arg)= mysql->options.extension ? mysql->options.extension->connection_handler : NULL;
     break;
+  case MARIADB_OPT_IO_WAIT:
+    *((int(**)(my_socket, my_bool, int))arg) = mysql->options.extension ? mysql->options.extension->io_wait : NULL;
+    break;
   default:
     va_end(ap);
     SET_CLIENT_ERROR(mysql, CR_NOT_IMPLEMENTED, SQLSTATE_UNKNOWN, 0);
@@ -3338,12 +3351,12 @@ my_bool STDCALL mysql_autocommit(MYSQL *mysql, my_bool mode)
 
 my_bool STDCALL mysql_commit(MYSQL *mysql)
 {
-  return((my_bool)mysql_real_query(mysql, "COMMIT", (unsigned long) sizeof("COMMIT")));
+  return((my_bool)mysql_real_query(mysql, "COMMIT", (unsigned long)strlen("COMMIT")));
 }
 
 my_bool STDCALL mysql_rollback(MYSQL *mysql)
 {
-  return((my_bool)mysql_real_query(mysql, "ROLLBACK", (unsigned long)sizeof("ROLLBACK")));
+  return((my_bool)mysql_real_query(mysql, "ROLLBACK", (unsigned long)strlen("ROLLBACK")));
 }
 
 my_ulonglong STDCALL mysql_insert_id(MYSQL *mysql)

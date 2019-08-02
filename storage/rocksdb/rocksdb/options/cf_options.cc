@@ -5,11 +5,7 @@
 
 #include "options/cf_options.h"
 
-#ifndef __STDC_FORMAT_MACROS
-#define __STDC_FORMAT_MACROS
-#endif
-
-#include <inttypes.h>
+#include <cinttypes>
 #include <cassert>
 #include <limits>
 #include <string>
@@ -17,6 +13,7 @@
 #include "port/port.h"
 #include "rocksdb/env.h"
 #include "rocksdb/options.h"
+#include "rocksdb/concurrent_task_limiter.h"
 
 namespace rocksdb {
 
@@ -75,8 +72,8 @@ ImmutableCFOptions::ImmutableCFOptions(const ImmutableDBOptions& db_options,
       max_subcompactions(db_options.max_subcompactions),
       memtable_insert_with_hint_prefix_extractor(
           cf_options.memtable_insert_with_hint_prefix_extractor.get()),
-      ttl(cf_options.ttl),
-      cf_paths(cf_options.cf_paths) {}
+      cf_paths(cf_options.cf_paths),
+      compaction_thread_limiter(cf_options.compaction_thread_limiter) {}
 
 // Multiple two operands. If they overflow, return op1.
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {
@@ -134,6 +131,8 @@ void MutableCFOptions::Dump(Logger* log) const {
                  arena_block_size);
   ROCKS_LOG_INFO(log, "              memtable_prefix_bloom_ratio: %f",
                  memtable_prefix_bloom_size_ratio);
+  ROCKS_LOG_INFO(log, "              memtable_whole_key_filtering: %d",
+                 memtable_whole_key_filtering);
   ROCKS_LOG_INFO(log,
                  "                  memtable_huge_page_size: %" ROCKSDB_PRIszt,
                  memtable_huge_page_size);
@@ -166,8 +165,14 @@ void MutableCFOptions::Dump(Logger* log) const {
                  target_file_size_multiplier);
   ROCKS_LOG_INFO(log, "                 max_bytes_for_level_base: %" PRIu64,
                  max_bytes_for_level_base);
+  ROCKS_LOG_INFO(log, "                       snap_refresh_nanos: %" PRIu64,
+                 snap_refresh_nanos);
   ROCKS_LOG_INFO(log, "           max_bytes_for_level_multiplier: %f",
                  max_bytes_for_level_multiplier);
+  ROCKS_LOG_INFO(log, "                                      ttl: %" PRIu64,
+                 ttl);
+  ROCKS_LOG_INFO(log, "              periodic_compaction_seconds: %" PRIu64,
+                 periodic_compaction_seconds);
   std::string result;
   char buf[10];
   for (const auto m : max_bytes_for_level_multiplier_additional) {
@@ -190,6 +195,31 @@ void MutableCFOptions::Dump(Logger* log) const {
                  report_bg_io_stats);
   ROCKS_LOG_INFO(log, "                              compression: %d",
                  static_cast<int>(compression));
+
+  // Universal Compaction Options
+  ROCKS_LOG_INFO(log, "compaction_options_universal.size_ratio : %d",
+                 compaction_options_universal.size_ratio);
+  ROCKS_LOG_INFO(log, "compaction_options_universal.min_merge_width : %d",
+                 compaction_options_universal.min_merge_width);
+  ROCKS_LOG_INFO(log, "compaction_options_universal.max_merge_width : %d",
+                 compaction_options_universal.max_merge_width);
+  ROCKS_LOG_INFO(
+      log, "compaction_options_universal.max_size_amplification_percent : %d",
+      compaction_options_universal.max_size_amplification_percent);
+  ROCKS_LOG_INFO(log,
+                 "compaction_options_universal.compression_size_percent : %d",
+                 compaction_options_universal.compression_size_percent);
+  ROCKS_LOG_INFO(log, "compaction_options_universal.stop_style : %d",
+                 compaction_options_universal.stop_style);
+  ROCKS_LOG_INFO(
+      log, "compaction_options_universal.allow_trivial_move : %d",
+      static_cast<int>(compaction_options_universal.allow_trivial_move));
+
+  // FIFO Compaction Options
+  ROCKS_LOG_INFO(log, "compaction_options_fifo.max_table_files_size : %" PRIu64,
+                 compaction_options_fifo.max_table_files_size);
+  ROCKS_LOG_INFO(log, "compaction_options_fifo.allow_compaction : %d",
+                 compaction_options_fifo.allow_compaction);
 }
 
 MutableCFOptions::MutableCFOptions(const Options& options)

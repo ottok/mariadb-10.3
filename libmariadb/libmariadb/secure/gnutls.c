@@ -1025,11 +1025,15 @@ static size_t ma_gnutls_get_protocol_version(const char *tls_version_option,
     strcat(tls_versions, ":+VERS-TLS1.1");
   if (strstr(tls_version_option, "TLSv1.2"))
     strcat(tls_versions, ":+VERS-TLS1.2");
+#if GNUTLS_VERSION_NUMBER > 0x030605
+  if (strstr(tls_version_option, "TLSv1.3"))
+    strcat(tls_versions, ":+VERS-TLS1.3");
+#endif
 end:
   if (tls_versions[0])
-    snprintf(priority_string, prio_len - 1, "NORMAL:-VERS-TLS-ALL%s", tls_versions);
+    snprintf(priority_string, prio_len - 1, "-VERS-TLS-ALL%s:NORMAL", tls_versions);
   else
-    strncpy(priority_string, "NORMAL", prio_len - 1);
+    strncpy(priority_string, "NORMAL:+VERS-ALL", prio_len - 1);
   return strlen(priority_string);
 }
 
@@ -1062,62 +1066,10 @@ static int ma_gnutls_set_ciphers(gnutls_session_t ssl,
   return gnutls_priority_set_direct(ssl, prio , &err);
 }
 
-static int ma_tls_load_cert(const char *filename,
-                            enum ma_pem_type type,
-                            const char *password,
-                            void *ptr)
-{
-  gnutls_datum_t data;
-  int rc;
-
-  data.data= 0;
-
-  if ((rc= gnutls_load_file(filename, &data)) < 0)
-    goto error;
-
-  switch(type) {
-  case MA_TLS_PEM_CERT:
-  {
-    gnutls_x509_crt_t cert;
-    if ((rc= gnutls_x509_crt_init(&cert)) < 0)
-      goto error;
-    if ((rc= gnutls_x509_crt_import(cert, &data, GNUTLS_X509_FMT_PEM)))
-    {
-      gnutls_x509_crt_deinit(cert);
-      goto error;
-    }
-    *((gnutls_x509_crt_t *)ptr)= cert;
-    return 0;
-  }
-  case MA_TLS_PEM_KEY:
-  {
-    gnutls_x509_privkey_t key;
-    if ((rc= gnutls_x509_privkey_init(&key)) < 0)
-      goto error;
-    if ((rc= gnutls_x509_privkey_import2(key, &data, 
-                                         GNUTLS_X509_FMT_PEM,
-                                         password, 0)) < 0)
-    {
-      gnutls_x509_privkey_deinit(key);
-      goto error;
-    }
-    *((gnutls_x509_privkey_t *)ptr)= key;
-  }
-  default:
-    break;
-  }
-error:
-  if (data.data)
-    gnutls_free(data.data);
-  return rc;
-}
-
 static int ma_tls_set_certs(MYSQL *mysql,
                             gnutls_certificate_credentials_t ctx)
 {
   int  ssl_error= 0;
-  gnutls_x509_privkey_t key= 0;
-  gnutls_x509_crt_t cert= 0;
 
   if (mysql->options.ssl_ca)
   {
@@ -1135,53 +1087,20 @@ static int ma_tls_set_certs(MYSQL *mysql,
   {
     char *keyfile= mysql->options.ssl_key;
     char *certfile= mysql->options.ssl_cert;
-    unsigned char key_id1[65], key_id2[65];
-    size_t key_id1_len, key_id2_len;
-
+    
     if (!certfile)
       certfile= keyfile;
     else if (!keyfile)
       keyfile= certfile;
 
-    if ((ssl_error= ma_tls_load_cert(keyfile, MA_TLS_PEM_KEY,
-                                     mysql->options.extension ?
-                                     mysql->options.extension->tls_pw : NULL,
-                                     &key)) < 0)
-      goto error;
-    if ((ssl_error= ma_tls_load_cert(certfile, MA_TLS_PEM_CERT,
-                                     NULL, &cert)) < 0)
-      goto error;
-
-    /* check if private key corresponds to certificate */
-    key_id1_len= key_id2_len= sizeof(key_id1);
-    if ((ssl_error= gnutls_x509_crt_get_key_id(cert, 0, 
-                                               key_id1, &key_id1_len)) < 0 ||
-        (ssl_error= gnutls_x509_privkey_get_key_id(key, 0, 
-                                                   key_id2, &key_id2_len)) < 0)
-      goto error;
-
-    if (key_id1_len != key_id2_len ||
-        memcmp(key_id1, key_id2, key_id1_len) != 0)
-    {
-      ssl_error= GNUTLS_E_CERTIFICATE_KEY_MISMATCH;
-      goto error;
-    }
-
     /* load cert/key into context */
-    if ((ssl_error= gnutls_certificate_set_x509_key(ctx,
-                                                    &cert,
-                                                    1,
-                                                    key)) < 0)
+    if ((ssl_error= gnutls_certificate_set_x509_key_file2(ctx,
+                                certfile, keyfile, GNUTLS_X509_FMT_PEM,
+                                 mysql->options.extension ? mysql->options.extension->tls_pw : NULL, 0)) < 0)
       goto error;
   }
 
-
-  return ssl_error;
 error:
-  if (key)
-    gnutls_x509_privkey_deinit(key);
-  if (cert)
-    gnutls_x509_crt_deinit(cert);
   return ssl_error;
 }
 
@@ -1225,6 +1144,7 @@ void *ma_tls_init(MYSQL *mysql)
 error:
   free_gnutls_data(data);
   ma_tls_set_error(mysql, ssl, ssl_error);
+  gnutls_certificate_free_credentials(ctx);
   if (ssl)
     gnutls_deinit(ssl);
   pthread_mutex_unlock(&LOCK_gnutls_config);
@@ -1272,6 +1192,7 @@ my_bool ma_tls_connect(MARIADB_TLS *ctls)
   /* Set socket to blocking if not already set */
   if (!(blocking= pvio->methods->is_blocking(pvio)))
     pvio->methods->blocking(pvio, TRUE, 0);
+
 
 #ifdef GNUTLS_EXTERNAL_TRANSPORT
   /* we don't use GnuTLS read/write functions */
@@ -1354,12 +1275,32 @@ ssize_t ma_tls_read_async(MARIADB_PVIO *pvio, const uchar *buffer, size_t length
 
 ssize_t ma_tls_read(MARIADB_TLS *ctls, const uchar* buffer, size_t length)
 {
-  return gnutls_record_recv((gnutls_session_t )ctls->ssl, (void *)buffer, length);
+  ssize_t rc;
+  MARIADB_PVIO *pvio= ctls->pvio;
+
+  while ((rc= gnutls_record_recv((gnutls_session_t)ctls->ssl, (void *)buffer, length)) <= 0)
+  {
+    if (rc != GNUTLS_E_AGAIN && rc != GNUTLS_E_INTERRUPTED)
+      return rc;
+    if (pvio->methods->wait_io_or_timeout(pvio, TRUE, pvio->mysql->options.read_timeout) < 1)
+      return rc;
+  }
+  return rc;
 }
 
 ssize_t ma_tls_write(MARIADB_TLS *ctls, const uchar* buffer, size_t length)
 { 
-  return gnutls_record_send((gnutls_session_t )ctls->ssl, (void *)buffer, length);
+  ssize_t rc;
+  MARIADB_PVIO *pvio= ctls->pvio;
+
+  while ((rc= gnutls_record_send((gnutls_session_t)ctls->ssl, (void *)buffer, length)) <= 0)
+  {
+    if (rc != GNUTLS_E_AGAIN && rc != GNUTLS_E_INTERRUPTED)
+      return rc;
+    if (pvio->methods->wait_io_or_timeout(pvio, TRUE, pvio->mysql->options.write_timeout) < 1)
+      return rc;
+  }
+  return rc;
 }
 
 my_bool ma_tls_close(MARIADB_TLS *ctls)

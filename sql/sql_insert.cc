@@ -1786,12 +1786,15 @@ int write_record(THD *thd, TABLE *table,COPY_INFO *info)
       }
       if (table->vfield)
       {
+        my_bool abort_on_warning= thd->abort_on_warning;
         /*
           We have not yet called update_virtual_fields(VOL_UPDATE_FOR_READ)
           in handler methods for the just read row in record[1].
         */
         table->move_fields(table->field, table->record[1], table->record[0]);
+        thd->abort_on_warning= 0;
         table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_REPLACE);
+        thd->abort_on_warning= abort_on_warning;
         table->move_fields(table->field, table->record[0], table->record[1]);
       }
       if (info->handle_duplicates == DUP_UPDATE)
@@ -4045,8 +4048,12 @@ void select_insert::abort_result_set() {
     example), no table will have been opened and therefore 'table'
     will be NULL. In that case, we still need to execute the rollback
     and the end of the function.
+
+    If it fail due to inability to insert in multi-table view for example,
+    table will be assigned with view table structure, but that table will
+    not be opened really (it is dummy to check fields types & Co).
    */
-  if (table)
+  if (table && table->file->get_table())
   {
     bool changed, transactional_table;
     /*
