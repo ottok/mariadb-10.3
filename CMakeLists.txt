@@ -12,7 +12,7 @@
 # 
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335 USA
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.7)
 
@@ -22,10 +22,14 @@ ENDIF()
 IF(POLICY CMP0054)
   CMAKE_POLICY(SET CMP0054 NEW)
 ENDIF()
+IF(POLICY CMP0075)
+  CMAKE_POLICY(SET CMP0075 NEW)
+ENDIF()
 
 MESSAGE(STATUS "Running cmake version ${CMAKE_VERSION}")
 
-SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/cmake)
+SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
+  ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_SOURCE_DIR}/cmake/Internal/CPack)
 
 # Use a default manufacturer if no manufacturer was identified.
 IF(NOT DEFINED MANUFACTURER) 
@@ -182,6 +186,8 @@ INCLUDE(check_compiler_flag)
 OPTION(WITH_ASAN "Enable address sanitizer" OFF)
 
 IF (WITH_ASAN AND NOT MSVC)
+  # this flag might be set by default on some OS
+  MY_CHECK_AND_SET_COMPILER_FLAG("-U_FORTIFY_SOURCE" DEBUG RELWITHDEBINFO)
   # gcc 4.8.1 and new versions of clang
   MY_CHECK_AND_SET_COMPILER_FLAG("-fsanitize=address -fPIC"
     DEBUG RELWITHDEBINFO)
@@ -213,16 +219,24 @@ IF (WITH_TSAN)
   MY_CHECK_AND_SET_COMPILER_FLAG("-fsanitize=thread" DEBUG RELWITHDEBINFO)
 ENDIF()
 
+OPTION(WITH_UBSAN "Enable undefined behavior sanitizer" OFF)
+IF (WITH_UBSAN)
+  MY_CHECK_AND_SET_COMPILER_FLAG("-fsanitize=undefined -fno-sanitize=alignment -U_FORTIFY_SOURCE" DEBUG RELWITHDEBINFO)
+ENDIF()
+
 IF(NOT WITH_TSAN)
   # enable security hardening features, like most distributions do
   # in our benchmarks that costs about ~1% of performance, depending on the load
-  IF(CMAKE_C_COMPILER_VERSION VERSION_LESS "4.6")
+  IF(CMAKE_C_COMPILER_VERSION VERSION_LESS "4.6" OR WITH_ASAN OR WITH_UBSAN)
     SET(security_default OFF)
   ELSE()
     SET(security_default ON)
   ENDIF()
   OPTION(SECURITY_HARDENED "Use security-enhancing compiler features (stack protector, relro, etc)" ${security_default})
   IF(SECURITY_HARDENED)
+    IF(WITH_ASAN OR WITH_UBSAN)
+      MESSAGE(FATAL_ERROR "WITH_ASAN/WITH_UBSAN and SECURITY_HARDENED are mutually exclusive")
+    ENDIF()
     # security-enhancing flags
     MY_CHECK_AND_SET_COMPILER_FLAG("-pie -fPIC")
     MY_CHECK_AND_SET_COMPILER_FLAG("-Wl,-z,relro,-z,now")
@@ -278,6 +292,16 @@ IF(WITH_SAFEMALLOC MATCHES "ON")
 ELSEIF(WITH_SAFEMALLOC MATCHES "AUTO" AND NOT WIN32 AND NOT WITH_VALGRIND)
   SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -DSAFEMALLOC")
   SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DSAFEMALLOC")
+ENDIF()
+
+# Another memory debugging feature
+SET(TRASH_FREED_MEMORY "AUTO" CACHE STRING "Fill freed memory with specific byte pattern. Will result in slower execution. Options are: ON OFF AUTO.")
+MARK_AS_ADVANCED(TRASH_FREED_MEMORY)
+IF(TRASH_FREED_MEMORY MATCHES "ON")
+  ADD_DEFINITIONS( -DTRASH_FREED_MEMORY)
+ELSEIF(TRASH_FREED_MEMORY MATCHES "AUTO" AND NOT WIN32 AND NOT WITH_VALGRIND AND NOT WITH_ASAN)
+  SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -DTRASH_FREED_MEMORY")
+  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DTRASH_FREED_MEMORY")
 ENDIF()
 
 # Set commonly used variables
@@ -482,7 +506,7 @@ ADD_CUSTOM_TARGET(INFO_BIN ALL
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-INSTALL_DOCUMENTATION(README.md CREDITS COPYING COPYING.thirdparty
+INSTALL_DOCUMENTATION(README.md CREDITS COPYING THIRDPARTY
                       EXCEPTIONS-CLIENT COMPONENT Readme)
 
 # MDEV-6526 these files are not installed anymore
@@ -492,6 +516,8 @@ INSTALL_DOCUMENTATION(README.md CREDITS COPYING COPYING.thirdparty
 IF(UNIX)
   INSTALL_DOCUMENTATION(Docs/INSTALL-BINARY Docs/README-wsrep COMPONENT Readme)
 ENDIF()
+
+INCLUDE(build_depends)
 
 INCLUDE(CPack)
 

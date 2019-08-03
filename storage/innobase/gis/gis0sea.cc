@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -1629,15 +1629,13 @@ rtr_get_mbr_from_tuple(
 {
 	const dfield_t* dtuple_field;
         ulint           dtuple_f_len;
-	byte*		data;
 
 	dtuple_field = dtuple_get_nth_field(dtuple, 0);
 	dtuple_f_len = dfield_get_len(dtuple_field);
 	ut_a(dtuple_f_len >= 4 * sizeof(double));
 
-	data = static_cast<byte*>(dfield_get_data(dtuple_field));
-
-	rtr_read_mbr(data, mbr);
+	rtr_read_mbr(static_cast<const byte*>(dfield_get_data(dtuple_field)),
+		     mbr);
 }
 
 /****************************************************************//**

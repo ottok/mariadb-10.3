@@ -12,7 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA 
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335  USA 
 
 # This file includes Linux specific options and quirks, related to system checks
 
@@ -34,8 +34,8 @@ ENDFOREACH()
 
 # Ensure we have clean build for shared libraries
 # without unresolved symbols
-# Not supported with AddressSanitizer and ThreadSanitizer
-IF(NOT WITH_ASAN AND NOT WITH_TSAN)
+# Not supported with the clang sanitizers
+IF(NOT WITH_ASAN AND NOT WITH_TSAN AND NOT WITH_UBSAN)
   SET(LINK_FLAG_NO_UNDEFINED "-Wl,--no-undefined")
 ENDIF()
 

@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 /**
   @file
@@ -349,13 +349,56 @@ static Sys_var_long Sys_pfs_connect_attrs_size(
 
 #endif /* WITH_PERFSCHEMA_STORAGE_ENGINE */
 
+#ifdef WITH_WSREP
+
+/*
+  We need to keep the original values set by the user, as they will
+  be lost if wsrep_auto_increment_control set to 'ON':
+*/
+static bool update_auto_increment_increment (sys_var *self, THD *thd, enum_var_type type)
+{
+  if (type == OPT_GLOBAL)
+    global_system_variables.saved_auto_increment_increment=
+      global_system_variables.auto_increment_increment;
+  else
+    thd->variables.saved_auto_increment_increment=
+      thd->variables.auto_increment_increment;
+  return false;
+}
+
+#endif /* WITH_WSREP */
+
 static Sys_var_ulong Sys_auto_increment_increment(
        "auto_increment_increment",
        "Auto-increment columns are incremented by this",
        SESSION_VAR(auto_increment_increment),
        CMD_LINE(OPT_ARG),
        VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1),
+#ifdef WITH_WSREP
+       NO_MUTEX_GUARD, IN_BINLOG, ON_CHECK(0),
+       ON_UPDATE(update_auto_increment_increment));
+#else
        NO_MUTEX_GUARD, IN_BINLOG);
+#endif /* WITH_WSREP */
+
+#ifdef WITH_WSREP
+
+/*
+  We need to keep the original values set by the user, as they will
+  be lost if wsrep_auto_increment_control set to 'ON':
+*/
+static bool update_auto_increment_offset (sys_var *self, THD *thd, enum_var_type type)
+{
+  if (type == OPT_GLOBAL)
+    global_system_variables.saved_auto_increment_offset=
+      global_system_variables.auto_increment_offset;
+  else
+    thd->variables.saved_auto_increment_offset=
+      thd->variables.auto_increment_offset;
+  return false;
+}
+
+#endif /* WITH_WSREP */
 
 static Sys_var_ulong Sys_auto_increment_offset(
        "auto_increment_offset",
@@ -364,7 +407,12 @@ static Sys_var_ulong Sys_auto_increment_offset(
        SESSION_VAR(auto_increment_offset),
        CMD_LINE(OPT_ARG),
        VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1),
+#ifdef WITH_WSREP
+       NO_MUTEX_GUARD, IN_BINLOG, ON_CHECK(0),
+       ON_UPDATE(update_auto_increment_offset));
+#else
        NO_MUTEX_GUARD, IN_BINLOG);
+#endif /* WITH_WSREP */
 
 static Sys_var_mybool Sys_automatic_sp_privileges(
        "automatic_sp_privileges",
@@ -3096,6 +3144,8 @@ static Sys_var_replicate_events_marked_for_skip Replicate_events_marked_for_skip
 static bool fix_rpl_semi_sync_master_enabled(sys_var *self, THD *thd,
                                              enum_var_type type)
 {
+  mysql_mutex_unlock(&LOCK_global_system_variables);
+  mysql_mutex_lock(&repl_semisync_master.LOCK_rpl_semi_sync_master_enabled);
   if (rpl_semi_sync_master_enabled)
   {
     if (repl_semisync_master.enable_master() != 0)
@@ -3108,11 +3158,11 @@ static bool fix_rpl_semi_sync_master_enabled(sys_var *self, THD *thd,
   }
   else
   {
-    if (repl_semisync_master.disable_master() != 0)
-      rpl_semi_sync_master_enabled= true;
-    if (!rpl_semi_sync_master_enabled)
-      ack_receiver.stop();
+    repl_semisync_master.disable_master();
+    ack_receiver.stop();
   }
+  mysql_mutex_unlock(&repl_semisync_master.LOCK_rpl_semi_sync_master_enabled);
+  mysql_mutex_lock(&LOCK_global_system_variables);
   return false;
 }
 
@@ -3695,14 +3745,12 @@ bool Sys_var_tx_read_only::session_update(THD *thd, set_var *var)
 #ifndef EMBEDDED_LIBRARY
     if (thd->variables.session_track_transaction_info > TX_TRACK_NONE)
     {
-      Transaction_state_tracker *tst= (Transaction_state_tracker *)
-             thd->session_tracker.get_tracker(TRANSACTION_INFO_TRACKER);
-
       if (var->type == OPT_DEFAULT)
-        tst->set_read_flags(thd,
+        thd->session_tracker.transaction_info.set_read_flags(thd,
                             thd->tx_read_only ? TX_READ_ONLY : TX_READ_WRITE);
       else
-        tst->set_read_flags(thd, TX_READ_INHERIT);
+        thd->session_tracker.transaction_info.set_read_flags(thd,
+                            TX_READ_INHERIT);
     }
 #endif //EMBEDDED_LIBRARY
   }
@@ -5339,11 +5387,54 @@ static Sys_var_ulong Sys_wsrep_retry_autocommit(
        SESSION_VAR(wsrep_retry_autocommit), CMD_LINE(REQUIRED_ARG),
        VALID_RANGE(0, 10000), DEFAULT(1), BLOCK_SIZE(1));
 
+static bool update_wsrep_auto_increment_control (sys_var *self, THD *thd, enum_var_type type)
+{
+  if (wsrep_auto_increment_control)
+  {
+    /*
+      The variables that control auto increment shall be calculated
+      automaticaly based on the size of the cluster. This usually done
+      within the wsrep_view_handler_cb callback. However, if the user
+      manually sets the value of wsrep_auto_increment_control to 'ON',
+      then we should to re-calculate these variables again (because
+      these values may be required before wsrep_view_handler_cb will
+      be re-invoked, which is rarely invoked if the cluster stays in
+      the stable state):
+    */
+    global_system_variables.auto_increment_increment=
+       wsrep_cluster_size ? wsrep_cluster_size : 1;
+    global_system_variables.auto_increment_offset=
+       wsrep_local_index >= 0 ? wsrep_local_index + 1 : 1;
+    thd->variables.auto_increment_increment=
+      global_system_variables.auto_increment_increment;
+    thd->variables.auto_increment_offset=
+      global_system_variables.auto_increment_offset;
+  }
+  else
+  {
+    /*
+      We must restore the last values of the variables that
+      are explicitly specified by the user:
+    */
+    global_system_variables.auto_increment_increment=
+      global_system_variables.saved_auto_increment_increment;
+    global_system_variables.auto_increment_offset=
+      global_system_variables.saved_auto_increment_offset;
+    thd->variables.auto_increment_increment=
+      thd->variables.saved_auto_increment_increment;
+    thd->variables.auto_increment_offset=
+      thd->variables.saved_auto_increment_offset;
+  }
+  return false;
+}
+
 static Sys_var_mybool Sys_wsrep_auto_increment_control(
        "wsrep_auto_increment_control", "To automatically control the "
        "assignment of autoincrement variables",
        GLOBAL_VAR(wsrep_auto_increment_control), 
-       CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+       CMD_LINE(OPT_ARG), DEFAULT(TRUE),
+       NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
+       ON_UPDATE(update_wsrep_auto_increment_control));
 
 static Sys_var_mybool Sys_wsrep_drupal_282555_workaround(
        "wsrep_drupal_282555_workaround", "Enable a workaround to handle the "
@@ -6037,8 +6128,7 @@ static bool update_session_track_schema(sys_var *self, THD *thd,
                                         enum_var_type type)
 {
   DBUG_ENTER("update_session_track_schema");
-  DBUG_RETURN(thd->session_tracker.get_tracker(CURRENT_SCHEMA_TRACKER)->
-              update(thd, NULL));
+  DBUG_RETURN(thd->session_tracker.current_schema.update(thd, NULL));
 }
 
 static Sys_var_mybool Sys_session_track_schema(
@@ -6055,8 +6145,7 @@ static bool update_session_track_tx_info(sys_var *self, THD *thd,
                                          enum_var_type type)
 {
   DBUG_ENTER("update_session_track_tx_info");
-  DBUG_RETURN(thd->session_tracker.get_tracker(TRANSACTION_INFO_TRACKER)->
-              update(thd, NULL));
+  DBUG_RETURN(thd->session_tracker.transaction_info.update(thd, NULL));
 }
 
 static const char *session_track_transaction_info_names[]=
@@ -6081,8 +6170,7 @@ static bool update_session_track_state_change(sys_var *self, THD *thd,
                                               enum_var_type type)
 {
   DBUG_ENTER("update_session_track_state_change");
-  DBUG_RETURN(thd->session_tracker.get_tracker(SESSION_STATE_CHANGE_TRACKER)->
-              update(thd, NULL));
+  DBUG_RETURN(thd->session_tracker.state_change.update(thd, NULL));
 }
 
 static Sys_var_mybool Sys_session_track_state_change(

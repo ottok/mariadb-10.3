@@ -20,7 +20,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -221,7 +221,6 @@ row_sel_sec_rec_is_for_clust_rec(
 		reconstructed from base column in cluster index */
 		if (is_virtual) {
 			const dict_v_col_t*	v_col;
-			const dtuple_t*         row;
 			dfield_t*		vfield;
 			row_ext_t*		ext;
 
@@ -238,10 +237,11 @@ row_sel_sec_rec_is_for_clust_rec(
 
 			v_col = reinterpret_cast<const dict_v_col_t*>(col);
 
-			row = row_build(ROW_COPY_POINTERS,
-					clust_index, clust_rec,
-					clust_offs,
-					NULL, NULL, NULL, &ext, heap);
+			dtuple_t* row = row_build(
+				ROW_COPY_POINTERS,
+				clust_index, clust_rec,
+				clust_offs,
+				NULL, NULL, NULL, &ext, heap);
 
 			vfield = innobase_get_computed_value(
 					row, v_col, clust_index,
@@ -802,7 +802,7 @@ row_sel_build_committed_vers_for_mysql(
 					record does not exist in the view:
 					i.e., it was freshly inserted
 					afterwards */
-	const dtuple_t**vrow,		/*!< out: to be filled with old virtual
+	dtuple_t**	vrow,		/*!< out: to be filled with old virtual
 					column version if any */
 	mtr_t*		mtr)		/*!< in: mtr */
 {
@@ -3222,7 +3222,7 @@ row_sel_build_prev_vers_for_mysql(
 					record does not exist in the view:
 					i.e., it was freshly inserted
 					afterwards */
-	const dtuple_t**vrow,		/*!< out: dtuple to hold old virtual
+	dtuple_t**	vrow,		/*!< out: dtuple to hold old virtual
 					column data */
 	mtr_t*		mtr)		/*!< in: mtr */
 {
@@ -3266,7 +3266,7 @@ row_sel_get_clust_rec_for_mysql(
 				rec_get_offsets(out_rec, clust_index) */
 	mem_heap_t**	offset_heap,/*!< in/out: memory heap from which
 				the offsets are allocated */
-	const dtuple_t**vrow,	/*!< out: virtual column to fill */
+	dtuple_t**	vrow,	/*!< out: virtual column to fill */
 	mtr_t*		mtr)	/*!< in: mtr used to get access to the
 				non-clustered record; the same mtr is used to
 				access the clustered index */
@@ -3979,7 +3979,7 @@ void
 row_sel_fill_vrow(
 	const rec_t*		rec,
 	dict_index_t*		index,
-	const dtuple_t**	vrow,
+	dtuple_t**		vrow,
 	mem_heap_t*		heap)
 {
 	ulint           offsets_[REC_OFFS_NORMAL_SIZE];
@@ -4175,7 +4175,7 @@ row_search_mvcc(
 	dict_index_t*	clust_index;
 	que_thr_t*	thr;
 	const rec_t*	UNINIT_VAR(rec);
-	const dtuple_t*	vrow = NULL;
+	dtuple_t*	vrow = NULL;
 	const rec_t*	result_rec = NULL;
 	const rec_t*	clust_rec;
 	dberr_t		err				= DB_SUCCESS;
@@ -4655,7 +4655,7 @@ wait_table_again:
 					"Table %s is encrypted but encryption service or"
 					" used key_id is not available. "
 					" Can't continue reading table.",
-					prebuilt->table->name);
+					prebuilt->table->name.m_name);
 				index->table->file_unreadable = true;
 			}
 			rec = NULL;
@@ -4800,8 +4800,9 @@ wrong_offs:
 				<< " of table " << index->table->name
 				<< ". We try to skip the rest of the page.";
 
-			btr_pcur_move_to_last_on_page(pcur, &mtr);
-
+			page_cur_set_after_last(btr_pcur_get_block(pcur),
+						btr_pcur_get_page_cur(pcur));
+			pcur->old_stored = false;
 			goto next_rec;
 		}
 	}
@@ -5564,36 +5565,47 @@ next_rec:
 	}
 
 	if (moves_up) {
-		bool	 move;
-
-		if (spatial_search) {
-			move = rtr_pcur_move_to_next(
-				search_tuple, mode, pcur, 0, &mtr);
+		if (UNIV_UNLIKELY(spatial_search)) {
+			if (rtr_pcur_move_to_next(
+				    search_tuple, mode, pcur, 0, &mtr)) {
+				goto rec_loop;
+			}
 		} else {
-			move = btr_pcur_move_to_next(pcur, &mtr);
-		}
-
-		if (!move) {
-not_moved:
-			if (!spatial_search) {
-				btr_pcur_store_position(pcur, &mtr);
-			}
-
-			if (match_mode != 0) {
-				err = DB_RECORD_NOT_FOUND;
+			const buf_block_t* block = btr_pcur_get_block(pcur);
+			/* This is based on btr_pcur_move_to_next(),
+			but avoids infinite read loop of a corrupted page. */
+			ut_ad(pcur->pos_state == BTR_PCUR_IS_POSITIONED);
+			ut_ad(pcur->latch_mode != BTR_NO_LATCHES);
+			pcur->old_stored = false;
+			if (btr_pcur_is_after_last_on_page(pcur)) {
+				if (btr_pcur_is_after_last_in_tree(pcur)) {
+					goto not_moved;
+				}
+				btr_pcur_move_to_next_page(pcur, &mtr);
+				if (UNIV_UNLIKELY(btr_pcur_get_block(pcur)
+						  == block)) {
+					err = DB_CORRUPTION;
+					goto lock_wait_or_error;
+				}
 			} else {
-				err = DB_END_OF_INDEX;
+				btr_pcur_move_to_next_on_page(pcur);
 			}
 
-			goto normal_return;
+			goto rec_loop;
 		}
 	} else {
-		if (UNIV_UNLIKELY(!btr_pcur_move_to_prev(pcur, &mtr))) {
-			goto not_moved;
+		if (btr_pcur_move_to_prev(pcur, &mtr)) {
+			goto rec_loop;
 		}
 	}
 
-	goto rec_loop;
+not_moved:
+	if (!spatial_search) {
+		btr_pcur_store_position(pcur, &mtr);
+	}
+
+	err = match_mode ? DB_RECORD_NOT_FOUND : DB_END_OF_INDEX;
+	goto normal_return;
 
 lock_wait_or_error:
 	/* Reset the old and new "did semi-consistent read" flags. */

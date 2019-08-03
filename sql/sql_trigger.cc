@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335  USA */
 
 
 #define MYSQL_LEX 1
@@ -1806,7 +1806,7 @@ bool Table_triggers_list::drop_all_triggers(THD *thd, const LEX_CSTRING *db,
   bool result= 0;
   DBUG_ENTER("Triggers::drop_all_triggers");
 
-  bzero(&table, sizeof(table));
+  table.reset();
   init_sql_alloc(&table.mem_root, "Triggers::drop_all_triggers", 8192, 0,
                  MYF(0));
 
@@ -2058,7 +2058,7 @@ bool Table_triggers_list::change_table_name(THD *thd, const LEX_CSTRING *db,
   Trigger *err_trigger;
   DBUG_ENTER("Triggers::change_table_name");
 
-  bzero(&table, sizeof(table));
+  table.reset();
   init_sql_alloc(&table.mem_root, "Triggers::change_table_name", 8192, 0,
                  MYF(0));
 

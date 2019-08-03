@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2018, MariaDB Corporation.
+Copyright (c) 2018, 2019, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -83,20 +83,21 @@ static bool row_build_spatial_index_key(
 		return true;
 	}
 
-	uchar*	dptr = NULL;
+	const byte* dptr = NULL;
 	ulint	dlen = 0;
 	ulint	flen = 0;
 	double	tmp_mbr[SPDIMS * 2];
 	mem_heap_t*	temp_heap = NULL;
 
 	if (!dfield_is_ext(dfield2)) {
-		dptr = static_cast<uchar*>(dfield_get_data(dfield2));
+		dptr = static_cast<const byte*>(dfield_get_data(dfield2));
 		dlen = dfield_get_len(dfield2);
 		goto write_mbr;
 	}
 
 	if (flag == ROW_BUILD_FOR_PURGE) {
-		byte*	ptr = static_cast<byte*>(dfield_get_data(dfield2));
+		const byte* ptr = static_cast<const byte*>(
+			dfield_get_data(dfield2));
 
 		switch (dfield_get_spatial_status(dfield2)) {
 		case SPATIAL_ONLY:
@@ -140,12 +141,12 @@ static bool row_build_spatial_index_key(
 		log record, and avoid recomputing it here! */
 		flen = BTR_EXTERN_FIELD_REF_SIZE;
 		ut_ad(dfield_get_len(dfield2) >= BTR_EXTERN_FIELD_REF_SIZE);
-		dptr = static_cast<byte*>(dfield_get_data(dfield2))
+		dptr = static_cast<const byte*>(dfield_get_data(dfield2))
 			+ dfield_get_len(dfield2)
 			- BTR_EXTERN_FIELD_REF_SIZE;
 	} else {
 		flen = dfield_get_len(dfield2);
-		dptr = static_cast<byte*>(dfield_get_data(dfield2));
+		dptr = static_cast<const byte*>(dfield_get_data(dfield2));
 	}
 
 	temp_heap = mem_heap_create(1000);
@@ -224,7 +225,7 @@ row_build_index_entry_low(
 		const dict_col_t*	col;
 		ulint			col_no = 0;
 		dfield_t*		dfield;
-		dfield_t*		dfield2;
+		const dfield_t*		dfield2;
 		ulint			len;
 
 		if (i >= entry_len) {
@@ -944,9 +945,6 @@ row_build_row_ref_in_tuple(
 	ulint			offsets_[REC_OFFS_NORMAL_SIZE];
 	rec_offs_init(offsets_);
 
-	ut_a(ref);
-	ut_a(index);
-	ut_a(rec);
 	ut_ad(!dict_index_is_clust(index));
 	ut_a(index->table);
 
@@ -1035,9 +1033,12 @@ row_search_on_row_ref(
 	if (UNIV_UNLIKELY(ref->info_bits != 0)) {
 		ut_ad(ref->info_bits == REC_INFO_METADATA);
 		ut_ad(ref->n_fields <= index->n_uniq);
-		btr_pcur_open_at_index_side(true, index, mode, pcur, true, 0,
-					    mtr);
-		btr_pcur_move_to_next_user_rec(pcur, mtr);
+		if (btr_pcur_open_at_index_side(
+			    true, index, mode, pcur, true, 0, mtr)
+		    != DB_SUCCESS
+		    || !btr_pcur_move_to_next_user_rec(pcur, mtr)) {
+			return FALSE;
+		}
 		/* We do not necessarily have index->is_instant() here,
 		because we could be executing a rollback of an
 		instant ADD COLUMN operation. The function
@@ -1048,7 +1049,10 @@ row_search_on_row_ref(
 			& REC_INFO_MIN_REC_FLAG;
 	} else {
 		ut_a(ref->n_fields == index->n_uniq);
-		btr_pcur_open(index, ref, PAGE_CUR_LE, mode, pcur, mtr);
+		if (btr_pcur_open(index, ref, PAGE_CUR_LE, mode, pcur, mtr)
+		    != DB_SUCCESS) {
+			return FALSE;
+		}
 	}
 
 	low_match = btr_pcur_get_low_match(pcur);

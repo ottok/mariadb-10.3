@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA */
 
 /* Describe, check and repair of MyISAM tables */
 
@@ -1405,8 +1405,8 @@ static void descript(HA_CHECK *param, register MI_INFO *info, char * name)
 	null_bit[0]=null_pos[0]=0;
 	if (keyseg->null_bit)
 	{
-	  sprintf(null_bit,"%d",keyseg->null_bit);
-	  sprintf(null_pos,"%ld",(long) keyseg->null_pos+1);
+	  my_snprintf(null_bit, sizeof(null_bit), "%d", keyseg->null_bit);
+	  my_snprintf(null_pos, sizeof(null_pos), "%ld", (long) keyseg->null_pos+1);
 	}
 	printf("%-7ld%-5d%-9s%-10s%-30s\n",
 	       (long) keyseg->start+1,keyseg->length,

@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -325,7 +325,7 @@ too_small:
 	mtr_commit(&mtr);
 
 	/* Flush the modified pages to disk and make a checkpoint */
-	log_make_checkpoint_at(LSN_MAX, TRUE);
+	log_make_checkpoint_at(LSN_MAX);
 
 	/* Remove doublewrite pages from LRU */
 	buf_pool_invalidate();
@@ -333,20 +333,6 @@ too_small:
 	ib::info() <<  "Doublewrite buffer created";
 
 	goto start_again;
-}
-
-/** Check if a page is all zeroes.
-@param[in]	read_buf	database page
-@param[in]	page_size	page frame size
-@return	whether the page is all zeroes */
-static bool buf_page_is_zeroes(const byte* read_buf, size_t page_size)
-{
-	for (ulint i = 0; i < page_size; i++) {
-		if (read_buf[i] != 0) {
-			return false;
-		}
-	}
-	return true;
 }
 
 /**
@@ -649,18 +635,13 @@ bad:
 		ulint decomp = fil_page_decompress(buf, page);
 		if (!decomp || (decomp != srv_page_size
 				&& page_size.is_compressed())) {
-			goto bad_doublewrite;
+			continue;
 		}
 
 		if (expect_encrypted && mach_read_from_4(
 			    page + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION)
 		    ? !fil_space_verify_crypt_checksum(page, page_size)
 		    : buf_page_is_corrupted(true, page, page_size, space)) {
-			if (!is_all_zero) {
-bad_doublewrite:
-				ib::warn() << "A doublewrite copy of page "
-					<< page_id << " is corrupted.";
-			}
 			/* Theoretically we could have another good
 			copy for this page in the doublewrite
 			buffer. If not, we will report a fatal error

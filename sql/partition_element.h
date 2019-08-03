@@ -14,7 +14,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335  USA */
 
 #include "my_base.h"                            /* ha_rows */
 #include "handler.h"                            /* UNDEF_NODEGROUP */
@@ -175,21 +175,6 @@ public:
     DBUG_ASSERT(ev);
     DBUG_ASSERT(ev->col_val_array);
     return ev->col_val_array[idx];
-  }
-
-  bool find_engine_flag(uint32 flag)
-  {
-    if (ha_check_storage_engine_flag(engine_type, flag))
-      return true;
-
-    List_iterator_fast<partition_element> it(subpartitions);
-    while (partition_element *element= it++)
-    {
-      if (element->find_engine_flag(flag))
-        return true;
-    }
-
-    return false;
   }
 };
 

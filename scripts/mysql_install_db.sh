@@ -13,7 +13,7 @@
 # 
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335  USA
 
 # This scripts creates the MariaDB Server system tables
 #
@@ -272,9 +272,16 @@ then
 fi
 if test -n "$srcdir"
 then
+  # In an out-of-source build, builddir is not srcdir. Try to guess where
+  # builddir is by looking for my_print_defaults.
   if test -z "$builddir"
   then
-    builddir="$srcdir"
+    if test -x "$dirname0/extra/my_print_defaults"
+    then
+      builddir="$dirname0"
+    else
+      builddir="$srcdir"
+    fi
   fi
   print_defaults="$builddir/extra/my_print_defaults"
 elif test -n "$basedir"
@@ -437,7 +444,7 @@ then
 fi
 
 # Create database directories
-for dir in "$ldata" "$ldata/mysql"
+for dir in "$ldata"
 do
   if test ! -d "$dir"
   then
@@ -489,6 +496,7 @@ mysqld_install_cmd_line()
 
 cat_sql()
 {
+  echo "create database if not exists mysql;"
   echo "use mysql;"
 
   case "$auth_root_authentication_method" in

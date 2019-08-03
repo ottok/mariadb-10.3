@@ -13,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -38,7 +38,9 @@ enum mtr_log_t {
 	/** Default mode: log all operations modifying disk-based data */
 	MTR_LOG_ALL = 21,
 
-	/** Log no operations and dirty pages are not added to the flush list */
+	/** Log no operations and dirty pages are not added to the flush list.
+	Set when applying log in crash recovery or when a modification of a
+	ROW_FORMAT=COMPRESSED page is attempted. */
 	MTR_LOG_NONE = 22,
 
 	/** Don't generate REDO log but add dirty pages to flush list */

@@ -14,7 +14,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA */
 
 
 /* Function items used by mysql */
@@ -1003,25 +1003,66 @@ public:
 };
 
 
-class Item_double_typecast :public Item_real_func
+class Item_real_typecast: public Item_real_func
 {
+protected:
+  double val_real_with_truncate(double max_value);
 public:
-  Item_double_typecast(THD *thd, Item *a, uint len, uint dec):
-    Item_real_func(thd, a)
+  Item_real_typecast(THD *thd, Item *a, uint len, uint dec)
+   :Item_real_func(thd, a)
   {
     decimals=   (uint8)  dec;
     max_length= (uint32) len;
   }
-  double val_real();
+  bool need_parentheses_in_default() { return true; }
+  void print(String *str, enum_query_type query_type);
   void fix_length_and_dec_generic() { maybe_null= 1; }
+};
+
+
+class Item_float_typecast :public Item_real_typecast
+{
+public:
+  Item_float_typecast(THD *thd, Item *a)
+   :Item_real_typecast(thd, a, MAX_FLOAT_STR_LENGTH, NOT_FIXED_DEC)
+  { }
+  const Type_handler *type_handler() const { return &type_handler_float; }
+  bool fix_length_and_dec()
+  {
+    return
+      args[0]->type_handler()->Item_float_typecast_fix_length_and_dec(this);
+  }
+  const char *func_name() const { return "float_typecast"; }
+  double val_real()
+  {
+    return (double) (float) val_real_with_truncate(FLT_MAX);
+  }
+  String *val_str(String*str)
+  {
+    Float nr(Item_float_typecast::val_real());
+    if (null_value)
+      return 0;
+    nr.to_string(str, decimals);
+    return str;
+  }
+  Item *get_copy(THD *thd)
+  { return get_item_copy<Item_float_typecast>(thd, this); }
+};
+
+
+class Item_double_typecast :public Item_real_typecast
+{
+public:
+  Item_double_typecast(THD *thd, Item *a, uint len, uint dec):
+    Item_real_typecast(thd, a, len, dec)
+  { }
   bool fix_length_and_dec()
   {
     return
       args[0]->type_handler()->Item_double_typecast_fix_length_and_dec(this);
   }
   const char *func_name() const { return "double_typecast"; }
-  virtual void print(String *str, enum_query_type query_type);
-  bool need_parentheses_in_default() { return true; }
+  double val_real() { return val_real_with_truncate(DBL_MAX); }
   Item *get_copy(THD *thd)
   { return get_item_copy<Item_double_typecast>(thd, this); }
 };
@@ -2404,7 +2445,6 @@ class Item_func_set_user_var :public Item_func_user_var
        user variable it the first connection context).
   */
   my_thread_id entry_thread_id;
-  char buffer[MAX_FIELD_WIDTH];
   String value;
   my_decimal decimal_buff;
   bool null_item;
@@ -2467,6 +2507,7 @@ public:
   void cleanup();
   Item *get_copy(THD *thd)
   { return get_item_copy<Item_func_set_user_var>(thd, this); }
+  bool excl_dep_on_table(table_map tab_map) { return false; }
 };
 
 
@@ -3162,7 +3203,6 @@ Item *get_system_var(THD *thd, enum_var_type var_type,
 extern bool check_reserved_words(const LEX_CSTRING *name);
 double my_double_round(double value, longlong dec, bool dec_unsigned,
                        bool truncate);
-bool eval_const_cond(COND *cond);
 
 extern bool volatile  mqh_used;
 

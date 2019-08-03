@@ -786,10 +786,12 @@ extern int MYSQLdebug;
     XML_SYM = 996,
     YEAR_SYM = 997,
     PREC_BELOW_ESCAPE = 998,
-    PREC_BELOW_NOT = 999,
-    PREC_BELOW_IDENTIFIER_OPT_SPECIAL_CASE = 1000,
-    USER = 1001,
-    PREC_BELOW_CONTRACTION_TOKEN2 = 1002
+    CONDITIONLESS_JOIN = 999,
+    ON_SYM = 1000,
+    PREC_BELOW_NOT = 1001,
+    PREC_BELOW_IDENTIFIER_OPT_SPECIAL_CASE = 1002,
+    USER = 1003,
+    PREC_BELOW_CONTRACTION_TOKEN2 = 1004
   };
 #endif
 
@@ -906,7 +908,7 @@ union YYSTYPE
   enum Column_definition::enum_column_versioning vers_column_versioning;
   enum plsql_cursor_attr_t plsql_cursor_attr;
 
-#line 910 "/home/buildbot/git/mkdist/sql/sql_yacc.hh" /* yacc.c:1909  */
+#line 912 "/home/buildbot/git/mkdist/sql/sql_yacc.hh" /* yacc.c:1909  */
 };
 # define YYSTYPE_IS_TRIVIAL 1
 # define YYSTYPE_IS_DECLARED 1

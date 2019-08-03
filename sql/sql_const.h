@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335  USA */
 
 /**
   @file
@@ -64,7 +64,7 @@
     CREATE TABLE t1 (c VARBINARY(65534));
     CREATE TABLE t1 (c VARBINARY(65535));
   Like VARCHAR(65536), they will be converted to BLOB automatically
-  in non-sctict mode.
+  in non-strict mode.
 */
 #define MAX_FIELD_VARCHARLENGTH	(65535-2-1)
 #define MAX_FIELD_BLOBLENGTH UINT_MAX32         /* cf field_blob::get_length() */
@@ -242,6 +242,14 @@
 #define HEAP_TEMPTABLE_LOOKUP_COST 0.05
 #define DISK_TEMPTABLE_LOOKUP_COST 1.0
 #define SORT_INDEX_CMP_COST 0.02
+
+
+#define COST_MAX (DBL_MAX * (1.0 - DBL_EPSILON))
+
+#define COST_ADD(c,d) (COST_MAX - (d) > (c) ? (c) + (d) : COST_MAX)
+
+#define COST_MULT(c,f) (COST_MAX / (f) > (c) ? (c) * (f) : COST_MAX)
+
 
 #define MY_CHARSET_BIN_MB_MAXLEN 1
 

@@ -1,5 +1,5 @@
 /* Copyright (c) 2010, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2011, 2018, MariaDB
+   Copyright (c) 2011, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 #include "mariadb.h"
 #include "sql_class.h"                       // THD
@@ -452,8 +452,6 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
   DBUG_ENTER("mysql_admin_table");
   DBUG_PRINT("enter", ("extra_open_options: %u", extra_open_options));
 
-  thd->prepare_logs_for_admin_command();
-
   field_list.push_back(item= new (thd->mem_root)
                        Item_empty_string(thd, "Table",
                                          NAME_CHAR_LEN * 2), thd->mem_root);
@@ -568,7 +566,8 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
           if (!table->table->part_info)
           {
             my_error(ER_PARTITION_MGMT_ON_NONPARTITIONED, MYF(0));
-            goto err2;
+            thd->resume_subsequent_commits(suspended_wfc);
+            DBUG_RETURN(TRUE);
           }
           if (set_part_state(alter_info, table->table->part_info, PART_ADMIN))
           {
@@ -701,19 +700,23 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
       MDL_SHARED_NO_READ_WRITE lock (MDL_SHARED_WRITE cannot be upgraded)
       by *not* having HA_CONCURRENT_OPTIMIZE table_flag.
     */
-    if (lock_type == TL_WRITE && !table->table->s->tmp_table &&
-                        table->mdl_request.type > MDL_SHARED_WRITE)
+    if (lock_type == TL_WRITE && table->mdl_request.type > MDL_SHARED_WRITE)
     {
-      if (wait_while_table_is_used(thd, table->table, HA_EXTRA_NOT_USED))
-        goto err;
-      DEBUG_SYNC(thd, "after_admin_flush");
-      /* Flush entries in the query cache involving this table. */
-      query_cache_invalidate3(thd, table->table, 0);
-      /*
-        XXX: hack: switch off open_for_modify to skip the
-        flush that is made later in the execution flow. 
-      */
-      open_for_modify= 0;
+      if (table->table->s->tmp_table)
+        thd->close_unused_temporary_table_instances(tables);
+      else
+      {
+        if (wait_while_table_is_used(thd, table->table, HA_EXTRA_NOT_USED))
+          goto err;
+        DEBUG_SYNC(thd, "after_admin_flush");
+        /* Flush entries in the query cache involving this table. */
+        query_cache_invalidate3(thd, table->table, 0);
+        /*
+          XXX: hack: switch off open_for_modify to skip the
+          flush that is made later in the execution flow.
+        */
+        open_for_modify= 0;
+      }
     }
 
     if (table->table->s->crashed && operator_func == &handler::ha_check)
@@ -1221,9 +1224,6 @@ err:
   }
   close_thread_tables(thd);			// Shouldn't be needed
   thd->mdl_context.release_transactional_locks();
-#ifdef WITH_PARTITION_STORAGE_ENGINE
-err2:
-#endif
   thd->resume_subsequent_commits(suspended_wfc);
   DBUG_RETURN(TRUE);
 }
@@ -1398,8 +1398,6 @@ bool Sql_cmd_repair_table::execute(THD *thd)
   if (check_table_access(thd, SELECT_ACL | INSERT_ACL, first_table,
                          FALSE, UINT_MAX, FALSE))
     goto error; /* purecov: inspected */
-  thd->enable_slow_log&= !MY_TEST(thd->variables.log_slow_disabled_statements &
-                                  LOG_SLOW_DISABLE_ADMIN);
   WSREP_TO_ISOLATION_BEGIN_WRTCHK(NULL, NULL, first_table);
   res= mysql_admin_table(thd, first_table, &m_lex->check_opt, "repair",
                          TL_WRITE, 1,

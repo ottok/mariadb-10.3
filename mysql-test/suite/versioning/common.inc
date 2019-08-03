@@ -1,4 +1,8 @@
 --disable_query_log
+if (!$TEST_VERSIONING_SO)
+{
+  --skip needs test_versioning plugin
+}
 source include/have_innodb.inc;
 
 set @@session.time_zone='+00:00';
@@ -43,6 +47,10 @@ let $sys_datatype_expl_uc= TIMESTAMP(6);
 let $sys_datatype_max= TIMESTAMP'2038-01-19 03:14:07.999999';
 
 if ($MTR_COMBINATION_MYISAM)
+{
+  --let $MTR_COMBINATION_TIMESTAMP= 1
+}
+if ($MTR_COMBINATION_HEAP)
 {
   --let $MTR_COMBINATION_TIMESTAMP= 1
 }

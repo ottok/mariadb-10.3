@@ -14,7 +14,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -525,7 +525,7 @@ struct mtr_t {
 	/** Check if this mini-transaction is dirtying a clean page.
 	@param block	block being x-fixed
 	@return true if the mtr is dirtying a clean page. */
-	static bool is_block_dirtied(const buf_block_t* block)
+	static inline bool is_block_dirtied(const buf_block_t* block)
 		MY_ATTRIBUTE((warn_unused_result));
 
 private:

@@ -12,7 +12,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; see the file COPYING. If not, write to the
 # Free Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston
-# MA  02110-1301  USA.
+# MA  02110-1335  USA.
 
 # This is a common command line parser to be sourced by other SST scripts
 
@@ -28,7 +28,6 @@ WSREP_SST_OPT_PSWD=${WSREP_SST_OPT_PSWD:-}
 WSREP_SST_OPT_DEFAULT=""
 WSREP_SST_OPT_EXTRA_DEFAULT=""
 WSREP_SST_OPT_SUFFIX_DEFAULT=""
-WSREP_SST_OPT_SUFFIX_VALUE=""
 INNODB_DATA_HOME_DIR_ARG=""
 
 while [ $# -gt 0 ]; do
@@ -94,7 +93,6 @@ case "$1" in
         ;;
     '--defaults-group-suffix')
         readonly WSREP_SST_OPT_SUFFIX_DEFAULT="$1=$2"
-        readonly WSREP_SST_OPT_SUFFIX_VALUE="$2"
         shift
         ;;
     '--host')

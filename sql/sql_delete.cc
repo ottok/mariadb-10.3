@@ -1,6 +1,6 @@
 /*
-   Copyright (c) 2000, 2010, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2015, MariaDB
+   Copyright (c) 2000, 2019, Oracle and/or its affiliates.
+   Copyright (c) 2010, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 /*
   Delete of records tables.
@@ -41,7 +41,7 @@
 #include "records.h"                            // init_read_record,
 #include "filesort.h"
 #include "uniques.h"
-#include "sql_derived.h"                        // mysql_handle_list_of_derived
+#include "sql_derived.h"                        // mysql_handle_derived
                                                 // end_read_record
 #include "sql_partition.h"       // make_used_partitions_str
 
@@ -254,12 +254,7 @@ int TABLE::delete_row()
 
   store_record(this, record[1]);
   vers_update_end();
-  int res;
-  if ((res= file->extra(HA_EXTRA_REMEMBER_POS)))
-    return res;
-  if ((res= file->ha_update_row(record[1], record[0])))
-    return res;
-  return file->extra(HA_EXTRA_RESTORE_POS);
+  return file->ha_update_row(record[1], record[0]);
 }
 
 
@@ -310,8 +305,8 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
 
   THD_STAGE_INFO(thd, stage_init_update);
 
-  bool truncate_history= table_list->vers_conditions.is_set();
-  if (truncate_history)
+  bool delete_history= table_list->vers_conditions.is_set();
+  if (delete_history)
   {
     if (table_list->is_view_or_derived())
     {
@@ -319,8 +314,7 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
       DBUG_RETURN(true);
     }
 
-    TABLE *table= table_list->table;
-    DBUG_ASSERT(table);
+    DBUG_ASSERT(table_list->table);
 
     DBUG_ASSERT(!conds || thd->stmt_arena->is_stmt_execute());
 
@@ -335,9 +329,9 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
     }
   }
 
-  if (mysql_handle_list_of_derived(thd->lex, table_list, DT_MERGE_FOR_INSERT))
+  if (thd->lex->handle_list_of_derived(table_list, DT_MERGE_FOR_INSERT))
     DBUG_RETURN(TRUE);
-  if (mysql_handle_list_of_derived(thd->lex, table_list, DT_PREPARE))
+  if (thd->lex->handle_list_of_derived(table_list, DT_PREPARE))
     DBUG_RETURN(TRUE);
 
   if (!table_list->single_table_updatable())
@@ -360,7 +354,10 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
                            select_lex->item_list, &conds,
                            &delete_while_scanning))
     DBUG_RETURN(TRUE);
-  
+
+  if (delete_history)
+    table->vers_write= false;
+
   if (with_select)
     (void) result->prepare(select_lex->item_list, NULL);
 
@@ -702,7 +699,7 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
     while (!(error=info.read_record()) && !thd->killed &&
           ! thd->is_error())
     {
-      if (record_should_be_deleted(thd, table, select, explain, truncate_history))
+      if (record_should_be_deleted(thd, table, select, explain, delete_history))
       {
         table->file->position(table->record[0]);
         if (unlikely((error=
@@ -733,10 +730,10 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
   {
     if (delete_while_scanning)
       delete_record= record_should_be_deleted(thd, table, select, explain,
-                                              truncate_history);
+                                              delete_history);
     if (delete_record)
     {
-      if (!truncate_history && table->triggers &&
+      if (!delete_history && table->triggers &&
           table->triggers->process_triggers(thd, TRG_EVENT_DELETE,
                                             TRG_ACTION_BEFORE, FALSE))
       {
@@ -754,7 +751,7 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
       if (likely(!error))
       {
 	deleted++;
-        if (!truncate_history && table->triggers &&
+        if (!delete_history && table->triggers &&
             table->triggers->process_triggers(thd, TRG_EVENT_DELETE,
                                               TRG_ACTION_AFTER, FALSE))
         {
@@ -1521,6 +1518,7 @@ bool multi_delete::send_eof()
         thd->clear_error();
       else
         errcode= query_error_code(thd, killed_status == NOT_KILLED);
+      thd->thread_specific_used= TRUE;
       if (unlikely(thd->binlog_query(THD::ROW_QUERY_TYPE,
                                      thd->query(), thd->query_length(),
                                      transactional_tables, FALSE, FALSE,

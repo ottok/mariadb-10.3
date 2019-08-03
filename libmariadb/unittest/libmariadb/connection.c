@@ -43,7 +43,7 @@ static int test_conc66(MYSQL *my)
   fprintf(fp, "user=conc66\n");
   fprintf(fp, "port=3306\n");
   fprintf(fp, "enable-local-infile\n");
-  fprintf(fp, "password='test\\\";#test'\n");
+  fprintf(fp, "password='test@A1\\\";#test'\n");
 
   fclose(fp);
 
@@ -52,7 +52,7 @@ static int test_conc66(MYSQL *my)
   rc= mysql_options(mysql, MYSQL_READ_DEFAULT_FILE, "./my-conc66-test.cnf");
   check_mysql_rc(rc, mysql);
 
-  sprintf(query, "GRANT ALL ON %s.* TO 'conc66'@'%s' IDENTIFIED BY 'test\";#test'", schema, this_host ? this_host : "localhost");
+  sprintf(query, "GRANT ALL ON %s.* TO 'conc66'@'%s' IDENTIFIED BY 'test@A1\";#test'", schema, this_host ? this_host : "localhost");
   rc= mysql_query(my, query);
   check_mysql_rc(rc, my);
   rc= mysql_query(my, "FLUSH PRIVILEGES");
@@ -800,7 +800,7 @@ static int test_bind_address(MYSQL *my)
   sprintf(query, "DROP USER '%s'@'%s'", username, bind_addr);
   rc= mysql_query(my, query);
 
-  sprintf(query, "CREATE USER '%s'@'%s'", username, bind_addr);
+  sprintf(query, "CREATE USER '%s'@'%s' IDENTIFIED BY '%s'", username, bind_addr, password);
   rc= mysql_query(my, query);
   check_mysql_rc(rc, my);
 
@@ -1081,7 +1081,7 @@ static int test_auth256(MYSQL *my)
   my_ulonglong num_rows= 0;
   char query[1024];
 
-  if (!mysql_client_find_plugin(mysql, "sha256_password", 3))
+  if (!mysql_client_find_plugin(mysql, "sha256_password", MYSQL_CLIENT_AUTHENTICATION_PLUGIN))
   {
     diag("sha256_password plugin not available");
     mysql_close(mysql);
@@ -1345,6 +1345,10 @@ static int test_expired_pw(MYSQL *my)
   my_test_connect(mysql, hostname, "foo", "foo", schema,
                   port, socketname, 0);
 
+  /* we should be in sandbox mode now, only set commands should be allowed */
+  rc= mysql_query(mysql, "DROP TABLE IF EXISTS t1");
+  FAIL_IF(!rc, "Error expected (we are in sandbox mode");
+
   diag("error: %d %s", mysql_errno(mysql), mysql_error(mysql));
   FAIL_IF(mysql_errno(mysql) != ER_MUST_CHANGE_PASSWORD &&
           mysql_errno(mysql) != ER_MUST_CHANGE_PASSWORD_LOGIN, "Error 1820/1862 expected");
@@ -1598,8 +1602,92 @@ static int test_conc312(MYSQL *my)
   return OK;
 }
 
+static int test_conc366(MYSQL *mysql)
+{
+  char query[1024];
+  int rc;
+  MYSQL *my;
+
+  if (!is_mariadb)
+  {
+    diag("feature not supported by MySQL server");
+    return SKIP;
+  }
+
+  /* check if ed25519 plugin is available */
+  if (!mysql_client_find_plugin(mysql, "client_ed25519", MYSQL_CLIENT_AUTHENTICATION_PLUGIN))
+  {
+    diag("client_ed25519 plugin not available");
+    return SKIP;
+  }
+
+  rc= mysql_query(mysql, "INSTALL SONAME 'auth_ed25519'");
+  if (rc)
+  {
+    diag("feature not supported, ed25519 plugin not available");
+    return SKIP;
+  }
+
+
+  sprintf(query, "CREATE OR REPLACE USER 'ede'@'%s' IDENTIFIED VIA ed25519 USING 'vubFBzIrapbfHct1/J72dnUryz5VS7lA6XHH8sIx4TI'", this_host);
+  rc= mysql_query(mysql, query);
+  check_mysql_rc(rc, mysql);
+
+  sprintf(query, "GRANT ALL ON %s.* TO 'ede'@'%s'", schema, this_host);
+  rc= mysql_query(mysql, query);
+  check_mysql_rc(rc, mysql);
+
+  my= mysql_init(NULL);
+  if (plugindir)
+    mysql_options(my, MYSQL_PLUGIN_DIR, plugindir);
+  if (!mysql_real_connect(my, hostname, "ede", "foo", schema, port, socketname, 0))
+  {
+    diag("Error: %s", mysql_error(my));
+    return FAIL;
+  }
+  mysql_close(my);
+
+  sprintf(query, "DROP USER 'ede'@'%s'", this_host);
+  rc= mysql_query(mysql, query);
+  check_mysql_rc(rc, mysql);
+
+  sprintf(query, "UNINSTALL SONAME 'auth_ed25519'");
+  rc= mysql_query(mysql, query);
+  check_mysql_rc(rc, mysql);
+  return OK;
+}
+
+static int test_conc392(MYSQL *mysql)
+{
+  int rc;
+  const char *data;
+  size_t len;
+  ulong capabilities= 0;
+
+  mariadb_get_infov(mysql, MARIADB_CONNECTION_SERVER_CAPABILITIES, &capabilities);
+  if (!(capabilities & CLIENT_SESSION_TRACKING))
+  {
+    diag("Server doesn't support session tracking (cap=%lu)", mysql->server_capabilities);
+    return SKIP;
+  }
+  
+  rc= mysql_query(mysql, "set session_track_state_change=1");
+  check_mysql_rc(rc, mysql);
+
+  if (mysql_session_track_get_first(mysql, SESSION_TRACK_STATE_CHANGE, &data, &len))
+  {
+    diag("session_track_get_first failed");
+    return FAIL;
+  }
+  
+  FAIL_IF(len != 1, "Expected length 1");
+  return OK;
+}
+
 
 struct my_tests_st my_tests[] = {
+  {"test_conc366", test_conc366, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
+  {"test_conc392", test_conc392, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_conc312", test_conc312, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_conc351", test_conc351, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_conc332", test_conc332, TEST_CONNECTION_NONE, 0, NULL, NULL},

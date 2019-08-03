@@ -11,7 +11,7 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA */
 
 #define MYSQL_SERVER 1
 #include <my_global.h>
@@ -253,7 +253,7 @@ int spider_trx_another_lock_tables(
   sql_str.init_calc_mem(188);
   sql_str.length(0);
   memset((void*)&tmp_spider, 0, sizeof(ha_spider));
-  memset(&tmp_share, 0, sizeof(SPIDER_SHARE));
+  memset((void*)&tmp_share, 0, sizeof(SPIDER_SHARE));
   tmp_spider.share = &tmp_share;
   tmp_spider.trx = trx;
   tmp_share.access_charset = system_charset_info;
@@ -2944,7 +2944,7 @@ int spider_internal_xa_commit_by_xid(
     }
   }
 
-  memset(&tmp_share, 0, sizeof(SPIDER_SHARE));
+  memset((void*)&tmp_share, 0, sizeof(SPIDER_SHARE));
   memset(&tmp_connect_info, 0,
     sizeof(char *) * SPIDER_TMP_SHARE_CHAR_PTR_COUNT);
   spider_set_tmp_share_pointer(&tmp_share, tmp_connect_info,
@@ -3177,7 +3177,7 @@ int spider_internal_xa_rollback_by_xid(
     }
   }
 
-  memset(&tmp_share, 0, sizeof(SPIDER_SHARE));
+  memset((void*)&tmp_share, 0, sizeof(SPIDER_SHARE));
   memset(&tmp_connect_info, 0,
     sizeof(char *) * SPIDER_TMP_SHARE_CHAR_PTR_COUNT);
   spider_set_tmp_share_pointer(&tmp_share, tmp_connect_info,

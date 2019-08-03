@@ -12,7 +12,7 @@
 # 
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335 USA
 
 IF(WIN32)
   SET(localstatedir "C:\\\\mysql\\\\data\\\\")
@@ -77,6 +77,15 @@ IF(UNIX)
         ADD_CUSTOM_TARGET(${pol}-pp ALL DEPENDS ${out})
         INSTALL(FILES ${out} DESTINATION ${inst_location}/policy/selinux COMPONENT SupportFiles)
       ENDFOREACH()
+      IF(RPM)
+        EXECUTE_PROCESS(COMMAND rpm -q --qf "%{VERSION}-%{RELEASE}" libsepol
+                        OUTPUT_VARIABLE LIBSEPOL_VERSION RESULT_VARIABLE err)
+        IF (NOT err)
+          SET(CPACK_RPM_server_PACKAGE_REQUIRES
+            "${CPACK_RPM_server_PACKAGE_REQUIRES} libsepol >= ${LIBSEPOL_VERSION}"
+            PARENT_SCOPE)
+        ENDIF()
+      ENDIF()
     ENDIF()
   ENDIF()
 

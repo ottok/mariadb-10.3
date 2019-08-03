@@ -189,9 +189,11 @@ PQRYRES CSVColumns(PGLOBAL g, PCSZ dp, PTOS topt, bool info)
 		htrc("File %s Sep=%c Qot=%c Header=%d maxerr=%d\n",
 		SVP(tdp->Fn), tdp->Sep, tdp->Qot, tdp->Header, tdp->Maxerr);
 
+#if defined(ZIP_SUPPORT)
 	if (tdp->Zipped)
 		tcvp = new(g)TDBCSV(tdp, new(g)UNZFAM(tdp));
 	else
+#endif
 		tcvp = new(g) TDBCSV(tdp, new(g) DOSFAM(tdp));
 
 	tcvp->SetMode(MODE_READ);
@@ -1485,8 +1487,8 @@ void CSVCOL::ReadColumn(PGLOBAL g)
 /***********************************************************************/
 void CSVCOL::WriteColumn(PGLOBAL g)
   {
-  char   *p, buf[64];
-  int     flen;
+  char   *p;
+  int     n, flen;
   PTDBCSV tdbp = (PTDBCSV)To_Tdb;
 
   if (trace(2))
@@ -1508,13 +1510,14 @@ void CSVCOL::WriteColumn(PGLOBAL g)
   /*********************************************************************/
   /*  Get the string representation of the column value.               */
   /*********************************************************************/
-  p = Value->ShowValue(buf);
+  p = Value->GetCharString(Buf);
+	n = strlen(p);
 
   if (trace(2))
-    htrc("new length(%p)=%d\n", p, strlen(p));
+    htrc("new length(%p)=%d\n", p, n);
 
-  if ((signed)strlen(p) > flen) {
-    sprintf(g->Message, MSG(BAD_FLD_LENGTH), Name, p, flen,
+  if (n > flen) {
+    sprintf(g->Message, MSG(BAD_FLD_LENGTH), Name, p, n,
                         tdbp->RowNumber(g), tdbp->GetFile(g));
 		throw 34;
 	} else if (Dsp)

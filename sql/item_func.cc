@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2017, MariaDB
+   Copyright (c) 2009, 2019, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 /**
   @file
@@ -67,18 +67,6 @@ bool check_reserved_words(const LEX_CSTRING *name)
       lex_string_eq(name, STRING_WITH_LEN("SESSION")))
     return TRUE;
   return FALSE;
-}
-
-
-/**
-  @return
-    TRUE if item is a constant
-*/
-
-bool
-eval_const_cond(COND *cond)
-{
-  return ((Item_func*) cond)->val_int() ? TRUE : FALSE;
 }
 
 
@@ -372,6 +360,7 @@ Item_func::fix_fields(THD *thd, Item **ref)
       with_window_func= with_window_func || item->with_window_func;
       with_field= with_field || item->with_field;
       used_tables_and_const_cache_join(item);
+      not_null_tables_cache|= item->not_null_tables();
       m_with_subquery|= item->with_subquery();
     }
   }
@@ -1145,19 +1134,26 @@ void Item_decimal_typecast::print(String *str, enum_query_type query_type)
 }
 
 
-double Item_double_typecast::val_real()
+double Item_real_typecast::val_real_with_truncate(double max_value)
 {
   int error;
   double tmp= args[0]->val_real();
   if ((null_value= args[0]->null_value))
     return 0.0;
 
-  if (unlikely((error= truncate_double(&tmp, max_length, decimals, 0,
-                                       DBL_MAX))))
+  if (unlikely((error= truncate_double(&tmp, max_length, decimals,
+                                       false/*unsigned_flag*/, max_value))))
   {
+    /*
+      We don't want automatic escalation from a warning to an error
+      in this scenario:
+        INSERT INTO t1 (float_field) VALUES (CAST(1e100 AS FLOAT));
+      The above statement should work even in the strict mode.
+      So let's use a note rather than a warning.
+    */
     THD *thd= current_thd;
     push_warning_printf(thd,
-                        Sql_condition::WARN_LEVEL_WARN,
+                        Sql_condition::WARN_LEVEL_NOTE,
                         ER_WARN_DATA_OUT_OF_RANGE,
                         ER_THD(thd, ER_WARN_DATA_OUT_OF_RANGE),
                         name.str, (ulong) 1);
@@ -1171,14 +1167,15 @@ double Item_double_typecast::val_real()
 }
 
 
-void Item_double_typecast::print(String *str, enum_query_type query_type)
+void Item_real_typecast::print(String *str, enum_query_type query_type)
 {
   char len_buf[20*3 + 1];
   char *end;
 
   str->append(STRING_WITH_LEN("cast("));
   args[0]->print(str, query_type);
-  str->append(STRING_WITH_LEN(" as double"));
+  str->append(STRING_WITH_LEN(" as "));
+  str->append(type_handler()->name().ptr());
   if (decimals != NOT_FIXED_DEC)
   {
     str->append('(');
@@ -6910,9 +6907,9 @@ longlong Item_func_lastval::val_int()
 /*
   Sets next value to be returned from sequences
 
-  SELECT setval('foo', 42, 0);           Next nextval will return 43
-  SELECT setval('foo', 42, 0, true);     Same as above
-  SELECT setval('foo', 42, 0, false);    Next nextval will return 42
+  SELECT setval(foo, 42, 0);           Next nextval will return 43
+  SELECT setval(foo, 42, 0, true);     Same as above
+  SELECT setval(foo, 42, 0, false);    Next nextval will return 42
 */
 
 longlong Item_func_setval::val_int()

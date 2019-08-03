@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA
 */
 
 /**
@@ -2397,7 +2397,7 @@ int Field::set_default()
   /* Copy constant value stored in s->default_values */
   my_ptrdiff_t l_offset= (my_ptrdiff_t) (table->s->default_values -
                                         table->record[0]);
-  memcpy(ptr, ptr + l_offset, pack_length());
+  memcpy(ptr, ptr + l_offset, pack_length_in_rec());
   if (maybe_null_in_table())
     *null_ptr= ((*null_ptr & (uchar) ~null_bit) |
                 (null_ptr[l_offset] & null_bit));
@@ -4556,34 +4556,15 @@ String *Field_float::val_str(String *val_buffer,
 {
   ASSERT_COLUMN_MARKED_FOR_READ;
   DBUG_ASSERT(!zerofill || field_length <= MAX_FIELD_CHARLENGTH);
-  float nr;
-  float4get(nr,ptr);
 
-  uint to_length= 70;
-  if (val_buffer->alloc(to_length))
+  if (Float(ptr).to_string(val_buffer, dec))
   {
     my_error(ER_OUT_OF_RESOURCES, MYF(0));
     return val_buffer;
   }
 
-  char *to=(char*) val_buffer->ptr();
-  size_t len;
-
-  if (dec >= FLOATING_POINT_DECIMALS)
-    len= my_gcvt(nr, MY_GCVT_ARG_FLOAT, to_length - 1, to, NULL);
-  else
-  {
-    /*
-      We are safe here because the buffer length is 70, and
-      fabs(float) < 10^39, dec < FLOATING_POINT_DECIMALS. So the resulting string
-      will be not longer than 69 chars + terminating '\0'.
-    */
-    len= my_fcvt(nr, dec, to, NULL);
-  }
-  val_buffer->length((uint) len);
   if (zerofill)
     prepend_zeros(val_buffer);
-  val_buffer->set_charset(&my_charset_numeric);
   return val_buffer;
 }
 
@@ -6958,8 +6939,11 @@ Field_longstr::check_string_copy_error(const String_copier *copier,
   if (likely(!(pos= copier->most_important_error_pos())))
     return FALSE;
 
-  convert_to_printable(tmp, sizeof(tmp), pos, (end - pos), cs, 6);
-  set_warning_truncated_wrong_value("string", tmp);
+  if (!is_stat_field)
+  {
+    convert_to_printable(tmp, sizeof(tmp), pos, (end - pos), cs, 6);
+    set_warning_truncated_wrong_value("string", tmp);
+  }
   return TRUE;
 }
 
@@ -11121,20 +11105,48 @@ bool Column_definition::has_default_expression()
 
 bool Column_definition::set_compressed(const char *method)
 {
+  if (!method || !strcmp(method, zlib_compression_method->name))
+  {
+    unireg_check= Field::TMYSQL_COMPRESSED;
+    compression_method_ptr= zlib_compression_method;
+    return false;
+  }
+  my_error(ER_UNKNOWN_COMPRESSION_METHOD, MYF(0), method);
+  return true;
+}
+
+
+bool Column_definition::set_compressed_deprecated(THD *thd, const char *method)
+{
+  push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+                      ER_WARN_DEPRECATED_SYNTAX,
+                      ER_THD(thd, ER_WARN_DEPRECATED_SYNTAX),
+                      "<data type> <character set clause> ... COMPRESSED...",
+                      "'<data type> COMPRESSED... <character set clause> ...'");
+  return set_compressed(method);
+}
+
+
+bool
+Column_definition::set_compressed_deprecated_column_attribute(THD *thd,
+                                                              const char *pos,
+                                                              const char *method)
+{
+  if (compression_method_ptr)
+  {
+    /*
+      Compression method has already been set, e.g.:
+        a VARCHAR(10) COMPRESSED DEFAULT 10 COMPRESSED
+    */
+    thd->parse_error(ER_SYNTAX_ERROR, pos);
+    return true;
+  }
   enum enum_field_types sql_type= real_field_type();
   /* We can't use f_is_blob here as pack_flag is not yet set */
   if (sql_type == MYSQL_TYPE_VARCHAR || sql_type == MYSQL_TYPE_TINY_BLOB ||
       sql_type == MYSQL_TYPE_BLOB || sql_type == MYSQL_TYPE_MEDIUM_BLOB ||
       sql_type == MYSQL_TYPE_LONG_BLOB)
-  {
-    if (!method || !strcmp(method, zlib_compression_method->name))
-    {
-      unireg_check= Field::TMYSQL_COMPRESSED;
-      compression_method_ptr= zlib_compression_method;
-      return false;
-    }
-    my_error(ER_UNKNOWN_COMPRESSION_METHOD, MYF(0), method);
-  }
+    return set_compressed_deprecated(thd, method);
   else
     my_error(ER_WRONG_FIELD_SPEC, MYF(0), field_name.str);
   return true;

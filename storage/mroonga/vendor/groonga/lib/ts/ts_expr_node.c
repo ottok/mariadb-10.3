@@ -13,7 +13,7 @@
 
   You should have received a copy of the GNU Lesser General Public
   License along with this library; if not, write to the Free Software
-  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA
 */
 
 #include "ts_expr_node.h"
@@ -185,55 +185,6 @@ inline static grn_ts_ref
 grn_ts_ref_zero(void)
 {
   return (grn_ts_ref){ 0, 0.0 };
-}
-
-/* grn_ts_bool_vector_zero() returns a zero. */
-inline static grn_ts_bool_vector
-grn_ts_bool_vector_zero(void)
-{
-  return (grn_ts_bool_vector){ NULL, 0 };
-}
-
-/* grn_ts_int_vector_zero() returns a zero. */
-inline static grn_ts_int_vector
-grn_ts_int_vector_zero(void)
-{
-  return (grn_ts_int_vector){ NULL, 0 };
-}
-
-/* grn_ts_float_vector_zero() returns a zero. */
-inline static grn_ts_float_vector
-grn_ts_float_vector_zero(void)
-{
-  return (grn_ts_float_vector){ NULL, 0 };
-}
-
-/* grn_ts_time_vector_zero() returns a zero. */
-inline static grn_ts_time_vector
-grn_ts_time_vector_zero(void)
-{
-  return (grn_ts_time_vector){ NULL, 0 };
-}
-
-/* grn_ts_text_vector_zero() returns a zero. */
-inline static grn_ts_text_vector
-grn_ts_text_vector_zero(void)
-{
-  return (grn_ts_text_vector){ NULL, 0 };
-}
-
-/* grn_ts_geo_vector_zero() returns a zero. */
-inline static grn_ts_geo_vector
-grn_ts_geo_vector_zero(void)
-{
-  return (grn_ts_geo_vector){ NULL, 0 };
-}
-
-/* grn_ts_ref_vector_zero() returns a zero. */
-inline static grn_ts_ref_vector
-grn_ts_ref_vector_zero(void)
-{
-  return (grn_ts_ref_vector){ NULL, 0 };
 }
 
 /* grn_ts_data_type_to_kind() returns a kind associated with a type. */

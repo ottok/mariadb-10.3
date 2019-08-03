@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2006, 2014, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2019, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -12,7 +13,7 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1335 USA
 
 *****************************************************************************/
 
@@ -63,14 +64,10 @@ ib_wqueue_add(
 	mem_heap_t*	heap);		/*!< in: memory heap to use for
 					allocating the list node */
 
-/********************************************************************
-Check if queue is empty. */
-ibool
-ib_wqueue_is_empty(
-/*===============*/
-					/* out: TRUE if queue empty
-					else FALSE */
-	const ib_wqueue_t*      wq);    /* in: work queue */
+/** Check if queue is empty.
+@param wq wait queue
+@return whether the queue is empty */
+bool ib_wqueue_is_empty(ib_wqueue_t* wq);
 
 /****************************************************************//**
 Wait for a work item to appear in the queue.
@@ -87,7 +84,7 @@ ib_wqueue_timedwait(
 /*================*/
 					/* out: work item or NULL on timeout*/
 	ib_wqueue_t*	wq,		/* in: work queue */
-	ib_time_t	wait_in_usecs); /* in: wait time in micro seconds */
+	ulint		wait_in_usecs); /* in: wait time in micro seconds */
 
 /********************************************************************
 Return first item on work queue or NULL if queue is empty
