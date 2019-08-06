@@ -1,4 +1,4 @@
-mariadb-10.3 (1:10.3.17-0+deb9u1) buster; urgency=high
+mariadb-10.3 (1:10.3.17-0+deb10u1) buster; urgency=high
 
   * New upstream version 10.3.17. Includes security fixes for:
     - CVE-2019-2737
