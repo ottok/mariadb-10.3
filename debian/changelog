@@ -6,6 +6,8 @@ mariadb-10.3 (1:10.3.17-0+deb10u1) buster; urgency=high
     - CVE-2019-2740
     - CVE-2019-2758
     - CVE-2019-2805
+  * Upstream release 10.3.16 fixed segfaults when database 'information_schema'
+    is accessed (Closes: #931801)
   * Multiple Gitlab-CI/Salsa-CI improvements
   * Update libmariadb3 symbols to match MariaDB Connector C 3.1 API
   * Add Lintian override for new test binary wsrep_check_version
