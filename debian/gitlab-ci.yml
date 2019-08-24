@@ -7,8 +7,6 @@ include:
 variables:
   DEB_BUILD_OPTIONS: "nocheck noautodbgsym"
   RELEASE: buster
-  CCACHE_TMP_DIR: ${CI_PROJECT_DIR}/../.ccache
-  CCACHE_WORK_DIR: ${WORKING_DIR}/.ccache
   SALSA_CI_DISABLE_REPROTEST: 1
 
 stages:
@@ -23,8 +21,11 @@ stages:
 build:
   extends: .build-package
   script:
-    - apt-get update
-    - mkdir -p ${CCACHE_WORK_DIR}
+    # salsa-ci-team/pipeline#104
+    - rm -rf '$CI_PROJECT_DIR'
+    # salsa-ci-team/pipeline#107
+    - rm -rf ${CI_PROJECT_DIR}/debian/output/.ccache
+    - mkdir -p ${WORKING_DIR} ${CCACHE_WORK_DIR}
     - mv ${CCACHE_WORK_DIR} ${CCACHE_TMP_DIR}
     - gbp pull --ignore-branch --pristine-tar --track-missing
     - |
