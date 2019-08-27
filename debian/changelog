@@ -1,6 +1,7 @@
 mariadb-10.3 (1:10.3.17-0+deb10u1) buster; urgency=high
 
-  * New upstream version 10.3.17. Includes security fixes for:
+  * SECURITY UPDATE: New upstream version 10.3.17. Includes fixes for the
+    following security vulnerabilities:
     - CVE-2019-2737
     - CVE-2019-2739
     - CVE-2019-2740
@@ -11,8 +12,15 @@ mariadb-10.3 (1:10.3.17-0+deb10u1) buster; urgency=high
   * Multiple Gitlab-CI/Salsa-CI improvements
   * Update libmariadb3 symbols to match MariaDB Connector C 3.1 API
   * Add Lintian override for new test binary wsrep_check_version
+  * Make libzstd dependency versioned as RocksDB need at least 1.3.3
+  * Rename 'mariadbcheck' to 'mariadb-check' as upstream is doing in 10.4
+  * Improve cross building (Closes: #930314)
+    - Perform a native build of import_executables first.
+    - cross.patch: Fix missing include in cmake/systemd.cmake.
+    - Build-Depends: libreadline-gplv2-dev:native for the native pass.
+    - Forward IMPORT_EXECUTABLES to the cross build pass.
 
- -- Otto Kekäläinen <otto@debian.org>  Fri, 02 Aug 2019 19:46:11 +0100
+ -- Otto Kekäläinen <otto@debian.org>  Tue, 27 Aug 2019 23:42:59 +0200
 
 mariadb-10.3 (1:10.3.15-1) unstable; urgency=high
 
