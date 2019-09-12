@@ -2433,6 +2433,7 @@ unlink_all_closed_tables(THD *thd, MYSQL_LOCK *lock, size_t reopen_count)
       DBUG_ASSERT(thd->open_tables == m_reopen_array[reopen_count]);
 
       thd->open_tables->pos_in_locked_tables->table= NULL;
+      thd->open_tables->pos_in_locked_tables= NULL;
 
       close_thread_table(thd, &thd->open_tables);
     }
@@ -2487,9 +2488,16 @@ Locked_tables_list::reopen_tables(THD *thd, bool need_reopen)
     {
       if (!table_list->table || !table_list->table->needs_reopen())
         continue;
-      /* no need to remove the table from the TDC here, thus (TABLE*)1 */
-      close_all_tables_for_name(thd, table_list->table->s,
-                                HA_EXTRA_NOT_USED, (TABLE*)1);
+      for (TABLE **prev= &thd->open_tables; *prev; prev= &(*prev)->next)
+      {
+        if (*prev == table_list->table)
+        {
+          thd->locked_tables_list.unlink_from_list(thd, table_list, false);
+          mysql_lock_remove(thd, thd->lock, *prev);
+          close_thread_table(thd, prev);
+          break;
+        }
+      }
       DBUG_ASSERT(table_list->table == NULL);
     }
     else
@@ -8304,8 +8312,8 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
         rfield->field_index ==  table->next_number_field->field_index)
       table->auto_increment_field_not_null= TRUE;
     Item::Type type= value->type();
-    bool vers_sys_field= table->versioned() && rfield->vers_sys_field();
-    if ((rfield->vcol_info || vers_sys_field) &&
+    const bool skip_sys_field= rfield->vers_sys_field(); // TODO: && !thd->vers_modify_history() [MDEV-16546]
+    if ((rfield->vcol_info || skip_sys_field) &&
         type != Item::DEFAULT_VALUE_ITEM &&
         type != Item::NULL_ITEM &&
         table->s->table_category != TABLE_CATEGORY_TEMPORARY)
@@ -8314,15 +8322,14 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
                           ER_WARNING_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN,
                           ER_THD(thd, ER_WARNING_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN),
                           rfield->field_name.str, table->s->table_name.str);
-      if (vers_sys_field)
-        continue;
     }
     if (only_unvers_fields && !rfield->vers_update_unversioned())
       only_unvers_fields= false;
 
     if (rfield->stored_in_db())
     {
-      if (unlikely(value->save_in_field(rfield, 0) < 0) && !ignore_errors)
+      if (!skip_sys_field &&
+          unlikely(value->save_in_field(rfield, 0) < 0) && !ignore_errors)
       {
         my_message(ER_UNKNOWN_ERROR, ER_THD(thd, ER_UNKNOWN_ERROR), MYF(0));
         goto err;
@@ -8336,7 +8343,7 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
         rfield->move_field_offset((my_ptrdiff_t) (table->record[1] -
                                                   table->record[0]));
     }
-    rfield->set_explicit_default(value);
+    rfield->set_has_explicit_value();
   }
 
   if (update && thd->variables.sql_mode & MODE_SIMULTANEOUS_ASSIGNMENT)
@@ -8355,9 +8362,13 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
     }
   }
 
-  if (!update && table_arg->default_field &&
-      table_arg->update_default_fields(0, ignore_errors))
-    goto err;
+  if (update)
+    table_arg->evaluate_update_default_function();
+  else
+    if (table_arg->default_field &&
+        table_arg->update_default_fields(ignore_errors))
+      goto err;
+
   /* Update virtual fields */
   if (table_arg->vfield &&
       table_arg->update_virtual_fields(table_arg->file, VCOL_UPDATE_FOR_WRITE))
@@ -8547,7 +8558,6 @@ fill_record(THD *thd, TABLE *table, Field **ptr, List<Item> &values,
 {
   List_iterator_fast<Item> v(values);
   List<TABLE> tbl_list;
-  bool all_fields_have_values= true;
   Item *value;
   Field *field;
   bool abort_on_warning_saved= thd->abort_on_warning;
@@ -8578,10 +8588,7 @@ fill_record(THD *thd, TABLE *table, Field **ptr, List<Item> &values,
     DBUG_ASSERT(field->table == table);
 
     if (unlikely(field->invisible))
-    {
-      all_fields_have_values= false;
       continue;
-    }
     else
       value=v++;
 
@@ -8610,11 +8617,8 @@ fill_record(THD *thd, TABLE *table, Field **ptr, List<Item> &values,
     else
       if (value->save_in_field(field, 0) < 0)
         goto err;
-    all_fields_have_values &= field->set_explicit_default(value);
+    field->set_has_explicit_value();
   }
-  if (!all_fields_have_values && table->default_field &&
-      table->update_default_fields(0, ignore_errors))
-    goto err;
   /* Update virtual fields */
   thd->abort_on_warning= FALSE;
   if (table->vfield &&

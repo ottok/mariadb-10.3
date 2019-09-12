@@ -235,6 +235,7 @@ extern my_bool srv_background_scrub_data_compressed;
 extern uint srv_background_scrub_data_interval;
 extern uint srv_background_scrub_data_check_interval;
 #ifdef UNIV_DEBUG
+my_bool innodb_evict_tables_on_commit_debug;
 extern my_bool srv_scrub_force_testing;
 #endif
 
@@ -1708,9 +1709,9 @@ innobase_srv_conc_enter_innodb(
 			   && thd_is_replication_slave_thread(trx->mysql_thd)) {
 			const ulonglong end = my_interval_timer()
 				+ ulonglong(srv_replication_delay) * 1000000;
-			while (srv_conc_get_active_threads()
-			       >= srv_thread_concurrency
-			       || my_interval_timer() >= end) {
+			while ((srv_conc_get_active_threads()
+			        >= srv_thread_concurrency)
+			       && my_interval_timer() < end) {
 				os_thread_sleep(2000 /* 2 ms */);
 			}
 		} else {
@@ -3110,7 +3111,7 @@ static bool innobase_query_caching_table_check(
 	const char*	norm_name)
 {
 	dict_table_t*   table = dict_table_open_on_name(
-		norm_name, FALSE, FALSE, DICT_ERR_IGNORE_NONE);
+		norm_name, FALSE, FALSE, DICT_ERR_IGNORE_FK_NOKEY);
 
 	if (table == NULL) {
 		return false;
@@ -3925,14 +3926,12 @@ static int innodb_init_params()
 		DBUG_RETURN(HA_ERR_INITIALIZATION);
 	}
 
-	if (srv_n_log_files * srv_log_file_size
-	    >= 512ULL * 1024ULL * 1024ULL * 1024ULL) {
-		/* log_block_convert_lsn_to_no() limits the returned block
-		number to 1G and given that OS_FILE_LOG_BLOCK_SIZE is 512
-		bytes, then we have a limit of 512 GB. If that limit is to
-		be raised, then log_block_convert_lsn_to_no() must be
-		modified. */
-		ib::error() << "Combined size of log files must be < 512 GB";
+	if (srv_n_log_files * srv_log_file_size >= log_group_max_size) {
+		/* Log group size is limited by the size of page number.
+		Remove this limitation when fil_io() is not used for
+		recovery log io. */
+		ib::error() << "Combined size of log files must be < "
+			<< log_group_max_size;
 		DBUG_RETURN(HA_ERR_INITIALIZATION);
 	}
 
@@ -6086,9 +6085,7 @@ initialize_auto_increment(dict_table_t* table, const Field* field)
 int
 ha_innobase::open(const char* name, int, uint)
 {
-	dict_table_t*		ib_table;
 	char			norm_name[FN_REFLEN];
-	dict_err_ignore_t	ignore_err = DICT_ERR_IGNORE_NONE;
 
 	DBUG_ENTER("ha_innobase::open");
 
@@ -6102,15 +6099,8 @@ ha_innobase::open(const char* name, int, uint)
 
 	char*	is_part = is_partition(norm_name);
 	THD*	thd = ha_thd();
-
-	/* Check whether FOREIGN_KEY_CHECKS is set to 0. If so, the table
-	can be opened even if some FK indexes are missing. If not, the table
-	can't be opened in the same situation */
-	if (thd_test_options(thd, OPTION_NO_FOREIGN_KEY_CHECKS)) {
-		ignore_err = DICT_ERR_IGNORE_FK_NOKEY;
-	}
-
-	ib_table = open_dict_table(name, norm_name, is_part, ignore_err);
+	dict_table_t* ib_table = open_dict_table(name, norm_name, is_part,
+						 DICT_ERR_IGNORE_FK_NOKEY);
 
 	DEBUG_SYNC(thd, "ib_open_after_dict_open");
 
@@ -10174,17 +10164,6 @@ next_record:
 }
 
 #ifdef WITH_WSREP
-extern dict_index_t*
-wsrep_dict_foreign_find_index(
-/*==========================*/
-	dict_table_t*	table,
-	const char**	col_names,
-	const char**	columns,
-	ulint		n_cols,
-	dict_index_t*	types_idx,
-	ibool		check_charsets,
-	ulint		check_null);
-
 inline
 const char*
 wsrep_key_type_to_str(wsrep_key_type type)
@@ -10247,7 +10226,7 @@ wsrep_append_foreign_key(
 					foreign->referenced_table_name_lookup);
 			if (foreign->referenced_table) {
 				foreign->referenced_index =
-					wsrep_dict_foreign_find_index(
+					dict_foreign_find_index(
 						foreign->referenced_table, NULL,
 						foreign->referenced_col_names,
 						foreign->n_fields,
@@ -10261,7 +10240,7 @@ wsrep_append_foreign_key(
 
 			if (foreign->foreign_table) {
 				foreign->foreign_index =
-					wsrep_dict_foreign_find_index(
+					dict_foreign_find_index(
 						foreign->foreign_table, NULL,
 						foreign->foreign_col_names,
 						foreign->n_fields,
@@ -13180,8 +13159,8 @@ innobase_rename_table(
 		row_mysql_lock_data_dictionary(trx);
 	}
 
-	dict_table_t*   table = dict_table_open_on_name(norm_from, TRUE, FALSE,
-							DICT_ERR_IGNORE_NONE);
+	dict_table_t*   table = dict_table_open_on_name(
+		norm_from, TRUE, FALSE, DICT_ERR_IGNORE_FK_NOKEY);
 
 	/* Since DICT_BG_YIELD has sleep for 250 milliseconds,
 	Convert lock_wait_timeout unit from second to 250 milliseconds */
@@ -14302,7 +14281,7 @@ ha_innobase::defragment_table(
 	normalize_table_name(norm_name, name);
 
 	table = dict_table_open_on_name(norm_name, FALSE,
-		FALSE, DICT_ERR_IGNORE_NONE);
+		FALSE, DICT_ERR_IGNORE_FK_NOKEY);
 
 	for (index = dict_table_get_first_index(table); index;
 	     index = dict_table_get_next_index(index)) {
@@ -19591,7 +19570,7 @@ static MYSQL_SYSVAR_ULONG(log_buffer_size, srv_log_buffer_size,
 static MYSQL_SYSVAR_ULONGLONG(log_file_size, srv_log_file_size,
   PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
   "Size of each log file in a log group.",
-  NULL, NULL, 48 << 20, 1 << 20, 512ULL << 30, UNIV_PAGE_SIZE_MAX);
+  NULL, NULL, 48 << 20, 1 << 20, log_group_max_size, UNIV_PAGE_SIZE_MAX);
 /* OS_FILE_LOG_BLOCK_SIZE would be more appropriate than UNIV_PAGE_SIZE_MAX,
 but fil_space_t is being used for the redo log, and it uses data pages. */
 
@@ -19920,6 +19899,11 @@ static MYSQL_SYSVAR_BOOL(trx_purge_view_update_only_debug,
   "Pause actual purging any delete-marked records, but merely update the purge view."
   " It is to create artificially the situation the purge view have been updated"
   " but the each purges were not done yet.",
+  NULL, NULL, FALSE);
+
+static MYSQL_SYSVAR_BOOL(evict_tables_on_commit_debug,
+  innodb_evict_tables_on_commit_debug, PLUGIN_VAR_OPCMDARG,
+  "On transaction commit, try to evict tables from the data dictionary cache.",
   NULL, NULL, FALSE);
 
 static MYSQL_SYSVAR_UINT(data_file_size_debug,
@@ -20287,6 +20271,7 @@ static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(trx_rseg_n_slots_debug),
   MYSQL_SYSVAR(limit_optimistic_insert_debug),
   MYSQL_SYSVAR(trx_purge_view_update_only_debug),
+  MYSQL_SYSVAR(evict_tables_on_commit_debug),
   MYSQL_SYSVAR(data_file_size_debug),
   MYSQL_SYSVAR(fil_make_page_dirty_debug),
   MYSQL_SYSVAR(saved_page_number_debug),
