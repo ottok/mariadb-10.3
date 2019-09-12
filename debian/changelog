@@ -1,8 +1,11 @@
-mariadb-10.3 (1:10.3.17-2) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.18-1) unstable; urgency=medium
 
-  * Open new changelog entry. This will be replaced by 'gbp dch'.
+  * New upstream version 10.3.18. Fixes regression introduced in 10.3.17
+    (MDEV-20247: Replication hangs with "preparing" and never starts)
+    (Closes: #939819)
+  * Minort Gitlab-CI improvements
 
- -- Otto Kekäläinen <otto@debian.org>  Tue, 27 Aug 2019 01:09:25 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 12 Sep 2019 15:51:04 +0300
 
 mariadb-10.3 (1:10.3.17-1) unstable; urgency=high
 
