@@ -1,7 +1,7 @@
 #ifndef FIELD_INCLUDED
 #define FIELD_INCLUDED
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2017, MariaDB Corporation.
+   Copyright (c) 2008, 2019, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -461,6 +461,7 @@ inline bool is_temporal_type_with_date(enum_field_types type)
   case MYSQL_TYPE_DATETIME2:
   case MYSQL_TYPE_TIMESTAMP2:
     DBUG_ASSERT(0); // field->real_type() should not get to here.
+    /* fall through */
   default:
     return false;
   }
@@ -561,6 +562,7 @@ public:
   /* Flag indicating  that the field is physically stored in the database */
   bool stored_in_db;
   bool utf8;                                    /* Already in utf8 */
+  bool automatic_name;
   Item *expr;
   LEX_CSTRING name;                             /* Name of constraint */
   /* see VCOL_* (VCOL_FIELD_REF, ...) */
@@ -570,7 +572,7 @@ public:
   : vcol_type((enum_vcol_info_type)VCOL_TYPE_NONE),
     field_type((enum enum_field_types)MYSQL_TYPE_VIRTUAL),
     in_partitioning_expr(FALSE), stored_in_db(FALSE),
-    utf8(TRUE), expr(NULL), flags(0)
+    utf8(TRUE), automatic_name(FALSE), expr(NULL), flags(0)
   {
     name.str= NULL;
     name.length= 0;
@@ -629,6 +631,8 @@ protected:
     val_str(&result);
     return to->store(result.ptr(), result.length(), charset());
   }
+  void error_generated_column_function_is_not_allowed(THD *thd, bool error)
+                                                      const;
   static void do_field_int(Copy_field *copy);
   static void do_field_real(Copy_field *copy);
   static void do_field_string(Copy_field *copy);
@@ -997,7 +1001,6 @@ public:
   {
     bitmap_clear_bit(&table->has_value_set, field_index);
   }
-  bool set_explicit_default(Item *value);
 
   virtual my_time_t get_timestamp(const uchar *pos, ulong *sec_part) const
   { DBUG_ASSERT(0); return 0; }
@@ -1005,14 +1008,6 @@ public:
   {
     return get_timestamp(ptr, sec_part);
   }
-
-  /**
-     Evaluates the @c UPDATE default function, if one exists, and stores the
-     result in the record buffer. If no such function exists for the column,
-     or the function is not valid for the column's data type, invoking this
-     function has no effect.
-  */
-  virtual int evaluate_update_default_function() { return 0; }
 
   virtual bool binary() const { return 1; }
   virtual bool zero_pack() const { return 1; }
@@ -1140,6 +1135,7 @@ public:
     in str and restore it with set() if needed
   */
   virtual void sql_type(String &str) const =0;
+  virtual void sql_rpl_type(String *str) const { sql_type(*str); }
   virtual uint size_of() const =0;		// For new field
   inline bool is_null(my_ptrdiff_t row_offset= 0) const
   {
@@ -1206,6 +1202,16 @@ public:
   }
 
   bool stored_in_db() const { return !vcol_info || vcol_info->stored_in_db; }
+  bool check_vcol_sql_mode_dependency(THD *, vcol_init_mode mode) const;
+
+  virtual sql_mode_t value_depends_on_sql_mode() const
+  {
+    return 0;
+  }
+  virtual sql_mode_t can_handle_sql_mode_dependency_on_store() const
+  {
+    return 0;
+  }
 
   inline THD *get_thd() const
   { return likely(table) ? table->in_use : current_thd; }
@@ -1686,6 +1692,7 @@ public:
   enum Derivation derivation(void) const { return DERIVATION_NUMERIC; }
   uint repertoire(void) const { return MY_REPERTOIRE_NUMERIC; }
   CHARSET_INFO *charset(void) const { return &my_charset_numeric; }
+  sql_mode_t can_handle_sql_mode_dependency_on_store() const;
   Item *get_equal_const_item(THD *thd, const Context &ctx, Item *const_item)
   {
     return (flags & ZEROFILL_FLAG) ?
@@ -1707,13 +1714,6 @@ public:
   int save_in_field(Field *to)
   {
     return to->store(val_int(), MY_TEST(flags & UNSIGNED_FLAG));
-  }
-  bool memcpy_field_possible(const Field *from) const
-  {
-    return real_type() == from->real_type() &&
-           pack_length() == from->pack_length() &&
-           !((flags & UNSIGNED_FLAG) && !(from->flags & UNSIGNED_FLAG)) &&
-           decimals() == from->decimals();
   }
   uint is_equal(Create_field *new_field);
   uint row_pack_length() const { return pack_length(); }
@@ -1892,7 +1892,10 @@ public:
       e.g. a DOUBLE(53,10) into a DOUBLE(10,10).
       But it should be OK the other way around.
     */
-    return Field_num::memcpy_field_possible(from) &&
+    return real_type() == from->real_type() &&
+           pack_length() == from->pack_length() &&
+           is_unsigned() <= from->is_unsigned() &&
+           decimals() == from->decimals() &&
            field_length >= from->field_length;
   }
   int store_decimal(const my_decimal *);
@@ -1983,7 +1986,10 @@ public:
   }
   bool memcpy_field_possible(const Field *from) const
   {
-    return Field_num::memcpy_field_possible(from) &&
+    return real_type() == from->real_type() &&
+           pack_length() == from->pack_length() &&
+           is_unsigned() <= from->is_unsigned() &&
+           decimals() == from->decimals() &&
            field_length == from->field_length;
   }
   int  reset(void);
@@ -2041,6 +2047,12 @@ public:
     :Field_num(ptr_arg, len_arg, null_ptr_arg, null_bit_arg,
                unireg_check_arg, field_name_arg, 0, zero_arg, unsigned_arg)
     {}
+  bool memcpy_field_possible(const Field *from) const
+  {
+    return real_type() == from->real_type() &&
+           pack_length() == from->pack_length() &&
+           is_unsigned() == from->is_unsigned();
+  }
   int store_decimal(const my_decimal *);
   my_decimal *val_decimal(my_decimal *);
   bool val_bool() { return val_int() != 0; }
@@ -2551,6 +2563,7 @@ public:
   {
     return store(str, length, &my_charset_bin);
   }
+  sql_mode_t can_handle_sql_mode_dependency_on_store() const;
   Copy_func *get_copy_func(const Field *from) const;
   int save_in_field(Field *to)
   {
@@ -2664,13 +2677,6 @@ public:
   void sql_type(String &str) const;
   bool zero_pack() const { return 0; }
   int set_time();
-  int evaluate_update_default_function()
-  {
-    int res= 0;
-    if (has_update_default_function())
-      res= set_time();
-    return res;
-  }
   /* Get TIMESTAMP field value as seconds since begging of Unix Epoch */
   my_time_t get_timestamp(const uchar *pos, ulong *sec_part) const;
   my_time_t get_timestamp(ulong *sec_part) const
@@ -3126,13 +3132,6 @@ public:
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate)
   { return Field_datetime::get_TIME(ltime, ptr, fuzzydate); }
   int set_time();
-  int evaluate_update_default_function()
-  {
-    int res= 0;
-    if (has_update_default_function())
-      res= set_time();
-    return res;
-  }
   uchar *pack(uchar* to, const uchar *from,
               uint max_length __attribute__((unused)))
   {
@@ -3357,6 +3356,7 @@ public:
   int cmp(const uchar *,const uchar *);
   void sort_string(uchar *buff,uint length);
   void sql_type(String &str) const;
+  void sql_rpl_type(String*) const;
   virtual uchar *pack(uchar *to, const uchar *from,
                       uint max_length);
   virtual const uchar *unpack(uchar* to, const uchar *from,
@@ -3381,6 +3381,8 @@ public:
   { return charset() == &my_charset_bin ? FALSE : TRUE; }
   Field *make_new_field(MEM_ROOT *root, TABLE *new_table, bool keep_type);
   virtual uint get_key_image(uchar *buff,uint length, imagetype type);
+  sql_mode_t value_depends_on_sql_mode() const;
+  sql_mode_t can_handle_sql_mode_dependency_on_store() const;
 private:
   int save_field_metadata(uchar *first_byte);
 };
@@ -3467,6 +3469,7 @@ public:
   uint get_key_image(uchar *buff,uint length, imagetype type);
   void set_key_image(const uchar *buff,uint length);
   void sql_type(String &str) const;
+  void sql_rpl_type(String*) const;
   virtual uchar *pack(uchar *to, const uchar *from, uint max_length);
   virtual const uchar *unpack(uchar* to, const uchar *from,
                               const uchar *from_end, uint param_data);
@@ -3971,6 +3974,7 @@ public:
   Field *make_new_field(MEM_ROOT *root, TABLE *new_table, bool keep_type);
   const Type_handler *type_handler() const { return &type_handler_enum; }
   enum ha_base_keytype key_type() const;
+  sql_mode_t can_handle_sql_mode_dependency_on_store() const;
   Copy_func *get_copy_func(const Field *from) const
   {
     if (eq_def(from))

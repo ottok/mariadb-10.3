@@ -3951,7 +3951,12 @@ int ha_partition::external_lock(THD *thd, int lock_type)
   {
     if (m_part_info->part_expr)
       m_part_info->part_expr->walk(&Item::register_field_in_read_map, 1, 0);
-    if (m_part_info->part_type == VERSIONING_PARTITION)
+    if (m_part_info->part_type == VERSIONING_PARTITION &&
+      /* TODO: MDEV-20345 exclude more inapproriate commands like INSERT
+         These commands may be excluded because working history partition is needed
+         only for versioned DML. */
+      thd->lex->sql_command != SQLCOM_SELECT &&
+      thd->lex->sql_command != SQLCOM_INSERT_SELECT)
       m_part_info->vers_set_hist_part(thd);
   }
   DBUG_RETURN(0);
@@ -4093,8 +4098,24 @@ int ha_partition::start_stmt(THD *thd, thr_lock_type lock_type)
     /* Add partition to be called in reset(). */
     bitmap_set_bit(&m_partitions_to_reset, i);
   }
-  if (lock_type == F_WRLCK && m_part_info->part_expr)
-    m_part_info->part_expr->walk(&Item::register_field_in_read_map, 1, 0);
+  switch (lock_type)
+  {
+  case TL_WRITE_ALLOW_WRITE:
+  case TL_WRITE_CONCURRENT_INSERT:
+  case TL_WRITE_DELAYED:
+  case TL_WRITE_DEFAULT:
+  case TL_WRITE_LOW_PRIORITY:
+  case TL_WRITE:
+  case TL_WRITE_ONLY:
+    if (m_part_info->part_expr)
+      m_part_info->part_expr->walk(&Item::register_field_in_read_map, 1, 0);
+    if (m_part_info->part_type == VERSIONING_PARTITION &&
+      // TODO: MDEV-20345 (see above)
+      thd->lex->sql_command != SQLCOM_SELECT &&
+      thd->lex->sql_command != SQLCOM_INSERT_SELECT)
+      m_part_info->vers_set_hist_part(thd);
+  default:;
+  }
   DBUG_RETURN(error);
 }
 
@@ -8283,6 +8304,7 @@ int ha_partition::info(uint flag)
     ulonglong max_records= 0;
     uint32 i= 0;
     uint32 handler_instance= 0;
+    bool handler_instance_set= 0;
 
     file_array= m_file;
     do
@@ -8295,8 +8317,9 @@ int ha_partition::info(uint flag)
             !bitmap_is_set(&(m_part_info->read_partitions),
                            (uint) (file_array - m_file)))
           file->info(HA_STATUS_VARIABLE | no_lock_flag | extra_var_flag);
-        if (file->stats.records > max_records)
+        if (file->stats.records > max_records || !handler_instance_set)
         {
+          handler_instance_set= 1;
           max_records= file->stats.records;
           handler_instance= i;
         }

@@ -5387,10 +5387,10 @@ part_column_list:
 
 
 part_func:
-          '(' remember_name part_func_expr remember_end ')'
+          '(' part_func_expr ')'
           {
             partition_info *part_info= Lex->part_info;
-            if (unlikely(part_info->set_part_expr(thd, $2 + 1, $3, $4, FALSE)))
+            if (unlikely(part_info->set_part_expr(thd, $2, FALSE)))
               MYSQL_YYABORT;
             part_info->num_columns= 1;
             part_info->column_list= FALSE;
@@ -5398,9 +5398,9 @@ part_func:
         ;
 
 sub_part_func:
-          '(' remember_name part_func_expr remember_end ')'
+          '(' part_func_expr ')'
           {
-            if (unlikely(Lex->part_info->set_part_expr(thd, $2 + 1, $3, $4, TRUE)))
+            if (unlikely(Lex->part_info->set_part_expr(thd, $2, TRUE)))
               MYSQL_YYABORT;
           }
         ;
@@ -6984,7 +6984,12 @@ field_type_lob:
             Lex->charset=&my_charset_bin;
             $$.set(&type_handler_blob, $2);
           }
-        | BLOB_ORACLE_SYM opt_field_length opt_compressed
+        | BLOB_ORACLE_SYM field_length opt_compressed
+          {
+            Lex->charset=&my_charset_bin;
+            $$.set(&type_handler_blob, $2);
+          }
+        | BLOB_ORACLE_SYM opt_compressed
           {
             Lex->charset=&my_charset_bin;
             $$.set(&type_handler_long_blob);
@@ -7287,6 +7292,11 @@ serial_attribute:
           {
             Lex->last_field->versioning= $1;
             Lex->create_info.options|= HA_VERSIONED_TABLE;
+            if (Lex->alter_info.flags & ALTER_DROP_SYSTEM_VERSIONING)
+            {
+              my_yyabort_error((ER_VERS_NOT_VERSIONED, MYF(0),
+                       Lex->create_last_non_select_table->table_name.str));
+            }
           }
         ;
 
@@ -8430,6 +8440,7 @@ alter_list_item:
         | DROP SYSTEM VERSIONING_SYM
           {
             Lex->alter_info.flags|= ALTER_DROP_SYSTEM_VERSIONING;
+            Lex->create_info.options&= ~HA_VERSIONED_TABLE;
           }
         | DROP PERIOD_SYM FOR_SYSTEM_TIME_SYM
           {

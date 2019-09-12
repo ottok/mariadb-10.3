@@ -5836,11 +5836,11 @@ static int rocksdb_done_func(void *const p) {
 // Disown the cache data since we're shutting down.
 // This results in memory leaks but it improved the shutdown time.
 // Don't disown when running under valgrind
-#ifndef HAVE_purify
+#ifndef HAVE_valgrind
   if (rocksdb_tbl_options->block_cache) {
     rocksdb_tbl_options->block_cache->DisownData();
   }
-#endif /* HAVE_purify */
+#endif /* HAVE_valgrind */
 
   /*
     MariaDB: don't clear rocksdb_db_options and rocksdb_tbl_options.
@@ -14316,6 +14316,8 @@ static int rocksdb_validate_update_cf_options(
   // then there's no point to proceed.
   if (!Rdb_cf_options::parse_cf_options(str, &option_map)) {
     my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), "rocksdb_update_cf_options", str);
+    // Free what we've copied with my_strdup above.
+    my_free((void*)(*(const char **)save));
     return HA_EXIT_FAILURE;
   }
   // Loop through option_map and create missing column families

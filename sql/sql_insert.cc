@@ -1057,6 +1057,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
         break;
       }
 
+      thd->decide_logging_format_low(table);
 #ifndef EMBEDDED_LIBRARY
       if (lock_type == TL_WRITE_DELAYED)
       {
@@ -1834,10 +1835,7 @@ int write_record(THD *thd, TABLE *table,COPY_INFO *info)
           be updated as if this is an UPDATE.
         */
         if (different_records && table->default_field)
-        {
-          if (table->update_default_fields(1, info->ignore))
-            goto err;
-        }
+          table->evaluate_update_default_function();
 
         /* CHECK OPTION for VIEW ... ON DUPLICATE KEY UPDATE ... */
         res= info->table_list->view_check_option(table->in_use, info->ignore);
@@ -2071,7 +2069,7 @@ before_trg_err:
 
 
 /******************************************************************************
-  Check that all fields with arn't null_fields are used
+  Check that there aren't any null_fields
 ******************************************************************************/
 
 
@@ -2623,7 +2621,8 @@ TABLE *Delayed_insert::get_local_table(THD* client_thd)
                                            sizeof(MY_BITMAP)))))
       goto error;
     if (unlikely(parse_vcol_defs(client_thd, client_thd->mem_root, copy,
-                                 &error_reported)))
+                                 &error_reported,
+                                 VCOL_INIT_DEPENDENCY_FAILURE_IS_WARNING)))
       goto error;
   }
 
@@ -3854,7 +3853,7 @@ int select_insert::send_data(List<Item> &values)
   thd->count_cuted_fields= CHECK_FIELD_WARN;	// Calculate cuted fields
   store_values(values);
   if (table->default_field &&
-      unlikely(table->update_default_fields(0, info.ignore)))
+      unlikely(table->update_default_fields(info.ignore)))
     DBUG_RETURN(1);
   thd->count_cuted_fields= CHECK_FIELD_ERROR_FOR_NULL;
   if (unlikely(thd->is_error()))
