@@ -1,3 +1,11 @@
+mariadb-10.3 (1:10.3.18-0+deb10u1) buster; urgency=high
+
+  * New upstream version 10.3.18. Fixes regression introduced in 10.3.17
+    (MDEV-20247: Replication hangs with "preparing" and never starts)
+    (Closes: #939819)
+
+ -- Otto Kekäläinen <otto@debian.org>  Mon, 16 Sep 2019 19:30:57 +0300
+
 mariadb-10.3 (1:10.3.17-0+deb10u1) buster; urgency=high
 
   * SECURITY UPDATE: New upstream version 10.3.17. Includes fixes for the
