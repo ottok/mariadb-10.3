@@ -8244,6 +8244,7 @@ void JOIN::get_prefix_cost_and_fanout(uint n_tables,
       record_count= COST_MULT(record_count, best_positions[i].records_read);
       read_time= COST_ADD(read_time, best_positions[i].read_time);
     }
+    /* TODO: Take into account condition selectivities here */
   }
   *read_time_arg= read_time;// + record_count / TIME_FOR_COMPARE;
   *record_count_arg= record_count;
@@ -8484,6 +8485,7 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
     KEYUSE *keyuse= pos->key;
     KEYUSE *prev_ref_keyuse= keyuse;
     uint key= keyuse->key;
+    bool used_range_selectivity= false;
     
     /*
       Check if we have a prefix of key=const that matches a quick select.
@@ -8509,6 +8511,7 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
           keyparts++;
         }
         sel /= (double)table->quick_rows[key] / (double) table->stat_records();
+        used_range_selectivity= true;
       }
     }
     
@@ -8544,13 +8547,14 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
           if (keyparts > keyuse->keypart)
 	  {
             /* Ok this is the keyuse that will be used for ref access */
-            uint fldno;
-            if (is_hash_join_key_no(key))
-	      fldno= keyuse->keypart;
-            else
-              fldno= table->key_info[key].key_part[keyparts-1].fieldnr - 1;
-            if (keyuse->val->const_item())
+            if (!used_range_selectivity && keyuse->val->const_item())
             { 
+              uint fldno;
+              if (is_hash_join_key_no(key))
+                fldno= keyuse->keypart;
+              else
+                fldno= table->key_info[key].key_part[keyparts-1].fieldnr - 1;
+
               if (table->field[fldno]->cond_selectivity > 0)
 	      {            
                 sel /= table->field[fldno]->cond_selectivity;
@@ -15972,10 +15976,20 @@ void optimize_wo_join_buffering(JOIN *join, uint first_tab, uint last_tab,
     reopt_remaining_tables &= ~rs->table->map;
     rec_count= COST_MULT(rec_count, pos.records_read);
     cost= COST_ADD(cost, pos.read_time);
-
-
+    cost= COST_ADD(cost, rec_count / (double) TIME_FOR_COMPARE);
+    //TODO: take into account join condition selectivity here
+    double pushdown_cond_selectivity= 1.0;
+    table_map real_table_bit= rs->table->map;
+    if (join->thd->variables.optimizer_use_condition_selectivity > 1)
+    {
+      pushdown_cond_selectivity= table_cond_selectivity(join, i, rs,
+                                                        reopt_remaining_tables &
+                                                        ~real_table_bit);
+    }
+    (*outer_rec_count) *= pushdown_cond_selectivity;
     if (!rs->emb_sj_nest)
       *outer_rec_count= COST_MULT(*outer_rec_count, pos.records_read);
+
   }
   join->cur_sj_inner_tables= save_cur_sj_inner_tables;
 
@@ -16909,9 +16923,9 @@ static void create_tmp_field_from_item_finalize(THD *thd,
 static Field *create_tmp_field_from_item(THD *thd, Item *item, TABLE *table,
                                          Item ***copy_func, bool modify_item)
 {
-  Field *UNINIT_VAR(new_field);
   DBUG_ASSERT(thd == table->in_use);
-  if ((new_field= item->create_tmp_field(false, table)))
+  Field* new_field= item->create_tmp_field(false, table);
+  if (new_field)
     create_tmp_field_from_item_finalize(thd, new_field, item,
                                         copy_func, modify_item);
   return new_field;
