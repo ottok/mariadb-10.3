@@ -8,9 +8,9 @@ Subject: Add_default_ExecStartPre_to_mariadb@.service
 
 --- a/support-files/mariadb@.service.in
 +++ b/support-files/mariadb@.service.in
-@@ -67,6 +67,8 @@ ProtectHome=true
- # Execute pre and post scripts as root, otherwise it does it as User=
- PermissionsStartOnly=true
+@@ -76,6 +76,8 @@ PermissionsStartOnly=true
+ 
+ @SYSTEMD_EXECSTARTPRE@
  
 +@SYSTEMD_EXECSTARTPRE@
 +

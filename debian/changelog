@@ -1,3 +1,15 @@
+mariadb-10.3 (1:10.3.19-1) unstable; urgency=high
+
+  [ Otto Kekäläinen ]
+  * New upstream version 10.3.17. Includes security fixes for:
+    - CVE-2019-2938
+    - CVE-2019-2974
+
+  [ Faustin Lammler ]
+  * Fix typo in Readme
+
+ -- Otto Kekäläinen <otto@debian.org>  Wed, 06 Nov 2019 16:28:38 +0200
+
 mariadb-10.3 (1:10.3.18-1) unstable; urgency=medium
 
   * New upstream version 10.3.18. Fixes regression introduced in 10.3.17
