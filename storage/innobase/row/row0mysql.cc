@@ -2777,7 +2777,7 @@ row_mysql_drop_garbage_tables()
 			btr_pcur_store_position(&pcur, &mtr);
 			btr_pcur_commit_specify_mtr(&pcur, &mtr);
 
-			if (dict_load_table(table_name, true,
+			if (dict_load_table(table_name,
 					    DICT_ERR_IGNORE_DROP)) {
 				row_drop_table_for_mysql(table_name, trx,
 							 SQLCOM_DROP_TABLE);
@@ -3246,10 +3246,9 @@ row_drop_ancillary_fts_tables(
 	DICT_TF2_FTS flag set. So keep this out of above
 	dict_table_has_fts_index condition */
 	if (table->fts != NULL) {
-		/* Need to set TABLE_DICT_LOCKED bit, since
-		fts_que_graph_free_check_lock would try to acquire
+		/* fts_que_graph_free_check_lock would try to acquire
 		dict mutex lock */
-		table->fts->fts_status |= TABLE_DICT_LOCKED;
+		table->fts->dict_locked = true;
 
 		fts_free(table);
 	}
@@ -3279,7 +3278,7 @@ row_drop_table_from_cache(
 
 	dict_table_remove_from_cache(table);
 
-	if (dict_load_table(tablename, true, DICT_ERR_IGNORE_FK_NOKEY)) {
+	if (dict_load_table(tablename, DICT_ERR_IGNORE_FK_NOKEY)) {
 		ib::error() << "Not able to remove table "
 			<< ut_get_name(trx, tablename)
 			<< " from the dictionary cache!";
@@ -4600,7 +4599,7 @@ end:
 		dict_mem_table_fill_foreign_vcol_set(table);
 
 		while (!fk_tables.empty()) {
-			dict_load_table(fk_tables.front(), true,
+			dict_load_table(fk_tables.front(),
 					DICT_ERR_IGNORE_NONE);
 			fk_tables.pop_front();
 		}

@@ -1156,7 +1156,7 @@ dict_table_open_on_name(
 	table = dict_table_check_if_in_cache_low(table_name);
 
 	if (table == NULL) {
-		table = dict_load_table(table_name, true, ignore_err);
+		table = dict_load_table(table_name, ignore_err);
 	}
 
 	ut_ad(!table || table->cached);
@@ -1418,14 +1418,7 @@ dict_make_room_in_cache(
 	        prev_table = UT_LIST_GET_PREV(table_LRU, table);
 
 		if (dict_table_can_be_evicted(table)) {
-
-			DBUG_EXECUTE_IF("crash_if_fts_table_is_evicted",
-			{
-				  if (table->fts &&
-				      dict_table_has_fts_index(table)) {
-					ut_ad(0);
-				  }
-			};);
+			ut_ad(!table->fts);
 			dict_table_remove_from_cache_low(table, TRUE);
 
 			++n_evicted;
@@ -2801,30 +2794,6 @@ dict_table_copy_types(
 	}
 
 	dict_table_copy_v_types(tuple, table);
-}
-
-/********************************************************************
-Wait until all the background threads of the given table have exited, i.e.,
-bg_threads == 0. Note: bg_threads_mutex must be reserved when
-calling this. */
-void
-dict_table_wait_for_bg_threads_to_exit(
-/*===================================*/
-	dict_table_t*	table,	/*< in: table */
-	ulint		delay)	/*< in: time in microseconds to wait between
-				checks of bg_threads. */
-{
-	fts_t*		fts = table->fts;
-
-	ut_ad(mutex_own(&fts->bg_threads_mutex));
-
-	while (fts->bg_threads > 0) {
-		mutex_exit(&fts->bg_threads_mutex);
-
-		os_thread_sleep(delay);
-
-		mutex_enter(&fts->bg_threads_mutex);
-	}
 }
 
 /*******************************************************************//**

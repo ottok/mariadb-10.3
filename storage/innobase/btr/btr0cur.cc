@@ -2881,7 +2881,7 @@ btr_cur_open_at_rnd_pos_func(
 				index->table->file_unreadable = true;
 			}
 
-			goto exit_loop;
+			break;
 		}
 
 		page = buf_block_get_frame(block);
@@ -3038,12 +3038,11 @@ btr_cur_open_at_rnd_pos_func(
 		n_blocks++;
 	}
 
- exit_loop:
 	if (UNIV_LIKELY_NULL(heap)) {
 		mem_heap_free(heap);
 	}
 
-	return(true);
+	return err == DB_SUCCESS;
 }
 
 /*==================== B-TREE INSERT =========================*/
@@ -3362,7 +3361,7 @@ fail_err:
 	    && page_get_n_recs(page) >= 2
 	    && dict_index_get_space_reserve() + rec_size > max_size
 	    && (btr_page_get_split_rec_to_right(cursor, &dummy)
-		|| btr_page_get_split_rec_to_left(cursor, &dummy))) {
+		|| btr_page_get_split_rec_to_left(cursor))) {
 		goto fail;
 	}
 
@@ -5676,6 +5675,9 @@ btr_cur_pessimistic_delete(
 #endif /* UNIV_ZIP_DEBUG */
 	}
 
+	rec_t* next_rec = NULL;
+	bool min_mark_next_rec = false;
+
 	if (page_is_leaf(page)) {
 		const bool is_metadata = rec_get_info_bits(
 			rec, page_rec_is_comp(rec)) & REC_INFO_MIN_REC_FLAG;
@@ -5749,20 +5751,14 @@ discard_page:
 			goto return_after_reservations;
 		}
 
-		rec_t*	next_rec = page_rec_get_next(rec);
+		next_rec = page_rec_get_next(rec);
 
 		if (!page_has_prev(page)) {
-
 			/* If we delete the leftmost node pointer on a
 			non-leaf level, we must mark the new leftmost node
 			pointer as the predefined minimum record */
 
-			/* This will make page_zip_validate() fail until
-			page_cur_delete_rec() completes.  This is harmless,
-			because everything will take place within a single
-			mini-transaction and because writing to the redo log
-			is an atomic operation (performed by mtr_commit()). */
-			btr_set_min_rec_mark(next_rec, mtr);
+			min_mark_next_rec = true;
 		} else if (dict_index_is_spatial(index)) {
 			/* For rtree, if delete the leftmost node pointer,
 			we need to update parent page. */
@@ -5830,6 +5826,11 @@ discard_page:
 				block->page.size, mtr);
 		page_cur_delete_rec(btr_cur_get_page_cur(cursor), index,
 				    offsets, mtr);
+
+		if (min_mark_next_rec) {
+			btr_set_min_rec_mark(next_rec, mtr);
+		}
+
 #ifdef UNIV_ZIP_DEBUG
 		ut_a(!page_zip || page_zip_validate(page_zip, page, index));
 #endif /* UNIV_ZIP_DEBUG */
@@ -7205,7 +7206,7 @@ struct btr_blob_log_check_t {
 		ulint		page_no = ULINT_UNDEFINED;
 		FlushObserver*	observer = m_mtr->get_flush_observer();
 
-		if (m_op == BTR_STORE_INSERT_BULK) {
+		if (UNIV_UNLIKELY(m_op == BTR_STORE_INSERT_BULK)) {
 			offs = page_offset(*m_rec);
 			page_no = page_get_page_no(
 				buf_block_get_frame(*m_block));
@@ -7228,8 +7229,7 @@ struct btr_blob_log_check_t {
 		index->set_modified(*m_mtr);
 		m_mtr->set_flush_observer(observer);
 
-		if (m_op == BTR_STORE_INSERT_BULK) {
-			mtr_x_lock(dict_index_get_lock(index), m_mtr);
+		if (UNIV_UNLIKELY(m_op == BTR_STORE_INSERT_BULK)) {
 			m_pcur->btr_cur.page_cur.block = btr_block_get(
 				page_id_t(index->table->space_id, page_no),
 				page_size_t(index->table->space->flags),
@@ -7258,9 +7258,10 @@ struct btr_blob_log_check_t {
 		      *m_rec,
 		      MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
 
-		ut_ad(mtr_memo_contains_flagged(m_mtr,
-		      dict_index_get_lock(index),
-		      MTR_MEMO_SX_LOCK | MTR_MEMO_X_LOCK));
+		ut_ad((m_op == BTR_STORE_INSERT_BULK)
+		      == !mtr_memo_contains_flagged(m_mtr, &index->lock,
+						    MTR_MEMO_SX_LOCK
+						    | MTR_MEMO_X_LOCK));
 	}
 };
 
@@ -7314,8 +7315,10 @@ btr_store_big_rec_extern_fields(
 
 	ut_ad(rec_offs_validate(rec, index, offsets));
 	ut_ad(rec_offs_any_extern(offsets));
-	ut_ad(mtr_memo_contains_flagged(btr_mtr, dict_index_get_lock(index),
-					MTR_MEMO_X_LOCK | MTR_MEMO_SX_LOCK));
+	ut_ad(op == BTR_STORE_INSERT_BULK
+	      || mtr_memo_contains_flagged(btr_mtr, &index->lock,
+					   MTR_MEMO_X_LOCK
+					   | MTR_MEMO_SX_LOCK));
 	ut_ad(mtr_memo_contains(btr_mtr, rec_block, MTR_MEMO_PAGE_X_FIX));
 	ut_ad(buf_block_get_frame(rec_block) == page_align(rec));
 	ut_a(dict_index_is_clust(index));
@@ -7440,7 +7443,7 @@ btr_store_big_rec_extern_fields(
 
 			mtr_t	*alloc_mtr;
 
-			if (op == BTR_STORE_INSERT_BULK) {
+			if (UNIV_UNLIKELY(op == BTR_STORE_INSERT_BULK)) {
 				mtr_bulk.start();
 				mtr_bulk.set_spaces(mtr);
 				alloc_mtr = &mtr_bulk;
@@ -7463,7 +7466,7 @@ btr_store_big_rec_extern_fields(
 
 			index->table->space->release_free_extents(r_extents);
 
-			if (op == BTR_STORE_INSERT_BULK) {
+			if (UNIV_UNLIKELY(op == BTR_STORE_INSERT_BULK)) {
 				mtr_bulk.commit();
 			}
 
@@ -7619,7 +7622,7 @@ btr_store_big_rec_extern_fields(
 				}
 
 				/* We compress a page when finish bulk insert.*/
-				if (op != BTR_STORE_INSERT_BULK) {
+				if (UNIV_LIKELY(op != BTR_STORE_INSERT_BULK)) {
 					page_zip_write_blob_ptr(
 						page_zip, rec, index, offsets,
 						field_no, &mtr);

@@ -5909,7 +5909,6 @@ MYSQL_BIN_LOG::flush_and_set_pending_rows_event(THD *thd,
   DBUG_ASSERT(WSREP_EMULATE_BINLOG(thd) || mysql_bin_log.is_open());
   DBUG_PRINT("enter", ("event: %p", event));
 
-  int error= 0;
   binlog_cache_mngr *const cache_mngr=
     (binlog_cache_mngr*) thd_get_ha_data(thd, binlog_hton);
 
@@ -5947,7 +5946,7 @@ MYSQL_BIN_LOG::flush_and_set_pending_rows_event(THD *thd,
 
   thd->binlog_set_pending_rows_event(event, is_transactional);
 
-  DBUG_RETURN(error);
+  DBUG_RETURN(0);
 }
 
 
@@ -7691,7 +7690,7 @@ MYSQL_BIN_LOG::queue_for_group_commit(group_commit_entry *orig_entry)
   mysql_mutex_unlock(&LOCK_prepare_ordered);
   DEBUG_SYNC(orig_entry->thd, "commit_after_release_LOCK_prepare_ordered");
 
-  DBUG_PRINT("info", ("Queued for group commit as %s\n",
+  DBUG_PRINT("info", ("Queued for group commit as %s",
                       (orig_queue == NULL) ? "leader" : "participant"));
   DBUG_RETURN(orig_queue == NULL);
 }

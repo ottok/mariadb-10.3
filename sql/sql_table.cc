@@ -1993,7 +1993,7 @@ int write_bin_log(THD *thd, bool clear_error,
       errcode= query_error_code(thd, TRUE);
     error= thd->binlog_query(THD::STMT_QUERY_TYPE,
                              query, query_length, is_trans, FALSE, FALSE,
-                             errcode);
+                             errcode) > 0;
     thd_proc_info(thd, 0);
   }
   return error;
@@ -2616,12 +2616,12 @@ err:
 #ifdef WITH_WSREP
           thd->wsrep_skip_wsrep_GTID = true;
 #endif /* WITH_WSREP */
-          error |= thd->binlog_query(THD::STMT_QUERY_TYPE,
-                                     built_non_trans_tmp_query.ptr(),
-                                     built_non_trans_tmp_query.length(),
-                                     FALSE, FALSE,
-                                     is_drop_tmp_if_exists_added,
-                                     0);
+          error |= (thd->binlog_query(THD::STMT_QUERY_TYPE,
+                                      built_non_trans_tmp_query.ptr(),
+                                      built_non_trans_tmp_query.length(),
+                                      FALSE, FALSE,
+                                      is_drop_tmp_if_exists_added,
+                                      0) > 0);
       }
       if (trans_tmp_table_deleted)
       {
@@ -2631,12 +2631,12 @@ err:
 #ifdef WITH_WSREP
           thd->wsrep_skip_wsrep_GTID = true;
 #endif /* WITH_WSREP */
-          error |= thd->binlog_query(THD::STMT_QUERY_TYPE,
-                                     built_trans_tmp_query.ptr(),
-                                     built_trans_tmp_query.length(),
-                                     TRUE, FALSE,
-                                     is_drop_tmp_if_exists_added,
-                                     0);
+          error |= (thd->binlog_query(THD::STMT_QUERY_TYPE,
+                                      built_trans_tmp_query.ptr(),
+                                      built_trans_tmp_query.length(),
+                                      TRUE, FALSE,
+                                      is_drop_tmp_if_exists_added,
+                                      0) > 0);
       }
       if (non_tmp_table_deleted)
       {
@@ -2648,11 +2648,11 @@ err:
 #ifdef WITH_WSREP
           thd->wsrep_skip_wsrep_GTID = false;
 #endif /* WITH_WSREP */
-          error |= thd->binlog_query(THD::STMT_QUERY_TYPE,
-                                     built_query.ptr(),
-                                     built_query.length(),
-                                     TRUE, FALSE, FALSE,
-                                     error_code);
+          error |= (thd->binlog_query(THD::STMT_QUERY_TYPE,
+                                      built_query.ptr(),
+                                      built_query.length(),
+                                      TRUE, FALSE, FALSE,
+                                      error_code) > 0);
       }
     }
   }
@@ -2738,7 +2738,7 @@ bool log_drop_table(THD *thd, const LEX_CSTRING *db_name,
                                "failed CREATE OR REPLACE */"));
   error= thd->binlog_query(THD::STMT_QUERY_TYPE,
                            query.ptr(), query.length(),
-                           FALSE, FALSE, temporary_table, 0);
+                           FALSE, FALSE, temporary_table, 0) > 0;
   DBUG_RETURN(error);
 }
 
@@ -4067,16 +4067,16 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       /* Use packed keys for long strings on the first column */
       if (!((*db_options) & HA_OPTION_NO_PACK_KEYS) &&
           !((create_info->table_options & HA_OPTION_NO_PACK_KEYS)) &&
-	  (key_part_length >= KEY_DEFAULT_PACK_LENGTH &&
-	   (sql_field->real_field_type() == MYSQL_TYPE_STRING ||
-	    sql_field->real_field_type() == MYSQL_TYPE_VARCHAR ||
-	    sql_field->pack_flag & FIELDFLAG_BLOB)))
+          (key_part_length >= KEY_DEFAULT_PACK_LENGTH &&
+           (sql_field->real_field_type() == MYSQL_TYPE_STRING ||
+            sql_field->real_field_type() == MYSQL_TYPE_VARCHAR ||
+            f_is_blob(sql_field->pack_flag))))
       {
-	if ((column_nr == 0 && (sql_field->pack_flag & FIELDFLAG_BLOB)) ||
+        if ((column_nr == 0 && f_is_blob(sql_field->pack_flag)) ||
             sql_field->real_field_type() == MYSQL_TYPE_VARCHAR)
-	  key_info->flags|= HA_BINARY_PACK_KEY | HA_VAR_LENGTH_KEY;
-	else
-	  key_info->flags|= HA_PACK_KEY;
+          key_info->flags|= HA_BINARY_PACK_KEY | HA_VAR_LENGTH_KEY;
+        else
+          key_info->flags|= HA_PACK_KEY;
       }
       /* Check if the key segment is partial, set the key flag accordingly */
       if (key_part_length != sql_field->key_length)
@@ -5215,9 +5215,13 @@ bool mysql_create_table(THD *thd, TABLE_LIST *create_table,
   }
 
 err:
-  /* In RBR we don't need to log CREATE TEMPORARY TABLE */
-  if (!result && thd->is_current_stmt_binlog_format_row() && create_info->tmp_table())
+  /* In RBR or readonly server we don't need to log CREATE TEMPORARY TABLE */
+  if (!result && create_info->tmp_table() &&
+      (thd->is_current_stmt_binlog_format_row() || (opt_readonly && !thd->slave_thread)))
+  {
+    /* Note that table->s->table_creation_was_logged is not set! */
     DBUG_RETURN(result);
+  }
 
   if (create_info->tmp_table())
     thd->transaction.stmt.mark_created_temp_table();
@@ -5234,11 +5238,13 @@ err:
       */
       thd->locked_tables_list.unlock_locked_table(thd, mdl_ticket);
     }
-    else if (likely(!result) && create_info->tmp_table() && create_info->table)
+    else if (likely(!result) && create_info->table)
     {
       /*
-        Remember that tmp table creation was logged so that we know if
+        Remember that table creation was logged so that we know if
         we should log a delete of it.
+        If create_info->table was not set, it's a normal table and
+        table_creation_was_logged will be set when the share is created.
       */
       create_info->table->s->table_creation_was_logged= 1;
     }
@@ -6727,7 +6733,7 @@ static bool fill_alter_inplace_info(THD *thd, TABLE *table, bool varchar,
           }
 
           if (field->vcol_info->is_in_partitioning_expr() ||
-              field->flags & PART_KEY_FLAG)
+              field->flags & PART_KEY_FLAG || field->stored_in_db())
           {
             if (value_changes)
               ha_alter_info->handler_flags|= ALTER_COLUMN_VCOL;
@@ -8159,12 +8165,6 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
         alter_ctx->datetime_field= def;
         alter_ctx->error_if_not_empty= TRUE;
     }
-    if (def->flags & VERS_SYSTEM_FIELD &&
-        !(alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING))
-    {
-      my_error(ER_VERS_NOT_VERSIONED, MYF(0), table->s->table_name.str);
-      goto err;
-    }
     if (!def->after.str)
       new_create_list.push_back(def, thd->mem_root);
     else
@@ -8509,13 +8509,6 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
         break;
       }
     }
-  }
-
-  if (table->versioned() && !(alter_info->flags & ALTER_DROP_SYSTEM_VERSIONING) &&
-      new_create_list.elements == VERSIONING_FIELDS)
-  {
-    my_error(ER_VERS_TABLE_MUST_HAVE_COLUMNS, MYF(0), table->s->table_name.str);
-    goto err;
   }
 
   if (!create_info->comment.str)
@@ -9549,6 +9542,12 @@ do_continue:;
 
   if (mysql_prepare_alter_table(thd, table, create_info, alter_info,
                                 &alter_ctx))
+  {
+    DBUG_RETURN(true);
+  }
+
+  if (create_info->vers_check_system_fields(thd, alter_info,
+                                            table->s->table_name, table->s->db))
   {
     DBUG_RETURN(true);
   }
@@ -10908,7 +10907,8 @@ bool Sql_cmd_create_table_like::execute(THD *thd)
   LEX *lex= thd->lex;
   SELECT_LEX *select_lex= &lex->select_lex;
   TABLE_LIST *first_table= select_lex->table_list.first;
-  DBUG_ASSERT(first_table == lex->query_tables && first_table != 0);
+  DBUG_ASSERT(first_table == lex->query_tables);
+  DBUG_ASSERT(first_table != 0);
   bool link_to_local;
   TABLE_LIST *create_table= first_table;
   TABLE_LIST *select_tables= lex->create_last_non_select_table->next_global;
@@ -11170,7 +11170,9 @@ bool Sql_cmd_create_table_like::execute(THD *thd)
     else
     {
       if (create_info.vers_fix_system_fields(thd, &alter_info, *create_table) ||
-	  create_info.vers_check_system_fields(thd, &alter_info, *create_table))
+          create_info.vers_check_system_fields(thd, &alter_info,
+                                               create_table->table_name,
+                                               create_table->db))
 	goto end_with_restore_list;
 
       /*
