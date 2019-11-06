@@ -115,10 +115,8 @@ libmariadb.so.3 libmariadb3 #MINVER#
  mysql_get_socket@libmysqlclient_18 3.0.0
  mysql_get_ssl_cipher@libmariadbclient_18 3.0.0
  mysql_get_ssl_cipher@libmysqlclient_18 3.0.0
- mysql_get_timeout_value@libmariadbclient_18 3.0.0
- mysql_get_timeout_value@libmysqlclient_18 3.0.0
- mysql_get_timeout_value_ms@libmariadbclient_18 3.0.0
- mysql_get_timeout_value_ms@libmysqlclient_18 3.0.0
+ mysql_get_timeout_value@libmariadb_3 3.0.19
+ mysql_get_timeout_value_ms@libmariadb_3 3.0.19
  mysql_hex_string@libmariadbclient_18 3.0.0
  mysql_hex_string@libmysqlclient_18 3.0.0
  mysql_info@libmariadbclient_18 3.0.0
