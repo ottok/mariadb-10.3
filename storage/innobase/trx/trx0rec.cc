@@ -421,9 +421,15 @@ trx_undo_report_insert_virtual(
 
 			const dfield_t* vfield = dtuple_get_nth_v_field(
 				row, col->v_pos);
-			ulint	flen = vfield->len;
+			switch (ulint flen = vfield->len) {
+			case 0: case UNIV_SQL_NULL:
+				if (trx_undo_left(undo_block, *ptr) < 5) {
+					return(false);
+				}
 
-			if (flen != UNIV_SQL_NULL) {
+				*ptr += mach_write_compressed(*ptr, flen);
+				break;
+			default:
 				ulint	max_len
 					= dict_max_v_field_len_store_undo(
 						table, col_no);
@@ -438,14 +444,8 @@ trx_undo_report_insert_virtual(
 				}
 				*ptr += mach_write_compressed(*ptr, flen);
 
-				ut_memcpy(*ptr, vfield->data, flen);
+				memcpy(*ptr, vfield->data, flen);
 				*ptr += flen;
-			} else {
-				if (trx_undo_left(undo_block, *ptr) < 5) {
-					return(false);
-				}
-
-				*ptr += mach_write_compressed(*ptr, flen);
 			}
 		}
 	}
@@ -524,13 +524,16 @@ trx_undo_page_report_insert(
 
 		ptr += mach_write_compressed(ptr, flen);
 
-		if (flen != UNIV_SQL_NULL) {
+		switch (flen) {
+		case 0: case UNIV_SQL_NULL:
+			break;
+		default:
 			if (trx_undo_left(undo_block, ptr) < flen) {
 
 				return(0);
 			}
 
-			ut_memcpy(ptr, dfield_get_data(field), flen);
+			memcpy(ptr, dfield_get_data(field), flen);
 			ptr += flen;
 		}
 	}
@@ -998,7 +1001,7 @@ trx_undo_page_report_modify(
 				return(0);
 			}
 
-			ut_memcpy(ptr, field, flen);
+			memcpy(ptr, field, flen);
 			ptr += flen;
 		}
 	}
@@ -1129,7 +1132,7 @@ trx_undo_page_report_modify(
 					return(0);
 				}
 
-				ut_memcpy(ptr, field, flen);
+				memcpy(ptr, field, flen);
 				ptr += flen;
 			}
 
@@ -1154,7 +1157,7 @@ trx_undo_page_report_modify(
 						return(0);
 					}
 
-					ut_memcpy(ptr, field, flen);
+					memcpy(ptr, field, flen);
 					ptr += flen;
 				}
 			}
@@ -1303,7 +1306,7 @@ trx_undo_page_report_modify(
 						return(0);
 					}
 
-					ut_memcpy(ptr, field, flen);
+					memcpy(ptr, field, flen);
 					ptr += flen;
 				}
 
@@ -1388,13 +1391,16 @@ already_logged:
 
 				ptr += mach_write_compressed(ptr, flen);
 
-				if (flen != UNIV_SQL_NULL) {
+				switch (flen) {
+				case 0: case UNIV_SQL_NULL:
+					break;
+				default:
 					if (trx_undo_left(undo_block, ptr)
 					    < flen) {
 						return(0);
 					}
 
-					ut_memcpy(ptr, field, flen);
+					memcpy(ptr, field, flen);
 					ptr += flen;
 				}
 			}
@@ -1905,7 +1911,7 @@ dberr_t trx_undo_report_rename(trx_t* trx, const dict_table_t* table)
 		ut_ad(err == DB_SUCCESS);
 		ut_ad(undo);
 		for (ut_d(int loop_count = 0);;) {
-			ut_ad(++loop_count < 2);
+			ut_ad(loop_count++ < 2);
 			ut_ad(undo->last_page_no == block->page.id.page_no());
 
 			if (ulint offset = trx_undo_page_report_rename(

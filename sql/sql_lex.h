@@ -2018,6 +2018,14 @@ public:
                 ((1U << STMT_READS_TEMP_TRANS_TABLE) |
                  (1U << STMT_WRITES_TEMP_TRANS_TABLE))) != 0);
   }
+  inline bool stmt_writes_to_non_temp_table()
+  {
+    DBUG_ENTER("THD::stmt_writes_to_non_temp_table");
+
+    DBUG_RETURN((stmt_accessed_table_flag &
+                ((1U << STMT_WRITES_TRANS_TABLE) |
+                 (1U << STMT_WRITES_NON_TRANS_TABLE))));
+  }
 
   /**
     Checks if a temporary non-transactional table is about to be accessed
@@ -2069,7 +2077,7 @@ public:
       unsafe= (binlog_unsafe_map[stmt_accessed_table_flag] & condition);
 
 #if !defined(DBUG_OFF)
-      DBUG_PRINT("LEX::is_mixed_stmt_unsafe", ("RESULT %02X %02X %02X\n", condition,
+      DBUG_PRINT("LEX::is_mixed_stmt_unsafe", ("RESULT %02X %02X %02X", condition,
               binlog_unsafe_map[stmt_accessed_table_flag],
               (binlog_unsafe_map[stmt_accessed_table_flag] & condition)));
  
@@ -4060,6 +4068,8 @@ public:
   }
   bool tvc_finalize();
   bool tvc_finalize_derived();
+
+  void mark_first_table_as_inserting();
 };
 
 

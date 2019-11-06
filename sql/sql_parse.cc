@@ -522,7 +522,6 @@ void init_update_queries(void)
   server_command_flags[COM_STMT_SEND_LONG_DATA]= CF_SKIP_WSREP_CHECK;
   server_command_flags[COM_REGISTER_SLAVE]= CF_SKIP_WSREP_CHECK;
   server_command_flags[COM_MULTI]= CF_SKIP_WSREP_CHECK | CF_NO_COM_MULTI;
-  server_command_flags[CF_NO_COM_MULTI]= CF_NO_COM_MULTI;
 
   /* Initialize the sql command flags array. */
   memset(sql_command_flags, 0, sizeof(sql_command_flags));
@@ -606,11 +605,12 @@ void init_update_queries(void)
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_SP_BULK_SAFE;
+                                            CF_SP_BULK_SAFE | CF_DELETES_DATA;
   sql_command_flags[SQLCOM_DELETE_MULTI]=   CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
-                                            CF_CAN_BE_EXPLAINED;
+                                            CF_CAN_BE_EXPLAINED |
+                                            CF_DELETES_DATA;
   sql_command_flags[SQLCOM_REPLACE]=        CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
@@ -3282,6 +3282,10 @@ mysql_execute_command(THD *thd)
   Rpl_filter *rpl_filter;
 #endif
   DBUG_ENTER("mysql_execute_command");
+
+  // check that we correctly marked first table for data insertion
+  DBUG_ASSERT(!(sql_command_flags[lex->sql_command] & CF_INSERTS_DATA) ||
+              first_table->for_insert_data);
 
   DBUG_ASSERT(thd->transaction.stmt.is_empty() || thd->in_sub_stmt);
   /*
@@ -6681,11 +6685,7 @@ check_access(THD *thd, ulong want_access, const char *db, ulong *save_priv,
 bool check_single_table_access(THD *thd, ulong privilege, 
                                TABLE_LIST *all_tables, bool no_errors)
 {
-  Security_context * backup_ctx= thd->security_ctx;
-
-  /* we need to switch to the saved context (if any) */
-  if (all_tables->security_ctx)
-    thd->security_ctx= all_tables->security_ctx;
+  Switch_to_definer_security_ctx backup_sctx(thd, all_tables);
 
   const char *db_name;
   if ((all_tables->view || all_tables->field_translation) &&
@@ -6698,20 +6698,15 @@ bool check_single_table_access(THD *thd, ulong privilege,
                    &all_tables->grant.privilege,
                    &all_tables->grant.m_internal,
                    0, no_errors))
-    goto deny;
+    return 1;
 
   /* Show only 1 table for check_grant */
   if (!(all_tables->belong_to_view &&
         (thd->lex->sql_command == SQLCOM_SHOW_FIELDS)) &&
       check_grant(thd, privilege, all_tables, FALSE, 1, no_errors))
-    goto deny;
+    return 1;
 
-  thd->security_ctx= backup_ctx;
   return 0;
-
-deny:
-  thd->security_ctx= backup_ctx;
-  return 1;
 }
 
 /**
@@ -6886,7 +6881,6 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
 {
   TABLE_LIST *org_tables= tables;
   TABLE_LIST *first_not_own_table= thd->lex->first_not_own_table();
-  Security_context *sctx= thd->security_ctx, *backup_ctx= thd->security_ctx;
   uint i= 0;
   /*
     The check that first_not_own_table is not reached is for the case when
@@ -6898,12 +6892,9 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
   {
     TABLE_LIST *const table_ref= tables->correspondent_table ?
       tables->correspondent_table : tables;
+    Switch_to_definer_security_ctx backup_ctx(thd, table_ref);
 
     ulong want_access= requirements;
-    if (table_ref->security_ctx)
-      sctx= table_ref->security_ctx;
-    else
-      sctx= backup_ctx;
 
     /*
        Register access for view underlying table.
@@ -6914,7 +6905,7 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
     if (table_ref->schema_table_reformed)
     {
       if (check_show_access(thd, table_ref))
-        goto deny;
+        return 1;
       continue;
     }
 
@@ -6923,8 +6914,6 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
 
     if (table_ref->is_anonymous_derived_table())
       continue;
-
-    thd->security_ctx= sctx;
 
     if (table_ref->sequence)
     {
@@ -6939,15 +6928,11 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
                      &table_ref->grant.privilege,
                      &table_ref->grant.m_internal,
                      0, no_errors))
-      goto deny;
+      return 1;
   }
-  thd->security_ctx= backup_ctx;
   return check_grant(thd,requirements,org_tables,
                      any_combination_of_privileges_will_do,
                      number, no_errors);
-deny:
-  thd->security_ctx= backup_ctx;
-  return TRUE;
 }
 
 
@@ -8487,9 +8472,9 @@ bool st_select_lex::add_cross_joined_table(TABLE_LIST *left_op,
 
   TABLE_LIST *tbl;
   List<TABLE_LIST> *right_op_jl= right_op->join_list;
-  TABLE_LIST *r_tbl= right_op_jl->pop();
+  IF_DBUG(const TABLE_LIST *r_tbl=,) right_op_jl->pop();
   DBUG_ASSERT(right_op == r_tbl);
-  TABLE_LIST *l_tbl= right_op_jl->pop();
+  IF_DBUG(const TABLE_LIST *l_tbl=,) right_op_jl->pop();
   DBUG_ASSERT(left_op == l_tbl);
   TABLE_LIST *cj_nest;
 
@@ -10200,4 +10185,15 @@ CHARSET_INFO *find_bin_collation(CHARSET_INFO *cs)
     my_error(ER_UNKNOWN_COLLATION, MYF(0), tmp);
   }
   return cs;
+}
+
+void LEX::mark_first_table_as_inserting()
+{
+  TABLE_LIST *t= select_lex.table_list.first;
+  DBUG_ENTER("Query_tables_list::mark_tables_with_important_flags");
+  DBUG_ASSERT(sql_command_flags[sql_command] & CF_INSERTS_DATA);
+  t->for_insert_data= TRUE;
+  DBUG_PRINT("info", ("table_list: %p  name: %s  db: %s  command: %u",
+                      t, t->table_name.str,t->db.str, sql_command));
+  DBUG_VOID_RETURN;
 }
