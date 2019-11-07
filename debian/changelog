@@ -1,3 +1,9 @@
+mariadb-10.3 (1:10.3.19-2) UNRELEASED; urgency=medium
+
+  * Open new changelog entry. This will be replaced by 'gbp dch'.
+
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 07 Nov 2019 21:35:10 +0200
+
 mariadb-10.3 (1:10.3.19-1) unstable; urgency=high
 
   [ Otto Kekäläinen ]
