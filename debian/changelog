@@ -4,11 +4,13 @@ mariadb-10.3 (1:10.3.19-1) unstable; urgency=high
   * New upstream version 10.3.17. Includes security fixes for:
     - CVE-2019-2938
     - CVE-2019-2974
+  * Update symbols to match latest libmariadb_3
+  * Drop systemd service patch applied upstream
 
   [ Faustin Lammler ]
   * Fix typo in Readme
 
- -- Otto Kekäläinen <otto@debian.org>  Wed, 06 Nov 2019 16:28:38 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 07 Nov 2019 21:26:49 +0200
 
 mariadb-10.3 (1:10.3.18-1) unstable; urgency=medium
 
