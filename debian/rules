@@ -192,13 +192,9 @@ endif
 override_dh_installlogrotate-arch:
 	dh_installlogrotate --name mysql-server
 
-override_dh_systemd_enable:
+override_dh_installsystemd:
 	dh_installsystemd --name=mariadb
-	dh_installsystemd --no-enable --name=mariadb@
-
-# Disable dh_systemd_start due /etc/init.d/mysql messing with the automatic snippets
-override_dh_systemd_start:
-	:
+	dh_installsystemd --no-start --no-enable --name=mariadb@
 
 # Start mysql at sequence number 19 before 20 where apache, proftpd etc gets
 # started which might depend on a running database server.
