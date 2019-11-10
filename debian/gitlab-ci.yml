@@ -37,6 +37,7 @@ build:
         mv ../*.orig.* ${WORKING_DIR}
       fi
     - gbp buildpackage --git-ignore-branch --git-ignore-new --git-no-create-orig --git-overlay --git-export-dir=${WORKING_DIR} --git-builder="docker-build.sh ${SALSA_CI_IMAGES_DOCKERBUILDER}" | (head -n 5000 ; echo "==== Output supressed to avoid hitting Gitlab-CI 4 MB log limit ===="; tail -n 5000)
+    - du -shc ${WORKING_DIR}/* # Show total file size of artifacts. Must stay are under 100 MB.
     - mv ${CCACHE_TMP_DIR} ${CCACHE_WORK_DIR}
 
 # Backports build not here as we cannot build MariaDB 10.3 backport for Stretch
