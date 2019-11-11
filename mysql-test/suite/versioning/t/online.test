@@ -134,5 +134,6 @@ select count(*) from t for system_time all;
 update t set b=11;
 select count(*) from t for system_time all;
 
-drop database test;
-create database test;
+drop table t;
+
+--source suite/versioning/common_finish.inc

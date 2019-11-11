@@ -802,9 +802,9 @@ struct xid_t {
   char data[XIDDATASIZE];  // not \0-terminated !
 
   xid_t() {}                                /* Remove gcc warning */
-  bool eq(struct xid_t *xid)
+  bool eq(struct xid_t *xid) const
   { return !xid->is_null() && eq(xid->gtrid_length, xid->bqual_length, xid->data); }
-  bool eq(long g, long b, const char *d)
+  bool eq(long g, long b, const char *d) const
   { return !is_null() && g == gtrid_length && b == bqual_length && !memcmp(d, data, g+b); }
   void set(struct xid_t *xid)
   { memcpy(this, xid, xid->length()); }
@@ -2104,11 +2104,12 @@ struct Table_scope_and_contents_source_st:
   }
 
   bool vers_fix_system_fields(THD *thd, Alter_info *alter_info,
-                         const TABLE_LIST &create_table,
-                         bool create_select= false);
+                         const TABLE_LIST &create_table);
 
   bool vers_check_system_fields(THD *thd, Alter_info *alter_info,
-                                const TABLE_LIST &create_table);
+                                const Lex_table_name &table_name,
+                                const Lex_table_name &db,
+                                int select_count= 0);
 
 };
 
@@ -3007,6 +3008,10 @@ private:
   */
   Handler_share **ha_share;
 
+  /** Stores next_insert_id for handling duplicate key errors. */
+  ulonglong m_prev_insert_id;
+
+
 public:
   handler(handlerton *ht_arg, TABLE_SHARE *share_arg)
     :table_share(share_arg), table(0),
@@ -3029,7 +3034,7 @@ public:
     auto_inc_intervals_count(0),
     m_psi(NULL), set_top_table_fields(FALSE), top_table(0),
     top_table_field(0), top_table_fields(0),
-    m_lock_type(F_UNLCK), ha_share(NULL)
+    m_lock_type(F_UNLCK), ha_share(NULL), m_prev_insert_id(0)
   {
     DBUG_PRINT("info",
                ("handler created F_UNLCK %d F_RDLCK %d F_WRLCK %d",
@@ -3683,7 +3688,7 @@ public:
     DBUG_PRINT("info",("auto_increment: next value %lu", (ulong)id));
     next_insert_id= id;
   }
-  void restore_auto_increment(ulonglong prev_insert_id)
+  virtual void restore_auto_increment(ulonglong prev_insert_id)
   {
     /*
       Insertion of a row failed, re-use the lastly generated auto_increment
@@ -3697,6 +3702,16 @@ public:
     */
     next_insert_id= (prev_insert_id > 0) ? prev_insert_id :
       insert_id_for_cur_row;
+  }
+
+  /** Store and restore next_insert_id over duplicate key errors. */
+  virtual void store_auto_increment()
+  {
+    m_prev_insert_id= next_insert_id;
+  }
+  virtual void restore_auto_increment()
+  {
+    restore_auto_increment(m_prev_insert_id);
   }
 
   virtual void update_create_info(HA_CREATE_INFO *create_info) {}

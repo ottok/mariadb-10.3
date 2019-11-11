@@ -522,7 +522,6 @@ void init_update_queries(void)
   server_command_flags[COM_STMT_SEND_LONG_DATA]= CF_SKIP_WSREP_CHECK;
   server_command_flags[COM_REGISTER_SLAVE]= CF_SKIP_WSREP_CHECK;
   server_command_flags[COM_MULTI]= CF_SKIP_WSREP_CHECK | CF_NO_COM_MULTI;
-  server_command_flags[CF_NO_COM_MULTI]= CF_NO_COM_MULTI;
 
   /* Initialize the sql command flags array. */
   memset(sql_command_flags, 0, sizeof(sql_command_flags));
@@ -606,11 +605,12 @@ void init_update_queries(void)
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_SP_BULK_SAFE;
+                                            CF_SP_BULK_SAFE | CF_DELETES_DATA;
   sql_command_flags[SQLCOM_DELETE_MULTI]=   CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
-                                            CF_CAN_BE_EXPLAINED;
+                                            CF_CAN_BE_EXPLAINED |
+                                            CF_DELETES_DATA;
   sql_command_flags[SQLCOM_REPLACE]=        CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
@@ -3283,6 +3283,10 @@ mysql_execute_command(THD *thd)
 #endif
   DBUG_ENTER("mysql_execute_command");
 
+  // check that we correctly marked first table for data insertion
+  DBUG_ASSERT(!(sql_command_flags[lex->sql_command] & CF_INSERTS_DATA) ||
+              first_table->for_insert_data);
+
   DBUG_ASSERT(thd->transaction.stmt.is_empty() || thd->in_sub_stmt);
   /*
     Each statement or replication event which might produce deadlock
@@ -3579,6 +3583,7 @@ mysql_execute_command(THD *thd)
         case GET_NO_ARG:
         case GET_DISABLED:
           DBUG_ASSERT(0);
+          /* fall through */
         case 0:
         case GET_FLAGSET:
         case GET_ENUM:
@@ -6072,7 +6077,7 @@ finish:
       trans_rollback_stmt(thd);
     }
 #ifdef WITH_WSREP
-    if (thd->spcont &&
+    else if (thd->spcont &&
              (thd->wsrep_conflict_state == MUST_ABORT ||
               thd->wsrep_conflict_state == ABORTED    ||
               thd->wsrep_conflict_state == CERT_FAILURE))
@@ -6680,11 +6685,7 @@ check_access(THD *thd, ulong want_access, const char *db, ulong *save_priv,
 bool check_single_table_access(THD *thd, ulong privilege, 
                                TABLE_LIST *all_tables, bool no_errors)
 {
-  Security_context * backup_ctx= thd->security_ctx;
-
-  /* we need to switch to the saved context (if any) */
-  if (all_tables->security_ctx)
-    thd->security_ctx= all_tables->security_ctx;
+  Switch_to_definer_security_ctx backup_sctx(thd, all_tables);
 
   const char *db_name;
   if ((all_tables->view || all_tables->field_translation) &&
@@ -6697,20 +6698,15 @@ bool check_single_table_access(THD *thd, ulong privilege,
                    &all_tables->grant.privilege,
                    &all_tables->grant.m_internal,
                    0, no_errors))
-    goto deny;
+    return 1;
 
   /* Show only 1 table for check_grant */
   if (!(all_tables->belong_to_view &&
         (thd->lex->sql_command == SQLCOM_SHOW_FIELDS)) &&
       check_grant(thd, privilege, all_tables, FALSE, 1, no_errors))
-    goto deny;
+    return 1;
 
-  thd->security_ctx= backup_ctx;
   return 0;
-
-deny:
-  thd->security_ctx= backup_ctx;
-  return 1;
 }
 
 /**
@@ -6885,7 +6881,6 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
 {
   TABLE_LIST *org_tables= tables;
   TABLE_LIST *first_not_own_table= thd->lex->first_not_own_table();
-  Security_context *sctx= thd->security_ctx, *backup_ctx= thd->security_ctx;
   uint i= 0;
   /*
     The check that first_not_own_table is not reached is for the case when
@@ -6897,12 +6892,9 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
   {
     TABLE_LIST *const table_ref= tables->correspondent_table ?
       tables->correspondent_table : tables;
+    Switch_to_definer_security_ctx backup_ctx(thd, table_ref);
 
     ulong want_access= requirements;
-    if (table_ref->security_ctx)
-      sctx= table_ref->security_ctx;
-    else
-      sctx= backup_ctx;
 
     /*
        Register access for view underlying table.
@@ -6913,7 +6905,7 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
     if (table_ref->schema_table_reformed)
     {
       if (check_show_access(thd, table_ref))
-        goto deny;
+        return 1;
       continue;
     }
 
@@ -6922,8 +6914,6 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
 
     if (table_ref->is_anonymous_derived_table())
       continue;
-
-    thd->security_ctx= sctx;
 
     if (table_ref->sequence)
     {
@@ -6938,15 +6928,11 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
                      &table_ref->grant.privilege,
                      &table_ref->grant.m_internal,
                      0, no_errors))
-      goto deny;
+      return 1;
   }
-  thd->security_ctx= backup_ctx;
   return check_grant(thd,requirements,org_tables,
                      any_combination_of_privileges_will_do,
                      number, no_errors);
-deny:
-  thd->security_ctx= backup_ctx;
-  return TRUE;
 }
 
 
@@ -8248,10 +8234,6 @@ TABLE_LIST *st_select_lex::nest_last_join(THD *thd)
   TABLE_LIST *head= join_list->head();
   if (head->nested_join && head->nested_join->nest_type & REBALANCED_NEST)
   {
-    List_iterator<TABLE_LIST> li(*join_list);
-    li++;
-    while (li++)
-      li.remove();
     DBUG_RETURN(head);
   }
   if (unlikely(!(ptr= (TABLE_LIST*) thd->calloc(ALIGN_SIZE(sizeof(TABLE_LIST))+
@@ -8335,13 +8317,13 @@ void st_select_lex::add_joined_table(TABLE_LIST *table)
     context and right-associative in another context.
 
     In this query
-       SELECT * FROM t1 JOIN t2 LEFT JOIN t3 ON t2.a=t3.a  (Q1)
+      SELECT * FROM t1 JOIN t2 LEFT JOIN t3 ON t2.a=t3.a  (Q1)
     JOIN is left-associative and the query Q1 is interpreted as
-       SELECT * FROM (t1 JOIN t2) LEFT JOIN t3 ON t2.a=t3.a.
+      SELECT * FROM (t1 JOIN t2) LEFT JOIN t3 ON t2.a=t3.a.
     While in this query
-       SELECT * FROM t1 JOIN t2 LEFT JOIN t3 ON t2.a=t3.a ON t1.b=t2.b (Q2)
+      SELECT * FROM t1 JOIN t2 LEFT JOIN t3 ON t2.a=t3.a ON t1.b=t2.b (Q2)
     JOIN is right-associative and the query Q2 is interpreted as
-       SELECT * FROM t1 JOIN (t2 LEFT JOIN t3 ON t2.a=t3.a) ON t1.b=t2.b
+      SELECT * FROM t1 JOIN (t2 LEFT JOIN t3 ON t2.a=t3.a) ON t1.b=t2.b
 
     JOIN is right-associative if it is used with ON clause or with USING clause.
     Otherwise it is left-associative.
@@ -8387,9 +8369,9 @@ void st_select_lex::add_joined_table(TABLE_LIST *table)
 
              J                               LJ - ON
             / \                             /  \
-          t1   LJ - ON    (TQ3*)    =>     J    t2
-              /  \                        / \
-            t3    t2                    t1   t3
+          t1   LJ - ON    (TQ3*)    =>    t3    J
+              /  \                             / \
+            t3    t2                         t1   t2
 
     With several left associative JOINs
       SELECT * FROM t1 JOIN t2 JOIN t3 LEFT JOIN t4 ON t3.a=t4.a (Q4)
@@ -8397,15 +8379,15 @@ void st_select_lex::add_joined_table(TABLE_LIST *table)
 
           J1                         LJ - ON
          /  \                       /  \
-       t1    LJ - ON               J2   t4
+       t1    J2                    J2   t4
             /  \          =>      /  \
-           J2   t4              J1    t3
-          /  \                 /  \
-        t2    t3             t1    t2
+           t2  LJ - ON          J1    t3
+              /  \             /  \
+            t3   t4          t1    t2
 
-     Here's another example:
-       SELECT *
-       FROM t1 JOIN t2 LEFT JOIN t3 JOIN t4 ON t3.a=t4.a ON t2.b=t3.b (Q5)
+    Here's another example:
+      SELECT *
+      FROM t1 JOIN t2 LEFT JOIN t3 JOIN t4 ON t3.a=t4.a ON t2.b=t3.b (Q5)
 
           J                       LJ - ON
          / \                     /   \
@@ -8415,15 +8397,58 @@ void st_select_lex::add_joined_table(TABLE_LIST *table)
               / \
             t3   t4
 
-     If the transformed nested join node node is a natural join node like in
-     the following query
-       SELECT * FROM t1 JOIN t2 LEFT JOIN t3 USING(a)  (Q6)
-     the transformation additionally has to take care about setting proper
-     references in the field natural_join for both operands of the natural
-     join operation.
-     The function also has to change the name resolution context for ON
-     expressions used in the transformed join expression to take into
-     account the tables of the left_op node.
+    If the transformed nested join node node is a natural join node like in
+    the following query
+      SELECT * FROM t1 JOIN t2 LEFT JOIN t3 USING(a)  (Q6)
+    the transformation additionally has to take care about setting proper
+    references in the field natural_join for both operands of the natural
+    join operation.
+
+    The queries that combine comma syntax for join operation with
+    JOIN expression require a special care. Consider the query
+      SELECT * FROM t1, t2 JOIN t3 LEFT JOIN t4 ON t3.a=t4.a (Q7)
+    This query is equivalent to the query
+      SELECT * FROM (t1, t2) JOIN t3 LEFT JOIN t4 ON t3.a=t4.a
+    The latter is transformed in the same way as query Q1
+
+             J                               LJ - ON
+            / \                             /  \
+      (t1,t2)  LJ - ON      =>             J    t4
+              /  \                        / \
+            t3    t4                (t1,t2)   t3
+
+    A transformation similar to the transformation for Q3 is done for
+    the following query with RIGHT JOIN
+      SELECT * FROM t1, t2 JOIN t3 RIGHT JOIN t4 ON t3.a=t4.a (Q8)
+
+             J                               LJ - ON
+            / \                             /  \
+          t3   LJ - ON      =>            t4    J
+              /  \                             / \
+            t4   (t1,t2)                 (t1,t2)  t3
+
+    The function also has to change the name resolution context for ON
+    expressions used in the transformed join expression to take into
+    account the tables of the left_op node.
+
+  TODO:
+    A more elegant solution would be to implement the transformation that
+    eliminates nests for cross join operations. For Q7 it would work like this:
+
+             J                               LJ - ON
+            / \                             /  \
+      (t1,t2)  LJ - ON      =>     (t1,t2,t3)   t4
+              /  \
+            t3    t4
+
+    For Q8 with RIGHT JOIN the transformation would work similarly:
+
+             J                               LJ - ON
+            / \                             /  \
+          t3   LJ - ON      =>            t4   (t1,t2,t3)
+              /  \
+            t4   (t1,t2)
+
 */
 
 bool st_select_lex::add_cross_joined_table(TABLE_LIST *left_op,
@@ -8446,7 +8471,11 @@ bool st_select_lex::add_cross_joined_table(TABLE_LIST *left_op,
   }
 
   TABLE_LIST *tbl;
-  List<TABLE_LIST> *jl= &right_op->nested_join->join_list;
+  List<TABLE_LIST> *right_op_jl= right_op->join_list;
+  IF_DBUG(const TABLE_LIST *r_tbl=,) right_op_jl->pop();
+  DBUG_ASSERT(right_op == r_tbl);
+  IF_DBUG(const TABLE_LIST *l_tbl=,) right_op_jl->pop();
+  DBUG_ASSERT(left_op == l_tbl);
   TABLE_LIST *cj_nest;
 
   /*
@@ -8463,6 +8492,8 @@ bool st_select_lex::add_cross_joined_table(TABLE_LIST *left_op,
   List<TABLE_LIST> *cjl=  &cj_nest->nested_join->join_list;
   cjl->empty();
 
+  List<TABLE_LIST> *jl= &right_op->nested_join->join_list;
+  DBUG_ASSERT(jl->elements == 2);
   /* Look for the left most node tbl of the right_op tree */
   for ( ; ; )
   {
@@ -8535,6 +8566,8 @@ bool st_select_lex::add_cross_joined_table(TABLE_LIST *left_op,
     create a new top level nested join node.
   */
   right_op->nested_join->nest_type|= REBALANCED_NEST;
+  if (unlikely(right_op_jl->push_front(right_op)))
+    DBUG_RETURN(true);
   DBUG_RETURN(false);
 }
 
@@ -10152,4 +10185,15 @@ CHARSET_INFO *find_bin_collation(CHARSET_INFO *cs)
     my_error(ER_UNKNOWN_COLLATION, MYF(0), tmp);
   }
   return cs;
+}
+
+void LEX::mark_first_table_as_inserting()
+{
+  TABLE_LIST *t= select_lex.table_list.first;
+  DBUG_ENTER("Query_tables_list::mark_tables_with_important_flags");
+  DBUG_ASSERT(sql_command_flags[sql_command] & CF_INSERTS_DATA);
+  t->for_insert_data= TRUE;
+  DBUG_PRINT("info", ("table_list: %p  name: %s  db: %s  command: %u",
+                      t, t->table_name.str,t->db.str, sql_command));
+  DBUG_VOID_RETURN;
 }

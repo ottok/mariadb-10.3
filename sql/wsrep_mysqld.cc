@@ -38,7 +38,6 @@
 #include <cstdlib>
 #include "log_event.h"
 #include <slave.h>
-#include "sql_plugin.h"                         /* wsrep_plugins_pre_init() */
 
 wsrep_t *wsrep                  = NULL;
 /*
@@ -183,7 +182,19 @@ static PSI_file_info wsrep_files[]=
 {
   { &key_file_wsrep_gra_log, "wsrep_gra_log", 0}
 };
-#endif
+
+PSI_thread_key key_wsrep_sst_joiner, key_wsrep_sst_donor,
+  key_wsrep_rollbacker, key_wsrep_applier;
+
+static PSI_thread_info wsrep_threads[]=
+{
+ {&key_wsrep_sst_joiner, "wsrep_sst_joiner_thread", PSI_FLAG_GLOBAL},
+ {&key_wsrep_sst_donor, "wsrep_sst_donor_thread", PSI_FLAG_GLOBAL},
+ {&key_wsrep_rollbacker, "wsrep_rollbacker_thread", PSI_FLAG_GLOBAL},
+ {&key_wsrep_applier, "wsrep_applier_thread", PSI_FLAG_GLOBAL}
+};
+
+#endif /* HAVE_PSI_INTERFACE */
 
 my_bool wsrep_inited                   = 0; // initialized ?
 
@@ -799,6 +810,7 @@ void wsrep_thr_init()
   mysql_mutex_register("sql", wsrep_mutexes, array_elements(wsrep_mutexes));
   mysql_cond_register("sql", wsrep_conds, array_elements(wsrep_conds));
   mysql_file_register("sql", wsrep_files, array_elements(wsrep_files));
+  mysql_thread_register("sql", wsrep_threads, array_elements(wsrep_threads));
 #endif
 
   mysql_mutex_init(key_LOCK_wsrep_ready, &LOCK_wsrep_ready, MY_MUTEX_INIT_FAST);
@@ -814,6 +826,7 @@ void wsrep_thr_init()
   mysql_mutex_init(key_LOCK_wsrep_slave_threads, &LOCK_wsrep_slave_threads, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_LOCK_wsrep_desync, &LOCK_wsrep_desync, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_LOCK_wsrep_config_state, &LOCK_wsrep_config_state, MY_MUTEX_INIT_FAST);
+
   DBUG_VOID_RETURN;
 }
 
@@ -1583,25 +1596,6 @@ static bool wsrep_can_run_in_toi(THD *thd, const char *db, const char *table,
   }
 }
 
-static const char* wsrep_get_query_or_msg(const THD* thd)
-{
-  switch(thd->lex->sql_command)
-  {
-    case SQLCOM_CREATE_USER:
-      return "CREATE USER";
-    case SQLCOM_GRANT:
-      return "GRANT";
-    case SQLCOM_REVOKE:
-      return "REVOKE";
-    case SQLCOM_SET_OPTION:
-      if (thd->lex->definer)
-	return "SET PASSWORD";
-      /* fallthrough */
-    default:
-      return thd->query();
-   }
-}
-
 /*
   returns: 
    0: statement was replicated as TOI
@@ -1625,7 +1619,7 @@ static int wsrep_TOI_begin(THD *thd, const char *db_, const char *table_,
   }
 
   WSREP_DEBUG("TO BEGIN: %lld, %d : %s", (long long)wsrep_thd_trx_seqno(thd),
-              thd->wsrep_exec_mode, wsrep_get_query_or_msg(thd));
+              thd->wsrep_exec_mode, wsrep_thd_query(thd));
 
   switch (thd->lex->sql_command)
   {
@@ -1705,13 +1699,13 @@ static void wsrep_TOI_end(THD *thd) {
   wsrep_to_isolation--;
 
   WSREP_DEBUG("TO END: %lld, %d: %s", (long long)wsrep_thd_trx_seqno(thd),
-              thd->wsrep_exec_mode, wsrep_get_query_or_msg(thd));
+              thd->wsrep_exec_mode, wsrep_thd_query(thd));
 
   wsrep_set_SE_checkpoint(thd->wsrep_trx_meta.gtid.uuid,
                           thd->wsrep_trx_meta.gtid.seqno);
   WSREP_DEBUG("TO END: %lld, update seqno",
               (long long)wsrep_thd_trx_seqno(thd));
-  
+
   if (WSREP_OK == (ret = wsrep->to_execute_end(wsrep, thd->thread_id))) {
     WSREP_DEBUG("TO END: %lld", (long long)wsrep_thd_trx_seqno(thd));
   }
@@ -2078,7 +2072,7 @@ pthread_handler_t start_wsrep_THD(void *arg)
     need to know the start of the stack so that we could check for
     stack overruns.
   */
-  DBUG_PRINT("wsrep", ("handle_one_connection called by thread %lld\n",
+  DBUG_PRINT("wsrep", ("handle_one_connection called by thread %lld",
                        (long long)thd->thread_id));
   /* now that we've called my_thread_init(), it is safe to call DBUG_* */
 
@@ -2650,9 +2644,28 @@ extern "C" query_id_t wsrep_thd_query_id(THD *thd)
 }
 
 
-char *wsrep_thd_query(THD *thd)
+const char *wsrep_thd_query(THD *thd)
 {
-  return (thd) ? thd->query() : NULL;
+  if (thd)
+  {
+    switch(thd->lex->sql_command)
+    {
+    case SQLCOM_CREATE_USER:
+      return "CREATE USER";
+    case SQLCOM_GRANT:
+      return "GRANT";
+    case SQLCOM_REVOKE:
+      return "REVOKE";
+    case SQLCOM_SET_OPTION:
+      if (thd->lex->definer)
+	return "SET PASSWORD";
+      /* fallthrough */
+    default:
+      if (thd->query())
+        return thd->query();
+    }
+  }
+  return "NULL";
 }
 
 

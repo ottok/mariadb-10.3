@@ -2306,6 +2306,8 @@ class Rdb_transaction {
   bool m_is_delayed_snapshot = false;
   bool m_is_two_phase = false;
 
+  std::unordered_set<Rdb_tbl_def*> modified_tables;
+
  private:
   /*
     Number of write operations this transaction had when we took the last
@@ -3001,6 +3003,26 @@ protected:
   virtual void start_tx() = 0;
   virtual void start_stmt() = 0;
 
+ protected:
+  // Non-virtual functions with actions to be done on transaction start and
+  // commit.
+  void on_commit() {
+    time_t tm;
+    tm = time(nullptr);
+    for (auto &it : modified_tables) {
+      it->m_update_time = tm;
+    }
+    modified_tables.clear();
+  }
+  void on_rollback() {
+    modified_tables.clear();
+  }
+ public:
+  // Inform the transaction that this table was modified
+  void log_table_write_op(Rdb_tbl_def *tbl) {
+    modified_tables.insert(tbl);
+  }
+
   void set_initial_savepoint() {
     /*
       Set the initial savepoint. If the first statement in the transaction
@@ -3185,7 +3207,9 @@ class Rdb_transaction_impl : public Rdb_transaction {
       goto error;
     }
 
+    on_commit();
   error:
+    on_rollback();
     /* Save the transaction object to be reused */
     release_tx();
 
@@ -3201,6 +3225,7 @@ class Rdb_transaction_impl : public Rdb_transaction {
 
  public:
   void rollback() override {
+    on_rollback();
     m_write_count = 0;
     m_insert_count = 0;
     m_update_count = 0;
@@ -3522,7 +3547,9 @@ class Rdb_writebatch_impl : public Rdb_transaction {
       res = true;
       goto error;
     }
+    on_commit();
   error:
+    on_rollback();
     reset();
 
     m_write_count = 0;
@@ -3555,6 +3582,7 @@ class Rdb_writebatch_impl : public Rdb_transaction {
   }
 
   void rollback() override {
+    on_rollback();
     m_write_count = 0;
     m_insert_count = 0;
     m_update_count = 0;
@@ -5836,11 +5864,11 @@ static int rocksdb_done_func(void *const p) {
 // Disown the cache data since we're shutting down.
 // This results in memory leaks but it improved the shutdown time.
 // Don't disown when running under valgrind
-#ifndef HAVE_purify
+#ifndef HAVE_valgrind
   if (rocksdb_tbl_options->block_cache) {
     rocksdb_tbl_options->block_cache->DisownData();
   }
-#endif /* HAVE_purify */
+#endif /* HAVE_valgrind */
 
   /*
     MariaDB: don't clear rocksdb_db_options and rocksdb_tbl_options.
@@ -10335,6 +10363,8 @@ int ha_rocksdb::update_write_row(const uchar *const old_data,
     row_info.tx->incr_insert_count();
   }
 
+  row_info.tx->log_table_write_op(m_tbl_def);
+
   if (do_bulk_commit(row_info.tx)) {
     DBUG_RETURN(HA_ERR_ROCKSDB_BULK_LOAD);
   }
@@ -10814,6 +10844,7 @@ int ha_rocksdb::delete_row(const uchar *const buf) {
   }
 
   tx->incr_delete_count();
+  tx->log_table_write_op(m_tbl_def);
 
   if (do_bulk_commit(tx)) {
     DBUG_RETURN(HA_ERR_ROCKSDB_BULK_LOAD);
@@ -11008,6 +11039,12 @@ int ha_rocksdb::info(uint flag) {
         k->rec_per_key[j] = x;
       }
     }
+
+    stats.create_time = m_tbl_def->get_create_time();
+  }
+
+  if (flag & HA_STATUS_TIME) {
+    stats.update_time = m_tbl_def->m_update_time;
   }
 
   if (flag & HA_STATUS_ERRKEY) {
@@ -14316,6 +14353,8 @@ static int rocksdb_validate_update_cf_options(
   // then there's no point to proceed.
   if (!Rdb_cf_options::parse_cf_options(str, &option_map)) {
     my_error(ER_WRONG_VALUE_FOR_VAR, MYF(0), "rocksdb_update_cf_options", str);
+    // Free what we've copied with my_strdup above.
+    my_free((void*)(*(const char **)save));
     return HA_EXIT_FAILURE;
   }
   // Loop through option_map and create missing column families

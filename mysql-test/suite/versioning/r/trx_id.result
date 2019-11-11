@@ -181,9 +181,7 @@ select row_start from t1 into @trx_id;
 select trt_begin_ts(@trx_id) <= @ts1 as BEGIN_TS_GOOD;
 BEGIN_TS_GOOD
 1
-drop database test;
-create database test;
-use test;
+drop table t1;
 #
 # MDEV-16100 FOR SYSTEM_TIME erroneously resolves string user variables as transaction IDs
 #
@@ -421,7 +419,9 @@ ALTER TABLE t
 CHANGE a a INT WITH SYSTEM VERSIONING,
 ADD PRIMARY KEY pk(a);
 affected rows: 0
-info: Records: 0  Duplicates: 0  Warnings: 0
+info: Records: 0  Duplicates: 0  Warnings: 1
+Warnings:
+Warning	1280	Name 'pk' ignored for PRIMARY key.
 SELECT c.prtype FROM INFORMATION_SCHEMA.INNODB_SYS_COLUMNS AS c
 INNER JOIN INFORMATION_SCHEMA.INNODB_SYS_TABLES AS t
 ON c.table_id=t.table_id

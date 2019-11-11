@@ -855,7 +855,16 @@ buf_flush_init_for_writing(
 	ut_ad(block == NULL || block->frame == page);
 	ut_ad(block == NULL || page_zip_ == NULL
 	      || &block->page.zip == page_zip_);
+	ut_ad(!block || newest_lsn);
 	ut_ad(page);
+#if 0 /* MDEV-15528 TODO: reinstate this check */
+	/* innodb_immediate_scrub_data_uncompressed=ON would cause
+	fsp_init_file_page() to be called on freed pages, and thus
+	cause them to be written as almost-all-zeroed.
+	In MDEV-15528 we should change that implement an option to
+	make freed pages appear all-zero, bypassing this code. */
+	ut_ad(!newest_lsn || fil_page_get_type(page));
+#endif
 
 	if (page_zip_) {
 		page_zip_des_t*	page_zip;

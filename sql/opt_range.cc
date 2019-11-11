@@ -2414,12 +2414,16 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
   records= head->stat_records();
   if (!records)
     records++;					/* purecov: inspected */
-  scan_time= (double) records / TIME_FOR_COMPARE + 1;
-  read_time= (double) head->file->scan_time() + scan_time + 1.1;
-  if (head->force_index)
+
+  if (head->force_index || force_quick_range)
     scan_time= read_time= DBL_MAX;
-  if (limit < records)
-    read_time= (double) records + scan_time + 1; // Force to use index
+  else
+  {
+    scan_time= (double) records / TIME_FOR_COMPARE + 1;
+    read_time= (double) head->file->scan_time() + scan_time + 1.1;
+    if (limit < records)
+      read_time= (double) records + scan_time + 1; // Force to use index
+  }
   
   possible_keys.clear_all();
 
@@ -2434,6 +2438,7 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
     KEY_PART *key_parts;
     KEY *key_info;
     PARAM param;
+    bool force_group_by = false;
 
     if (check_stack_overrun(thd, 2*STACK_MIN_SIZE + sizeof(PARAM), buff))
       DBUG_RETURN(0);                           // Fatal error flag is set
@@ -2562,15 +2567,20 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
       Try to construct a QUICK_GROUP_MIN_MAX_SELECT.
       Notice that it can be constructed no matter if there is a range tree.
     */
+    DBUG_EXECUTE_IF("force_group_by", force_group_by = true; );
     group_trp= get_best_group_min_max(&param, tree, best_read_time);
     if (group_trp)
     {
       param.table->quick_condition_rows= MY_MIN(group_trp->records,
                                              head->stat_records());
-      if (group_trp->read_cost < best_read_time)
+      if (group_trp->read_cost < best_read_time || force_group_by)
       {
         best_trp= group_trp;
         best_read_time= best_trp->read_cost;
+        if (force_group_by)
+        {
+          goto force_plan;
+        }
       }
     }
 
@@ -2670,6 +2680,7 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
       }
     }
 
+force_plan:
     thd->mem_root= param.old_root;
 
     /* If we got a read plan, create a quick select from it. */
@@ -10406,6 +10417,16 @@ ha_rows check_quick_select(PARAM *param, uint idx, bool index_only,
                                             bufsize, mrr_flags, cost);
   if (rows != HA_POS_ERROR)
   {
+    ha_rows table_records= param->table->stat_records();
+    if (rows > table_records)
+    {
+      /*
+        For any index the total number of records within all ranges
+        cannot be be bigger than the number of records in the table
+      */
+      rows= table_records;
+      set_if_bigger(rows, 1);
+    }
     param->quick_rows[keynr]= rows;
     param->possible_keys.set_bit(keynr);
     if (update_tbl_stats)
@@ -11534,13 +11555,28 @@ int QUICK_RANGE_SELECT::get_next_prefix(uint prefix_length,
       DBUG_ASSERT(cur_prefix != NULL);
       result= file->ha_index_read_map(record, cur_prefix, keypart_map,
                                       HA_READ_AFTER_KEY);
-      if (result || last_range->max_keypart_map == 0)
-        DBUG_RETURN(result);
-
-      key_range previous_endpoint;
-      last_range->make_max_endpoint(&previous_endpoint, prefix_length, keypart_map);
-      if (file->compare_key(&previous_endpoint) <= 0)
-        DBUG_RETURN(0);
+      if (result || last_range->max_keypart_map == 0) {
+        /*
+          Only return if actual failure occurred. For HA_ERR_KEY_NOT_FOUND
+          or HA_ERR_END_OF_FILE, we just want to continue to reach the next
+          set of ranges. It is possible for the storage engine to return
+          HA_ERR_KEY_NOT_FOUND/HA_ERR_END_OF_FILE even when there are more
+          keys if it respects the end range set by the read_range_first call
+          below.
+        */
+        if (result != HA_ERR_KEY_NOT_FOUND && result != HA_ERR_END_OF_FILE)
+          DBUG_RETURN(result);
+      } else {
+        /*
+          For storage engines that don't respect end range, check if we've
+          moved past the current range.
+        */
+        key_range previous_endpoint;
+        last_range->make_max_endpoint(&previous_endpoint, prefix_length,
+                                      keypart_map);
+        if (file->compare_key(&previous_endpoint) <= 0)
+          DBUG_RETURN(0);
+      }
     }
 
     uint count= ranges.elements - (uint)(cur_range - (QUICK_RANGE**) ranges.buffer);

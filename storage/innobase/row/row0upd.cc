@@ -1049,22 +1049,21 @@ row_upd_build_difference_binary(
 	TABLE*		mysql_table,
 	dberr_t*	error)
 {
-	upd_field_t*	upd_field;
 	ulint		len;
 	upd_t*		update;
 	ulint		n_diff;
 	ulint		trx_id_pos;
-	ulint		i;
 	ulint		offsets_[REC_OFFS_NORMAL_SIZE];
-	ulint		n_fld = dtuple_get_n_fields(entry);
-	ulint		n_v_fld = dtuple_get_n_v_fields(entry);
+	const ulint	n_v_fld = dtuple_get_n_v_fields(entry);
 	rec_offs_init(offsets_);
 
 	/* This function is used only for a clustered index */
 	ut_a(dict_index_is_clust(index));
 	ut_ad(!index->table->skip_alter_undo);
+	ut_ad(entry->n_fields <= index->n_fields);
+	ut_ad(entry->n_fields >= index->n_core_fields);
 
-	update = upd_create(n_fld + n_v_fld, heap);
+	update = upd_create(index->n_fields + n_v_fld, heap);
 
 	n_diff = 0;
 
@@ -1079,7 +1078,7 @@ row_upd_build_difference_binary(
 		ut_ad(rec_offs_validate(rec, index, offsets));
 	}
 
-	for (i = 0; i < n_fld; i++) {
+	for (ulint i = 0; i < entry->n_fields; i++) {
 		const byte* data = rec_get_nth_cfield(rec, index, offsets, i,
 						      &len);
 		const dfield_t* dfield = dtuple_get_nth_field(entry, i);
@@ -1101,15 +1100,20 @@ row_upd_build_difference_binary(
 		if (!dfield_is_ext(dfield)
 		    != !rec_offs_nth_extern(offsets, i)
 		    || !dfield_data_is_binary_equal(dfield, len, data)) {
-
-			upd_field = upd_get_nth_field(update, n_diff);
-
-			dfield_copy(&(upd_field->new_val), dfield);
-
-			upd_field_set_field_no(upd_field, i, index);
-
-			n_diff++;
+			upd_field_t* uf = upd_get_nth_field(update, n_diff++);
+			dfield_copy(&uf->new_val, dfield);
+			upd_field_set_field_no(uf, i, index);
 		}
+	}
+
+	for (ulint i = entry->n_fields; i < index->n_fields; i++) {
+		upd_field_t* uf = upd_get_nth_field(update, n_diff++);
+		const dict_col_t* col = dict_index_get_nth_col(index, i);
+		/* upd_create() zero-initialized uf */
+		uf->new_val.data = const_cast<byte*>(col->instant_value(&len));
+		uf->new_val.len = static_cast<unsigned>(len);
+		dict_col_copy_type(col, &uf->new_val.type);
+		upd_field_set_field_no(uf, i, index);
 	}
 
 	/* Check the virtual columns updates. Even if there is no non-virtual
@@ -1136,7 +1140,7 @@ row_upd_build_difference_binary(
 					       &mysql_table,
 					       &record, &vcol_storage);
 
-		for (i = 0; i < n_v_fld; i++) {
+		for (ulint i = 0; i < n_v_fld; i++) {
 			const dict_v_col_t*     col
                                 = dict_table_get_nth_v_col(index->table, i);
 
@@ -1164,24 +1168,16 @@ row_upd_build_difference_binary(
 				entry, i);
 
 			if (!dfield_data_is_binary_equal(
-				dfield, vfield->len,
-				static_cast<byte*>(vfield->data))) {
-				upd_field = upd_get_nth_field(update, n_diff);
-
-				upd_field->old_v_val = static_cast<dfield_t*>(
-					mem_heap_alloc(
-						heap,
-						sizeof *upd_field->old_v_val));
-
-				dfield_copy(upd_field->old_v_val, vfield);
-
-				dfield_copy(&(upd_field->new_val), dfield);
-
-				upd_field_set_v_field_no(
-					upd_field, i, index);
-
-				n_diff++;
-
+				    dfield, vfield->len,
+				    static_cast<byte*>(vfield->data))) {
+				upd_field_t* uf = upd_get_nth_field(update,
+								    n_diff++);
+				uf->old_v_val = static_cast<dfield_t*>(
+					mem_heap_alloc(heap,
+						       sizeof *uf->old_v_val));
+				dfield_copy(uf->old_v_val, vfield);
+				dfield_copy(&uf->new_val, dfield);
+				upd_field_set_v_field_no(uf, i, index);
 			}
 		}
 
@@ -2481,17 +2477,27 @@ row_upd_sec_index_entry(
 				case DB_NO_REFERENCED_ROW:
 					err = DB_SUCCESS;
 					break;
+				case DB_LOCK_WAIT:
+					if (wsrep_debug) {
+						ib::warn() << "WSREP: sec index FK lock wait"
+							   << " index " << index->name
+							   << " table " << index->table->name
+							   << " query " << wsrep_thd_query(trx->mysql_thd);
+					}
+					break;
 				case DB_DEADLOCK:
 					if (wsrep_debug) {
 						ib::warn() << "WSREP: sec index FK check fail for deadlock"
 							   << " index " << index->name
-							   << " table " << index->table->name;
+							   << " table " << index->table->name
+							   << " query " << wsrep_thd_query(trx->mysql_thd);
 					}
 					break;
 				default:
 					ib::error() << "WSREP: referenced FK check fail: " << ut_strerr(err)
 						    << " index " << index->name
-						    << " table " << index->table->name;
+						    << " table " << index->table->name
+						    << " query " << wsrep_thd_query(trx->mysql_thd);
 
 					break;
 				}
@@ -2533,7 +2539,7 @@ row_upd_sec_index_entry(
 	ut_a(entry);
 
 	/* Insert new index entry */
-	err = row_ins_sec_index_entry(index, entry, thr, false);
+	err = row_ins_sec_index_entry(index, entry, thr, !node->is_delete);
 
 func_exit:
 	mem_heap_free(heap);
@@ -2805,7 +2811,7 @@ check_fk:
 
 	err = row_ins_clust_index_entry(
 		index, entry, thr,
-		node->upd_ext ? node->upd_ext->n_ext : 0, false);
+		node->upd_ext ? node->upd_ext->n_ext : 0);
 	node->state = UPD_NODE_INSERT_CLUSTERED;
 
 	mem_heap_free(heap);
@@ -3195,9 +3201,8 @@ row_upd_clust_step(
 		row_upd_eval_new_vals(node->update);
 	}
 
-	if (node->cmpl_info & UPD_NODE_NO_ORD_CHANGE) {
+	if (!node->is_delete && node->cmpl_info & UPD_NODE_NO_ORD_CHANGE) {
 
-		node->index = NULL;
 		err = row_upd_clust_rec(
 			flags, node, index, offsets, &heap, thr, &mtr);
 		goto exit_func;
@@ -3241,7 +3246,10 @@ row_upd_clust_step(
 			goto exit_func;
 		}
 
-		node->state = UPD_NODE_UPDATE_SOME_SEC;
+		ut_ad(node->is_delete != PLAIN_DELETE);
+		node->state = node->is_delete ?
+			UPD_NODE_UPDATE_ALL_SEC :
+			UPD_NODE_UPDATE_SOME_SEC;
 	}
 
 	node->index = dict_table_get_next_index(index);

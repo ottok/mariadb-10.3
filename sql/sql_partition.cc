@@ -146,7 +146,7 @@ Item* convert_charset_partition_constant(Item *item, CHARSET_INFO *cs)
   item= item->safe_charset_converter(thd, cs);
   context->table_list= NULL;
   thd->where= "convert character set partition constant";
-  if (item->fix_fields_if_needed(thd, (Item**)NULL))
+  if (item && item->fix_fields_if_needed(thd, (Item**)NULL))
     item= NULL;
   thd->where= save_where;
   context->table_list= save_list;
@@ -1563,7 +1563,7 @@ static bool check_vers_constants(THD *thd, partition_info *part_info)
     return 0;
 
   part_info->range_int_array=
-    (longlong*) thd->alloc(hist_parts * sizeof(longlong));
+    (longlong*) thd->alloc(part_info->num_parts * sizeof(longlong));
 
   MYSQL_TIME ltime;
   List_iterator<partition_element> it(part_info->partitions);
@@ -1582,6 +1582,9 @@ static bool check_vers_constants(THD *thd, partition_info *part_info)
     if (vers_info->hist_part->range_value <= thd->query_start())
       vers_info->hist_part= el;
   }
+  DBUG_ASSERT(el == vers_info->now_part);
+  el->max_value= true;
+  part_info->range_int_array[el->id]= el->range_value= LONGLONG_MAX;
   return 0;
 err:
   my_error(ER_DATA_OUT_OF_RANGE, MYF(0), "TIMESTAMP", "INTERVAL");
@@ -1975,7 +1978,6 @@ bool fix_partition_func(THD *thd, TABLE *table, bool is_create_table_ind)
     }
   }
   DBUG_ASSERT(part_info->part_type != NOT_A_PARTITION);
-  DBUG_ASSERT(part_info->part_type != VERSIONING_PARTITION || part_info->column_list);
   /*
     Partition is defined. We need to verify that partitioning
     function is correct.
@@ -2008,15 +2010,15 @@ bool fix_partition_func(THD *thd, TABLE *table, bool is_create_table_ind)
   {
     if (part_info->column_list)
     {
-      if (part_info->part_type == VERSIONING_PARTITION &&
-        part_info->vers_setup_expression(thd))
-        goto end;
       List_iterator<const char> it(part_info->part_field_list);
       if (unlikely(handle_list_of_fields(thd, it, table, part_info, FALSE)))
         goto end;
     }
     else
     {
+      if (part_info->part_type == VERSIONING_PARTITION &&
+        part_info->vers_setup_expression(thd))
+        goto end;
       if (unlikely(fix_fields_part_func(thd, part_info->part_expr,
                                         table, FALSE, is_create_table_ind)))
         goto end;
@@ -2032,7 +2034,8 @@ bool fix_partition_func(THD *thd, TABLE *table, bool is_create_table_ind)
       goto end;
     }
     if (unlikely(!part_info->column_list &&
-                  part_info->part_expr->result_type() != INT_RESULT))
+                  part_info->part_expr->result_type() != INT_RESULT &&
+                  part_info->part_expr->result_type() != DECIMAL_RESULT))
     {
       part_info->report_part_expr_error(FALSE);
       goto end;
@@ -2541,7 +2544,7 @@ static int add_partition_values(String *str, partition_info *part_info,
   }
   else if (part_info->part_type == VERSIONING_PARTITION)
   {
-    switch (p_elem->type())
+    switch (p_elem->type)
     {
     case partition_element::CURRENT:
       err+= str->append(STRING_WITH_LEN(" CURRENT"));
@@ -4791,6 +4794,69 @@ bool compare_partition_options(HA_CREATE_INFO *table_create_info,
 }
 
 
+/**
+  Check if the ALTER command tries to change DATA DIRECTORY
+  or INDEX DIRECTORY for its partitions and warn if so.
+  @param thd  THD
+  @param part_elem partition_element to check
+ */
+static void warn_if_datadir_altered(THD *thd,
+    const partition_element *part_elem)
+{
+  DBUG_ASSERT(part_elem);
+
+  if (part_elem->engine_type &&
+      part_elem->engine_type->db_type != DB_TYPE_INNODB)
+    return;
+
+  if (part_elem->data_file_name)
+  {
+    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+        WARN_INNODB_PARTITION_OPTION_IGNORED,
+        ER(WARN_INNODB_PARTITION_OPTION_IGNORED),
+        "DATA DIRECTORY");
+  }
+  if (part_elem->index_file_name)
+  {
+    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+        WARN_INNODB_PARTITION_OPTION_IGNORED,
+        ER(WARN_INNODB_PARTITION_OPTION_IGNORED),
+        "INDEX DIRECTORY");
+  }
+}
+
+
+/**
+  Currently changing DATA DIRECTORY and INDEX DIRECTORY for InnoDB partitions is
+  not possible. This function checks it and warns on that case.
+  @param thd THD
+  @param tab_part_info old partition info
+  @param alt_part_info new partition info
+ */
+static void check_datadir_altered_for_innodb(THD *thd,
+    partition_info *tab_part_info,
+    partition_info *alt_part_info)
+{
+  if (tab_part_info->default_engine_type->db_type != DB_TYPE_INNODB)
+    return;
+
+  for (List_iterator_fast<partition_element> it(alt_part_info->partitions);
+       partition_element *part_elem= it++;)
+  {
+    if (alt_part_info->is_sub_partitioned())
+    {
+      for (List_iterator_fast<partition_element> it2(part_elem->subpartitions);
+           const partition_element *sub_part_elem= it2++;)
+      {
+        warn_if_datadir_altered(thd, sub_part_elem);
+      }
+    }
+    else
+      warn_if_datadir_altered(thd, part_elem);
+  }
+}
+
+
 /*
   Prepare for ALTER TABLE of partition structure
 
@@ -5321,7 +5387,7 @@ that are reorganised.
           partition_element *el;
           while ((el= it++))
           {
-            if (el->type() == partition_element::CURRENT)
+            if (el->type == partition_element::CURRENT)
             {
               it.remove();
               now_part= el;
@@ -5417,7 +5483,7 @@ that are reorganised.
         {
           if (tab_part_info->part_type == VERSIONING_PARTITION)
           {
-            if (part_elem->type() == partition_element::CURRENT)
+            if (part_elem->type == partition_element::CURRENT)
             {
               my_error(ER_VERS_WRONG_PARTS, MYF(0), table->s->table_name.str);
               goto err;
@@ -5626,6 +5692,8 @@ state of p1.
       {
         goto err;
       }
+      check_datadir_altered_for_innodb(thd, tab_part_info, alt_part_info);
+
 /*
 Online handling:
 REORGANIZE PARTITION:
@@ -7671,6 +7739,10 @@ static void set_up_range_analysis_info(partition_info *part_info)
     partitioning
   */
   switch (part_info->part_type) {
+  case VERSIONING_PARTITION:
+    if (!part_info->vers_info->interval.is_set())
+      break;
+    /* Fall through */
   case RANGE_PARTITION:
   case LIST_PARTITION:
     if (!part_info->column_list)
@@ -8107,7 +8179,8 @@ static int get_part_iter_for_interval_via_mapping(partition_info *part_info,
   part_iter->ret_null_part= part_iter->ret_null_part_orig= FALSE;
   part_iter->ret_default_part= part_iter->ret_default_part_orig= FALSE;
 
-  if (part_info->part_type == RANGE_PARTITION)
+  if (part_info->part_type == RANGE_PARTITION ||
+      part_info->part_type == VERSIONING_PARTITION)
   {
     if (part_info->part_charset_field_array)
       get_endpoint=        get_partition_id_range_for_endpoint_charset;

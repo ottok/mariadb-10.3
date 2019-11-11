@@ -185,6 +185,8 @@ access order rules. */
 ulong	innodb_change_buffering;
 
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
+/** Dump the change buffer at startup */
+my_bool	ibuf_dump;
 /** Flag to control insert buffer debugging. */
 uint	ibuf_debug;
 #endif /* UNIV_DEBUG || UNIV_IBUF_DEBUG */
@@ -336,10 +338,8 @@ ibuf_header_page_get(
 		page_id_t(IBUF_SPACE_ID, FSP_IBUF_HEADER_PAGE_NO),
 		univ_page_size, RW_X_LATCH, mtr);
 
-
-	if (!block->page.encrypted) {
+	if (block) {
 		buf_block_dbg_add_level(block, SYNC_IBUF_HEADER);
-
 		page = buf_block_get_frame(block);
 	}
 
@@ -508,6 +508,25 @@ ibuf_init_at_db_start(void)
 #endif /* BTR_CUR_ADAPT */
 	ibuf->index->page = FSP_IBUF_TREE_ROOT_PAGE_NO;
 	ut_d(ibuf->index->cached = TRUE);
+
+#if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
+	if (!ibuf_dump) {
+		return error;
+	}
+	ib::info() << "Dumping the change buffer";
+	ibuf_mtr_start(&mtr);
+	btr_pcur_t pcur;
+	if (DB_SUCCESS == btr_pcur_open_at_index_side(
+		    true, ibuf->index, BTR_SEARCH_LEAF, &pcur,
+		    true, 0, &mtr)) {
+		while (btr_pcur_move_to_next_user_rec(&pcur, &mtr)) {
+			rec_print_old(stderr, btr_pcur_get_rec(&pcur));
+		}
+	}
+	ibuf_mtr_commit(&mtr);
+	ib::info() << "Dumped the change buffer";
+#endif
+
 	return (error);
 }
 
@@ -1989,13 +2008,13 @@ ibuf_add_free_page(void)
 	buf_block_dbg_add_level(block, SYNC_IBUF_TREE_NODE_NEW);
 	page = buf_block_get_frame(block);
 
+	mlog_write_ulint(page + FIL_PAGE_TYPE, FIL_PAGE_IBUF_FREE_LIST,
+			 MLOG_2BYTES, &mtr);
+
 	/* Add the page to the free list and update the ibuf size data */
 
 	flst_add_last(root + PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST,
 		      page + PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST_NODE, &mtr);
-
-	mlog_write_ulint(page + FIL_PAGE_TYPE, FIL_PAGE_IBUF_FREE_LIST,
-			 MLOG_2BYTES, &mtr);
 
 	ibuf->seg_size++;
 	ibuf->free_list_len++;
@@ -4224,23 +4243,6 @@ ibuf_delete_rec(
 	ut_ad(ibuf_rec_get_page_no(mtr, btr_pcur_get_rec(pcur)) == page_no);
 	ut_ad(ibuf_rec_get_space(mtr, btr_pcur_get_rec(pcur)) == space);
 
-#if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
-	if (ibuf_debug == 2) {
-		/* Inject a fault (crash). We do this before trying
-		optimistic delete, because a pessimistic delete in the
-		change buffer would require a larger test case. */
-
-		/* Flag the buffered record as processed, to avoid
-		an assertion failure after crash recovery. */
-		btr_cur_set_deleted_flag_for_ibuf(
-			btr_pcur_get_rec(pcur), NULL, TRUE, mtr);
-
-		ibuf_mtr_commit(mtr);
-		log_write_up_to(LSN_MAX, true);
-		DBUG_SUICIDE();
-	}
-#endif /* UNIV_DEBUG || UNIV_IBUF_DEBUG */
-
 	success = btr_cur_optimistic_delete(btr_pcur_get_btr_cur(pcur),
 					    0, mtr);
 
@@ -4311,6 +4313,71 @@ func_exit:
 	return(TRUE);
 }
 
+/**
+Delete any buffered entries for a page.
+This prevents an infinite loop on slow shutdown
+in the case where the change buffer bitmap claims that no buffered
+changes exist, while entries exist in the change buffer tree.
+@param page_id  page number for which there should be no unbuffered changes */
+ATTRIBUTE_COLD static void ibuf_delete_recs(const page_id_t page_id)
+{
+	ulint dops[IBUF_OP_COUNT];
+	mtr_t mtr;
+	btr_pcur_t pcur;
+	mem_heap_t* heap = mem_heap_create(512);
+	const dtuple_t* tuple = ibuf_search_tuple_build(
+		page_id.space(), page_id.page_no(), heap);
+	memset(dops, 0, sizeof(dops));
+
+loop:
+	ibuf_mtr_start(&mtr);
+	btr_pcur_open(ibuf->index, tuple, PAGE_CUR_GE, BTR_MODIFY_LEAF,
+		      &pcur, &mtr);
+
+	if (!btr_pcur_is_on_user_rec(&pcur)) {
+		ut_ad(btr_pcur_is_after_last_in_tree(&pcur));
+		goto func_exit;
+	}
+
+	for (;;) {
+		ut_ad(btr_pcur_is_on_user_rec(&pcur));
+
+		const rec_t* ibuf_rec = btr_pcur_get_rec(&pcur);
+
+		if (ibuf_rec_get_space(&mtr, ibuf_rec)
+		    != page_id.space()
+		    || ibuf_rec_get_page_no(&mtr, ibuf_rec)
+		    != page_id.page_no()) {
+			break;
+		}
+
+		dops[ibuf_rec_get_op_type(&mtr, ibuf_rec)]++;
+
+		/* Delete the record from ibuf */
+		if (ibuf_delete_rec(page_id.space(), page_id.page_no(),
+				    &pcur, tuple, &mtr)) {
+			/* Deletion was pessimistic and mtr was committed:
+			we start from the beginning again */
+			ut_ad(mtr.has_committed());
+			goto loop;
+		}
+
+		if (btr_pcur_is_after_last_on_page(&pcur)) {
+			ibuf_mtr_commit(&mtr);
+			btr_pcur_close(&pcur);
+			goto loop;
+		}
+	}
+
+func_exit:
+	ibuf_mtr_commit(&mtr);
+	btr_pcur_close(&pcur);
+
+	ibuf_add_ops(ibuf->n_discarded_ops, dops);
+
+	mem_heap_free(heap);
+}
+
 /** When an index page is read from a disk to the buffer pool, this function
 applies any buffered operations to the page and deletes the entries from the
 insert buffer. If the page is not read, but created in the buffer pool, this
@@ -4330,9 +4397,7 @@ ibuf_merge_or_delete_for_page(
 	const page_size_t*	page_size,
 	ibool			update_ibuf_bitmap)
 {
-	mem_heap_t*	heap;
 	btr_pcur_t	pcur;
-	dtuple_t*	search_tuple;
 #ifdef UNIV_IBUF_DEBUG
 	ulint		volume			= 0;
 #endif /* UNIV_IBUF_DEBUG */
@@ -4405,9 +4470,16 @@ ibuf_merge_or_delete_for_page(
 			ibuf_mtr_commit(&mtr);
 
 			if (!bitmap_bits) {
-				/* No inserts buffered for this page */
-
+				/* No changes are buffered for this page. */
 				space->release();
+				if (UNIV_UNLIKELY(srv_shutdown_state)
+				    && !srv_fast_shutdown) {
+					/* Prevent an infinite loop on slow
+					shutdown, in case the bitmap bits are
+					wrongly clear even though buffered
+					changes exist. */
+					ibuf_delete_recs(page_id);
+				}
 				return;
 			}
 		}
@@ -4420,9 +4492,9 @@ ibuf_merge_or_delete_for_page(
 		space = NULL;
 	}
 
-	heap = mem_heap_create(512);
+	mem_heap_t* heap = mem_heap_create(512);
 
-	search_tuple = ibuf_search_tuple_build(
+	const dtuple_t* search_tuple = ibuf_search_tuple_build(
 		page_id.space(), page_id.page_no(), heap);
 
 	if (block != NULL) {
