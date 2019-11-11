@@ -1,3 +1,15 @@
+mariadb-10.3 (1:10.3.20-0ubuntu0.19.10.1) eoan; urgency=high
+
+  * SECURITY UPDATE: New upstream version 10.3.20 includes a fix for a
+    regression introduced in the previous release:
+    - MDEV-20987: InnoDB fails to start when FTS table has FK relation
+    Previous release 10.3.19 includes fix for the following security
+    vulnerability (LP: #1852109):
+    - CVE-2019-2938
+    - CVE-2019-2974
+
+ -- Otto Kekäläinen <otto@debian.org>  Tue, 12 Nov 2019 00:23:14 +0200
+
 mariadb-10.3 (1:10.3.17-1) unstable; urgency=high
 
   * New upstream version 10.3.17. Includes security fixes for:
