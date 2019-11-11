@@ -3,7 +3,7 @@
 Copyright (c) 1995, 2017, Oracle and/or its affiliates. All rights reserved.
 Copyright (c) 2008, 2009, Google Inc.
 Copyright (c) 2009, Percona Inc.
-Copyright (c) 2013, 2018, MariaDB Corporation.
+Copyright (c) 2013, 2019, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -536,6 +536,7 @@ extern my_bool	srv_ibuf_disable_background_merge;
 #endif /* UNIV_DEBUG || UNIV_IBUF_DEBUG */
 
 #ifdef UNIV_DEBUG
+extern my_bool	innodb_evict_tables_on_commit_debug;
 extern my_bool	srv_sync_debug;
 extern my_bool	srv_purge_view_update_only_debug;
 
@@ -591,6 +592,8 @@ extern ulong	srv_fatal_semaphore_wait_threshold;
 /** Buffer pool dump status frequence in percentages */
 extern ulong srv_buf_dump_status_frequency;
 
+#define srv_max_purge_threads 32
+
 # ifdef UNIV_PFS_THREAD
 /* Keys to register InnoDB threads with performance schema */
 extern mysql_pfs_key_t	buf_dump_thread_key;
@@ -632,11 +635,11 @@ do {								\
 
 #ifdef HAVE_PSI_STAGE_INTERFACE
 /** Performance schema stage event for monitoring ALTER TABLE progress
-everything after flush log_make_checkpoint_at(). */
+everything after flush log_make_checkpoint(). */
 extern PSI_stage_info	srv_stage_alter_table_end;
 
 /** Performance schema stage event for monitoring ALTER TABLE progress
-log_make_checkpoint_at(). */
+log_make_checkpoint(). */
 extern PSI_stage_info	srv_stage_alter_table_flush;
 
 /** Performance schema stage event for monitoring ALTER TABLE progress
@@ -1104,7 +1107,22 @@ struct srv_slot_t{
 						to do */
 	que_thr_t*	thr;			/*!< suspended query thread
 						(only used for user threads) */
+#ifdef UNIV_DEBUG
+	struct debug_sync_t {
+		UT_LIST_NODE_T(debug_sync_t) debug_sync_list;
+	};
+	UT_LIST_BASE_NODE_T(debug_sync_t) debug_sync;
+	rw_lock_t debug_sync_lock;
+#endif
 };
+
+#ifdef UNIV_DEBUG
+typedef void srv_slot_callback_t(srv_slot_t*, const void*);
+
+void srv_for_each_thread(srv_thread_type type,
+			 srv_slot_callback_t callback,
+			 const void *arg);
+#endif
 
 #ifdef WITH_WSREP
 UNIV_INTERN

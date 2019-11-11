@@ -129,5 +129,3 @@ select * from t1;
 a
 1
 drop table t1;
-drop database test;
-create database test;

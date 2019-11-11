@@ -1003,7 +1003,7 @@ row_log_table_low(
 	extra_size = rec_extra_size + is_instant;
 
 	unsigned fake_extra_size = 0;
-	byte fake_extra_buf[2];
+	byte fake_extra_buf[3];
 	if (is_instant && UNIV_UNLIKELY(!index->is_instant())) {
 		/* The source table was emptied after ALTER TABLE
 		started, and it was converted to non-instant format.
@@ -1015,9 +1015,9 @@ row_log_table_low(
 		fake_extra_size = rec_get_n_add_field_len(n_add);
 		ut_ad(fake_extra_size == 1 || fake_extra_size == 2);
 		extra_size += fake_extra_size;
-		byte* fake_extra = fake_extra_buf + fake_extra_size - 1;
+		byte* fake_extra = fake_extra_buf + fake_extra_size;
 		rec_set_n_add_field(fake_extra, n_add);
-		ut_ad(fake_extra + 1 == fake_extra_buf);
+		ut_ad(fake_extra == fake_extra_buf);
 	}
 
 	mrec_size = ROW_LOG_HEADER_SIZE
@@ -1076,7 +1076,7 @@ row_log_table_low(
 
 		memcpy(b, rec - rec_extra_size - omit_size, rec_extra_size);
 		b += rec_extra_size;
-		memcpy(b, fake_extra_buf, fake_extra_size);
+		memcpy(b, fake_extra_buf + 1, fake_extra_size);
 		b += fake_extra_size;
 		ulint len;
 		ulint trx_id_offs = rec_get_nth_field_offs(
@@ -1717,7 +1717,7 @@ row_log_table_apply_insert_low(
 
 	error = row_ins_clust_index_entry_low(
 		flags, BTR_MODIFY_TREE, index, index->n_uniq,
-		entry, 0, thr, false);
+		entry, 0, thr);
 
 	switch (error) {
 	case DB_SUCCESS:
@@ -1741,7 +1741,7 @@ row_log_table_apply_insert_low(
 		error = row_ins_sec_index_entry_low(
 			flags, BTR_MODIFY_TREE,
 			index, offsets_heap, heap, entry,
-			thr_get_trx(thr)->id, thr, false);
+			thr_get_trx(thr)->id, thr);
 
 		if (error != DB_SUCCESS) {
 			if (error == DB_DUPLICATE_KEY) {
@@ -1790,6 +1790,7 @@ row_log_table_apply_insert(
 		break;
 	default:
 		ut_ad(0);
+		/* fall through */
 	case DB_INVALID_NULL:
 		ut_ad(row == NULL);
 		return(error);
@@ -2078,6 +2079,7 @@ row_log_table_apply_update(
 		break;
 	default:
 		ut_ad(0);
+		/* fall through */
 	case DB_INVALID_NULL:
 		ut_ad(row == NULL);
 		return(error);
@@ -2371,7 +2373,7 @@ func_exit_committed:
 			BTR_CREATE_FLAG | BTR_NO_LOCKING_FLAG
 			| BTR_NO_UNDO_LOG_FLAG | BTR_KEEP_SYS_FLAG,
 			BTR_MODIFY_TREE, index, offsets_heap, heap,
-			entry, thr_get_trx(thr)->id, thr, false);
+			entry, thr_get_trx(thr)->id, thr);
 
 		/* Report correct index name for duplicate key error. */
 		if (error == DB_DUPLICATE_KEY) {

@@ -4911,13 +4911,14 @@ Stopping slave I/O thread due to out-of-memory error from master");
         goto err;
       }
 
-      if (rpl_semi_sync_slave_status && (mi->semi_ack & SEMI_SYNC_NEED_ACK) &&
-          repl_semisync_slave.slave_reply(mi))
+      if (rpl_semi_sync_slave_status && (mi->semi_ack & SEMI_SYNC_NEED_ACK))
       {
-        mi->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR, NULL,
-                   ER_THD(thd, ER_SLAVE_FATAL_ERROR),
-                   "Failed to run 'after_queue_event' hook");
-        goto err;
+        /*
+          We deliberately ignore the error in slave_reply, such error should
+          not cause the slave IO thread to stop, and the error messages are
+          already reported.
+        */
+        (void)repl_semisync_slave.slave_reply(mi);
       }
 
       if (mi->using_gtid == Master_info::USE_GTID_NO &&
@@ -6213,6 +6214,7 @@ static int queue_event(Master_info* mi,const char* buf, ulong event_len)
                     DBUG_ASSERT(debug_sync_service);
                     DBUG_ASSERT(!debug_sync_set_action(current_thd,
                                                        STRING_WITH_LEN(act)));
+                    dbug_rows_event_count = 0;
                   };);
 #endif
   mysql_mutex_lock(&mi->data_lock);
@@ -6739,7 +6741,18 @@ static int queue_event(Master_info* mi,const char* buf, ulong event_len)
           mi->last_queued_gtid.seq_no == 1000)
         goto skip_relay_logging;
     });
+    goto default_action;
 #endif
+  case START_ENCRYPTION_EVENT:
+    if (uint2korr(buf + FLAGS_OFFSET) & LOG_EVENT_IGNORABLE_F)
+    {
+      /*
+         If the event was not requested by the slave (the slave did not ask for
+         it), i.e. has end_log_pos=0, we do not increment mi->master_log_pos
+      */
+      inc_pos= uint4korr(buf+LOG_POS_OFFSET) ? event_len : 0;
+      break;
+    }
     /* fall through */
   default:
   default_action:

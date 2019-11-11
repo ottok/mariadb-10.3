@@ -75,8 +75,6 @@ SET(MYSQL_LIB_SYMBOLS
  mysql_get_server_version
  mysql_get_socket
  mysql_get_ssl_cipher
- mysql_get_timeout_value
- mysql_get_timeout_value_ms
  mysql_hex_string
  mysql_info
  mysql_init
@@ -201,8 +199,6 @@ SET(MARIADB_NONBLOCK_SYMBOLS
  mysql_fetch_row_start
  mysql_free_result_cont
  mysql_free_result_start
- mysql_get_timeout_value
- mysql_get_timeout_value_ms
  mysql_kill_cont
  mysql_kill_start
  mysql_list_fields_cont
@@ -412,7 +408,7 @@ ENDIF()
 
 IF(CMAKE_SYSTEM_NAME MATCHES "Linux" OR
    CMAKE_SYSTEM_NAME MATCHES "GNU")
-  IF (NOT WITH_ASAN AND NOT WITH_TSAN)
+  IF (NOT WITH_ASAN AND NOT WITH_TSAN AND NOT WITH_UBSAN AND NOT WITH_MSAN)
     TARGET_LINK_LIBRARIES (libmariadb "-Wl,--no-undefined")
   ENDIF()
   SET_TARGET_PROPERTIES(libmariadb PROPERTIES LINK_FLAGS "${CC_BINARY_DIR}/libmariadb/mariadbclient.def")

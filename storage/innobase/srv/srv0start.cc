@@ -510,7 +510,7 @@ create_log_files(
 		    (log_sys.lsn - log_sys.last_checkpoint_lsn));
 	log_mutex_exit();
 
-	log_make_checkpoint_at(LSN_MAX);
+	log_make_checkpoint();
 
 	return(DB_SUCCESS);
 }
@@ -1855,7 +1855,7 @@ dberr_t srv_start(bool create_new_db)
 		ut_a(fil_validate());
 		ut_a(log_space);
 
-		ut_a(srv_log_file_size <= 512ULL << 30);
+		ut_a(srv_log_file_size <= log_group_max_size);
 
 		const ulint size = 1 + ulint((srv_log_file_size - 1)
 					     >> srv_page_size_shift);

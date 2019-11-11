@@ -242,7 +242,6 @@ btr_block_get_func(
 	dict_index_t*		index,
 	mtr_t*			mtr);
 
-# ifdef UNIV_DEBUG
 /** Gets a buffer page and declares its latching order level.
 @param page_id tablespace/page identifier
 @param page_size page size
@@ -250,37 +249,9 @@ btr_block_get_func(
 @param index index tree, may be NULL if not the insert buffer tree
 @param mtr mini-transaction handle
 @return the block descriptor */
-#  define btr_block_get(page_id, page_size, mode, index, mtr)	\
+# define btr_block_get(page_id, page_size, mode, index, mtr)	\
 	btr_block_get_func(page_id, page_size, mode,		\
 		__FILE__, __LINE__, (dict_index_t*)index, mtr)
-# else /* UNIV_DEBUG */
-/** Gets a buffer page and declares its latching order level.
-@param page_id tablespace/page identifier
-@param page_size page size
-@param mode latch mode
-@param index index tree, may be NULL if not the insert buffer tree
-@param mtr mini-transaction handle
-@return the block descriptor */
-#  define btr_block_get(page_id, page_size, mode, index, mtr)	\
-	btr_block_get_func(page_id, page_size, mode, __FILE__, __LINE__, (dict_index_t*)index, mtr)
-# endif /* UNIV_DEBUG */
-/** Gets a buffer page and declares its latching order level.
-@param page_id tablespace/page identifier
-@param page_size page size
-@param mode latch mode
-@param index index tree, may be NULL if not the insert buffer tree
-@param mtr mini-transaction handle
-@return the uncompressed page frame */
-UNIV_INLINE
-page_t*
-btr_page_get(
-/*=========*/
-	const page_id_t		page_id,
-	const page_size_t&	page_size,
-	ulint			mode,
-	dict_index_t*		index,
-	mtr_t*			mtr)
-	MY_ATTRIBUTE((warn_unused_result));
 /**************************************************************//**
 Gets the index id field of a page.
 @return index id */
@@ -486,30 +457,22 @@ btr_page_reorganize(
 	dict_index_t*	index,	/*!< in: the index tree of the page */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 	MY_ATTRIBUTE((nonnull));
-/*************************************************************//**
-Decides if the page should be split at the convergence point of
-inserts converging to left.
-@return TRUE if split recommended */
-ibool
-btr_page_get_split_rec_to_left(
-/*===========================*/
-	btr_cur_t*	cursor,	/*!< in: cursor at which to insert */
-	rec_t**		split_rec)/*!< out: if split recommended,
-				the first record on upper half page,
-				or NULL if tuple should be first */
-	MY_ATTRIBUTE((warn_unused_result));
-/*************************************************************//**
-Decides if the page should be split at the convergence point of
-inserts converging to right.
-@return TRUE if split recommended */
-ibool
-btr_page_get_split_rec_to_right(
-/*============================*/
-	btr_cur_t*	cursor,	/*!< in: cursor at which to insert */
-	rec_t**		split_rec)/*!< out: if split recommended,
-				the first record on upper half page,
-				or NULL if tuple should be first */
-	MY_ATTRIBUTE((warn_unused_result));
+/** Decide if the page should be split at the convergence point of inserts
+converging to the left.
+@param[in]	cursor	insert position
+@return the first record to be moved to the right half page
+@retval	NULL if no split is recommended */
+rec_t* btr_page_get_split_rec_to_left(const btr_cur_t* cursor);
+/** Decide if the page should be split at the convergence point of inserts
+converging to the right.
+@param[in]	cursor		insert position
+@param[out]	split_rec	if split recommended, the first record
+				on the right half page, or
+				NULL if the to-be-inserted record
+				should be first
+@return whether split is recommended */
+bool
+btr_page_get_split_rec_to_right(const btr_cur_t* cursor, rec_t** split_rec);
 
 /*************************************************************//**
 Splits an index page to halves and inserts the tuple. It is assumed
@@ -549,14 +512,10 @@ btr_insert_on_non_leaf_level_func(
 	mtr_t*		mtr);	/*!< in: mtr */
 #define btr_insert_on_non_leaf_level(f,i,l,t,m)			\
 	btr_insert_on_non_leaf_level_func(f,i,l,t,__FILE__,__LINE__,m)
-/****************************************************************//**
-Sets a record as the predefined minimum record. */
-void
-btr_set_min_rec_mark(
-/*=================*/
-	rec_t*	rec,	/*!< in/out: record */
-	mtr_t*	mtr)	/*!< in: mtr */
-	MY_ATTRIBUTE((nonnull));
+
+/** Sets a record as the predefined minimum record. */
+void btr_set_min_rec_mark(rec_t* rec, mtr_t* mtr) MY_ATTRIBUTE((nonnull));
+
 /** Seek to the parent page of a B-tree page.
 @param[in,out]	index	b-tree
 @param[in]	block	child page

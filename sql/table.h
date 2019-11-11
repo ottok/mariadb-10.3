@@ -326,6 +326,20 @@ enum tmp_table_type
 };
 enum release_type { RELEASE_NORMAL, RELEASE_WAIT_FOR_DROP };
 
+
+enum vcol_init_mode
+{
+  VCOL_INIT_DEPENDENCY_FAILURE_IS_WARNING= 1,
+  VCOL_INIT_DEPENDENCY_FAILURE_IS_ERROR= 2
+  /*
+    There may be new flags here.
+    e.g. to automatically remove sql_mode dependency:
+      GENERATED ALWAYS AS (char_col) ->
+      GENERATED ALWAYS AS (RTRIM(char_col))
+  */
+};
+
+
 enum enum_vcol_update_mode
 {
   VCOL_UPDATE_FOR_READ= 0,
@@ -718,16 +732,20 @@ struct TABLE_SHARE
   bool null_field_first;
   bool system;                          /* Set if system table (one record) */
   bool not_usable_by_query_cache;
+  /*
+    This is used by log tables, for tables that have their own internal
+    binary logging or for tables that doesn't support statement or row logging
+   */
   bool no_replicate;
   bool crashed;
   bool is_view;
   bool can_cmp_whole_record;
+  /* This is set for temporary tables where CREATE was binary logged */
   bool table_creation_was_logged;
   bool non_determinstic_insert;
   bool vcols_need_refixing;
   bool has_update_default_function;
   bool can_do_row_logging;              /* 1 if table supports RBR */
-
   ulong table_map_id;                   /* for row-based replication */
 
   /*
@@ -1475,7 +1493,8 @@ public:
   ulong actual_key_flags(KEY *keyinfo);
   int update_virtual_field(Field *vf);
   int update_virtual_fields(handler *h, enum_vcol_update_mode update_mode);
-  int update_default_fields(bool update, bool ignore_errors);
+  int update_default_fields(bool ignore_errors);
+  void evaluate_update_default_function();
   void reset_default_fields();
   inline ha_rows stat_records() { return used_stat_records; }
 
@@ -1970,7 +1989,8 @@ struct TABLE_LIST
                                             prelocking_types prelocking_type,
                                             TABLE_LIST *belong_to_view_arg,
                                             uint8 trg_event_map_arg,
-                                            TABLE_LIST ***last_ptr)
+                                            TABLE_LIST ***last_ptr,
+                                            my_bool insert_data)
 
   {
     init_one_table(db_arg, table_name_arg, alias_arg, lock_type_arg);
@@ -1985,6 +2005,7 @@ struct TABLE_LIST
     **last_ptr= this;
     prev_global= *last_ptr;
     *last_ptr= &next_global;
+    for_insert_data= insert_data;
   }
 
 
@@ -2395,6 +2416,8 @@ struct TABLE_LIST
 
   /* System Versioning */
   vers_select_conds_t vers_conditions;
+
+  my_bool for_insert_data;
 
   /**
      @brief
@@ -2920,7 +2943,7 @@ bool fix_session_vcol_expr(THD *thd, Virtual_column_info *vcol);
 bool fix_session_vcol_expr_for_read(THD *thd, Field *field,
                                     Virtual_column_info *vcol);
 bool parse_vcol_defs(THD *thd, MEM_ROOT *mem_root, TABLE *table,
-                     bool *error_reported);
+                     bool *error_reported, vcol_init_mode expr);
 TABLE_SHARE *alloc_table_share(const char *db, const char *table_name,
                                const char *key, uint key_length);
 void init_tmp_table_share(THD *thd, TABLE_SHARE *share, const char *key,

@@ -118,7 +118,6 @@ IF(CONNECT_WITH_LIBXML2)
   FIND_PACKAGE(LibXml2)
   IF (LIBXML2_FOUND)
     INCLUDE_DIRECTORIES(${LIBXML2_INCLUDE_DIR})
-    SET(ZLIB_LIBRARY "z") # see ZLIB_INCLUDE_DIR below
     SET(XML_LIBRARY  ${LIBXML2_LIBRARIES})
     SET(CONNECT_SOURCES ${CONNECT_SOURCES} libdoc.cpp libdoc.h)
     add_definitions(-DLIBXML2_SUPPORT)
@@ -313,6 +312,35 @@ ENDIF(CONNECT_WITH_MONGO)
 
 
 #
+# REST
+#
+
+OPTION(CONNECT_WITH_REST "Compile CONNECT storage engine with REST support" ON)
+
+IF(CONNECT_WITH_REST)
+  FIND_PACKAGE(cpprestsdk QUIET)
+  IF (cpprestsdk_FOUND)
+	IF(UNIX)
+#     INCLUDE_DIRECTORIES(${CPPRESTSDK_INCLUDE_DIR})
+#     If needed edit next line to set the path to libcpprest.so
+      SET(REST_LIBRARY -lcpprest)
+      MESSAGE (STATUS ${REST_LIBRARY})
+	ELSE(NOT UNIX)
+#     Next line sets debug compile mode matching cpprest_2_10d.dll
+#     when it was binary installed (can be change later in Visual Studio)
+#     Comment it out if not needed depending on your cpprestsdk installation.
+	  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
+	ENDIF(UNIX)
+    IF(REST_LIBRARY)
+      SET(CONNECT_SOURCES ${CONNECT_SOURCES} tabrest.cpp restget.cpp tabrest.h)
+      add_definitions(-DREST_SUPPORT)
+    ENDIF()
+  ELSE(NOT cpprestsdk_FOUND)
+#    MESSAGE(STATUS "=====> cpprestsdk package not found")
+  ENDIF (cpprestsdk_FOUND)
+ENDIF(CONNECT_WITH_REST)
+
+#
 # XMAP
 #
 
@@ -331,24 +359,16 @@ MYSQL_ADD_PLUGIN(connect ${CONNECT_SOURCES}
   COMPONENT connect-engine
   RECOMPILE_FOR_EMBEDDED
   LINK_LIBRARIES ${ZLIB_LIBRARY} ${XML_LIBRARY} ${ICONV_LIBRARY}
-    ${ODBC_LIBRARY} ${JDBC_LIBRARY} ${MONGOC_LIBRARY} ${IPHLPAPI_LIBRARY})
+    ${ODBC_LIBRARY} ${JDBC_LIBRARY} ${MONGOC_LIBRARY} ${IPHLPAPI_LIBRARY} ${REST_LIBRARY})
 
 IF(NOT TARGET connect)
   RETURN()
 ENDIF()
 
-# Don't link with bundled zlib and systel libxml2 at the same time.
-# System libxml2 uses system zlib, might conflict with the bundled one.
-IF (XML_LIBRARY AND BUILD_BUNDLED_ZLIB)
-  GET_PROPERTY(INCS TARGET connect PROPERTY INCLUDE_DIRECTORIES)
-  LIST(REMOVE_ITEM INCS ${ZLIB_INCLUDE_DIR})
-  SET_PROPERTY(TARGET connect PROPERTY INCLUDE_DIRECTORIES ${INCS})
-ENDIF()
-
 IF(WIN32)
   IF (libmongoc-1.0_FOUND)
-	  SET_TARGET_PROPERTIES(connect PROPERTIES LINK_FLAGS
-	    "/DELAYLOAD:libbson-1.0.dll /DELAYLOAD:libmongoc-1.0.dll")
+    SET_TARGET_PROPERTIES(connect PROPERTIES LINK_FLAGS
+      "/DELAYLOAD:libbson-1.0.dll /DELAYLOAD:libmongoc-1.0.dll")
   ENDIF(libmongoc-1.0_FOUND)
 
 # Install some extra files that belong to connect engine
@@ -376,3 +396,4 @@ IF(CONNECT_WITH_JDBC AND JAVA_FOUND AND JNI_FOUND)
     ${CMAKE_CURRENT_BINARY_DIR}/JdbcInterface.jar
     DESTINATION ${INSTALL_PLUGINDIR} COMPONENT connect-engine)
 ENDIF()
+

@@ -292,24 +292,22 @@ class Item_sum_dense_rank: public Item_sum_int
   { return get_item_copy<Item_sum_dense_rank>(thd, this); }
 };
 
-class Item_sum_hybrid_simple : public Item_sum,
-                               public Type_handler_hybrid_field_type
+class Item_sum_hybrid_simple : public Item_sum_hybrid
 {
  public:
   Item_sum_hybrid_simple(THD *thd, Item *arg):
-   Item_sum(thd, arg),
-   Type_handler_hybrid_field_type(&type_handler_longlong),
+   Item_sum_hybrid(thd, arg),
    value(NULL)
-  { collation.set(&my_charset_bin); }
+  { }
 
   Item_sum_hybrid_simple(THD *thd, Item *arg1, Item *arg2):
-   Item_sum(thd, arg1, arg2),
-   Type_handler_hybrid_field_type(&type_handler_longlong),
+   Item_sum_hybrid(thd, arg1, arg2),
    value(NULL)
-  { collation.set(&my_charset_bin); }
+  { }
 
   bool add();
   bool fix_fields(THD *, Item **);
+  bool fix_length_and_dec();
   void setup_hybrid(THD *thd, Item *item);
   double val_real();
   longlong val_int();
@@ -317,8 +315,6 @@ class Item_sum_hybrid_simple : public Item_sum,
   void reset_field();
   String *val_str(String *);
   bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
-  const Type_handler *type_handler() const
-  { return Type_handler_hybrid_field_type::type_handler(); }
   void update_field();
   Field *create_tmp_field(bool group, TABLE *table);
   void clear()
@@ -1102,17 +1098,6 @@ public:
     }
   }
 
-  void setting_handler_for_percentile_functions(Item_result rtype) const
-  {
-    switch (window_func()->sum_func()){
-    case Item_sum::PERCENTILE_DISC_FUNC:
-         ((Item_sum_percentile_disc* ) window_func())->set_handler_by_cmp_type(rtype);
-         break;
-    default:
-      return;
-    }
-  }
-
   bool check_result_type_of_order_item();
 
 
@@ -1297,7 +1282,7 @@ public:
 
   bool fix_length_and_dec()
   {
-    decimals = window_func()->decimals;
+    Type_std_attributes::set(window_func());
     return FALSE;
   }
 

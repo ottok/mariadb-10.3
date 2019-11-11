@@ -619,6 +619,8 @@ JSON_search( '{"x": "\\""}', "one", '"')
 SELECT JSON_search( '{"x": "\\""}', "one", '\\"');
 JSON_search( '{"x": "\\""}', "one", '\\"')
 "$.x"
+set @save_max_allowed_packet=@@max_allowed_packet;
+set @save_net_buffer_length=@@net_buffer_length;
 set @@global.net_buffer_length=1024;
 set @@global.max_allowed_packet=2048;
 connect  newconn, localhost, root,,;
@@ -639,8 +641,8 @@ NULL
 Warnings:
 Warning	1301	Result of json_object() was larger than max_allowed_packet (2048) - truncated
 connection default;
-set @@global.max_allowed_packet = default;
-set @@global.net_buffer_length = default;
+set @@global.max_allowed_packet = @save_max_allowed_packet;
+set @@global.net_buffer_length = @save_net_buffer_length;
 disconnect newconn;
 create table t1(j longtext, p longtext);
 insert into t1 values
@@ -939,6 +941,27 @@ def					json_length	3	10	1	Y	32896	0	63
 def					json_depnth	3	10	1	N	32897	0	63
 json_length	json_depnth
 2	3
+#
+# MDEV-19670 json escaped unicode parse error
+#
+SELECT json_valid('{"value":"\\ud83d\\ude0a"}');
+json_valid('{"value":"\\ud83d\\ude0a"}')
+1
+SELECT json_valid('{"test": "\\ud83d\\ude0b"}');
+json_valid('{"test": "\\ud83d\\ude0b"}')
+1
+#
+# MDEV-19670 json escaped unicode parse error
+#
+SELECT JSON_VALID('{"admin\\"": null}'), '{"admin\\"": null}'
+    UNION
+SELECT JSON_VALID('{"\\"admin": null}'), '{"\\"admin": null}'
+      UNION
+SELECT JSON_VALID('{"\\"": null}'), '{"\\"": null}';
+JSON_VALID('{"admin\\"": null}')	{"admin\"": null}
+1	{"admin\"": null}
+1	{"\"admin": null}
+1	{"\"": null}
 #
 # End of 10.3 tests
 #

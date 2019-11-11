@@ -49,7 +49,7 @@
 #include <m_ctype.h>
 #include <sys/stat.h>
 #include <thr_alarm.h>
-#ifdef	__WIN__
+#ifdef	__WIN__0
 #include <io.h>
 #endif
 #include <mysys_err.h>
@@ -850,7 +850,6 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
   invoker.init();
   prepare_derived_at_open= FALSE;
   create_tmp_table_for_derived= FALSE;
-  force_read_stats= FALSE;
   save_prep_leaf_list= FALSE;
   org_charset= 0;
   /* Restore THR_THD */
@@ -2400,7 +2399,6 @@ bool THD::check_string_for_wellformedness(const char *str,
                                           size_t length,
                                           CHARSET_INFO *cs) const
 {
-  DBUG_ASSERT(charset_is_system_charset);
   size_t wlen= Well_formed_prefix(cs, str, length).length();
   if (wlen < length)
   {
@@ -4805,12 +4803,6 @@ extern "C" int thd_slave_thread(const MYSQL_THD thd)
 }
 
 
-extern "C" int thd_rpl_stmt_based(const MYSQL_THD thd)
-{
-  return thd &&
-    !thd->is_current_stmt_binlog_format_row() &&
-    !thd->is_current_stmt_binlog_disabled();
-}
 
 
 /* Returns high resolution timestamp for the start
@@ -6029,17 +6021,33 @@ int THD::decide_logging_format(TABLE_LIST *tables)
       Get the capabilities vector for all involved storage engines and
       mask out the flags for the binary log.
     */
-    for (TABLE_LIST *table= tables; table; table= table->next_global)
+    for (TABLE_LIST *tbl= tables; tbl; tbl= tbl->next_global)
     {
-      if (table->placeholder())
+      TABLE *table;
+      TABLE_SHARE *share;
+      handler::Table_flags flags;
+      if (tbl->placeholder())
         continue;
 
-      handler::Table_flags const flags= table->table->file->ha_table_flags();
+      table= tbl->table;
+      share= table->s;
+      flags= table->file->ha_table_flags();
+      if (!share->table_creation_was_logged)
+      {
+        /*
+          This is a temporary table which was not logged in the binary log.
+          Disable statement logging to enforce row level logging.
+        */
+        DBUG_ASSERT(share->tmp_table);
+        flags&= ~HA_BINLOG_STMT_CAPABLE;
+        /* We can only use row logging */
+        set_current_stmt_binlog_format_row();
+      }
 
       DBUG_PRINT("info", ("table: %s; ha_table_flags: 0x%llx",
-                          table->table_name.str, flags));
+                          tbl->table_name.str, flags));
 
-      if (table->table->s->no_replicate)
+      if (share->no_replicate)
       {
         /*
           The statement uses a table that is not replicated.
@@ -6057,44 +6065,44 @@ int THD::decide_logging_format(TABLE_LIST *tables)
         */
         lex->set_stmt_unsafe(LEX::BINLOG_STMT_UNSAFE_SYSTEM_TABLE);
 
-        if (table->lock_type >= TL_WRITE_ALLOW_WRITE)
+        if (tbl->lock_type >= TL_WRITE_ALLOW_WRITE)
         {
           non_replicated_tables_count++;
           continue;
         }
       }
-      if (table == lex->first_not_own_table())
+      if (tbl == lex->first_not_own_table())
         found_first_not_own_table= true;
 
       replicated_tables_count++;
 
-      if (table->prelocking_placeholder != TABLE_LIST::PRELOCK_FK)
+      if (tbl->prelocking_placeholder != TABLE_LIST::PRELOCK_FK)
       {
-        if (table->lock_type <= TL_READ_NO_INSERT)
+        if (tbl->lock_type <= TL_READ_NO_INSERT)
           has_read_tables= true;
-        else if (table->table->found_next_number_field &&
-                 (table->lock_type >= TL_WRITE_ALLOW_WRITE))
+        else if (table->found_next_number_field &&
+                 (tbl->lock_type >= TL_WRITE_ALLOW_WRITE))
         {
           has_auto_increment_write_tables= true;
           has_auto_increment_write_tables_not_first= found_first_not_own_table;
-          if (table->table->s->next_number_keypart != 0)
+          if (share->next_number_keypart != 0)
             has_write_table_auto_increment_not_first_in_pk= true;
         }
       }
 
-      if (table->lock_type >= TL_WRITE_ALLOW_WRITE)
+      if (tbl->lock_type >= TL_WRITE_ALLOW_WRITE)
       {
         bool trans;
         if (prev_write_table && prev_write_table->file->ht !=
-            table->table->file->ht)
+            table->file->ht)
           multi_write_engine= TRUE;
-        if (table->table->s->non_determinstic_insert &&
+        if (share->non_determinstic_insert &&
             !(sql_command_flags[lex->sql_command] & CF_SCHEMA_CHANGE))
           has_write_tables_with_unsafe_statements= true;
 
-        trans= table->table->file->has_transactions();
+        trans= table->file->has_transactions();
 
-        if (table->table->s->tmp_table)
+        if (share->tmp_table)
           lex->set_stmt_accessed_table(trans ? LEX::STMT_WRITES_TEMP_TRANS_TABLE :
                                                LEX::STMT_WRITES_TEMP_NON_TRANS_TABLE);
         else
@@ -6105,17 +6113,16 @@ int THD::decide_logging_format(TABLE_LIST *tables)
         flags_write_some_set |= flags;
         is_write= TRUE;
 
-        prev_write_table= table->table;
+        prev_write_table= table;
 
       }
       flags_access_some_set |= flags;
 
-      if (lex->sql_command != SQLCOM_CREATE_TABLE ||
-          (lex->sql_command == SQLCOM_CREATE_TABLE && lex->tmp_table()))
+      if (lex->sql_command != SQLCOM_CREATE_TABLE || lex->tmp_table())
       {
-        my_bool trans= table->table->file->has_transactions();
+        my_bool trans= table->file->has_transactions();
 
-        if (table->table->s->tmp_table)
+        if (share->tmp_table)
           lex->set_stmt_accessed_table(trans ? LEX::STMT_READS_TEMP_TRANS_TABLE :
                                                LEX::STMT_READS_TEMP_NON_TRANS_TABLE);
         else
@@ -6124,10 +6131,10 @@ int THD::decide_logging_format(TABLE_LIST *tables)
       }
 
       if (prev_access_table && prev_access_table->file->ht !=
-          table->table->file->ht)
+          table->file->ht)
         multi_access_engine= TRUE;
 
-      prev_access_table= table->table;
+      prev_access_table= table;
     }
 
     if (wsrep_binlog_format() != BINLOG_FORMAT_ROW)
@@ -6256,9 +6263,16 @@ int THD::decide_logging_format(TABLE_LIST *tables)
         {
           /*
             5. Error: Cannot modify table that uses a storage engine
-               limited to row-logging when binlog_format = STATEMENT
+               limited to row-logging when binlog_format = STATEMENT, except
+               if all tables that are updated are temporary tables
           */
-	  if (IF_WSREP((!WSREP(this) || wsrep_exec_mode == LOCAL_STATE),1))
+          if (!lex->stmt_writes_to_non_temp_table())
+          {
+            /* As all updated tables are temporary, nothing will be logged */
+            set_current_stmt_binlog_format_row();
+          }
+          else if (IF_WSREP((!WSREP(this) ||
+                             wsrep_exec_mode == LOCAL_STATE),1))
 	  {
             my_error((error= ER_BINLOG_STMT_MODE_AND_ROW_ENGINE), MYF(0), "");
 	  }
@@ -6327,10 +6341,8 @@ int THD::decide_logging_format(TABLE_LIST *tables)
                         "ROW" : "STATEMENT"));
 
     if (variables.binlog_format == BINLOG_FORMAT_ROW &&
-        (lex->sql_command == SQLCOM_UPDATE ||
-         lex->sql_command == SQLCOM_UPDATE_MULTI ||
-         lex->sql_command == SQLCOM_DELETE ||
-         lex->sql_command == SQLCOM_DELETE_MULTI))
+        (sql_command_flags[lex->sql_command] &
+         (CF_UPDATES_DATA | CF_DELETES_DATA)))
     {
       String table_names;
       /*
@@ -6350,8 +6362,8 @@ int THD::decide_logging_format(TABLE_LIST *tables)
       }
       if (!table_names.is_empty())
       {
-        bool is_update= (lex->sql_command == SQLCOM_UPDATE ||
-                         lex->sql_command == SQLCOM_UPDATE_MULTI);
+        bool is_update= MY_TEST(sql_command_flags[lex->sql_command] &
+                                CF_UPDATES_DATA);
         /*
           Replace the last ',' with '.' for table_names
         */
@@ -6382,6 +6394,48 @@ int THD::decide_logging_format(TABLE_LIST *tables)
   DBUG_RETURN(0);
 }
 
+int THD::decide_logging_format_low(TABLE *table)
+{
+  /*
+   INSERT...ON DUPLICATE KEY UPDATE on a table with more than one unique keys
+   can be unsafe.
+   */
+  if(wsrep_binlog_format() <= BINLOG_FORMAT_STMT &&
+       !is_current_stmt_binlog_format_row() &&
+       !lex->is_stmt_unsafe() &&
+       lex->sql_command == SQLCOM_INSERT &&
+       lex->duplicates == DUP_UPDATE)
+  {
+    uint unique_keys= 0;
+    uint keys= table->s->keys, i= 0;
+    Field *field;
+    for (KEY* keyinfo= table->s->key_info;
+             i < keys && unique_keys <= 1; i++, keyinfo++)
+      if (keyinfo->flags & HA_NOSAME &&
+         !(keyinfo->key_part->field->flags & AUTO_INCREMENT_FLAG &&
+             //User given auto inc can be unsafe
+             !keyinfo->key_part->field->val_int()))
+      {
+        for (uint j= 0; j < keyinfo->user_defined_key_parts; j++)
+        {
+          field= keyinfo->key_part[j].field;
+          if(!bitmap_is_set(table->write_set,field->field_index))
+            goto exit;
+        }
+        unique_keys++;
+exit:;
+      }
+
+    if (unique_keys > 1)
+    {
+      lex->set_stmt_unsafe(LEX::BINLOG_STMT_UNSAFE_INSERT_TWO_KEYS);
+      binlog_unsafe_warning_flags|= lex->get_stmt_unsafe_flags();
+      set_current_stmt_binlog_format_row_if_mixed();
+      return 1;
+    }
+  }
+  return 0;
+}
 
 /*
   Implementation of interface to write rows to the binary log through the
@@ -7143,11 +7197,12 @@ void THD::issue_unsafe_warnings()
 
   @see decide_logging_format
 
+  @retval < 0 No logging of query (ok)
   @retval 0 Success
-
-  @retval nonzero If there is a failure when writing the query (e.g.,
-  write failure), then the error code is returned.
+  @retval > 0  If there is a failure when writing the query (e.g.,
+               write failure), then the error code is returned.
 */
+
 int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
                       ulong query_len, bool is_trans, bool direct, 
                       bool suppress_use, int errcode)
@@ -7173,7 +7228,7 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
       The current statement is to be ignored, and not written to
       the binlog. Do not call issue_unsafe_warnings().
     */
-    DBUG_RETURN(0);
+    DBUG_RETURN(-1);
   }
 
   /*
@@ -7189,7 +7244,10 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
   {
     int error;
     if (unlikely(error= binlog_flush_pending_rows_event(TRUE, is_trans)))
+    {
+      DBUG_ASSERT(error > 0);
       DBUG_RETURN(error);
+    }
   }
 
   /*
@@ -7232,7 +7290,7 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
                ("is_current_stmt_binlog_format_row: %d",
                 is_current_stmt_binlog_format_row()));
     if (is_current_stmt_binlog_format_row())
-      DBUG_RETURN(0);
+      DBUG_RETURN(-1);
     /* Fall through */
 
     /*
@@ -7273,7 +7331,7 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
       }
 
       binlog_table_maps= 0;
-      DBUG_RETURN(error);
+      DBUG_RETURN(error >= 0 ? error : 1);
     }
 
   case THD::QUERY_TYPE_COUNT:

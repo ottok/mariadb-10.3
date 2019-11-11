@@ -43,8 +43,7 @@ Created 4/24/1996 Heikki Tuuri
 #include "rem0cmp.h"
 #include "srv0start.h"
 #include "srv0srv.h"
-#include <stack>
-#include <set>
+#include "fts0opt.h"
 
 /** Following are the InnoDB system tables. The positions in
 this array are referenced by enum dict_system_table_id. */
@@ -69,7 +68,6 @@ NULL.  These tables must be subsequently loaded so that all the foreign
 key constraints are loaded into memory.
 
 @param[in]	name		Table name in the db/tablename format
-@param[in]	cached		true=add to cache, false=do not
 @param[in]	ignore_err	Error to be ignored when loading table
 				and its index definition
 @param[out]	fk_tables	Related table names that must also be
@@ -82,7 +80,6 @@ static
 dict_table_t*
 dict_load_table_one(
 	const table_name_t&	name,
-	bool			cached,
 	dict_err_ignore_t	ignore_err,
 	dict_names_t&		fk_tables);
 
@@ -2577,8 +2574,9 @@ corrupted:
 			and simply did not load this index definition, the
 			.frm file would disagree with the index definitions
 			inside InnoDB. */
-			if (!dict_index_add_to_cache(
-				    index, index->page, false, &error)) {
+			if ((error = dict_index_add_to_cache(index,
+							     index->page))
+			    != DB_SUCCESS) {
 				goto func_exit;
 			}
 		}
@@ -2731,17 +2729,12 @@ the cluster definition if the table is a member in a cluster. Also loads
 all foreign key constraints where the foreign key is in the table or where
 a foreign key references columns in this table.
 @param[in]	name		Table name in the dbname/tablename format
-@param[in]	cached		true=add to cache, false=do not
 @param[in]	ignore_err	Error to be ignored when loading
 				table and its index definition
 @return table, NULL if does not exist; if the table is stored in an
 .ibd file, but the file does not exist, then we set the file_unreadable
 flag in the table object we return. */
-dict_table_t*
-dict_load_table(
-	const char*	name,
-	bool		cached,
-	dict_err_ignore_t ignore_err)
+dict_table_t* dict_load_table(const char* name, dict_err_ignore_t ignore_err)
 {
 	dict_names_t			fk_list;
 	dict_table_t*			result;
@@ -2756,12 +2749,12 @@ dict_load_table(
 
 	if (!result) {
 		result = dict_load_table_one(const_cast<char*>(name),
-					     cached, ignore_err, fk_list);
+					     ignore_err, fk_list);
 		while (!fk_list.empty()) {
 			if (!dict_table_check_if_in_cache_low(fk_list.front()))
 				dict_load_table_one(
 					const_cast<char*>(fk_list.front()),
-					cached, ignore_err, fk_list);
+					ignore_err, fk_list);
 			fk_list.pop_front();
 		}
 	}
@@ -2854,7 +2847,6 @@ NULL.  These tables must be subsequently loaded so that all the foreign
 key constraints are loaded into memory.
 
 @param[in]	name		Table name in the db/tablename format
-@param[in]	cached		true=add to cache, false=do not
 @param[in]	ignore_err	Error to be ignored when loading table
 				and its index definition
 @param[out]	fk_tables	Related table names that must also be
@@ -2867,7 +2859,6 @@ static
 dict_table_t*
 dict_load_table_one(
 	const table_name_t&	name,
-	bool			cached,
 	dict_err_ignore_t	ignore_err,
 	dict_names_t&		fk_tables)
 {
@@ -2956,10 +2947,8 @@ err_exit:
 
 	dict_table_add_system_columns(table, heap);
 
-	if (cached) {
-		table->can_be_evicted = true;
-		table->add_to_cache();
-	}
+	table->can_be_evicted = true;
+	table->add_to_cache();
 
 	mem_heap_empty(heap);
 
@@ -2997,7 +2986,7 @@ err_exit:
 		}
 	}
 
-	if (err == DB_SUCCESS && cached && table->is_readable()) {
+	if (err == DB_SUCCESS && table->is_readable()) {
 		if (table->space && !fil_space_get_size(table->space_id)) {
 corrupted:
 			table->corrupted = true;
@@ -3042,7 +3031,7 @@ corrupted:
 	of the error condition, since the user may want to dump data from the
 	clustered index. However we load the foreign key information only if
 	all indexes were loaded. */
-	if (!cached || !table->is_readable()) {
+	if (!table->is_readable()) {
 		/* Don't attempt to load the indexes from disk. */
 	} else if (err == DB_SUCCESS) {
 		err = dict_load_foreigns(table->name.m_name, NULL,
@@ -3086,7 +3075,7 @@ func_exit:
 	mem_heap_free(heap);
 
 	ut_ad(!table
-	      || ignore_err != DICT_ERR_IGNORE_NONE
+	      || (ignore_err & ~DICT_ERR_IGNORE_FK_NOKEY)
 	      || !table->is_readable()
 	      || !table->corrupted);
 
@@ -3099,8 +3088,12 @@ func_exit:
 			FTS */
 			fts_optimize_remove_table(table);
 			fts_free(table);
-		} else {
+		} else if (fts_optimize_wq) {
 			fts_optimize_add_table(table);
+		} else if (table->can_be_evicted) {
+			/* fts_optimize_thread is not started yet.
+			So make the table as non-evictable from cache. */
+			dict_table_move_from_lru_to_non_lru(table);
 		}
 	}
 
@@ -3194,7 +3187,7 @@ check_rec:
 				/* Load the table definition to memory */
 				char*	table_name = mem_heap_strdupl(
 					heap, (char*) field, len);
-				table = dict_load_table(table_name, true, ignore_err);
+				table = dict_load_table(table_name, ignore_err);
 			}
 		}
 	}
@@ -3775,29 +3768,14 @@ dict_load_table_id_on_index_id(
 	return(found);
 }
 
-UNIV_INTERN
-dict_table_t*
-dict_table_open_on_index_id(
-/*========================*/
-	index_id_t index_id,	/*!< in: index id */
-	bool dict_locked)	/*!< in: dict locked */
+dict_table_t* dict_table_open_on_index_id(index_id_t index_id)
 {
-	if (!dict_locked) {
-		mutex_enter(&dict_sys->mutex);
-	}
-
-	ut_ad(mutex_own(&dict_sys->mutex));
 	table_id_t table_id;
 	dict_table_t * table = NULL;
 	if (dict_load_table_id_on_index_id(index_id, &table_id)) {
-		bool local_dict_locked = true;
-		table = dict_table_open_on_id(table_id,
-					      local_dict_locked,
+		table = dict_table_open_on_id(table_id, true,
 					      DICT_TABLE_OP_LOAD_TABLESPACE);
 	}
 
-	if (!dict_locked) {
-		mutex_exit(&dict_sys->mutex);
-	}
 	return table;
 }

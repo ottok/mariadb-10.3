@@ -675,7 +675,11 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
   frmlen= read_length + sizeof(head);
 
   share->init_from_binary_frm_image(thd, false, buf, frmlen);
-  error_given= true; // init_from_binary_frm_image has already called my_error()
+  /*
+    Don't give any additional errors. If there would be a problem,
+    init_from_binary_frm_image would call my_error() itself.
+  */
+  error_given= true;
   my_free(buf);
 
   goto err_not_open;
@@ -684,6 +688,9 @@ err:
   mysql_file_close(file, MYF(MY_WME));
 
 err_not_open:
+  /* Mark that table was created earlier and thus should have been logged */
+  share->table_creation_was_logged= 1;
+
   if (unlikely(share->error && !error_given))
   {
     share->open_errno= my_errno;
@@ -992,7 +999,7 @@ static void mysql57_calculate_null_position(TABLE_SHARE *share,
     expression
 */
 bool parse_vcol_defs(THD *thd, MEM_ROOT *mem_root, TABLE *table,
-                     bool *error_reported)
+                     bool *error_reported, vcol_init_mode mode)
 {
   CHARSET_INFO *save_character_set_client= thd->variables.character_set_client;
   CHARSET_INFO *save_collation= thd->variables.collation_connection;
@@ -1076,6 +1083,12 @@ bool parse_vcol_defs(THD *thd, MEM_ROOT *mem_root, TABLE *table,
       vcol= unpack_vcol_info_from_frm(thd, mem_root, table, &expr_str,
                                     &((*field_ptr)->vcol_info), error_reported);
       *(vfield_ptr++)= *field_ptr;
+      if (vcol && field_ptr[0]->check_vcol_sql_mode_dependency(thd, mode))
+      {
+        DBUG_ASSERT(thd->is_error());
+        *error_reported= true;
+        goto end;
+      }
       break;
     case VCOL_DEFAULT:
       vcol= unpack_vcol_info_from_frm(thd, mem_root, table, &expr_str,
@@ -2832,6 +2845,8 @@ ret:
              sql_copy);
     DBUG_RETURN(HA_ERR_GENERIC);
   }
+  /* Treat the table as normal table from binary logging point of view */
+  table_creation_was_logged= 1;
   DBUG_RETURN(0);
 }
 
@@ -3359,8 +3374,26 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
     if (share->table_check_constraints || share->field_check_constraints)
       outparam->check_constraints= check_constraint_ptr;
 
-    if (unlikely(parse_vcol_defs(thd, &outparam->mem_root, outparam,
-                                 &error_reported)))
+    vcol_init_mode mode= VCOL_INIT_DEPENDENCY_FAILURE_IS_WARNING;
+#if MYSQL_VERSION_ID > 100500
+    switch (thd->lex->sql_command)
+    {
+    case SQLCOM_CREATE_TABLE:
+      mode= VCOL_INIT_DEPENDENCY_FAILURE_IS_ERROR;
+      break;
+    case SQLCOM_ALTER_TABLE:
+    case SQLCOM_CREATE_INDEX:
+    case SQLCOM_DROP_INDEX:
+      if ((ha_open_flags & HA_OPEN_FOR_ALTER) == 0)
+        mode= VCOL_INIT_DEPENDENCY_FAILURE_IS_ERROR;
+      break;
+    default:
+      break;
+    }
+#endif
+
+    if (parse_vcol_defs(thd, &outparam->mem_root, outparam,
+                        &error_reported, mode))
     {
       error= OPEN_FRM_CORRUPTED;
       goto err;
@@ -6486,15 +6519,16 @@ void TABLE::mark_columns_needed_for_delete()
     }
   }
 
-  if (need_signal)
-    file->column_bitmaps_signal();
-
   if (s->versioned)
   {
     bitmap_set_bit(read_set, s->vers_start_field()->field_index);
     bitmap_set_bit(read_set, s->vers_end_field()->field_index);
     bitmap_set_bit(write_set, s->vers_end_field()->field_index);
+    need_signal= true;
   }
+
+  if (need_signal)
+    file->column_bitmaps_signal();
 }
 
 
@@ -6507,7 +6541,7 @@ void TABLE::mark_columns_needed_for_delete()
     updated columns to be read.
 
     If this is no the case, we do like in the delete case and mark
-    if neeed, either the primary key column or all columns to be read.
+    if needed, either the primary key column or all columns to be read.
     (see mark_columns_needed_for_delete() for details)
 
     If the engine has HA_REQUIRES_KEY_COLUMNS_FOR_DELETE, we will
@@ -6571,14 +6605,18 @@ void TABLE::mark_columns_needed_for_update()
       need_signal= true;
     }
   }
-  /*
-     For System Versioning we have to read all columns since we will store
-     a copy of previous row with modified Sys_end column back to a table.
-  */
   if (s->versioned)
   {
-    // We will copy old columns to a new row.
-    use_all_columns();
+    /*
+      For System Versioning we have to read all columns since we store
+      a copy of previous row with modified row_end back to a table.
+
+      Without write_set versioning.rpl,row is unstable until MDEV-16370 is
+      applied.
+    */
+    bitmap_union(read_set, &s->all_set);
+    bitmap_union(write_set, &s->all_set);
+    need_signal= true;
   }
   if (check_constraints)
   {
@@ -7908,7 +7946,7 @@ int TABLE::update_virtual_field(Field *vf)
          ignore_errors == 0. If set then an error was generated.
 */
 
-int TABLE::update_default_fields(bool update_command, bool ignore_errors)
+int TABLE::update_default_fields(bool ignore_errors)
 {
   Query_arena backup_arena;
   Field **field_ptr;
@@ -7928,14 +7966,9 @@ int TABLE::update_default_fields(bool update_command, bool ignore_errors)
     */
     if (!field->has_explicit_value())
     {
-      if (!update_command)
-      {
-        if (field->default_value &&
-            (field->default_value->flags || field->flags & BLOB_FLAG))
-          res|= (field->default_value->expr->save_in_field(field, 0) < 0);
-      }
-      else
-        res|= field->evaluate_update_default_function();
+      if (field->default_value &&
+          (field->default_value->flags || field->flags & BLOB_FLAG))
+        res|= (field->default_value->expr->save_in_field(field, 0) < 0);
       if (!ignore_errors && res)
       {
         my_error(ER_CALCULATING_DEFAULT_VALUE, MYF(0), field->field_name.str);
@@ -7949,6 +7982,21 @@ int TABLE::update_default_fields(bool update_command, bool ignore_errors)
 }
 
 
+void TABLE::evaluate_update_default_function()
+{
+  DBUG_ENTER("TABLE::evaluate_update_default_function");
+
+  if (s->has_update_default_function)
+    for (Field **field_ptr= default_field; *field_ptr ; field_ptr++)
+    {
+      Field *field= (*field_ptr);
+      if (!field->has_explicit_value() && field->has_update_default_function())
+        field->set_time();
+    }
+  DBUG_VOID_RETURN;
+}
+
+
 void TABLE::vers_update_fields()
 {
   bitmap_set_bit(write_set, vers_start_field()->field_index);
@@ -7957,7 +8005,10 @@ void TABLE::vers_update_fields()
   if (versioned(VERS_TIMESTAMP))
   {
     if (!vers_write)
+    {
+      file->column_bitmaps_signal();
       return;
+    }
     if (vers_start_field()->store_timestamp(in_use->query_start(),
                                             in_use->query_start_sec_part()))
       DBUG_ASSERT(0);
@@ -7965,11 +8016,15 @@ void TABLE::vers_update_fields()
   else
   {
     if (!vers_write)
+    {
+      file->column_bitmaps_signal();
       return;
+    }
   }
 
   vers_end_field()->set_max();
   bitmap_set_bit(read_set, vers_end_field()->field_index);
+  file->column_bitmaps_signal();
 }
 
 
@@ -9114,7 +9169,7 @@ bool vers_select_conds_t::eq(const vers_select_conds_t &conds) const
   case SYSTEM_TIME_ALL:
     return true;
   case SYSTEM_TIME_BEFORE:
-    DBUG_ASSERT(0);
+    break;
   case SYSTEM_TIME_AS_OF:
     return start.eq(conds.start);
   case SYSTEM_TIME_FROM_TO:
