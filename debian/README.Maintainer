@@ -24,8 +24,8 @@ uploaded to Debian/Ubuntu before making new changes on git.
 This can be done by using dgit. The example command below will fetch the latest
 mariadb-10.0 package available in Ubuntu 16.04 (Xenial) base archive, security
 archive or updates archive (whichever has a newer version):
-  dgit -d ubuntu clone mariadb-10.0 xenial,-security,-updates
-  cp -ra mariadb-10.0/* .
+  dgit -d ubuntu clone mariadb-10.1 bionic,-security,-updates
+  cp -ra mariadb-10.1/* .
 
 You can then compare these two directories with a recursive diff or `git diff`.
 
@@ -185,7 +185,9 @@ needs to be tested on the Ubuntu release which most closely matches the Debian
 release in question. The following matrix maps what package should be tested
 where:
 
-- 10.4 for sid on launchpad eoan
+- 10.3 for sid on launchpad focal
+- 10.3 for eoan on launchpad eoan
+- 10.3 for disco on launchpad disco
 - 10.3 for buster on launchpad disco
 - 10.1 for bionic on launchpad bionic
 - 10.0 for xenial on launchpad xenial
@@ -211,16 +213,17 @@ regressions before they spread out to too many users.
 
 Upload priority for 10.3
 - debian sid
-- debian buster
-- ubuntu disco
+- ubuntu-19.10 eoan
+- ubuntu-19.04 disco
+- debian-10 buster
 
 for 10.1
-- debian stretch
-- ubuntu bionic
+- ubuntu-18.04 bionic
+- debian-9 stretch
 
-for 10.0
-- debian jessie
-- ubuntu xenial
+for 10.0 (only in case there are extra releases after official EOL)
+- ubuntu-16.04 xenial
+- debian-8 jessie
 
 ## Comparison to other distributions ##
 
