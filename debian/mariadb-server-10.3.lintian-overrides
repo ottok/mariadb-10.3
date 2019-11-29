@@ -1,5 +1,3 @@
-# ash's buildin has no "-e" so use /bin/echo
-command-with-path-in-maintainer-script postinst:150 /bin/echo
 # OK, path /usr/sbin/invoke-rc.d is only used in check, executes are run without the path
 # False positive: unfortified calls have already been fully validated at compile-time
 # See full research at https://jira.mariadb.org/browse/MDEV-8377
