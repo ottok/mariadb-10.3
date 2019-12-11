@@ -361,7 +361,7 @@ ibuf_tree_root_get(
 	ut_ad(ibuf_inside(mtr));
 	ut_ad(mutex_own(&ibuf_mutex));
 
-	mtr_sx_lock(dict_index_get_lock(ibuf->index), mtr);
+	mtr_sx_lock_index(ibuf->index, mtr);
 
 	/* only segment list access is exclusive each other */
 	block = buf_page_get(
@@ -459,7 +459,7 @@ ibuf_init_at_db_start(void)
 
 	compile_time_assert(IBUF_SPACE_ID == TRX_SYS_SPACE);
 	compile_time_assert(IBUF_SPACE_ID == 0);
-	mtr_x_lock(&fil_system.sys_space->latch, &mtr);
+	mtr_x_lock_space(fil_system.sys_space, &mtr);
 
 	mutex_enter(&ibuf_mutex);
 
@@ -1977,7 +1977,7 @@ ibuf_add_free_page(void)
 	mtr_start(&mtr);
 	/* Acquire the fsp latch before the ibuf header, obeying the latching
 	order */
-	mtr_x_lock(&fil_system.sys_space->latch, &mtr);
+	mtr_x_lock_space(fil_system.sys_space, &mtr);
 	header_page = ibuf_header_page_get(&mtr);
 
 	/* Allocate a new page: NOTE that if the page has been a part of a
@@ -2056,7 +2056,7 @@ ibuf_remove_free_page(void)
 	/* Acquire the fsp latch before the ibuf header, obeying the latching
 	order */
 
-	mtr_x_lock(&fil_system.sys_space->latch, &mtr);
+	mtr_x_lock_space(fil_system.sys_space, &mtr);
 	header_page = ibuf_header_page_get(&mtr);
 
 	/* Prevent pessimistic inserts to insert buffer trees for a while */
@@ -2980,7 +2980,7 @@ ibuf_get_volume_buffered(
 
 	/* Look at the previous page */
 
-	prev_page_no = btr_page_get_prev(page, mtr);
+	prev_page_no = btr_page_get_prev(page);
 
 	if (prev_page_no == FIL_NULL) {
 
@@ -3001,7 +3001,7 @@ ibuf_get_volume_buffered(
 	}
 
 #ifdef UNIV_BTR_DEBUG
-	ut_a(btr_page_get_next(prev_page, mtr) == page_get_page_no(page));
+	ut_a(!memcmp(prev_page + FIL_PAGE_NEXT, page + FIL_PAGE_OFFSET, 4));
 #endif /* UNIV_BTR_DEBUG */
 
 	rec = page_get_supremum_rec(prev_page);
@@ -3052,7 +3052,7 @@ count_later:
 
 	/* Look at the next page */
 
-	next_page_no = btr_page_get_next(page, mtr);
+	next_page_no = btr_page_get_next(page);
 
 	if (next_page_no == FIL_NULL) {
 
@@ -3073,7 +3073,7 @@ count_later:
 	}
 
 #ifdef UNIV_BTR_DEBUG
-	ut_a(btr_page_get_prev(next_page, mtr) == page_get_page_no(page));
+	ut_a(!memcmp(next_page + FIL_PAGE_PREV, page + FIL_PAGE_OFFSET, 4));
 #endif /* UNIV_BTR_DEBUG */
 
 	rec = page_get_infimum_rec(next_page);
@@ -4319,7 +4319,7 @@ This prevents an infinite loop on slow shutdown
 in the case where the change buffer bitmap claims that no buffered
 changes exist, while entries exist in the change buffer tree.
 @param page_id  page number for which there should be no unbuffered changes */
-ATTRIBUTE_COLD static void ibuf_delete_recs(const page_id_t page_id)
+ATTRIBUTE_COLD void ibuf_delete_recs(const page_id_t page_id)
 {
 	ulint dops[IBUF_OP_COUNT];
 	mtr_t mtr;
@@ -4559,7 +4559,7 @@ loop:
 	}
 
 	if (!btr_pcur_is_on_user_rec(&pcur)) {
-		ut_ad(btr_pcur_is_after_last_in_tree(&pcur));
+		ut_ad(btr_pcur_is_after_last_on_page(&pcur));
 		goto reset_bit;
 	}
 
@@ -4792,7 +4792,7 @@ loop:
 		&pcur, &mtr);
 
 	if (!btr_pcur_is_on_user_rec(&pcur)) {
-		ut_ad(btr_pcur_is_after_last_in_tree(&pcur));
+		ut_ad(btr_pcur_is_after_last_on_page(&pcur));
 		goto leave_loop;
 	}
 

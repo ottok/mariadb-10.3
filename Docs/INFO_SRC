@@ -1,8 +1,8 @@
-commit: 352e7667877ec6603aff5234c003ef8c11885cd8
-date: 2019-11-06 17:56:56 +0200
-build-date: 2019-11-06 16:01:59 +0000 
-short: 352e766
+commit: e5e5877740f248de848219ee3a1d2881cd5c5b82
+date: 2019-12-06 00:18:10 +0200
+build-date: 2019-12-05 22:22:35 +0000 
+short: e5e5877
 branch: HEAD
 
 
-MariaDB source 10.3.20
+MariaDB source 10.3.21
