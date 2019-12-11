@@ -677,6 +677,7 @@ bool vers_select_conds_t::init_from_sysvar(THD *thd)
 {
   vers_asof_timestamp_t &in= thd->variables.vers_asof_timestamp;
   type= (vers_system_time_t) in.type;
+  delete_history= false;
   start.unit= VERS_TIMESTAMP;
   if (type != SYSTEM_TIME_UNSPECIFIED && type != SYSTEM_TIME_ALL)
   {
@@ -709,6 +710,7 @@ void vers_select_conds_t::print(String *str, enum_query_type query_type) const
     end.print(str, query_type, STRING_WITH_LEN(" AND "));
     break;
   case SYSTEM_TIME_BEFORE:
+  case SYSTEM_TIME_HISTORY:
     DBUG_ASSERT(0);
     break;
   case SYSTEM_TIME_ALL:
@@ -717,22 +719,21 @@ void vers_select_conds_t::print(String *str, enum_query_type query_type) const
   }
 }
 
+static
+bool skip_setup_conds(THD *thd)
+{
+  return (!thd->stmt_arena->is_conventional()
+          && !thd->stmt_arena->is_stmt_prepare_or_first_sp_execute())
+         || thd->lex->is_view_context_analysis();
+}
+
 int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
 {
   DBUG_ENTER("SELECT_LEX::vers_setup_cond");
 #define newx new (thd->mem_root)
 
+  const bool update_conds= !skip_setup_conds(thd);
   TABLE_LIST *table;
-
-  if (!thd->stmt_arena->is_conventional() &&
-      !thd->stmt_arena->is_stmt_prepare_or_first_sp_execute())
-  {
-    // statement is already prepared
-    DBUG_RETURN(0);
-  }
-
-  if (thd->lex->is_view_context_analysis())
-    DBUG_RETURN(0);
 
   if (!versioned_tables)
   {
@@ -776,9 +777,22 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
     }
   }
 
+  bool is_select= false;
+  switch (thd->lex->sql_command)
+  {
+  case SQLCOM_SELECT:
+  case SQLCOM_INSERT_SELECT:
+  case SQLCOM_REPLACE_SELECT:
+  case SQLCOM_DELETE_MULTI:
+  case SQLCOM_UPDATE_MULTI:
+    is_select= true;
+  default:
+    break;
+  }
+
   for (table= tables; table; table= table->next_local)
   {
-    if (!table->table || !table->table->versioned())
+    if (!table->table || table->is_view() || !table->table->versioned())
       continue;
 
     vers_select_conds_t &vers_conditions= table->vers_conditions;
@@ -790,13 +804,15 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
       */
       if (table->partition_names && table->table->part_info->vers_info)
       {
-        if (vers_conditions.is_set())
+        /* If the history is stored in partitions, then partitions
+            themselves are not versioned. */
+        if (vers_conditions.was_set())
         {
           my_error(ER_VERS_QUERY_IN_PARTITION, MYF(0), table->alias.str);
           DBUG_RETURN(-1);
         }
-        else
-          vers_conditions.init(SYSTEM_TIME_ALL);
+        else if (!vers_conditions.is_set())
+          vers_conditions.type= SYSTEM_TIME_ALL;
       }
 #endif
 
@@ -808,7 +824,7 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
     }
 
     // propagate system_time from sysvar
-    if (!vers_conditions.is_set())
+    if (!vers_conditions.is_set() && is_select)
     {
       if (vers_conditions.init_from_sysvar(thd))
         DBUG_RETURN(-1);
@@ -834,7 +850,7 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
 
     bool timestamps_only= table->table->versioned(VERS_TIMESTAMP);
 
-    if (vers_conditions.is_set())
+    if (vers_conditions.is_set() && vers_conditions.type != SYSTEM_TIME_HISTORY)
     {
       thd->where= "FOR SYSTEM_TIME";
       /* TODO: do resolve fix_length_and_dec(), fix_fields(). This requires
@@ -851,6 +867,9 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
       }
     }
 
+    if (!update_conds)
+      continue;
+
     Item *cond1= NULL, *cond2= NULL, *cond3= NULL, *curr= NULL;
     Item *point_in_time1= vers_conditions.start.item;
     Item *point_in_time2= vers_conditions.end.item;
@@ -861,10 +880,14 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
       switch (vers_conditions.type)
       {
       case SYSTEM_TIME_UNSPECIFIED:
+      case SYSTEM_TIME_HISTORY:
         thd->variables.time_zone->gmt_sec_to_TIME(&max_time, TIMESTAMP_MAX_VALUE);
         max_time.second_part= TIME_MAX_SECOND_PART;
         curr= newx Item_datetime_literal(thd, &max_time, TIME_SECOND_PART_DIGITS);
-        cond1= newx Item_func_eq(thd, row_end, curr);
+        if (vers_conditions.type == SYSTEM_TIME_UNSPECIFIED)
+          cond1= newx Item_func_eq(thd, row_end, curr);
+        else
+          cond1= newx Item_func_lt(thd, row_end, curr);
         break;
       case SYSTEM_TIME_AS_OF:
         cond1= newx Item_func_le(thd, row_start, point_in_time1);
@@ -896,8 +919,12 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
       switch (vers_conditions.type)
       {
       case SYSTEM_TIME_UNSPECIFIED:
+      case SYSTEM_TIME_HISTORY:
         curr= newx Item_int(thd, ULONGLONG_MAX);
-        cond1= newx Item_func_eq(thd, row_end, curr);
+        if (vers_conditions.type == SYSTEM_TIME_UNSPECIFIED)
+          cond1= newx Item_func_eq(thd, row_end, curr);
+        else
+          cond1= newx Item_func_lt(thd, row_end, curr);
         break;
       case SYSTEM_TIME_AS_OF:
         trx_id0= vers_conditions.start.unit == VERS_TIMESTAMP
@@ -938,7 +965,19 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
     {
       cond1= and_items(thd, cond2, cond1);
       cond1= and_items(thd, cond3, cond1);
-      table->on_expr= and_items(thd, table->on_expr, cond1);
+      if (is_select)
+        table->on_expr= and_items(thd, table->on_expr, cond1);
+      else
+      {
+        if (join)
+        {
+          where= and_items(thd, join->conds, cond1);
+          join->conds= where;
+        }
+        else
+          where= and_items(thd, where, cond1);
+        table->where= and_items(thd, table->where, cond1);
+      }
     }
 
     table->vers_conditions.type= SYSTEM_TIME_ALL;
@@ -1674,7 +1713,20 @@ JOIN::optimize_inner()
     }
   }
   
-  conds= optimize_cond(this, conds, join_list, FALSE,
+  bool ignore_on_expr= false;
+  /*
+    PS/SP note: on_expr of versioned table can not be reallocated
+    (see build_equal_items() below) because it can be not rebuilt
+    at second invocation.
+  */
+  if (!thd->stmt_arena->is_conventional() && thd->mem_root != thd->stmt_arena->mem_root)
+    for (TABLE_LIST *tbl= tables_list; tbl; tbl= tbl->next_local)
+      if (tbl->table && tbl->on_expr && tbl->table->versioned())
+      {
+        ignore_on_expr= true;
+        break;
+      }
+  conds= optimize_cond(this, conds, join_list, ignore_on_expr,
                        &cond_value, &cond_equal, OPT_LINK_EQUAL_FIELDS);
   
   if (thd->is_error())
@@ -8527,7 +8579,6 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
           something went wrong.
 	*/
         sel /= (double)table->quick_rows[key] / (double) table->stat_records();
-        DBUG_ASSERT(0 < sel && sel <= 2.0);
         set_if_smaller(sel, 1.0);
         used_range_selectivity= true;
       }
@@ -8576,7 +8627,6 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
               if (table->field[fldno]->cond_selectivity > 0)
 	      {            
                 sel /= table->field[fldno]->cond_selectivity;
-                DBUG_ASSERT(0 < sel && sel <= 2.0);
                 set_if_smaller(sel, 1.0);
               }
               /* 
@@ -8634,7 +8684,6 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
           if (field->cond_selectivity > 0)
 	  {
             sel/= field->cond_selectivity;
-            DBUG_ASSERT(0 < sel && sel <= 2.0);  
             set_if_smaller(sel, 1.0);
           }
           break;
@@ -8646,7 +8695,6 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
   sel*= table_multi_eq_cond_selectivity(join, idx, s, rem_tables,
                                         keyparts, ref_keyuse_steps);
 
-  DBUG_ASSERT(0.0 < sel && sel <= 1.0);
   return sel;
 }
 
@@ -17783,7 +17831,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 
     /*
       Test if there is a default field value. The test for ->ptr is to skip
-      'offset' fields generated by initalize_tables
+      'offset' fields generated by initialize_tables
     */
     if (default_field[i] && default_field[i]->ptr)
     {
@@ -20551,7 +20599,7 @@ join_read_last(JOIN_TAB *tab)
 {
   TABLE *table=tab->table;
   int error= 0;
-  DBUG_ENTER("join_read_first");
+  DBUG_ENTER("join_read_last");
 
   DBUG_ASSERT(table->no_keyread ||
               !table->covering_keys.is_set(tab->index) ||
