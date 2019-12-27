@@ -15,3 +15,4 @@ tokudb-libjemalloc.patch
 MDEV-18768-automate-auth_socket-to_unix_socket-upgrade.patch
 928230-mysql_config---libmysqld-libs.patch
 930314-cross-build.patch
+rocksdb-kfreebsd.patch
