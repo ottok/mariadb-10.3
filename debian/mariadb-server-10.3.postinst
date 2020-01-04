@@ -137,7 +137,6 @@ EOF
       echo "user     = root"                                             >>$dc
       echo "password = "                                                 >>$dc
       echo "socket   = $mysql_rundir/mysqld.sock"                        >>$dc
-      echo "basedir  = /usr"                                             >>$dc
     fi
     # Keep it only root-readable, as it always was
     chown 0:0 $dc
