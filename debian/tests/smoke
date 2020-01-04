@@ -75,6 +75,7 @@ EOT
 # Check whether RocksDB should be installed or not.
 plugin=mariadb-plugin-rocksdb
 if [ "`dpkg-architecture -qDEB_HOST_ARCH_BITS`" != 32 ] &&
+   [ "`dpkg-architecture -qDEB_HOST_ARCH_OS`" = linux ] &&
    [ "`dpkg-architecture -qDEB_HOST_ARCH_ENDIAN`" = little ]; then
   dpkg-query -W $plugin
 

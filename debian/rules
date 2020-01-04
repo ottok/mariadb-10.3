@@ -43,7 +43,13 @@ else
     TESTSUITE_FAIL_CMD:=exit 1
 endif
 
+# Skip RocksDB on non-64-bit platforms
 ifeq (32,$(DEB_HOST_ARCH_BITS))
+    CMAKEFLAGS += -DWITHOUT_ROCKSDB=true
+endif
+
+# Skip RocksDB on non-Linux platforms (mainly kFreeBSD)
+ifneq (linux,$(DEB_HOST_ARCH_OS))
     CMAKEFLAGS += -DWITHOUT_ROCKSDB=true
 endif
 
