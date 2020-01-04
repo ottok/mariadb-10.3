@@ -448,13 +448,13 @@ Architecture: amd64 arm64 mips64el ppc64el
 Depends: mariadb-server-10.3 (= ${binary:Version}),
          rocksdb-tools,
          ${misc:Depends},
-         ${python:Depends},
+         ${python3:Depends},
          ${shlibs:Depends}
 Breaks: mariadb-rocksdb-engine-10.2,
         mariadb-rocksdb-engine-10.3
 Replaces: mariadb-rocksdb-engine-10.2,
           mariadb-rocksdb-engine-10.3
-Recommends: python-mysqldb
+Recommends: python3-mysqldb
 Description: RocksDB storage engine for MariaDB
  The RocksDB storage engine is a high performance storage engine, aimed
  at maximising storage efficiency while maintaining InnoDB-like performance.
