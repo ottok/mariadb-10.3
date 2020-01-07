@@ -1,8 +1,14 @@
-mariadb-10.3 (1:10.3.21-2) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.21-2) unstable; urgency=medium
 
-  * Open new changelog entry. This will be replaced by 'gbp dch'.
+  [ Otto Kekäläinen ]
+  * Update Python dependencies and recommends to Python 3 (Closes: #945697)
+  * Remove deprecated basedir config from debian.cnf (Closes: #947553)
 
- -- Otto Kekäläinen <otto@debian.org>  Sun, 05 Jan 2020 01:12:25 +0200
+  [ James Clarke ]
+  * Fix RocksDB on GNU/kFreeBSD (Closes: #920994)
+  * Use versioned symbols on GNU/kFreeBSD
+
+ -- Otto Kekäläinen <otto@debian.org>  Tue, 07 Jan 2020 09:01:10 +0200
 
 mariadb-10.3 (1:10.3.21-1) unstable; urgency=low
 
