@@ -94,6 +94,9 @@ fresh install:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-10.3.x to mariadb-10.3.y upgrade:
   stage: upgrade in Sid
@@ -131,6 +134,9 @@ mariadb-10.3.x to mariadb-10.3.y upgrade:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-10.3.x buster to mariadb-10.3 upgrade:
   stage: upgrade from Buster/Stretch/Jessie
@@ -172,6 +178,9 @@ mariadb-10.3.x buster to mariadb-10.3 upgrade:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-10.1 to mariadb-10.3 upgrade:
   stage: upgrade from Buster/Stretch/Jessie
@@ -213,6 +222,9 @@ mariadb-10.1 to mariadb-10.3 upgrade:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 test basic features:
   stage: test quality
@@ -265,6 +277,9 @@ test basic features:
     - mariadb -e "SELECT db.f()"
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 # Build a piece of software that was designed for libmysqlclient-dev but using the
 # libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time.
@@ -285,6 +300,9 @@ build mariadbclient consumer Python-MySQLdb:
     - python3 -c "import MySQLdb; print(MySQLdb.get_client_info())"
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 libmysql* to libmariadb* upgrade:
   stage: test extras
@@ -321,6 +339,9 @@ libmysql* to libmariadb* upgrade:
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 default-libmysqlclient-dev upgrade:
   stage: upgrade in Sid
@@ -344,6 +365,9 @@ default-libmysqlclient-dev upgrade:
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 default-libmysqlclient-dev on buster upgrade:
   stage: upgrade from Buster/Stretch/Jessie
@@ -369,6 +393,9 @@ default-libmysqlclient-dev on buster upgrade:
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 default-libmysqlclient-dev on stretch upgrade:
   stage: upgrade from Buster/Stretch/Jessie
@@ -394,6 +421,9 @@ default-libmysqlclient-dev on stretch upgrade:
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-connector-c on stretch upgrade:
   stage: upgrade from Buster/Stretch/Jessie
@@ -419,6 +449,9 @@ mariadb-connector-c on stretch upgrade:
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mysql-5.5 to mariadb-10.3 upgrade:
   stage: upgrade from Buster/Stretch/Jessie
@@ -460,6 +493,9 @@ mysql-5.5 to mariadb-10.3 upgrade:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 # Upgrading from MySQL 5.7 involves automatic renaming of auth_socket plugin
 # to unix_socket and automaticly re-adding Password column in user table.
@@ -503,3 +539,6 @@ mysql-5.7 to mariadb-10.3 upgrade:
     - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
   variables:
       GIT_STRATEGY: none
+  except:
+    variables:
+      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
