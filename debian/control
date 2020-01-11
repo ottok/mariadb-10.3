@@ -35,6 +35,7 @@ Build-Depends: bison,
                psmisc,
                unixodbc-dev,
                zlib1g-dev (>= 1:1.1.3-5~)
+Rules-Requires-Root: no
 Standards-Version: 4.2.1
 Homepage: https://mariadb.org/
 Vcs-Browser: https://salsa.debian.org/mariadb-team/mariadb-10.3
