@@ -186,6 +186,7 @@ Depends: mariadb-common (>= ${source:Version}),
 Conflicts: mysql-client-5.5,
            mysql-client-5.6,
            mysql-client-5.7,
+           mysql-client-8.0,
            virtual-mysql-client-core
 Breaks: mariadb-client-10.0 (<< 10.0.24-6~),
         mariadb-client-core-10.0,
@@ -194,7 +195,8 @@ Breaks: mariadb-client-10.0 (<< 10.0.24-6~),
         mariadb-client-core-5.5,
         mysql-client-core-5.5,
         mysql-client-core-5.6,
-        mysql-client-core-5.7
+        mysql-client-core-5.7,
+        mysql-client-core-8.0
 Replaces: mariadb-client-10.0 (<< 10.0.24-6~),
           mariadb-client-core-10.0,
           mariadb-client-core-10.1,
@@ -203,6 +205,7 @@ Replaces: mariadb-client-10.0 (<< 10.0.24-6~),
           mysql-client-core-5.5,
           mysql-client-core-5.6,
           mysql-client-core-5.7,
+          mysql-client-core-8.0,
           virtual-mysql-client-core
 Provides: virtual-mysql-client-core
 Description: MariaDB database core client binaries
@@ -224,6 +227,7 @@ Depends: debianutils (>=1.6),
 Conflicts: mysql-client-core-5.5,
            mysql-client-core-5.6,
            mysql-client-core-5.7,
+           mysql-client-core-8.0,
            mytop,
            virtual-mysql-client
 Breaks: mariadb-client-10.0,
@@ -233,7 +237,8 @@ Breaks: mariadb-client-10.0,
         mariadb-server-10.0 (<< 10.0.13-1~),
         mysql-client-5.5,
         mysql-client-5.6,
-        mysql-client-5.7
+        mysql-client-5.7,
+        mysql-client-8.0
 Replaces: mariadb-client-10.0,
           mariadb-client-10.1,
           mariadb-client-10.2,
@@ -242,6 +247,7 @@ Replaces: mariadb-client-10.0,
           mysql-client-5.5,
           mysql-client-5.6,
           mysql-client-5.7,
+          mysql-client-8.0,
           mytop,
           virtual-mysql-client
 Provides: virtual-mysql-client
@@ -266,6 +272,7 @@ Conflicts: mariadb-galera-server-5.5,
            mysql-server-5.5,
            mysql-server-5.6,
            mysql-server-5.7,
+           mysql-server-8.0,
            virtual-mysql-server-core
 Breaks: mariadb-client-10.1,
         mariadb-server-10.1,
@@ -279,7 +286,8 @@ Breaks: mariadb-client-10.1,
         mysql-client-5.6,
         mysql-server-core-5.5,
         mysql-server-core-5.6,
-        mysql-server-core-5.7
+        mysql-server-core-5.7,
+        mysql-server-core-8.0
 Replaces: mariadb-client-10.1,
           mariadb-server-10.1,
           mariadb-server-10.2,
@@ -291,9 +299,11 @@ Replaces: mariadb-client-10.1,
           mysql-client-5.5,
           mysql-client-5.6,
           mysql-client-5.7,
+          mysql-client-8.0,
           mysql-server-core-5.5,
           mysql-server-core-5.6,
           mysql-server-core-5.7,
+          mysql-server-core-8.0,
           virtual-mysql-server-core
 Provides: virtual-mysql-server-core
 Description: MariaDB database core server files
@@ -335,6 +345,7 @@ Conflicts: mariadb-tokudb-engine-10.0,
            mysql-server-core-5.5,
            mysql-server-core-5.6,
            mysql-server-core-5.7,
+           mysql-server-core-8.0,
            virtual-mysql-server
 Breaks: cqrlog (<< 1.9.0-5~),
         mariadb-galera-server,
@@ -350,7 +361,8 @@ Breaks: cqrlog (<< 1.9.0-5~),
         mysql-client-5.5,
         mysql-server-5.5,
         mysql-server-5.6,
-        mysql-server-5.7
+        mysql-server-5.7,
+        mysql-server-8.0
 Replaces: mariadb-galera-server,
           mariadb-galera-server-10.0,
           mariadb-galera-server-5.5,
@@ -365,6 +377,7 @@ Replaces: mariadb-galera-server,
           mysql-server-5.5,
           mysql-server-5.6,
           mysql-server-5.7,
+          mysql-server-8.0,
           virtual-mysql-server
 Provides: virtual-mysql-server
 Description: MariaDB database server binaries
@@ -615,7 +628,8 @@ Breaks: mariadb-test-10.0,
         mysql-testsuite,
         mysql-testsuite-5.5,
         mysql-testsuite-5.6,
-        mysql-testsuite-5.7
+        mysql-testsuite-5.7,
+        mysql-testsuite-8.0
 Replaces: mariadb-test-10.0,
           mariadb-test-10.1,
           mariadb-test-5.5,
@@ -623,7 +637,8 @@ Replaces: mariadb-test-10.0,
           mysql-testsuite,
           mysql-testsuite-5.5,
           mysql-testsuite-5.6,
-          mysql-testsuite-5.7
+          mysql-testsuite-5.7,
+          mysql-testsuite-8.0
 Description: MariaDB database regression test suite - data files
  MariaDB is a fast, stable and true multi-user, multi-threaded SQL database
  server. SQL (Structured Query Language) is the most popular database query
