@@ -148,14 +148,16 @@ set -e
 for dir in DATADIR LOGDIR; do
     checkdir=$(eval echo "$"$dir)
     if [ -L "$checkdir" ]; then
-	mkdir -p "$mysql_upgradedir"
+	# Use mkdir option 'Z' to create with correct SELinux context.
+	mkdir -pZ "$mysql_upgradedir"
 	cp -dT "$checkdir" "$mysql_upgradedir/$dir.link"
     fi
 done
 
 # creating mysql home directory
 if [ ! -d $mysql_datadir ] && [ ! -L $mysql_datadir ]; then
- 	mkdir $mysql_datadir
+	# Use mkdir option 'Z' to create with correct SELinux context.
+ 	mkdir -Z $mysql_datadir
 fi
 
 # checking disc space

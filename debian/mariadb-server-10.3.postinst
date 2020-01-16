@@ -73,10 +73,10 @@ EOF
     done
 
     # Ensure the existence and right permissions for the database and
-    # log files.
-    if [ ! -d "$mysql_statedir" ] && [ ! -L "$mysql_statedir" ]; then mkdir "$mysql_statedir"; fi
-    if [ ! -d "$mysql_datadir"  ] && [ ! -L "$mysql_datadir" ]; then mkdir "$mysql_datadir" ; fi
-    if [ ! -d "$mysql_logdir"   ] && [ ! -L "$mysql_logdir"  ]; then mkdir "$mysql_logdir"  ; fi
+    # log files. Use mkdir option 'Z' to create with correct SELinux context.
+    if [ ! -d "$mysql_statedir" ] && [ ! -L "$mysql_statedir" ]; then mkdir -Z "$mysql_statedir"; fi
+    if [ ! -d "$mysql_datadir"  ] && [ ! -L "$mysql_datadir" ]; then mkdir -Z "$mysql_datadir" ; fi
+    if [ ! -d "$mysql_logdir"   ] && [ ! -L "$mysql_logdir"  ]; then mkdir -Z "$mysql_logdir"  ; fi
     # When creating an ext3 jounal on an already mounted filesystem like e.g.
     # /var/lib/mysql, you get a .journal file that is not modifyable by chown.
     # The mysql_statedir must not be writable by the mysql user under any
