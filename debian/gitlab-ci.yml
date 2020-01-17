@@ -7,7 +7,6 @@ include:
 variables:
   DEB_BUILD_OPTIONS: "nocheck noautodbgsym"
   RELEASE: sid
-  SALSA_CI_DISABLE_REPROTEST: 1
 
 stages:
   - build
