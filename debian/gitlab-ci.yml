@@ -8,14 +8,15 @@ variables:
   DEB_BUILD_OPTIONS: "nocheck noautodbgsym"
   RELEASE: sid
   SALSA_CI_DISABLE_REPROTEST: 1
+  SALSA_CI_DISABLE_MISSING_BREAKS: 0
+  SALSA_CI_DISABLE_RC_BUGS: 0
 
 stages:
   - build
-  - test quality
+  - test
   - upgrade in Sid
   - upgrade from Buster/Stretch/Jessie
   - test extras
-  - test # Stage referenced by Salsa-CI template reprotest stanza, so must exist
   - publish # Stage referenced by Salsa-CI template aptly stanza, so must exist even though not used
 
 build:
@@ -43,16 +44,6 @@ build:
 # Backports build not here as we cannot build MariaDB 10.3 backport for Stretch
 # due to unmet build dependencies.
 
-lintian:
-  extends: .test-lintian
-  stage: test quality
-
-autopkgtest:
-  extends: .test-autopkgtest
-  stage: test quality
-  dependencies:
-    - build
-
 piuparts:
   extends: .test-piuparts
   stage: test extras
@@ -66,7 +57,7 @@ blhc:
 # In addition to Salsa-CI, also run these fully MariaDB specific build jobs
 
 fresh install:
-  stage: test quality
+  stage: test
   dependencies:
     - build
   image: debian:${RELEASE}
@@ -227,7 +218,7 @@ mariadb-10.1 to mariadb-10.3 upgrade:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 test basic features:
-  stage: test quality
+  stage: test
   dependencies:
     - build
   image: debian:${RELEASE}
@@ -284,7 +275,7 @@ test basic features:
 # Build a piece of software that was designed for libmysqlclient-dev but using the
 # libmariadb-dev-compat layer. Should always end up using libmariadb.so.3 run-time.
 build mariadbclient consumer Python-MySQLdb:
-  stage: test quality
+  stage: test
   dependencies:
     - build
   image: debian:${RELEASE}
