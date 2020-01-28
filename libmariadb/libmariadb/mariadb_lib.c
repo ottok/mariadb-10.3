@@ -27,6 +27,7 @@
 #include <ma_string.h>
 #include <mariadb_ctype.h>
 #include <ma_common.h>
+#include "ma_priv.h"
 #include "ma_context.h"
 #include "mysql.h"
 #include "mariadb_version.h"
@@ -771,7 +772,7 @@ static size_t rset_field_offsets[]= {
 
 MYSQL_FIELD *
 unpack_fields(MYSQL_DATA *data,MA_MEM_ROOT *alloc,uint fields,
-	      my_bool default_value, my_bool long_flag_protocol __attribute__((unused)))
+	      my_bool default_value)
 {
   MYSQL_ROWS	*row;
   MYSQL_FIELD	*field,*result;
@@ -1514,7 +1515,10 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
       scramble_len= pkt_scramble_len;
       scramble_plugin= scramble_data + scramble_len;
       if (scramble_data + scramble_len > end_pkt)
-        scramble_len= (uint)(end_pkt - scramble_data);
+      {
+        SET_CLIENT_ERROR(mysql, CR_MALFORMED_PACKET, SQLSTATE_UNKNOWN, 0);
+        goto error;
+      }
     } else
     {
       scramble_len= (uint)(end_pkt - scramble_data);
@@ -2192,9 +2196,7 @@ get_info:
   if (!(fields=mysql->methods->db_read_rows(mysql,(MYSQL_FIELD*) 0,8)))
     return(-1);
   if (!(mysql->fields=unpack_fields(fields,&mysql->field_alloc,
-				    (uint) field_count,1,
-				    (my_bool) test(mysql->server_capabilities &
-						   CLIENT_LONG_FLAG))))
+				    (uint) field_count, 1)))
     return(-1);
   mysql->status=MYSQL_STATUS_GET_RESULT;
   mysql->field_count=field_count;
@@ -2525,9 +2527,7 @@ mysql_list_fields(MYSQL *mysql, const char *table, const char *wild)
   result->eof=1;
   result->field_count = (uint) query->rows;
   result->fields= unpack_fields(query,&result->field_alloc,
-				result->field_count,1,
-				(my_bool) test(mysql->server_capabilities &
-					       CLIENT_LONG_FLAG));
+				result->field_count, 1);
   if (result->fields)
     return(result);
 
@@ -2552,9 +2552,8 @@ mysql_list_processes(MYSQL *mysql)
   field_count=(uint) net_field_length(&pos);
   if (!(fields = mysql->methods->db_read_rows(mysql,(MYSQL_FIELD*) 0,5)))
     return(NULL);
-  if (!(mysql->fields=unpack_fields(fields,&mysql->field_alloc,field_count,0,
-				    (my_bool) test(mysql->server_capabilities &
-						   CLIENT_LONG_FLAG))))
+  if (!(mysql->fields=unpack_fields(fields, &mysql->field_alloc,
+                                    field_count, 0)))
     return(NULL);
   mysql->status=MYSQL_STATUS_GET_RESULT;
   mysql->field_count=field_count;
