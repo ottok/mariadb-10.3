@@ -1,6 +1,6 @@
 --- a/libmariadb/libmariadb/CMakeLists.txt
 +++ b/libmariadb/libmariadb/CMakeLists.txt
-@@ -407,6 +407,7 @@ IF(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MSVC)
+@@ -410,6 +410,7 @@ IF(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MSVC)
  ENDIF()
  
  IF(CMAKE_SYSTEM_NAME MATCHES "Linux" OR

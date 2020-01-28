@@ -1,8 +1,21 @@
-mariadb-10.3 (1:10.3.21-3) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.22-1) unstable; urgency=medium
 
-  * Open new changelog entry. This will be replaced by 'gbp dch'.
+  [ Otto Kekäläinen ]
+  * New upstream version 10.3.22. Includes security fixes for:
+    - CVE-2020-2574
+  * Update conflicts/breaks/replaces for MySQL 8.0
+  * Add Rules-Requires-Root definition to control file
+  * Activate NO_UPDATE_BUILD_VERSION to make RocksDB build reproducible
+  * Strip path from Mroonga to make the build reproducible
+  * Update Debian Policy version
+  * Simplify and extend Gitlab-CI testing by using more of Salsa-CI features
+  * Prefer salsa-ci.yml naming over gitlab-ci.yml since we inherit Salsa-CI
+  * Add Breaks/Replaces for mysql-client-5.7 that ships myisam_ftdump
 
- -- Otto Kekäläinen <otto@debian.org>  Thu, 09 Jan 2020 21:15:13 +0200
+  [ Christian Göttsche ]
+  * Set correct SELinux contexts on package installation (Closes: #948424)
+
+ -- Otto Kekäläinen <otto@debian.org>  Tue, 28 Jan 2020 22:12:28 +0200
 
 mariadb-10.3 (1:10.3.21-2) unstable; urgency=medium
 
