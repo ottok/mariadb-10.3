@@ -637,7 +637,6 @@ int wsrep_init()
   {
     // enable normal operation in case no provider is specified
     wsrep_ready_set(TRUE);
-    wsrep_inited= 1;
     global_system_variables.wsrep_on = 0;
     wsrep_init_args args;
     args.logger_cb = wsrep_log_cb;
@@ -648,9 +647,14 @@ int wsrep_init()
     {
       DBUG_PRINT("wsrep",("wsrep::init() failed: %d", rcode));
       WSREP_ERROR("wsrep::init() failed: %d, must shutdown", rcode);
+      wsrep_ready_set(FALSE);
       wsrep->free(wsrep);
       free(wsrep);
       wsrep = NULL;
+    }
+    else
+    {
+      wsrep_inited= 1;
     }
     return rcode;
   }
@@ -1785,7 +1789,7 @@ static int wsrep_RSU_begin(THD *thd, const char *db_, const char *table_)
     }
 
     my_error(ER_LOCK_DEADLOCK, MYF(0));
-    return(1);
+    return(-1);
   }
 
   wsrep_seqno_t seqno = wsrep->pause(wsrep);
@@ -2302,6 +2306,7 @@ static my_bool have_committing_connections()
 
     if (is_committing_connection(tmp))
     {
+      mysql_mutex_unlock(&LOCK_thread_count);
       return TRUE;
     }
   }
