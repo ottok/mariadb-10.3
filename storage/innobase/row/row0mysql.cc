@@ -2063,8 +2063,8 @@ row_unlock_for_mysql(
 						     + index->trx_id_offset);
 		} else {
 			mem_heap_t*	heap			= NULL;
-			ulint	offsets_[REC_OFFS_NORMAL_SIZE];
-			ulint*	offsets				= offsets_;
+			offset_t offsets_[REC_OFFS_NORMAL_SIZE];
+			offset_t* offsets				= offsets_;
 
 			rec_offs_init(offsets_);
 			offsets = rec_get_offsets(rec, index, offsets, true,
@@ -2580,8 +2580,7 @@ row_create_index_for_mysql(
 	} else {
 		dict_build_index_def(table, index, trx);
 
-		err = dict_index_add_to_cache(
-			index, FIL_NULL, trx_is_strict(trx));
+		err = dict_index_add_to_cache(index, FIL_NULL);
 		ut_ad((index == NULL) == (err != DB_SUCCESS));
 		if (UNIV_LIKELY(err == DB_SUCCESS)) {
 			ut_ad(!index->is_instant());
@@ -4682,9 +4681,8 @@ row_scan_index_for_mysql(
 	ulint		i;
 	ulint		cnt;
 	mem_heap_t*	heap		= NULL;
-	ulint		n_ext;
-	ulint		offsets_[REC_OFFS_NORMAL_SIZE];
-	ulint*		offsets;
+	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
+	offset_t*	offsets;
 	rec_offs_init(offsets_);
 
 	*n_rows = 0;
@@ -4817,14 +4815,14 @@ not_ok:
 
 			tmp_heap = mem_heap_create(size);
 
-			offsets = static_cast<ulint*>(
+			offsets = static_cast<offset_t*>(
 				mem_heap_dup(tmp_heap, offsets, size));
 		}
 
 		mem_heap_empty(heap);
 
 		prev_entry = row_rec_to_index_entry(
-			rec, index, offsets, &n_ext, heap);
+			rec, index, offsets, heap);
 
 		if (UNIV_LIKELY_NULL(tmp_heap)) {
 			mem_heap_free(tmp_heap);

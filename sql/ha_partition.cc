@@ -564,7 +564,7 @@ bool ha_partition::initialize_partition(MEM_ROOT *mem_root)
     point.
 
     If you do not implement this, the default delete_table() is called from
-    handler.cc and it will delete all files with the file extentions returned
+    handler.cc and it will delete all files with the file extensions returned
     by bas_ext().
 
     Called from handler.cc by delete_table and  ha_create_table(). Only used
@@ -596,7 +596,7 @@ int ha_partition::delete_table(const char *name)
     Renames a table from one name to another from alter table call.
 
     If you do not implement this, the default rename_table() is called from
-    handler.cc and it will rename all files with the file extentions returned
+    handler.cc and it will rename all files with the file extensions returned
     by bas_ext().
 
     Called from sql_table.cc by mysql_rename_table().
@@ -4538,7 +4538,7 @@ int ha_partition::delete_row(const uchar *buf)
     or last historical partition, but DELETE HISTORY can delete from any
     historical partition. So, skip the check in this case.
   */
-  if (!thd->lex->vers_conditions.is_set()) // if not DELETE HISTORY
+  if (!thd->lex->vers_conditions.delete_history)
   {
     uint32 part_id;
     error= get_part_for_buf(buf, m_rec0, m_part_info, &part_id);
@@ -5265,7 +5265,10 @@ bool ha_partition::init_record_priority_queue()
   {
     size_t alloc_len;
     uint used_parts= bitmap_bits_set(&m_part_info->read_partitions);
-    DBUG_ASSERT(used_parts > 0);
+
+    if (used_parts == 0) /* Do nothing since no records expected. */
+      DBUG_RETURN(false);
+
     /* Allocate record buffer for each used partition. */
     m_priority_queue_rec_len= m_rec_length + PARTITION_BYTES_IN_POS;
     if (!m_using_extended_keys)
@@ -5476,6 +5479,13 @@ int ha_partition::index_end()
     {
       int tmp;
       if ((tmp= (*file)->ha_index_end()))
+        error= tmp;
+    }
+    else if ((*file)->inited == RND)
+    {
+      // Possible due to MRR
+      int tmp;
+      if ((tmp= (*file)->ha_rnd_end()))
         error= tmp;
     }
   } while (*(++file));
@@ -6519,8 +6529,11 @@ int ha_partition::multi_range_read_next(range_id_t *range_info)
     else if (unlikely((error= handle_unordered_next(table->record[0], FALSE))))
       DBUG_RETURN(error);
 
-    *range_info=
-      ((PARTITION_KEY_MULTI_RANGE *) m_range_info[m_last_part])->ptr;
+    if (!(m_mrr_mode & HA_MRR_NO_ASSOCIATION))
+    {
+      *range_info=
+        ((PARTITION_KEY_MULTI_RANGE *) m_range_info[m_last_part])->ptr;
+    }
   }
   DBUG_RETURN(0);
 }
@@ -9214,7 +9227,6 @@ void ha_partition::late_extra_cache(uint partition_id)
   }
   if (m_extra_prepare_for_update)
   {
-    DBUG_ASSERT(m_extra_cache);
     (void) file->extra(HA_EXTRA_PREPARE_FOR_UPDATE);
   }
   m_extra_cache_part_id= partition_id;
@@ -10684,8 +10696,8 @@ int ha_partition::indexes_are_disabled(void)
   @param repair        If true, move misplaced rows to correct partition.
 
   @return Operation status.
-    @retval 0     Success
-    @retval != 0  Error
+    @retval HA_ADMIN_OK     Success
+    @retval != HA_ADMIN_OK  Error
 */
 
 int ha_partition::check_misplaced_rows(uint read_part_id, bool do_repair)
@@ -10698,6 +10710,17 @@ int ha_partition::check_misplaced_rows(uint read_part_id, bool do_repair)
   DBUG_ENTER("ha_partition::check_misplaced_rows");
 
   DBUG_ASSERT(m_file);
+
+  if (m_part_info->vers_info &&
+      read_part_id != m_part_info->vers_info->now_part->id &&
+      !m_part_info->vers_info->interval.is_set())
+  {
+    print_admin_msg(ha_thd(), MYSQL_ERRMSG_SIZE, "note",
+                    table_share->db.str, table->alias,
+                    opt_op_name[CHECK_PARTS],
+                    "Not supported for non-INTERVAL history partitions");
+    DBUG_RETURN(HA_ADMIN_NOT_IMPLEMENTED);
+  }
 
   if (do_repair)
   {

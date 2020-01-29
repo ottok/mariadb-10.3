@@ -4,7 +4,7 @@ Copyright (c) 2000, 2019, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, 2009 Google Inc.
 Copyright (c) 2009, Percona Inc.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2019, MariaDB Corporation.
+Copyright (c) 2013, 2020, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -3429,17 +3429,6 @@ trx_is_interrupted(
 	return(trx && trx->mysql_thd && thd_kill_level(trx->mysql_thd));
 }
 
-/**********************************************************************//**
-Determines if the currently running transaction is in strict mode.
-@return TRUE if strict */
-ibool
-trx_is_strict(
-/*==========*/
-	trx_t*	trx)	/*!< in: transaction */
-{
-	return(trx && trx->mysql_thd && THDVAR(trx->mysql_thd, strict_mode));
-}
-
 /**************************************************************//**
 Resets some fields of a m_prebuilt struct. The template is used in fast
 retrieval of just those column values MySQL needs in its processing. */
@@ -5454,7 +5443,7 @@ normalize_table_name_c_low(
 
 create_table_info_t::create_table_info_t(
 	THD*		thd,
-	TABLE*		form,
+	const TABLE*	form,
 	HA_CREATE_INFO*	create_info,
 	char*		table_name,
 	char*		remote_path,
@@ -6466,7 +6455,7 @@ ha_innobase::clone(
 	DBUG_ENTER("ha_innobase::clone");
 
 	ha_innobase*	new_handler = static_cast<ha_innobase*>(
-		handler::clone(name, mem_root));
+		handler::clone(m_prebuilt->table->name.m_name, mem_root));
 
 	if (new_handler != NULL) {
 		DBUG_ASSERT(new_handler->m_prebuilt != NULL);
@@ -10905,6 +10894,9 @@ create_table_info_t::create_table_def()
 
 	heap = mem_heap_create(1000);
 
+	ut_d(bool have_vers_start = false);
+	ut_d(bool have_vers_end = false);
+
 	for (ulint i = 0, j = 0; j < n_cols; i++) {
 		Field*	field = m_form->field[i];
 		ulint vers_row = 0;
@@ -10912,8 +10904,10 @@ create_table_info_t::create_table_def()
 		if (m_form->versioned()) {
 			if (i == m_form->s->row_start_field) {
 				vers_row = DATA_VERS_START;
+				ut_d(have_vers_start = true);
 			} else if (i == m_form->s->row_end_field) {
 				vers_row = DATA_VERS_END;
+				ut_d(have_vers_end = true);
 			} else if (!(field->flags
 				     & VERS_UPDATE_UNVERSIONED_FLAG)) {
 				vers_row = DATA_VERSIONED;
@@ -11033,6 +11027,10 @@ err_col:
 
 		j++;
 	}
+
+	ut_ad(have_vers_start == have_vers_end);
+	ut_ad(table->versioned() == have_vers_start);
+	ut_ad(!table->versioned() || table->vers_start != table->vers_end);
 
 	if (num_v) {
 		for (ulint i = 0, j = 0; i < n_cols; i++) {
@@ -12493,7 +12491,238 @@ int create_table_info_t::create_table(bool create_fk)
 		}
 	}
 
+	/* In TRUNCATE TABLE, we will merely warn about the maximum
+	row size being too large. */
+	if (!row_size_is_acceptable(*m_table, create_fk)) {
+		DBUG_RETURN(convert_error_code_to_mysql(
+			    DB_TOO_BIG_RECORD, m_flags, NULL));
+	}
+
 	DBUG_RETURN(0);
+}
+
+bool create_table_info_t::row_size_is_acceptable(
+  const dict_table_t &table, bool strict) const
+{
+  for (dict_index_t *index= dict_table_get_first_index(&table); index;
+       index= dict_table_get_next_index(index))
+    if (!row_size_is_acceptable(*index, strict))
+      return false;
+  return true;
+}
+
+/* FIXME: row size check has some flaws and should be improved */
+dict_index_t::record_size_info_t dict_index_t::record_size_info() const
+{
+  ut_ad(!(type & DICT_FTS));
+
+  /* maximum allowed size of a node pointer record */
+  ulint page_ptr_max;
+  const bool comp= dict_table_is_comp(table);
+  /* table->space == NULL after DISCARD TABLESPACE */
+  const page_size_t page_size(dict_tf_get_page_size(table->flags));
+  record_size_info_t result;
+
+  if (page_size.is_compressed() &&
+      page_size.physical() < univ_page_size.physical())
+  {
+    /* On a ROW_FORMAT=COMPRESSED page, two records must fit in the
+    uncompressed page modification log. On compressed pages
+    with size.physical() == univ_page_size.physical(),
+    this limit will never be reached. */
+    ut_ad(comp);
+    /* The maximum allowed record size is the size of
+    an empty page, minus a byte for recoding the heap
+    number in the page modification log.  The maximum
+    allowed node pointer size is half that. */
+    result.max_leaf_size= page_zip_empty_size(n_fields, page_size.physical());
+    if (result.max_leaf_size)
+    {
+      result.max_leaf_size--;
+    }
+    page_ptr_max= result.max_leaf_size / 2;
+    /* On a compressed page, there is a two-byte entry in
+    the dense page directory for every record.  But there
+    is no record header. */
+    result.shortest_size= 2;
+  }
+  else
+  {
+    /* The maximum allowed record size is half a B-tree
+    page(16k for 64k page size).  No additional sparse
+    page directory entry will be generated for the first
+    few user records. */
+    result.max_leaf_size= (comp || srv_page_size < UNIV_PAGE_SIZE_MAX)
+                              ? page_get_free_space_of_empty(comp) / 2
+                              : REDUNDANT_REC_MAX_DATA_SIZE;
+
+    page_ptr_max= result.max_leaf_size;
+    /* Each record has a header. */
+    result.shortest_size= comp ? REC_N_NEW_EXTRA_BYTES : REC_N_OLD_EXTRA_BYTES;
+  }
+
+  if (comp)
+  {
+    /* Include the "null" flags in the
+    maximum possible record size. */
+    result.shortest_size+= UT_BITS_IN_BYTES(n_nullable);
+  }
+  else
+  {
+    /* For each column, include a 2-byte offset and a
+    "null" flag.  The 1-byte format is only used in short
+    records that do not contain externally stored columns.
+    Such records could never exceed the page limit, even
+    when using the 2-byte format. */
+    result.shortest_size+= 2 * n_fields;
+  }
+
+  const ulint max_local_len= table->get_overflow_field_local_len();
+
+  /* Compute the maximum possible record size. */
+  for (unsigned i= 0; i < n_fields; i++)
+  {
+    const dict_field_t &f= fields[i];
+    const dict_col_t &col= *f.col;
+
+    /* In dtuple_convert_big_rec(), variable-length columns
+    that are longer than BTR_EXTERN_LOCAL_STORED_MAX_SIZE
+    may be chosen for external storage.
+
+    Fixed-length columns, and all columns of secondary
+    index records are always stored inline. */
+
+    /* Determine the maximum length of the index field.
+    The field_ext_max_size should be computed as the worst
+    case in rec_get_converted_size_comp() for
+    REC_STATUS_ORDINARY records. */
+
+    size_t field_max_size= dict_col_get_fixed_size(&col, comp);
+    if (field_max_size && f.fixed_len != 0)
+    {
+      /* dict_index_add_col() should guarantee this */
+      ut_ad(!f.prefix_len || f.fixed_len == f.prefix_len);
+      /* Fixed lengths are not encoded
+      in ROW_FORMAT=COMPACT. */
+      goto add_field_size;
+    }
+
+    field_max_size= dict_col_get_max_size(&col);
+
+    if (f.prefix_len)
+    {
+      if (f.prefix_len < field_max_size)
+      {
+        field_max_size= f.prefix_len;
+      }
+
+      /* those conditions were copied from dtuple_convert_big_rec()*/
+    }
+    else if (field_max_size > max_local_len &&
+             field_max_size > BTR_EXTERN_LOCAL_STORED_MAX_SIZE &&
+             DATA_BIG_COL(&col) && dict_index_is_clust(this))
+    {
+
+      /* In the worst case, we have a locally stored
+      column of BTR_EXTERN_LOCAL_STORED_MAX_SIZE bytes.
+      The length can be stored in one byte.  If the
+      column were stored externally, the lengths in
+      the clustered index page would be
+      BTR_EXTERN_FIELD_REF_SIZE and 2. */
+      field_max_size= max_local_len;
+    }
+
+    if (comp)
+    {
+      /* Add the extra size for ROW_FORMAT=COMPACT.
+      For ROW_FORMAT=REDUNDANT, these bytes were
+      added to result.shortest_size before this loop. */
+      result.shortest_size+= field_max_size < 256 ? 1 : 2;
+    }
+  add_field_size:
+    result.shortest_size+= field_max_size;
+
+    /* Check the size limit on leaf pages. */
+    if (result.shortest_size >= result.max_leaf_size)
+    {
+      result.set_too_big(i);
+    }
+
+    /* Check the size limit on non-leaf pages.  Records
+    stored in non-leaf B-tree pages consist of the unique
+    columns of the record (the key columns of the B-tree)
+    and a node pointer field.  When we have processed the
+    unique columns, result.shortest_size equals the size of the
+    node pointer record minus the node pointer column. */
+    if (i + 1 == dict_index_get_n_unique_in_tree(this) &&
+        result.shortest_size + REC_NODE_PTR_SIZE >= page_ptr_max)
+    {
+      result.set_too_big(i);
+    }
+  }
+
+  return result;
+}
+
+/** Issue a warning that the row is too big. */
+static void ib_warn_row_too_big(THD *thd, const dict_table_t *table)
+{
+  /* FIXME: this row size check should be improved */
+  /* If prefix is true then a 768-byte prefix is stored
+  locally for BLOB fields. Refer to dict_table_get_format() */
+  const bool prefix= !dict_table_has_atomic_blobs(table);
+
+  const ulint free_space=
+      page_get_free_space_of_empty(table->flags & DICT_TF_COMPACT) / 2;
+
+  push_warning_printf(
+      thd, Sql_condition::WARN_LEVEL_WARN, HA_ERR_TO_BIG_ROW,
+      "Row size too large (> " ULINTPF "). Changing some columns to TEXT"
+      " or BLOB %smay help. In current row format, BLOB prefix of"
+      " %d bytes is stored inline.",
+      free_space,
+      prefix ? "or using ROW_FORMAT=DYNAMIC or ROW_FORMAT=COMPRESSED " : "",
+      prefix ? DICT_MAX_FIXED_COL_LEN : 0);
+}
+
+bool create_table_info_t::row_size_is_acceptable(
+    const dict_index_t &index, bool strict) const
+{
+  if ((index.type & DICT_FTS) || index.table->is_system_db)
+  {
+    /* Ignore system tables check because innodb_table_stats
+    maximum row size can not fit on 4k page. */
+    return true;
+  }
+
+  const bool innodb_strict_mode= THDVAR(m_thd, strict_mode);
+  dict_index_t::record_size_info_t info= index.record_size_info();
+
+  if (info.row_is_too_big())
+  {
+    ut_ad(info.get_overrun_size() != 0);
+    ut_ad(info.max_leaf_size != 0);
+
+    const size_t idx= info.get_first_overrun_field_index();
+    const dict_field_t *field= dict_index_get_nth_field(&index, idx);
+
+    if (innodb_strict_mode || global_system_variables.log_warnings > 2)
+    {
+      ib::error_or_warn(strict && innodb_strict_mode)
+          << "Cannot add field " << field->name << " in table "
+          << index.table->name << " because after adding it, the row size is "
+          << info.get_overrun_size()
+          << " which is greater than maximum allowed size ("
+          << info.max_leaf_size << " bytes) for a record on index leaf page.";
+    }
+
+    if (strict && innodb_strict_mode)
+      return false;
+
+    ib_warn_row_too_big(m_thd, index.table);
+  }
+
+  return true;
 }
 
 /** Update a new table in an InnoDB database.
@@ -21257,31 +21486,6 @@ innobase_convert_to_system_charset(
 	return(static_cast<uint>(strconvert(
 				cs1, from, static_cast<uint>(strlen(from)),
 				cs2, to, static_cast<uint>(len), errors)));
-}
-
-/**********************************************************************
-Issue a warning that the row is too big. */
-void
-ib_warn_row_too_big(const dict_table_t*	table)
-{
-	/* If prefix is true then a 768-byte prefix is stored
-	locally for BLOB fields. */
-	const bool	prefix = !dict_table_has_atomic_blobs(table);
-
-	const ulint	free_space = page_get_free_space_of_empty(
-		table->flags & DICT_TF_COMPACT) / 2;
-
-	THD*	thd = current_thd;
-
-	push_warning_printf(
-		thd, Sql_condition::WARN_LEVEL_WARN, HA_ERR_TO_BIG_ROW,
-		"Row size too large (> " ULINTPF ")."
-		" Changing some columns to TEXT"
-		" or BLOB %smay help. In current row format, BLOB prefix of"
-		" %d bytes is stored inline.", free_space
-		, prefix ? "or using ROW_FORMAT=DYNAMIC or"
-		" ROW_FORMAT=COMPRESSED ": ""
-		, prefix ? DICT_MAX_FIXED_COL_LEN : 0);
 }
 
 /** Validate the requested buffer pool size.  Also, reserve the necessary

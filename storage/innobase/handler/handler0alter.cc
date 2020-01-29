@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2005, 2019, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2019, MariaDB Corporation.
+Copyright (c) 2013, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -121,6 +121,15 @@ static const alter_table_operations INNOBASE_FOREIGN_OPERATIONS
 static const alter_table_operations INNOBASE_ALTER_NOCREATE
 	= ALTER_DROP_NON_UNIQUE_NON_PRIM_INDEX
 	| ALTER_DROP_UNIQUE_INDEX;
+
+/** Operations that InnoDB cares about and can perform without validation */
+static const alter_table_operations INNOBASE_ALTER_NOVALIDATE
+	= INNOBASE_ALTER_NOCREATE
+	| ALTER_VIRTUAL_COLUMN_ORDER
+	| ALTER_COLUMN_NAME
+	| INNOBASE_FOREIGN_OPERATIONS
+	| ALTER_COLUMN_UNVERSIONED
+	| ALTER_DROP_VIRTUAL_COLUMN;
 
 /** Operations that InnoDB cares about and can perform without rebuild */
 static const alter_table_operations INNOBASE_ALTER_NOREBUILD
@@ -2162,7 +2171,7 @@ innobase_rec_to_mysql(
 	struct TABLE*		table,	/*!< in/out: MySQL table */
 	const rec_t*		rec,	/*!< in: record */
 	const dict_index_t*	index,	/*!< in: index */
-	const ulint*		offsets)/*!< in: rec_get_offsets(
+	const offset_t*		offsets)/*!< in: rec_get_offsets(
 					rec, index, ...) */
 {
 	uint	n_fields	= table->s->fields;
@@ -4278,10 +4287,17 @@ innobase_add_instant_try(
 			case MYSQL_TYPE_MEDIUM_BLOB:
 			case MYSQL_TYPE_BLOB:
 			case MYSQL_TYPE_LONG_BLOB:
+			variable_length:
 				/* Store the empty string for 'core'
 				variable-length NOT NULL columns. */
 				dfield_set_data(d, field_ref_zero, 0);
 				break;
+			case MYSQL_TYPE_STRING:
+				if (col->mbminlen != col->mbmaxlen
+				    && dict_table_is_comp(user_table)) {
+					goto variable_length;
+				}
+				/* fall through */
 			default:
 				/* For fixed-length NOT NULL 'core' columns,
 				get a dummy default value from SQL. Note that
@@ -4394,7 +4410,7 @@ innobase_add_instant_try(
 			uf->field_no = f;
 			uf->new_val = entry->fields[f];
 		}
-		ulint* offsets = NULL;
+		offset_t* offsets = NULL;
 		mem_heap_t* offsets_heap = NULL;
 		big_rec_t* big_rec;
 		err = btr_cur_pessimistic_update(
@@ -4921,6 +4937,10 @@ prepare_inplace_alter_table_dict(
 
 	new_clustered = (DICT_CLUSTERED & index_defs[0].ind_type) != 0;
 
+	create_table_info_t info(ctx->prebuilt->trx->mysql_thd, altered_table,
+				 ha_alter_info->create_info, NULL, NULL,
+				 srv_file_per_table);
+
 	/* The primary index would be rebuilt if a FTS Doc ID
 	column is to be added, and the primary index definition
 	is just copied from old table and stored in indexdefs[0] */
@@ -5300,7 +5320,7 @@ new_clustered_failed:
 		for (uint a = 0; a < ctx->num_to_add_index; a++) {
 			ctx->add_index[a]->table = ctx->new_table;
 			error = dict_index_add_to_cache(
-				ctx->add_index[a], FIL_NULL, false, add_v);
+				ctx->add_index[a], FIL_NULL, add_v);
 			ut_a(error == DB_SUCCESS);
 		}
 		DBUG_ASSERT(ha_alter_info->key_count
@@ -5530,6 +5550,7 @@ new_table_failed:
 				if (index) {
 					dict_mem_index_free(index);
 				}
+error_handling_drop_uncached_1:
 				while (++a < ctx->num_to_add_index) {
 					dict_mem_index_free(ctx->add_index[a]);
 				}
@@ -5539,6 +5560,18 @@ new_table_failed:
 			}
 
 			ctx->add_index[a] = index;
+			/* For ALTER TABLE...FORCE or OPTIMIZE TABLE,
+			we may only issue warnings, because there will
+			be no schema change from the user perspective. */
+			if (!info.row_size_is_acceptable(
+				    *index,
+				    !!(ha_alter_info->handler_flags
+				       & ~(INNOBASE_INPLACE_IGNORE
+					   | INNOBASE_ALTER_NOVALIDATE
+					   | ALTER_RECREATE_TABLE)))) {
+				error = DB_TOO_BIG_RECORD;
+				goto error_handling_drop_uncached_1;
+			}
 			index->parser = index_defs[a].parser;
 			index->has_new_v_col = has_new_v_col;
 			/* Note the id of the transaction that created this
@@ -5637,6 +5670,10 @@ error_handling_drop_uncached:
 				DBUG_ASSERT(index != ctx->add_index[a]);
 			}
 			ctx->add_index[a]= index;
+			if (!info.row_size_is_acceptable(*index, true)) {
+				error = DB_TOO_BIG_RECORD;
+				goto error_handling_drop_uncached;
+			}
 
 			index->parser = index_defs[a].parser;
 			index->has_new_v_col = has_new_v_col;
@@ -5685,6 +5722,10 @@ error_handling_drop_uncached:
 				}
 			}
 		}
+	} else if (ctx->is_instant()
+		   && !info.row_size_is_acceptable(*user_table, true)) {
+		error = DB_TOO_BIG_RECORD;
+		goto error_handling;
 	}
 
 	if (ctx->online && ctx->num_to_add_index) {

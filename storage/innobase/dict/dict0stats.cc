@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2009, 2019, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2019, MariaDB Corporation.
+Copyright (c) 2015, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -854,10 +854,8 @@ dict_stats_update_transient_for_index(
 		mtr_t	mtr;
 		ulint	size;
 
-		mtr_start(&mtr);
-
-		mtr_s_lock(dict_index_get_lock(index), &mtr);
-
+		mtr.start();
+		mtr_s_lock_index(index, &mtr);
 		size = btr_get_size(index, BTR_TOTAL_SIZE, &mtr);
 
 		if (size != ULINT_UNDEFINED) {
@@ -867,7 +865,7 @@ dict_stats_update_transient_for_index(
 				index, BTR_N_LEAF_PAGES, &mtr);
 		}
 
-		mtr_commit(&mtr);
+		mtr.commit();
 
 		switch (size) {
 		case ULINT_UNDEFINED:
@@ -1016,8 +1014,8 @@ dict_stats_analyze_index_level(
 	bool		prev_rec_is_copied;
 	byte*		prev_rec_buf = NULL;
 	ulint		prev_rec_buf_size = 0;
-	ulint*		rec_offsets;
-	ulint*		prev_rec_offsets;
+	offset_t*	rec_offsets;
+	offset_t*	prev_rec_offsets;
 	ulint		i;
 
 	DEBUG_PRINTF("    %s(table=%s, index=%s, level=" ULINTPF ")\n",
@@ -1038,9 +1036,9 @@ dict_stats_analyze_index_level(
 	i = (REC_OFFS_HEADER_SIZE + 1 + 1) + n_uniq;
 
 	heap = mem_heap_create((2 * sizeof *rec_offsets) * i);
-	rec_offsets = static_cast<ulint*>(
+	rec_offsets = static_cast<offset_t*>(
 		mem_heap_alloc(heap, i * sizeof *rec_offsets));
-	prev_rec_offsets = static_cast<ulint*>(
+	prev_rec_offsets = static_cast<offset_t*>(
 		mem_heap_alloc(heap, i * sizeof *prev_rec_offsets));
 	rec_offs_set_n_alloc(rec_offsets, i);
 	rec_offs_set_n_alloc(prev_rec_offsets, i);
@@ -1171,13 +1169,9 @@ dict_stats_analyze_index_level(
 				prev_rec, index, prev_rec_offsets, !level,
 				n_uniq, &heap);
 
-			cmp_rec_rec_with_match(rec,
-					       prev_rec,
-					       rec_offsets,
-					       prev_rec_offsets,
-					       index,
-					       FALSE,
-					       &matched_fields);
+			cmp_rec_rec(prev_rec, rec,
+				    prev_rec_offsets, rec_offsets, index,
+				    false, &matched_fields);
 
 			for (i = matched_fields; i < n_uniq; i++) {
 
@@ -1333,11 +1327,11 @@ to the number of externally stored pages which were encountered
 @return offsets1 or offsets2 (the offsets of *out_rec),
 or NULL if the page is empty and does not contain user records. */
 UNIV_INLINE
-ulint*
+offset_t*
 dict_stats_scan_page(
 	const rec_t**		out_rec,
-	ulint*			offsets1,
-	ulint*			offsets2,
+	offset_t*		offsets1,
+	offset_t*		offsets2,
 	const dict_index_t*	index,
 	const page_t*		page,
 	ulint			n_prefix,
@@ -1345,8 +1339,8 @@ dict_stats_scan_page(
 	ib_uint64_t*		n_diff,
 	ib_uint64_t*		n_external_pages)
 {
-	ulint*		offsets_rec		= offsets1;
-	ulint*		offsets_next_rec	= offsets2;
+	offset_t*	offsets_rec		= offsets1;
+	offset_t*	offsets_next_rec	= offsets2;
 	const rec_t*	rec;
 	const rec_t*	next_rec;
 	/* A dummy heap, to be passed to rec_get_offsets().
@@ -1397,9 +1391,8 @@ dict_stats_scan_page(
 
 		/* check whether rec != next_rec when looking at
 		the first n_prefix fields */
-		cmp_rec_rec_with_match(rec, next_rec,
-				       offsets_rec, offsets_next_rec,
-				       index, FALSE, &matched_fields);
+		cmp_rec_rec(rec, next_rec, offsets_rec, offsets_next_rec,
+			    index, false, &matched_fields);
 
 		if (matched_fields < n_prefix) {
 			/* rec != next_rec, => rec is non-boring */
@@ -1412,23 +1405,16 @@ dict_stats_scan_page(
 		}
 
 		rec = next_rec;
-		{
-			/* Assign offsets_rec = offsets_next_rec
-			so that offsets_rec matches with rec which
-			was just assigned rec = next_rec above.
-			Also need to point offsets_next_rec to the
-			place where offsets_rec was pointing before
-			because we have just 2 placeholders where
-			data is actually stored:
-			offsets1 and offsets2 and we
-			are using them in circular fashion
-			(offsets[_next]_rec are just pointers to
-			those placeholders). */
-			ulint*	offsets_tmp;
-			offsets_tmp = offsets_rec;
-			offsets_rec = offsets_next_rec;
-			offsets_next_rec = offsets_tmp;
-		}
+		/* Assign offsets_rec = offsets_next_rec so that
+		offsets_rec matches with rec which was just assigned
+		rec = next_rec above.  Also need to point
+		offsets_next_rec to the place where offsets_rec was
+		pointing before because we have just 2 placeholders
+		where data is actually stored: offsets1 and offsets2
+		and we are using them in circular fashion
+		(offsets[_next]_rec are just pointers to those
+		placeholders). */
+		std::swap(offsets_rec, offsets_next_rec);
 
 		if (should_count_external_pages) {
 			*n_external_pages += btr_rec_get_externally_stored_len(
@@ -1467,9 +1453,9 @@ dict_stats_analyze_index_below_cur(
 	const page_t*	page;
 	mem_heap_t*	heap;
 	const rec_t*	rec;
-	ulint*		offsets1;
-	ulint*		offsets2;
-	ulint*		offsets_rec;
+	offset_t*	offsets1;
+	offset_t*	offsets2;
+	offset_t*	offsets_rec;
 	ulint		size;
 	mtr_t		mtr;
 
@@ -1487,10 +1473,10 @@ dict_stats_analyze_index_below_cur(
 
 	heap = mem_heap_create(size * (sizeof *offsets1 + sizeof *offsets2));
 
-	offsets1 = static_cast<ulint*>(mem_heap_alloc(
+	offsets1 = static_cast<offset_t*>(mem_heap_alloc(
 			heap, size * sizeof *offsets1));
 
-	offsets2 = static_cast<ulint*>(mem_heap_alloc(
+	offsets2 = static_cast<offset_t*>(mem_heap_alloc(
 			heap, size * sizeof *offsets2));
 
 	rec_offs_set_n_alloc(offsets1, size);
@@ -1748,8 +1734,8 @@ dict_stats_analyze_index_for_n_prefix(
 		ut_a(left <= right);
 		ut_a(right <= last_idx_on_level);
 
-		const ulint	rnd = right == left ? 0 :
-			ut_rnd_gen_ulint() % (right - left);
+		const ulint	rnd = ut_rnd_interval(
+			static_cast<ulint>(right - left));
 
 		const ib_uint64_t	dive_below_idx
 			= boundaries->at(static_cast<unsigned>(left + rnd));
@@ -1929,10 +1915,8 @@ dict_stats_analyze_index(
 
 	dict_stats_empty_index(index, false);
 
-	mtr_start(&mtr);
-
-	mtr_s_lock(dict_index_get_lock(index), &mtr);
-
+	mtr.start();
+	mtr_s_lock_index(index, &mtr);
 	size = btr_get_size(index, BTR_TOTAL_SIZE, &mtr);
 
 	if (size != ULINT_UNDEFINED) {
@@ -1941,7 +1925,7 @@ dict_stats_analyze_index(
 	}
 
 	/* Release the X locks on the root page taken by btr_get_size() */
-	mtr_commit(&mtr);
+	mtr.commit();
 
 	switch (size) {
 	case ULINT_UNDEFINED:
@@ -1954,10 +1938,8 @@ dict_stats_analyze_index(
 
 	index->stat_n_leaf_pages = size;
 
-	mtr_start(&mtr);
-
-	mtr_sx_lock(dict_index_get_lock(index), &mtr);
-
+	mtr.start();
+	mtr_sx_lock_index(index, &mtr);
 	root_level = btr_height_get(index, &mtr);
 
 	n_uniq = dict_index_get_n_unique(index);
@@ -1997,7 +1979,7 @@ dict_stats_analyze_index(
 			index->stat_n_sample_sizes[i] = total_pages;
 		}
 
-		mtr_commit(&mtr);
+		mtr.commit();
 
 		dict_stats_assert_initialized_index(index);
 		DBUG_VOID_RETURN;
@@ -2043,9 +2025,9 @@ dict_stats_analyze_index(
 
 		/* Commit the mtr to release the tree S lock to allow
 		other threads to do some work too. */
-		mtr_commit(&mtr);
-		mtr_start(&mtr);
-		mtr_sx_lock(dict_index_get_lock(index), &mtr);
+		mtr.commit();
+		mtr.start();
+		mtr_sx_lock_index(index, &mtr);
 		if (root_level != btr_height_get(index, &mtr)) {
 			/* Just quit if the tree has changed beyond
 			recognition here. The old stats from previous
@@ -2183,7 +2165,7 @@ found_level:
 			data, &mtr);
 	}
 
-	mtr_commit(&mtr);
+	mtr.commit();
 
 	UT_DELETE_ARRAY(n_diff_boundaries);
 
