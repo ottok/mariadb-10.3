@@ -123,7 +123,7 @@ override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Don't use --mem here as official Debian builders and most Docker systems don't have a large mem device available and
 	# would fail with errors on lack of disk space.
-	cd $(BUILDDIR)/mysql-test && ./mtr --force --testcase-timeout=30 --suite-timeout=540 --retry=3 --parallel=$(NUMJOBS) --skip-rpl --suite=main --skip-test-list=unstable-tests  || $(TESTSUITE_FAIL_CMD) ;
+	cd $(BUILDDIR)/mysql-test && ./mtr --force --testcase-timeout=30 --suite-timeout=540 --retry=3 --parallel=$(NUMJOBS) --skip-rpl --skip-tokudb --skip-tokudb_bugs --skip-tokudb_mariadb || $(TESTSUITE_FAIL_CMD) ;
 endif
 
 override_dh_auto_install:

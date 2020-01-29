@@ -5,7 +5,7 @@ include:
 
 # Overridfe Salsa-CI with MariaDB specific variations
 variables:
-  DEB_BUILD_OPTIONS: "nocheck noautodbgsym"
+  DEB_BUILD_OPTIONS: "noautodbgsym"
   RELEASE: sid
   SALSA_CI_DISABLE_REPROTEST: 1
   SALSA_CI_DISABLE_MISSING_BREAKS: 0

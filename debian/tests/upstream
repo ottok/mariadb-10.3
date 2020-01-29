@@ -50,7 +50,7 @@ fi
 
 cd /usr/share/mysql/mysql-test
 echo "starting mysql-test-tun.pl..."
-perl -I. ./mysql-test-run.pl --suite=main --vardir=$WORKDIR/var --tmpdir=$WORKDIR/tmp \
-    --parallel=auto --skip-rpl \
-    --force --skip-test-list=$SKIP_TEST_LST $@ 2>&1
+perl -I. ./mysql-test-run.pl --vardir=$WORKDIR/var --tmpdir=$WORKDIR/tmp \
+    --parallel=auto \
+    --force $@ 2>&1
 echo "run: OK"
