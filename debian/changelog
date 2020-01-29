@@ -1,3 +1,11 @@
+mariadb-10.3 (1:10.3.22-0ubuntu0.19.10.1) eoan-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.22 includes fixes for the
+    following security vulnerabilities (LP: #1861260):
+    - CVE-2020-2574
+
+ -- Otto Kekäläinen <otto@debian.org>  Wed, 29 Jan 2020 09:03:14 +0200
+
 mariadb-10.3 (1:10.3.20-0ubuntu0.19.10.1) eoan-security; urgency=high
 
   * SECURITY UPDATE: New upstream version 10.3.20 includes a fix for a
