@@ -108,8 +108,8 @@ row_purge_remove_clust_if_poss_low(
 	mtr_t			mtr;
 	rec_t*			rec;
 	mem_heap_t*		heap		= NULL;
-	ulint*			offsets;
-	ulint			offsets_[REC_OFFS_NORMAL_SIZE];
+	offset_t*		offsets;
+	offset_t		offsets_[REC_OFFS_NORMAL_SIZE];
 	rec_offs_init(offsets_);
 
 	ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_S)
@@ -385,14 +385,14 @@ row_purge_remove_sec_if_poss_tree(
 	enum row_search_result	search_result;
 
 	log_free_check();
-	mtr_start(&mtr);
+	mtr.start();
 	index->set_modified(mtr);
 
 	if (!index->is_committed()) {
 		/* The index->online_status may change if the index is
 		or was being created online, but not committed yet. It
 		is protected by index->lock. */
-		mtr_sx_lock(dict_index_get_lock(index), &mtr);
+		mtr_sx_lock_index(index, &mtr);
 
 		if (dict_index_is_online_ddl(index)) {
 			/* Online secondary index creation will not
@@ -487,9 +487,9 @@ row_purge_remove_sec_if_poss_tree(
 	}
 
 func_exit:
-	btr_pcur_close(&pcur);
+	btr_pcur_close(&pcur); // FIXME: need this?
 func_exit_no_pcur:
-	mtr_commit(&mtr);
+	mtr.commit();
 
 	return(success);
 }
@@ -516,7 +516,7 @@ row_purge_remove_sec_if_poss_leaf(
 	log_free_check();
 	ut_ad(index->table == node->table);
 	ut_ad(!index->table->is_temporary());
-	mtr_start(&mtr);
+	mtr.start();
 	index->set_modified(mtr);
 
 	if (!index->is_committed()) {
@@ -528,7 +528,7 @@ row_purge_remove_sec_if_poss_leaf(
 		/* The index->online_status may change if the the
 		index is or was being created online, but not
 		committed yet. It is protected by index->lock. */
-		mtr_s_lock(dict_index_get_lock(index), &mtr);
+		mtr_s_lock_index(index, &mtr);
 
 		if (dict_index_is_online_ddl(index)) {
 			/* Online secondary index creation will not
@@ -632,7 +632,7 @@ row_purge_remove_sec_if_poss_leaf(
 						 ->page.id);
 
 					btr_pcur_close(&pcur);
-					mtr_commit(&mtr);
+					mtr.commit();
 					return(success);
 				}
 			}
@@ -658,9 +658,9 @@ row_purge_remove_sec_if_poss_leaf(
 		/* The deletion was buffered. */
 	case ROW_NOT_FOUND:
 		/* The index entry does not exist, nothing to do. */
-		btr_pcur_close(&pcur);
+		btr_pcur_close(&pcur); // FIXME: do we need these? when is btr_cur->rtr_info set?
 func_exit_no_pcur:
-		mtr_commit(&mtr);
+		mtr.commit();
 		return(success);
 	}
 
@@ -801,9 +801,9 @@ static void row_purge_reset_trx_id(purge_node_t* node, mtr_t* mtr)
 		mem_heap_t*	heap = NULL;
 		/* Reserve enough offsets for the PRIMARY KEY and 2 columns
 		so that we can access DB_TRX_ID, DB_ROLL_PTR. */
-		ulint	offsets_[REC_OFFS_HEADER_SIZE + MAX_REF_PARTS + 2];
+		offset_t offsets_[REC_OFFS_HEADER_SIZE + MAX_REF_PARTS + 2];
 		rec_offs_init(offsets_);
-		ulint*	offsets = rec_get_offsets(
+		offset_t*	offsets = rec_get_offsets(
 			rec, index, offsets_, true, trx_id_pos + 2, &heap);
 		ut_ad(heap == NULL);
 
@@ -950,12 +950,12 @@ skip_secondaries:
 			ut_ad(rseg->id == rseg_id);
 			ut_ad(rseg->is_persistent());
 
-			mtr_start(&mtr);
+			mtr.start();
 
 			/* We have to acquire an SX-latch to the clustered
 			index tree (exclude other tree changes) */
 
-			mtr_sx_lock(dict_index_get_lock(index), &mtr);
+			mtr_sx_lock_index(index, &mtr);
 
 			index->set_modified(mtr);
 
@@ -986,7 +986,7 @@ skip_secondaries:
 				data_field + dfield_get_len(&ufield->new_val)
 				- BTR_EXTERN_FIELD_REF_SIZE,
 				NULL, NULL, NULL, 0, false, &mtr);
-			mtr_commit(&mtr);
+			mtr.commit();
 		}
 	}
 
@@ -1381,7 +1381,7 @@ purge_node_t::validate_pcur()
 
 	dict_index_t*	clust_index = pcur.btr_cur.index;
 
-	ulint*	offsets = rec_get_offsets(
+	offset_t* offsets = rec_get_offsets(
 		pcur.old_rec, clust_index, NULL, true,
 		pcur.old_n_fields, &heap);
 

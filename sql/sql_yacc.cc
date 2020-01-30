@@ -41599,7 +41599,7 @@ yyreduce:
   case 2220:
 #line 13787 "/home/buildbot/git/sql/sql_yacc.yy" /* yacc.c:1646  */
     {
-            Lex->vers_conditions.init(SYSTEM_TIME_ALL);
+            Lex->vers_conditions.init(SYSTEM_TIME_HISTORY);
           }
 #line 41605 "/home/buildbot/git/mkdist/sql/sql_yacc.cc" /* yacc.c:1646  */
     break;

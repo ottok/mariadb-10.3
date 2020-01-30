@@ -302,16 +302,21 @@ btr_pcur_restore_position_func(
 			if (cursor->rel_pos == BTR_PCUR_ON) {
 #ifdef UNIV_DEBUG
 				const rec_t*	rec;
-				const ulint*	offsets1;
-				const ulint*	offsets2;
+				offset_t	offsets1_[REC_OFFS_NORMAL_SIZE];
+				offset_t	offsets2_[REC_OFFS_NORMAL_SIZE];
+				offset_t*	offsets1 = offsets1_;
+				offset_t*	offsets2 = offsets2_;
 				rec = btr_pcur_get_rec(cursor);
+
+				rec_offs_init(offsets1_);
+				rec_offs_init(offsets2_);
 
 				heap = mem_heap_create(256);
 				offsets1 = rec_get_offsets(
-					cursor->old_rec, index, NULL, true,
+					cursor->old_rec, index, offsets1, true,
 					cursor->old_n_fields, &heap);
 				offsets2 = rec_get_offsets(
-					rec, index, NULL, true,
+					rec, index, offsets2, true,
 					cursor->old_n_fields, &heap);
 
 				ut_ad(!cmp_rec_rec(cursor->old_rec,
@@ -370,11 +375,13 @@ btr_pcur_restore_position_func(
 	ut_ad(cursor->rel_pos == BTR_PCUR_ON
 	      || cursor->rel_pos == BTR_PCUR_BEFORE
 	      || cursor->rel_pos == BTR_PCUR_AFTER);
+	offset_t offsets[REC_OFFS_NORMAL_SIZE];
+	rec_offs_init(offsets);
 	if (cursor->rel_pos == BTR_PCUR_ON
 	    && btr_pcur_is_on_user_rec(cursor)
 	    && !cmp_dtuple_rec(tuple, btr_pcur_get_rec(cursor),
 			       rec_get_offsets(btr_pcur_get_rec(cursor),
-					       index, NULL, true,
+					       index, offsets, true,
 					       ULINT_UNDEFINED, &heap))) {
 
 		/* We have to store the NEW value for the modify clock,
@@ -433,7 +440,7 @@ btr_pcur_move_to_next_page(
 		return;
 	}
 
-	next_page_no = btr_page_get_next(page, mtr);
+	next_page_no = btr_page_get_next(page);
 
 	ut_ad(next_page_no != FIL_NULL);
 
@@ -460,7 +467,7 @@ btr_pcur_move_to_next_page(
 	next_page = buf_block_get_frame(next_block);
 #ifdef UNIV_BTR_DEBUG
 	ut_a(page_is_comp(next_page) == page_is_comp(page));
-	ut_a(btr_page_get_prev(next_page, mtr)
+	ut_a(btr_page_get_prev(next_page)
 	     == btr_pcur_get_block(cursor)->page.id.page_no());
 #endif /* UNIV_BTR_DEBUG */
 
@@ -522,7 +529,7 @@ btr_pcur_move_backward_from_page(
 
 	page = btr_pcur_get_page(cursor);
 
-	prev_page_no = btr_page_get_prev(page, mtr);
+	prev_page_no = btr_page_get_prev(page);
 
 	if (prev_page_no == FIL_NULL) {
 	} else if (btr_pcur_is_before_first_on_page(cursor)) {
