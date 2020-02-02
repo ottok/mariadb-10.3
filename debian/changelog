@@ -1,4 +1,4 @@
-mariadb-10.3 (1:10.3.22-1+deb10u1) buster; urgency=high
+mariadb-10.3 (1:10.3.22-0+deb10u1) buster; urgency=high
 
   * SECURITY UPDATE: New upstream version 10.3.22. Includes fixes for the
     following security vulnerabilities:
@@ -13,8 +13,9 @@ mariadb-10.3 (1:10.3.22-1+deb10u1) buster; urgency=high
     vulnerabilities:
     - CVE-2019-2938
     - CVE-2019-2974
+  * Prefer salsa-ci.yml naming over gitlab-ci.yml since we inherit Salsa-CI
 
- -- Otto Kekäläinen <otto@debian.org>  Thu, 30 Jan 2020 10:18:37 +0200
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 02 Feb 2020 14:33:19 +0100
 
 mariadb-10.3 (1:10.3.18-0+deb10u1) buster; urgency=high
 
