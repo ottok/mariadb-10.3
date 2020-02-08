@@ -2,7 +2,7 @@
 
 set -e
 
-# Install Mroonga
+# Uninstall Mroonga
 # No user or password parameter is required with new MariaDB that
 # has unix socket authentication support by default.
 mysql < /usr/share/mysql/mroonga/uninstall.sql || true
