@@ -161,6 +161,7 @@ endif
 	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_interface.so
 	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/qa_auth_server.so
 	rm -f $(TMP)/usr/lib/*/mariadb19/plugin/test_versioning.so
+	rm -f $(TMP)/usr/share/mysql/mysql-test/suite/plugins/pam/pam_mariadb_mtr.so
 
 	# Delete useless systemd files introduced in upstream commit
 	# https://github.com/MariaDB/server/commit/7bbc6c14d1e8fcf1f4737e0a5fcf6237fe18bd23
