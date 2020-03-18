@@ -93,6 +93,15 @@ done
 if [ ! -z "$found_version" ]
 then
 
+  # MySQL 8.0 in Ubuntu has a bug in packaging and the file is name wrongly
+  # 'debian-5.7.flag', so in case '5.7' was encountered an extra check needs to
+  # be done to see is there is a file called undo_001, which is a sign of 8.0.
+  if [ "$found_version" == "5.7" ] && [ -f "$mysql_datadir/undo_001" ]
+  then
+    # Seems to be a 8.0, flag has wrongly 5.7 (know bug)
+    found_version=8.0
+  fi
+
   echo "$mysql_datadir: found previous version $found_version"
 
   if dpkg --compare-versions "$found_version" '>>' "$this_version"
