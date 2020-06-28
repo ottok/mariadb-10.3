@@ -7,6 +7,8 @@ mariadb-10.3 (1:10.3.23-1) unstable; urgency=medium
     - CVE-2020-2812
     - CVE-2020-2814
     - CVE-2020-13249
+  - Inludes fix for MDEV-21586: Server does not start if lc_messages setting
+    was not English (Closes: #951059)
 
  -- Otto Kekäläinen <otto@debian.org>  Sun, 05 Jul 2020 21:28:11 +0300
 
