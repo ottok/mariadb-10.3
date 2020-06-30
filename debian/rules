@@ -47,6 +47,13 @@ ifeq (32,$(DEB_HOST_ARCH_BITS))
     CMAKEFLAGS += -DWITHOUT_ROCKSDB=true
 endif
 
+ifeq ($(DEB_HOST_ARCH),riscv64)
+    # riscv64 is currently very slow.
+    TESTCASE_TIMEOUT=120
+else
+    TESTCASE_TIMEOUT=30
+endif
+
 # Skip TokuDB if arch is not amd64 (also disable for kfreebsd-amd64 as it FTBFS)
 # Skipped on the x32 ABI too; untested, but unlikely to work given i386 is not
 # supported.
@@ -123,7 +130,7 @@ override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Don't use --mem here as official Debian builders and most Docker systems don't have a large mem device available and
 	# would fail with errors on lack of disk space.
-	cd $(BUILDDIR)/mysql-test && ./mtr --force --testcase-timeout=30 --suite-timeout=540 --retry=3 --parallel=$(NUMJOBS) --skip-rpl --suite=main --skip-test-list=unstable-tests  || $(TESTSUITE_FAIL_CMD) ;
+	cd $(BUILDDIR)/mysql-test && ./mtr --force --testcase-timeout=$(TESTCASE_TIMEOUT) --suite-timeout=540 --retry=3 --parallel=$(NUMJOBS) --skip-rpl --suite=main --skip-test-list=unstable-tests  || $(TESTSUITE_FAIL_CMD) ;
 endif
 
 override_dh_auto_install:
