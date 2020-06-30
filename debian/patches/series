@@ -19,3 +19,4 @@ rocksdb-kfreebsd.patch
 libmariadb-kfreebsd.patch
 mroonga-path-reproducible-build.patch
 rocksdb-zstd-detection.patch
+riscv64-need-latomic-as-library.patch
