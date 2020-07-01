@@ -1,0 +1,65 @@
+From 201620f82d16fc1436fb089096dd9f5c4ad161ef Mon Sep 17 00:00:00 2001
+From: Daniel Black <daniel@linux.ibm.com>
+Date: Thu, 2 Jul 2020 09:39:13 +1000
+Subject: [PATCH] MDEV-23051: riscv64 fails build (atomics)
+
+riscv64 fails to build because the use
+of #include <atomic> needs to link with -latomic.
+
+per https://github.com/riscv/riscv-gnu-toolchain/issues/183#issuecomment-253721765
+
+Origin: upstream, https://github.com/MariaDB/server/pull/1617/commits/201620f82d16fc1436fb089096dd9f5c4ad161ef
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=<todo-bug>
+Last-Update: 2020-07-02
+
+---
+ storage/rocksdb/CMakeLists.txt      | 7 +++++++
+ storage/rocksdb/build_rocksdb.cmake | 4 ++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/storage/rocksdb/CMakeLists.txt b/storage/rocksdb/CMakeLists.txt
+index cef5a8b2517..506dead7a6e 100644
+--- a/storage/rocksdb/CMakeLists.txt
++++ b/storage/rocksdb/CMakeLists.txt
+@@ -108,9 +108,15 @@ SET(ROCKSDB_SE_SOURCES
+ # This is a strong requirement coming from RocksDB. No conditional checks here.
+ #ADD_DEFINITIONS(-DROCKSDB_PLATFORM_POSIX -DROCKSDB_LIB_IO_POSIX
+ #)
++if(CMAKE_SYSTEM_PROCESSOR STREQUAL "riscv64")
++  SET(ATOMIC_EXTRA_LIBS -latomic)
++else()
++  SET(ATOMIC_EXTRA_LIBS)
++endif()
+ 
+ MYSQL_ADD_PLUGIN(rocksdb ${ROCKSDB_SE_SOURCES} MODULE_ONLY STORAGE_ENGINE
+                  MODULE_OUTPUT_NAME ha_rocksdb
++                 LINK_LIBRARIES ${ATOMIC_EXTRA_LIBS}
+                  COMPONENT rocksdb-engine)
+ 
+ IF(NOT TARGET rocksdb)
+@@ -161,6 +167,7 @@ TARGET_LINK_LIBRARIES(rocksdb_aux_lib rocksdblib ${ZLIB_LIBRARY})
+ if (UNIX AND NOT APPLE)
+   TARGET_LINK_LIBRARIES(rocksdb_aux_lib -lrt)
+ endif()
++TARGET_LINK_LIBRARIES(rocksdb_aux_lib ${ATOMIC_EXTRA_LIBS})
+ 
+ # IF (WITH_JEMALLOC)
+ #  FIND_LIBRARY(JEMALLOC_LIBRARY
+diff --git a/storage/rocksdb/build_rocksdb.cmake b/storage/rocksdb/build_rocksdb.cmake
+index 3f3dca7e990..a32a98d0712 100644
+--- a/storage/rocksdb/build_rocksdb.cmake
++++ b/storage/rocksdb/build_rocksdb.cmake
+@@ -132,6 +132,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64")
+   ADD_DEFINITIONS(-DHAVE_POWER8 -DHAS_ALTIVEC)
+ endif(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64")
+ 
++if(CMAKE_SYSTEM_PROCESSOR STREQUAL "riscv64")
++ set(SYSTEM_LIBS ${SYSTEM_LIBS} -latomic)
++endif()
++
+ option(WITH_FALLOCATE "build with fallocate" ON)
+ 
+ if(WITH_FALLOCATE AND UNIX)
+-- 
+2.27.0
+

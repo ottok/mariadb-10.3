@@ -18,3 +18,4 @@ MDEV-18768-automate-auth_socket-to_unix_socket-upgrade.patch
 rocksdb-kfreebsd.patch
 libmariadb-kfreebsd.patch
 mroonga-path-reproducible-build.patch
+riscv64-need-latomic-as-library.patch
