@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2019, MariaDB Corporation.
+Copyright (c) 2016, 2020 MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -27,6 +27,8 @@ Created 7/19/1997 Heikki Tuuri
 #include "ibuf0ibuf.h"
 #include "sync0sync.h"
 #include "btr0sea.h"
+
+using st_::span;
 
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
 my_bool	srv_ibuf_disable_background_merge;
@@ -3310,7 +3312,7 @@ ibuf_insert_low(
 	dtuple_t*	ibuf_entry;
 	mem_heap_t*	offsets_heap	= NULL;
 	mem_heap_t*	heap;
-	offset_t*	offsets		= NULL;
+	rec_offs*	offsets		= NULL;
 	ulint		buffered;
 	lint		min_n_recs;
 	rec_t*		ins_rec;
@@ -3770,7 +3772,7 @@ ibuf_insert_to_index_page_low(
 	buf_block_t*	block,	/*!< in/out: index page where the buffered
 				entry should be placed */
 	dict_index_t*	index,	/*!< in: record descriptor */
-	offset_t**	offsets,/*!< out: offsets on *rec */
+	rec_offs**	offsets,/*!< out: offsets on *rec */
 	mem_heap_t*	heap,	/*!< in/out: memory heap */
 	mtr_t*		mtr,	/*!< in/out: mtr */
 	page_cur_t*	page_cur)/*!< in/out: cursor positioned on the record
@@ -3850,7 +3852,7 @@ ibuf_insert_to_index_page(
 	ulint		low_match;
 	page_t*		page		= buf_block_get_frame(block);
 	rec_t*		rec;
-	offset_t*	offsets;
+	rec_offs*	offsets;
 	mem_heap_t*	heap;
 
 	DBUG_ENTER("ibuf_insert_to_index_page");
@@ -4107,8 +4109,8 @@ ibuf_delete(
 		/* TODO: the below should probably be a separate function,
 		it's a bastardized version of btr_cur_optimistic_delete. */
 
-		offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-		offset_t*	offsets	= offsets_;
+		rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+		rec_offs*	offsets	= offsets_;
 		mem_heap_t*	heap = NULL;
 		ulint		max_ins_size = 0;
 
@@ -4948,7 +4950,8 @@ dberr_t ibuf_check_bitmap_on_import(const trx_t* trx, fil_space_t* space)
 		bitmap_page = ibuf_bitmap_get_map_page(
 			page_id_t(space->id, page_no), page_size, &mtr);
 
-		if (buf_page_is_zeroes(bitmap_page, page_size.physical())) {
+		if (buf_is_zeroes(span<const byte>(bitmap_page,
+					     page_size.physical()))) {
 			/* This means we got all-zero page instead of
 			ibuf bitmap page. The subsequent page should be
 			all-zero pages. */
@@ -4960,8 +4963,8 @@ dberr_t ibuf_check_bitmap_on_import(const trx_t* trx, fil_space_t* space)
 					page_id_t(space->id, curr_page),
 					page_size, RW_S_LATCH, &mtr);
 	                        page_t*	page = buf_block_get_frame(block);
-				ut_ad(buf_page_is_zeroes(
-					page, page_size.physical()));
+				ut_ad(buf_is_zeroes(span<const byte>(
+					page, page_size.physical())));
 			}
 #endif /* UNIV_DEBUG */
 			ibuf_exit(&mtr);

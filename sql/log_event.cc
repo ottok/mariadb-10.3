@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2019, MariaDB
+   Copyright (c) 2009, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -3239,7 +3239,7 @@ void Rows_log_event::change_to_flashback_event(PRINT_EVENT_INFO *print_event_inf
   Table_map_log_event *map;
   table_def *td;
   DYNAMIC_ARRAY rows_arr;
-  uchar *swap_buff1, *swap_buff2;
+  uchar *swap_buff1;
   uchar *rows_pos= rows_buff + m_rows_before_size;
 
   if (!(map= print_event_info->m_table_map.get_table(m_table_id)) ||
@@ -3288,7 +3288,7 @@ void Rows_log_event::change_to_flashback_event(PRINT_EVENT_INFO *print_event_inf
       }
       value+= length2;
 
-      swap_buff2= (uchar *) my_malloc(length2, MYF(0));
+      void *swap_buff2= my_malloc(length2, MYF(0));
       if (!swap_buff2)
       {
         fprintf(stderr, "\nError: Out of memory. "
@@ -3296,21 +3296,14 @@ void Rows_log_event::change_to_flashback_event(PRINT_EVENT_INFO *print_event_inf
         exit(1);
       }
       memcpy(swap_buff2, start_pos + length1, length2); // WHERE part
-    }
 
-    if (ev_type == UPDATE_ROWS_EVENT ||
-        ev_type == UPDATE_ROWS_EVENT_V1)
-    {
       /* Swap SET and WHERE part */
       memcpy(start_pos, swap_buff2, length2);
       memcpy(start_pos + length2, swap_buff1, length1);
+      my_free(swap_buff2);
     }
 
-    /* Free tmp buffers */
     my_free(swap_buff1);
-    if (ev_type == UPDATE_ROWS_EVENT ||
-        ev_type == UPDATE_ROWS_EVENT_V1)
-      my_free(swap_buff2);
 
     /* Copying one row into a buff, and pushing into the array */
     LEX_STRING one_row;
@@ -5936,7 +5929,7 @@ Query_log_event::do_shall_skip(rpl_group_info *rgi)
     }
   }
 #ifdef WITH_WSREP
-  else if (WSREP_ON && wsrep_mysql_replication_bundle && opt_slave_domain_parallel_threads == 0 &&
+  else if (WSREP(thd) && wsrep_mysql_replication_bundle && opt_slave_domain_parallel_threads == 0 &&
            thd->wsrep_mysql_replicated > 0 &&
            (is_begin() || is_commit()))
   {
@@ -5950,7 +5943,7 @@ Query_log_event::do_shall_skip(rpl_group_info *rgi)
       thd->wsrep_mysql_replicated = 0;
     }
   }
-#endif
+#endif /* WITH_WSREP */
   DBUG_RETURN(Log_event::do_shall_skip(rgi));
 }
 
@@ -9020,8 +9013,16 @@ int Xid_log_event::do_apply_event(rpl_group_info *rgi)
   res= trans_commit(thd); /* Automatically rolls back on error. */
   thd->mdl_context.release_transactional_locks();
 
+#ifdef WITH_WSREP
+  if (WSREP(thd)) mysql_mutex_lock(&thd->LOCK_thd_data);
+  if ((!res || (WSREP(thd) && thd->wsrep_conflict_state == MUST_REPLAY)) && sub_id)
+#else
   if (likely(!res) && sub_id)
+#endif /* WITH_WSREP */
     rpl_global_gtid_slave_state->update_state_hash(sub_id, &gtid, hton, rgi);
+#ifdef WITH_WSREP
+  if (WSREP(thd)) mysql_mutex_unlock(&thd->LOCK_thd_data);
+#endif /* WITH_WSREP */
 
   /*
     Increment the global status commit count variable
@@ -9042,7 +9043,7 @@ Xid_log_event::do_shall_skip(rpl_group_info *rgi)
     DBUG_RETURN(Log_event::EVENT_SKIP_COUNT);
   }
 #ifdef WITH_WSREP
-  else if (wsrep_mysql_replication_bundle && WSREP_ON &&
+  else if (WSREP(thd) && wsrep_mysql_replication_bundle &&
            opt_slave_domain_parallel_threads == 0)
   {
     if (++thd->wsrep_mysql_replicated < (int)wsrep_mysql_replication_bundle)

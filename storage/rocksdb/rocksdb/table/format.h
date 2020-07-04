@@ -10,13 +10,9 @@
 #pragma once
 #include <stdint.h>
 #include <string>
-#ifdef ROCKSDB_MALLOC_USABLE_SIZE
-#ifdef OS_FREEBSD
-#include <malloc_np.h>
-#else
-#include <malloc.h>
-#endif
-#endif
+#include "file/file_prefetch_buffer.h"
+#include "file/random_access_file_reader.h"
+
 #include "rocksdb/options.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/status.h"
@@ -24,11 +20,11 @@
 
 #include "memory/memory_allocator.h"
 #include "options/cf_options.h"
+#include "port/malloc.h"
 #include "port/port.h"  // noexcept
 #include "table/persistent_cache_options.h"
-#include "util/file_reader_writer.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 class RandomAccessFile;
 struct ReadOptions;
@@ -76,6 +72,35 @@ class BlockHandle {
   static const BlockHandle kNullBlockHandle;
 };
 
+// Value in block-based table file index.
+//
+// The index entry for block n is: y -> h, [x],
+// where: y is some key between the last key of block n (inclusive) and the
+// first key of block n+1 (exclusive); h is BlockHandle pointing to block n;
+// x, if present, is the first key of block n (unshortened).
+// This struct represents the "h, [x]" part.
+struct IndexValue {
+  BlockHandle handle;
+  // Empty means unknown.
+  Slice first_internal_key;
+
+  IndexValue() = default;
+  IndexValue(BlockHandle _handle, Slice _first_internal_key)
+      : handle(_handle), first_internal_key(_first_internal_key) {}
+
+  // have_first_key indicates whether the `first_internal_key` is used.
+  // If previous_handle is not null, delta encoding is used;
+  // in this case, the two handles must point to consecutive blocks:
+  // handle.offset() ==
+  //     previous_handle->offset() + previous_handle->size() + kBlockTrailerSize
+  void EncodeTo(std::string* dst, bool have_first_key,
+                const BlockHandle* previous_handle) const;
+  Status DecodeFrom(Slice* input, bool have_first_key,
+                    const BlockHandle* previous_handle);
+
+  std::string ToString(bool hex, bool have_first_key) const;
+};
+
 inline uint32_t GetCompressFormatForVersion(CompressionType compression_type,
                                             uint32_t version) {
 #ifdef NDEBUG
@@ -92,7 +117,7 @@ inline uint32_t GetCompressFormatForVersion(CompressionType compression_type,
 }
 
 inline bool BlockBasedTableSupportedVersion(uint32_t version) {
-  return version <= 4;
+  return version <= 5;
 }
 
 // Footer encapsulates the fixed information stored at the tail
@@ -188,6 +213,11 @@ Status ReadFooterFromFile(RandomAccessFileReader* file,
 
 // 1-byte type + 32-bit crc
 static const size_t kBlockTrailerSize = 5;
+
+// Make block size calculation for IO less error prone
+inline uint64_t block_size(const BlockHandle& handle) {
+  return handle.size() + kBlockTrailerSize;
+}
 
 inline CompressionType get_block_compression_type(const char* block_data,
                                                   size_t block_size) {
@@ -311,4 +341,4 @@ inline BlockHandle::BlockHandle()
 inline BlockHandle::BlockHandle(uint64_t _offset, uint64_t _size)
     : offset_(_offset), size_(_size) {}
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

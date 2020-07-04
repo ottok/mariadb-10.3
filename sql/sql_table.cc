@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2019, MariaDB
+   Copyright (c) 2010, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -4327,8 +4327,11 @@ bool validate_comment_length(THD *thd, LEX_CSTRING *comment, size_t max_len,
                              uint err_code, const char *name)
 {
   DBUG_ENTER("validate_comment_length");
-  size_t tmp_len= my_charpos(system_charset_info, comment->str,
-                           comment->str + comment->length, max_len);
+  if (comment->length == 0)
+    DBUG_RETURN(false);
+
+  size_t tmp_len=
+      Well_formed_prefix(system_charset_info, *comment, max_len).length();
   if (tmp_len < comment->length)
   {
     if (thd->is_strict_mode())
@@ -5579,7 +5582,7 @@ bool mysql_create_like_table(THD* thd, TABLE_LIST* table,
   DBUG_ENTER("mysql_create_like_table");
 
 #ifdef WITH_WSREP
-  if (WSREP_ON && !thd->wsrep_applier &&
+  if (WSREP(thd) && !thd->wsrep_applier &&
       wsrep_create_like_table(thd, table, src_table, create_info))
     DBUG_RETURN(res);
 #endif
@@ -9555,7 +9558,7 @@ do_continue:;
   */
   if (!(alter_info->flags & ~(ALTER_RENAME | ALTER_KEYS_ONOFF)) &&
       alter_info->partition_flags == 0 &&
-      alter_info->requested_algorithm !=
+      alter_info->algorithm(thd) !=
       Alter_info::ALTER_TABLE_ALGORITHM_COPY)   // No need to touch frm.
   {
     bool res;
@@ -9633,7 +9636,7 @@ do_continue:;
                "LOCK=DEFAULT");
       DBUG_RETURN(true);
     }
-    else if (alter_info->requested_algorithm !=
+    else if (alter_info->algorithm(thd) !=
              Alter_info::ALTER_TABLE_ALGORITHM_DEFAULT)
     {
       my_error(ER_ALTER_OPERATION_NOT_SUPPORTED_REASON, MYF(0),
@@ -9673,20 +9676,21 @@ do_continue:;
       using in-place API.
   */
   if ((thd->variables.alter_algorithm == Alter_info::ALTER_TABLE_ALGORITHM_COPY &&
-       alter_info->requested_algorithm !=
+       alter_info->algorithm(thd) !=
        Alter_info::ALTER_TABLE_ALGORITHM_INPLACE)
       || is_inplace_alter_impossible(table, create_info, alter_info)
       || IF_PARTITIONING((partition_changed &&
           !(table->s->db_type()->partition_flags() & HA_USE_AUTO_PARTITION)), 0))
   {
-    if (alter_info->requested_algorithm ==
+    if (alter_info->algorithm(thd) ==
         Alter_info::ALTER_TABLE_ALGORITHM_INPLACE)
     {
       my_error(ER_ALTER_OPERATION_NOT_SUPPORTED, MYF(0),
                "ALGORITHM=INPLACE", "ALGORITHM=COPY");
       DBUG_RETURN(true);
     }
-    alter_info->requested_algorithm= Alter_info::ALTER_TABLE_ALGORITHM_COPY;
+    alter_info->set_requested_algorithm(
+      Alter_info::ALTER_TABLE_ALGORITHM_COPY);
   }
 
   /*
@@ -9806,12 +9810,12 @@ do_continue:;
   /* Remember that we have not created table in storage engine yet. */
   bool no_ha_table= true;
 
-  if (alter_info->requested_algorithm != Alter_info::ALTER_TABLE_ALGORITHM_COPY)
+  if (alter_info->algorithm(thd) != Alter_info::ALTER_TABLE_ALGORITHM_COPY)
   {
     Alter_inplace_info ha_alter_info(create_info, alter_info,
                                      key_info, key_count,
                                      IF_PARTITIONING(thd->work_part_info, NULL),
-                                     ignore);
+                                     ignore, alter_ctx.error_if_not_empty);
     TABLE *altered_table= NULL;
     bool use_inplace= true;
 
@@ -9897,7 +9901,7 @@ do_continue:;
     // If SHARED lock and no particular algorithm was requested, use COPY.
     if (inplace_supported == HA_ALTER_INPLACE_EXCLUSIVE_LOCK &&
         alter_info->requested_lock == Alter_info::ALTER_TABLE_LOCK_SHARED &&
-         alter_info->requested_algorithm ==
+         alter_info->algorithm(thd) ==
                  Alter_info::ALTER_TABLE_ALGORITHM_DEFAULT &&
          thd->variables.alter_algorithm ==
                  Alter_info::ALTER_TABLE_ALGORITHM_DEFAULT)
@@ -10258,7 +10262,7 @@ err_new_table_cleanup:
     thd->abort_on_warning= true;
     make_truncated_value_warning(thd, Sql_condition::WARN_LEVEL_WARN,
                                  f_val, strlength(f_val), t_type,
-                                 new_table->s,
+                                 new_table ? new_table->s : table->s,
                                  alter_ctx.datetime_field->field_name.str);
     thd->abort_on_warning= save_abort_on_warning;
   }
@@ -10373,7 +10377,6 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   bool make_versioned= !from->versioned() && to->versioned();
   bool make_unversioned= from->versioned() && !to->versioned();
   bool keep_versioned= from->versioned() && to->versioned();
-  bool drop_history= false; // XXX
   Field *to_row_start= NULL, *to_row_end= NULL, *from_row_end= NULL;
   MYSQL_TIME query_start;
   DBUG_ENTER("copy_data_between_tables");
@@ -10501,10 +10504,6 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   {
     from_row_end= from->vers_end_field();
   }
-  else if (keep_versioned && drop_history)
-  {
-    from_row_end= from->vers_end_field();
-  }
 
   THD_STAGE_INFO(thd, stage_copy_to_tmp_table);
   /* Tell handler that we have values for all columns in the to table */
@@ -10536,6 +10535,13 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
       error= 1;
       break;
     }
+
+    if (make_unversioned)
+    {
+      if (!from_row_end->is_max())
+        continue; // Drop history rows.
+    }
+
     if (unlikely(++thd->progress.counter >= time_to_report_progress))
     {
       time_to_report_progress+= MY_HOW_OFTEN_TO_WRITE/10;
@@ -10555,19 +10561,11 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
       copy_ptr->do_copy(copy_ptr);
     }
 
-    if (drop_history && from_row_end && !from_row_end->is_max())
-      continue;
-
     if (make_versioned)
     {
       to_row_start->set_notnull();
       to_row_start->store_time(&query_start);
       to_row_end->set_max();
-    }
-    else if (make_unversioned)
-    {
-      if (!from_row_end->is_max())
-        continue; // Drop history rows.
     }
 
     prev_insert_id= to->file->next_insert_id;
@@ -10746,7 +10744,8 @@ bool mysql_recreate_table(THD *thd, TABLE_LIST *table_list, bool table_copy)
   alter_info.flags= (ALTER_CHANGE_COLUMN | ALTER_RECREATE);
 
   if (table_copy)
-    alter_info.requested_algorithm= Alter_info::ALTER_TABLE_ALGORITHM_COPY;
+    alter_info.set_requested_algorithm(
+      Alter_info::ALTER_TABLE_ALGORITHM_COPY);
 
   bool res= mysql_alter_table(thd, &null_clex_str, &null_clex_str, &create_info,
                                 table_list, &alter_info, 0,

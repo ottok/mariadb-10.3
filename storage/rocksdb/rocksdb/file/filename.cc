@@ -12,14 +12,14 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <vector>
+#include "file/writable_file_writer.h"
 #include "logging/logging.h"
 #include "rocksdb/env.h"
 #include "test_util/sync_point.h"
-#include "util/file_reader_writer.h"
 #include "util/stop_watch.h"
 #include "util/string_util.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 static const std::string kRocksDbTFileExt = "sst";
 static const std::string kLevelDbTFileExt = "ldb";
@@ -57,18 +57,26 @@ static size_t GetInfoLogPrefix(const std::string& path, char* dest, int len) {
   return write_idx;
 }
 
+static std::string MakeFileName(uint64_t number, const char* suffix) {
+  char buf[100];
+  snprintf(buf, sizeof(buf), "%06llu.%s",
+           static_cast<unsigned long long>(number), suffix);
+  return buf;
+}
+
 static std::string MakeFileName(const std::string& name, uint64_t number,
                                 const char* suffix) {
-  char buf[100];
-  snprintf(buf, sizeof(buf), "/%06llu.%s",
-           static_cast<unsigned long long>(number),
-           suffix);
-  return name + buf;
+  return name + "/" + MakeFileName(number, suffix);
 }
 
 std::string LogFileName(const std::string& name, uint64_t number) {
   assert(number > 0);
   return MakeFileName(name, number, "log");
+}
+
+std::string LogFileName(uint64_t number) {
+  assert(number > 0);
+  return MakeFileName(number, "log");
 }
 
 std::string BlobFileName(const std::string& blobdirname, uint64_t number) {
@@ -93,6 +101,10 @@ std::string ArchivedLogFileName(const std::string& name, uint64_t number) {
 
 std::string MakeTableFileName(const std::string& path, uint64_t number) {
   return MakeFileName(path, number, kRocksDbTFileExt.c_str());
+}
+
+std::string MakeTableFileName(uint64_t number) {
+  return MakeFileName(number, kRocksDbTFileExt.c_str());
 }
 
 std::string Rocks2LevelTableFileName(const std::string& fullname) {
@@ -381,8 +393,14 @@ Status SetCurrentFile(Env* env, const std::string& dbname,
   return s;
 }
 
-Status SetIdentityFile(Env* env, const std::string& dbname) {
-  std::string id = env->GenerateUniqueId();
+Status SetIdentityFile(Env* env, const std::string& dbname,
+                       const std::string& db_id) {
+  std::string id;
+  if (db_id.empty()) {
+    id = env->GenerateUniqueId();
+  } else {
+    id = db_id;
+  }
   assert(!id.empty());
   // Reserve the filename dbname/000000.dbtmp for the temporary identity file
   std::string tmp = TempFileName(dbname, 0);
@@ -435,4 +453,4 @@ Status GetInfoLogFiles(Env* env, const std::string& db_log_dir,
   return Status::OK();
 }
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

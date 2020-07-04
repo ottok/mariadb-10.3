@@ -2,7 +2,7 @@
 
 Copyright (c) 1995, 2018, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, Google Inc.
-Copyright (c) 2013, 2019, MariaDB Corporation.
+Copyright (c) 2013, 2020, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -82,6 +82,8 @@ Created 11/5/1995 Heikki Tuuri
 #ifdef HAVE_LZO
 #include "lzo/lzo1x.h"
 #endif
+
+using st_::span;
 
 #ifdef HAVE_LIBNUMA
 #include <numa.h>
@@ -461,7 +463,7 @@ buf_pool_register_chunk(
 @return true if temporary tablespace decrypted, false if not */
 static bool buf_tmp_page_decrypt(byte* tmp_frame, byte* src_frame)
 {
-	if (buf_page_is_zeroes(src_frame, srv_page_size)) {
+	if (buf_is_zeroes(span<const byte>(src_frame, srv_page_size))) {
 		return true;
 	}
 
@@ -948,20 +950,14 @@ static uint32_t buf_page_check_crc32(const byte* page, uint32_t checksum)
 # define buf_page_check_crc32(page, checksum) buf_calc_page_crc32(page)
 #endif /* INNODB_BUG_ENDIAN_CRC32 */
 
-/** Check if a page is all zeroes.
-@param[in]	read_buf	database page
-@param[in]	page_size	page frame size
-@return whether the page is all zeroes */
-bool buf_page_is_zeroes(const void* read_buf, size_t page_size)
+
+/** Check if a buffer is all zeroes.
+@param[in]	buf	data to check
+@return whether the buffer is all zeroes */
+bool buf_is_zeroes(span<const byte> buf)
 {
-	const ulint* b = reinterpret_cast<const ulint*>(read_buf);
-	const ulint* const e = b + page_size / sizeof *b;
-	do {
-		if (*b++) {
-			return false;
-		}
-	} while (b != e);
-	return true;
+  ut_ad(buf.size() <= sizeof field_ref_zero);
+  return memcmp(buf.data(), field_ref_zero, buf.size()) == 0;
 }
 
 /** Check if a page is corrupt.
@@ -1077,7 +1073,7 @@ buf_page_is_corrupted(
 
 	/* A page filled with NUL bytes is considered not corrupted.
 	The FIL_PAGE_FILE_FLUSH_LSN field may be written nonzero for
-	the first page of each file of the system tablespace.
+	the first page of the system tablespace.
 	Ignore it for the system tablespace. */
 	if (!checksum_field1 && !checksum_field2) {
 		/* Checksum fields can have valid value as zero.
@@ -1250,11 +1246,12 @@ buf_madvise_do_dump()
 
 	/* mirrors allocation in log_t::create() */
 	if (log_sys.buf) {
-		ret+= madvise(log_sys.first_in_use
-			      ? log_sys.buf
-			      : log_sys.buf - srv_log_buffer_size,
-			      srv_log_buffer_size * 2,
-			      MADV_DODUMP);
+		ret += madvise(log_sys.buf,
+			       srv_log_buffer_size,
+			       MADV_DODUMP);
+		ret += madvise(log_sys.flush_buf,
+			       srv_log_buffer_size,
+			       MADV_DODUMP);
 	}
 	/* mirrors recv_sys_init() */
 	if (recv_sys->buf)
@@ -2253,8 +2250,8 @@ buf_page_realloc(
 		ut_d(block->page.in_page_hash = FALSE);
 		ulint	fold = block->page.id.fold();
 		ut_ad(fold == new_block->page.id.fold());
-		HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, fold, (&block->page));
-		HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, fold, (&new_block->page));
+		HASH_REPLACE(buf_page_t, hash, buf_pool->page_hash, fold,
+			     &block->page, &new_block->page);
 
 		ut_ad(new_block->page.in_page_hash);
 
@@ -2689,23 +2686,6 @@ buf_pool_resize_hash(
 	buf_pool->zip_hash = new_hash_table;
 }
 
-#ifndef DBUG_OFF
-/** This is a debug routine to inject an memory allocation failure error. */
-static
-void
-buf_pool_resize_chunk_make_null(buf_chunk_t** new_chunks)
-{
-	static int count = 0;
-
-	if (count == 1) {
-		ut_free(*new_chunks);
-		*new_chunks = NULL;
-	}
-
-	count++;
-}
-#endif // DBUG_OFF
-
 /** Resize the buffer pool based on srv_buf_pool_size from
 srv_buf_pool_old_size. */
 static
@@ -2973,7 +2953,8 @@ withdraw_retry:
 					ut_zalloc_nokey_nofatal(new_chunks_size));
 
 			DBUG_EXECUTE_IF("buf_pool_resize_chunk_null",
-				buf_pool_resize_chunk_make_null(&new_chunks););
+					ut_free(new_chunks);
+					new_chunks = NULL;);
 
 			if (new_chunks == NULL) {
 				ib::error() << "buffer pool " << i
@@ -3372,8 +3353,8 @@ buf_relocate(
 	/* relocate buf_pool->page_hash */
 	ulint	fold = bpage->id.fold();
 	ut_ad(fold == dpage->id.fold());
-	HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, fold, bpage);
-	HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, fold, dpage);
+	HASH_REPLACE(buf_page_t, hash, buf_pool->page_hash, fold, bpage,
+		     dpage);
 }
 
 /** Hazard Pointer implementation. */
@@ -4013,7 +3994,8 @@ buf_zip_decompress(
 				frame, size, SRV_CHECKSUM_ALGORITHM_INNODB)
 			<< ", none: "
 			<< page_zip_calc_checksum(
-				frame, size, SRV_CHECKSUM_ALGORITHM_NONE);
+				frame, size, SRV_CHECKSUM_ALGORITHM_NONE)
+			<< " (algorithm: " << srv_checksum_algorithm << ")";
 
 		goto err_exit;
 	}
@@ -4255,7 +4237,45 @@ buf_wait_for_read(
 	}
 }
 
-/** This is the general function used to get access to a database page.
+/** Lock the page with the given latch type.
+@param[in,out]	block		block to be locked
+@param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
+@param[in]	mtr		mini-transaction
+@param[in]	file		file name
+@param[in]	line		line where called
+@return pointer to locked block */
+static buf_block_t* buf_page_mtr_lock(buf_block_t *block,
+                                      ulint rw_latch,
+                                      mtr_t* mtr,
+                                      const char *file,
+                                      unsigned line)
+{
+  mtr_memo_type_t fix_type;
+  switch (rw_latch)
+  {
+  case RW_NO_LATCH:
+    fix_type= MTR_MEMO_BUF_FIX;
+    break;
+  case RW_S_LATCH:
+    rw_lock_s_lock_inline(&block->lock, 0, file, line);
+    fix_type= MTR_MEMO_PAGE_S_FIX;
+    break;
+  case RW_SX_LATCH:
+    rw_lock_sx_lock_inline(&block->lock, 0, file, line);
+    fix_type= MTR_MEMO_PAGE_SX_FIX;
+    break;
+  default:
+    ut_ad(rw_latch == RW_X_LATCH);
+    rw_lock_x_lock_inline(&block->lock, 0, file, line);
+    fix_type= MTR_MEMO_PAGE_X_FIX;
+    break;
+  }
+
+  mtr_memo_push(mtr, block, fix_type);
+  return block;
+}
+
+/** This is the low level function used to get access to a database page.
 @param[in]	page_id		page id
 @param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
 @param[in]	guess		guessed block or NULL
@@ -4266,7 +4286,7 @@ BUF_PEEK_IF_IN_POOL, BUF_GET_NO_LATCH, or BUF_GET_IF_IN_POOL_OR_WATCH
 @param[in]	mtr		mini-transaction
 @return pointer to the block or NULL */
 buf_block_t*
-buf_page_get_gen(
+buf_page_get_low(
 	const page_id_t		page_id,
 	const page_size_t&	page_size,
 	ulint			rw_latch,
@@ -4912,35 +4932,7 @@ evict_from_pool:
 		return NULL;
 	}
 
-	mtr_memo_type_t	fix_type;
-
-	switch (rw_latch) {
-	case RW_NO_LATCH:
-
-		fix_type = MTR_MEMO_BUF_FIX;
-		break;
-
-	case RW_S_LATCH:
-		rw_lock_s_lock_inline(&fix_block->lock, 0, file, line);
-
-		fix_type = MTR_MEMO_PAGE_S_FIX;
-		break;
-
-	case RW_SX_LATCH:
-		rw_lock_sx_lock_inline(&fix_block->lock, 0, file, line);
-
-		fix_type = MTR_MEMO_PAGE_SX_FIX;
-		break;
-
-	default:
-		ut_ad(rw_latch == RW_X_LATCH);
-		rw_lock_x_lock_inline(&fix_block->lock, 0, file, line);
-
-		fix_type = MTR_MEMO_PAGE_X_FIX;
-		break;
-	}
-
-	mtr_memo_push(mtr, fix_block, fix_type);
+	fix_block = buf_page_mtr_lock(fix_block, rw_latch, mtr, file, line);
 
 	if (mode != BUF_PEEK_IF_IN_POOL && !access_time) {
 		/* In the case of a first access, try to apply linear
@@ -4953,6 +4945,42 @@ evict_from_pool:
 				   RW_LOCK_FLAG_X | RW_LOCK_FLAG_S));
 
 	return(fix_block);
+}
+
+/** This is the general function used to get access to a database page.
+It does page initialization and applies the buffered redo logs.
+@param[in]	page_id		page id
+@param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
+@param[in]	guess		guessed block or NULL
+@param[in]	mode		BUF_GET, BUF_GET_IF_IN_POOL,
+BUF_PEEK_IF_IN_POOL, BUF_GET_NO_LATCH, or BUF_GET_IF_IN_POOL_OR_WATCH
+@param[in]	file		file name
+@param[in]	line		line where called
+@param[in]	mtr		mini-transaction
+@param[out]	err		DB_SUCCESS or error code
+@return pointer to the block or NULL */
+buf_block_t*
+buf_page_get_gen(
+	const page_id_t		page_id,
+	const page_size_t&	page_size,
+	ulint			rw_latch,
+	buf_block_t*		guess,
+	ulint			mode,
+	const char*		file,
+	unsigned		line,
+	mtr_t*			mtr,
+	dberr_t*		err)
+{
+  if (buf_block_t *block = recv_recovery_create_page(page_id))
+  {
+    buf_block_fix(block);
+    ut_ad(rw_lock_s_lock_nowait(&block->debug_latch, file, line));
+    block= buf_page_mtr_lock(block, rw_latch, mtr, file, line);
+    return block;
+  }
+
+  return buf_page_get_low(page_id, page_size, rw_latch,
+                          guess, mode, file, line, mtr, err);
 }
 
 /********************************************************************//**

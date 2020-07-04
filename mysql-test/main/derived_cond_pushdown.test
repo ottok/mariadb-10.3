@@ -1,3 +1,4 @@
+--source include/have_sequence.inc
 --source include/default_optimizer_switch.inc
 let $no_pushdown= set statement optimizer_switch='condition_pushdown_for_derived=off' for;
 set @@join_buffer_size=256*1024;
@@ -2168,6 +2169,22 @@ DROP TABLE t1, t2;
 
 SET optimizer_switch=DEFAULT;
 
+
+
+--echo #
+--echo # MDEV-17177: an attempt to push down IN predicate when one of
+--echo #             the arguments is too complex to be cloned
+--echo #
+
+CREATE TABLE t1 (a VARCHAR(8));
+INSERT INTO t1 VALUES ('abc'),('def');
+CREATE VIEW v1 AS SELECT * FROM t1 GROUP BY a;
+
+SELECT * FROM v1 WHERE IF( a REGEXP 'def', 'foo', a ) IN ('abc', 'foobar');
+
+DROP VIEW v1;
+DROP TABLE t1;
+
 --echo # End of 10.2 tests
 
 --echo #
@@ -3327,5 +3344,98 @@ eval $q;
 set join_cache_level=default;
 
 DROP TABLE t1,t2;
+
+
+--echo #
+--echo # MDEV-21614: potentially splittable materialized derived/view
+--echo #             within materialized semi-join
+--echo #
+
+create table t1 (
+  id int not null auto_increment primary key,
+  a int not null
+) engine=myisam;
+
+create table t2 (
+  id int not null auto_increment primary key,
+  ro_id int not null,
+  flag int not null, key (ro_id)
+) engine=myisam;
+
+insert into t1(a) select seq+100 from seq_1_to_20;
+insert into t2(ro_id,flag) select seq, 1 from seq_1_to_20;
+insert into t2(ro_id,flag) select seq, 0 from seq_1_to_20;
+
+create view v1 as
+select t1.* from t1 left join t2 on (t1.id = t2.ro_id AND t2.flag = 1)
+  group by t1.id;
+
+let $q1=
+select id, a from t1 where  id in (select id from v1);
+eval $q1;
+eval explain extended $q1;
+
+let $q2=
+select id, a from t1
+  where id in (select id
+               from (select t1.* from t1 left join t2
+                                      on (t1.id = t2.ro_id AND t2.flag = 1)
+                     group by t1.id) dt);
+eval $q2;
+eval explain extended $q2;
+
+drop view v1;
+drop table t1,t2;
+
+--echo #
+--echo # MDEV-21883: potentially splittable materialized derived
+--echo #             that uses a join of 32 tables
+--echo #
+
+CREATE TABLE t (id INT NOT NULL PRIMARY KEY);
+INSERT INTO t values (1),(2),(3);
+
+let $q=
+SELECT t.id FROM t
+LEFT JOIN (
+    SELECT t0.id FROM t AS t0
+    LEFT JOIN t AS t1 ON 0=1
+    LEFT JOIN t AS t2 ON 0=1
+    LEFT JOIN t AS t3 ON 0=1
+    LEFT JOIN t AS t4 ON 0=1
+    LEFT JOIN t AS t5 ON 0=1
+    LEFT JOIN t AS t6 ON 0=1
+    LEFT JOIN t AS t7 ON 0=1
+    LEFT JOIN t AS t8 ON 0=1
+    LEFT JOIN t AS t9 ON 0=1
+    LEFT JOIN t AS t10 ON 0=1
+    LEFT JOIN t AS t11 ON 0=1
+    LEFT JOIN t AS t12 ON 0=1
+    LEFT JOIN t AS t13 ON 0=1
+    LEFT JOIN t AS t14 ON 0=1
+    LEFT JOIN t AS t15 ON 0=1
+    LEFT JOIN t AS t16 ON 0=1
+    LEFT JOIN t AS t17 ON 0=1
+    LEFT JOIN t AS t18 ON 0=1
+    LEFT JOIN t AS t19 ON 0=1
+    LEFT JOIN t AS t20 ON 0=1
+    LEFT JOIN t AS t21 ON 0=1
+    LEFT JOIN t AS t22 ON 0=1
+    LEFT JOIN t AS t23 ON 0=1
+    LEFT JOIN t AS t24 ON 0=1
+    LEFT JOIN t AS t25 ON 0=1
+    LEFT JOIN t AS t26 ON 0=1
+    LEFT JOIN t AS t27 ON 0=1
+    LEFT JOIN t AS t28 ON 0=1
+    LEFT JOIN t AS t29 ON 0=1
+    LEFT JOIN t AS t30 ON 0=1
+    LEFT JOIN t AS t31 ON 0=1
+    GROUP BY t0.id) AS dt ON dt.id = t.id;
+
+eval set statement optimizer_switch='split_materialized=off' for $q;
+
+eval set statement optimizer_switch='split_materialized=on' for $q;
+
+DROP TABLE t;
 
 --echo # End of 10.3 tests

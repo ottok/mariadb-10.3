@@ -9,18 +9,23 @@
 
 #include "test_util/testutil.h"
 
+#include <array>
 #include <cctype>
+#include <fstream>
 #include <sstream>
 
 #include "db/memtable_list.h"
+#include "env/composite_env_wrapper.h"
+#include "file/random_access_file_reader.h"
+#include "file/sequence_file_reader.h"
+#include "file/writable_file_writer.h"
 #include "port/port.h"
-#include "util/file_reader_writer.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 namespace test {
 
 const uint32_t kDefaultFormatVersion = BlockBasedTableOptions().format_version;
-const uint32_t kLatestFormatVersion = 4u;
+const uint32_t kLatestFormatVersion = 5u;
 
 Slice RandomString(Random* rnd, int len, std::string* dst) {
   dst->resize(len);
@@ -123,19 +128,20 @@ const Comparator* Uint64Comparator() {
 WritableFileWriter* GetWritableFileWriter(WritableFile* wf,
                                           const std::string& fname) {
   std::unique_ptr<WritableFile> file(wf);
-  return new WritableFileWriter(std::move(file), fname, EnvOptions());
+  return new WritableFileWriter(NewLegacyWritableFileWrapper(std::move(file)),
+                                fname, EnvOptions());
 }
 
 RandomAccessFileReader* GetRandomAccessFileReader(RandomAccessFile* raf) {
   std::unique_ptr<RandomAccessFile> file(raf);
-  return new RandomAccessFileReader(std::move(file),
+  return new RandomAccessFileReader(NewLegacyRandomAccessFileWrapper(file),
                                     "[test RandomAccessFileReader]");
 }
 
 SequentialFileReader* GetSequentialFileReader(SequentialFile* se,
                                               const std::string& fname) {
   std::unique_ptr<SequentialFile> file(se);
-  return new SequentialFileReader(std::move(file), fname);
+  return new SequentialFileReader(NewLegacySequentialFileWrapper(file), fname);
 }
 
 void CorruptKeyType(InternalKey* ikey) {
@@ -197,8 +203,12 @@ BlockBasedTableOptions RandomBlockBasedTableOptions(Random* rnd) {
   opt.cache_index_and_filter_blocks = rnd->Uniform(2);
   opt.pin_l0_filter_and_index_blocks_in_cache = rnd->Uniform(2);
   opt.pin_top_level_index_and_filter = rnd->Uniform(2);
-  opt.index_type = rnd->Uniform(2) ? BlockBasedTableOptions::kBinarySearch
-                                   : BlockBasedTableOptions::kHashSearch;
+  using IndexType = BlockBasedTableOptions::IndexType;
+  const std::array<IndexType, 4> index_types = {
+      {IndexType::kBinarySearch, IndexType::kHashSearch,
+       IndexType::kTwoLevelIndexSearch, IndexType::kBinarySearchWithFirstKey}};
+  opt.index_type =
+      index_types[rnd->Uniform(static_cast<int>(index_types.size()))];
   opt.hash_index_allow_collision = rnd->Uniform(2);
   opt.checksum = static_cast<ChecksumType>(rnd->Uniform(3));
   opt.block_size = rnd->Uniform(10000000);
@@ -255,6 +265,7 @@ void RandomInitDBOptions(DBOptions* db_opt, Random* rnd) {
   db_opt->paranoid_checks = rnd->Uniform(2);
   db_opt->skip_log_error_on_recovery = rnd->Uniform(2);
   db_opt->skip_stats_update_on_db_open = rnd->Uniform(2);
+  db_opt->skip_checking_sst_file_sizes_on_db_open = rnd->Uniform(2);
   db_opt->use_adaptive_mutex = rnd->Uniform(2);
   db_opt->use_fsync = rnd->Uniform(2);
   db_opt->recycle_log_file_num = rnd->Uniform(2);
@@ -327,6 +338,7 @@ void RandomInitCFOptions(ColumnFamilyOptions* cf_opt, DBOptions& db_options,
   cf_opt->max_mem_compaction_level = rnd->Uniform(100);
   cf_opt->max_write_buffer_number = rnd->Uniform(100);
   cf_opt->max_write_buffer_number_to_maintain = rnd->Uniform(100);
+  cf_opt->max_write_buffer_size_to_maintain = rnd->Uniform(10000);
   cf_opt->min_write_buffer_number_to_merge = rnd->Uniform(100);
   cf_opt->num_levels = rnd->Uniform(100);
   cf_opt->target_file_size_multiplier = rnd->Uniform(100);
@@ -421,5 +433,22 @@ bool IsDirectIOSupported(Env* env, const std::string& dir) {
   return s.ok();
 }
 
+size_t GetLinesCount(const std::string& fname, const std::string& pattern) {
+  std::stringstream ssbuf;
+  std::string line;
+  size_t count = 0;
+
+  std::ifstream inFile(fname.c_str());
+  ssbuf << inFile.rdbuf();
+
+  while (getline(ssbuf, line)) {
+    if (line.find(pattern) != std::string::npos) {
+      count++;
+    }
+  }
+
+  return count;
+}
+
 }  // namespace test
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

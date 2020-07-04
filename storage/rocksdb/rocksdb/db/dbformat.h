@@ -26,7 +26,7 @@
 #include "util/coding.h"
 #include "util/user_comparator_wrapper.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // The file declares data structures and functions that deal with internal
 // keys.
@@ -326,6 +326,9 @@ class IterKey {
         key_size_(0),
         buf_size_(sizeof(space_)),
         is_user_key_(true) {}
+  // No copying allowed
+  IterKey(const IterKey&) = delete;
+  void operator=(const IterKey&) = delete;
 
   ~IterKey() { ResetBuffer(); }
 
@@ -523,10 +526,6 @@ class IterKey {
   }
 
   void EnlargeBuffer(size_t key_size);
-
-  // No copying allowed
-  IterKey(const IterKey&) = delete;
-  void operator=(const IterKey&) = delete;
 };
 
 // Convert from a SliceTranform of user keys, to a SliceTransform of
@@ -669,20 +668,4 @@ struct ParsedInternalKeyComparator {
   const InternalKeyComparator* cmp;
 };
 
-// TODO (yanqin): this causes extra memory allocation and copy. Should be
-// addressed in the future.
-inline Status AppendTimestamp(const Slice& key, const Slice& timestamp,
-                              Slice* ret_key, std::string* ret_buf) {
-  assert(ret_key != nullptr);
-  assert(ret_buf != nullptr);
-  if (key.data() + key.size() == timestamp.data()) {
-    *ret_key = Slice(key.data(), key.size() + timestamp.size());
-  } else {
-    ret_buf->assign(key.data(), key.size());
-    ret_buf->append(timestamp.data(), timestamp.size());
-    *ret_key = Slice(*ret_buf);
-  }
-  return Status::OK();
-}
-
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

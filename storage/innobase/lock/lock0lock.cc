@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2014, 2019, MariaDB Corporation.
+Copyright (c) 2014, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -324,7 +324,7 @@ lock_report_trx_id_insanity(
 	trx_id_t	trx_id,		/*!< in: trx id */
 	const rec_t*	rec,		/*!< in: user record */
 	dict_index_t*	index,		/*!< in: index */
-	const offset_t*	offsets,	/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets,	/*!< in: rec_get_offsets(rec, index) */
 	trx_id_t	max_trx_id)	/*!< in: trx_sys.get_max_trx_id() */
 {
 	ut_ad(rec_offs_validate(rec, index, offsets));
@@ -348,7 +348,7 @@ lock_check_trx_id_sanity(
 	trx_id_t	trx_id,		/*!< in: trx id */
 	const rec_t*	rec,		/*!< in: user record */
 	dict_index_t*	index,		/*!< in: index */
-	const offset_t*	offsets)	/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets)	/*!< in: rec_get_offsets(rec, index) */
 {
 	ut_ad(rec_offs_validate(rec, index, offsets));
 	ut_ad(!rec_is_metadata(rec, index));
@@ -374,7 +374,7 @@ lock_clust_rec_cons_read_sees(
 	const rec_t*	rec,	/*!< in: user record which should be read or
 				passed over by a read cursor */
 	dict_index_t*	index,	/*!< in: clustered index */
-	const offset_t*	offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets,/*!< in: rec_get_offsets(rec, index) */
 	ReadView*	view)	/*!< in: consistent read view */
 {
 	ut_ad(dict_index_is_clust(index));
@@ -1090,9 +1090,7 @@ wsrep_kill_victim(
 	ut_ad(trx_mutex_own(lock->trx));
 
 	/* quit for native mysql */
-	if (!wsrep_on(trx->mysql_thd)) {
-		return;
-	}
+	if (!trx->is_wsrep()) return;
 
 	my_bool bf_this  = wsrep_thd_is_BF(trx->mysql_thd, FALSE);
 	my_bool bf_other = wsrep_thd_is_BF(lock->trx->mysql_thd, TRUE);
@@ -1175,7 +1173,7 @@ lock_rec_other_has_conflicting(
 
 		if (lock_rec_has_to_wait(true, trx, mode, lock, is_supremum)) {
 #ifdef WITH_WSREP
-			if (wsrep_on_trx(trx)) {
+			if (trx->is_wsrep()) {
 				trx_mutex_enter(lock->trx);
 				/* Below function will roll back either trx
 				or lock->trx depending on priority of the
@@ -1205,7 +1203,7 @@ lock_sec_rec_some_has_impl(
 	trx_t*		caller_trx,/*!<in/out: trx of current thread */
 	const rec_t*	rec,	/*!< in: user record */
 	dict_index_t*	index,	/*!< in: secondary index */
-	const offset_t*	offsets)/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets)/*!< in: rec_get_offsets(rec, index) */
 {
 	trx_t*		trx;
 	trx_id_t	max_trx_id;
@@ -1417,7 +1415,7 @@ lock_rec_create_low(
 	ut_ad(index->table->get_ref_count() > 0 || !index->table->can_be_evicted);
 
 #ifdef WITH_WSREP
-	if (c_lock && wsrep_on_trx(trx)
+	if (c_lock && trx->is_wsrep()
 	    && wsrep_thd_is_BF(trx->mysql_thd, FALSE)) {
 		lock_t *hash	= (lock_t *)c_lock->hash;
 		lock_t *prev	= NULL;
@@ -1823,8 +1821,7 @@ lock_rec_add_to_queue(
 #ifdef WITH_WSREP
 		//ut_a(!other_lock || (wsrep_thd_is_BF(trx->mysql_thd, FALSE) &&
                 //                     wsrep_thd_is_BF(other_lock->trx->mysql_thd, TRUE)));
-		if (other_lock &&
-			wsrep_on(trx->mysql_thd) &&
+		if (other_lock && trx->is_wsrep() &&
 			!wsrep_thd_is_BF(trx->mysql_thd, FALSE) &&
 			!wsrep_thd_is_BF(other_lock->trx->mysql_thd, TRUE)) {
 
@@ -3522,7 +3519,7 @@ lock_table_create(
 	UT_LIST_ADD_LAST(trx->lock.trx_locks, lock);
 
 #ifdef WITH_WSREP
-	if (c_lock && wsrep_on_trx(trx)) {
+	if (c_lock && trx->is_wsrep()) {
 		if (wsrep_thd_is_BF(trx->mysql_thd, FALSE)) {
 			ut_list_insert(table->locks, c_lock, lock,
 				       TableLockGetNode());
@@ -3752,7 +3749,7 @@ lock_table_enqueue_waiting(
 	}
 
 #ifdef WITH_WSREP
-	if (trx->lock.was_chosen_as_deadlock_victim && wsrep_on_trx(trx)) {
+	if (trx->is_wsrep() && trx->lock.was_chosen_as_deadlock_victim) {
 		return(DB_DEADLOCK);
 	}
 #endif /* WITH_WSREP */
@@ -3825,7 +3822,7 @@ lock_table_other_has_incompatible(
 		    && (wait || !lock_get_wait(lock))) {
 
 #ifdef WITH_WSREP
-			if (wsrep_on(lock->trx->mysql_thd)) {
+			if (lock->trx->is_wsrep()) {
 				if (wsrep_debug) {
 					ib::info() << "WSREP: table lock abort for table:"
 						   << table->name.m_name;
@@ -4470,8 +4467,8 @@ static void lock_rec_print(FILE* file, const lock_t* lock, mtr_t& mtr)
 	putc('\n', file);
 
 	mem_heap_t*		heap		= NULL;
-	offset_t		offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*		offsets		= offsets_;
+	rec_offs		offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*		offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	mtr.start();
@@ -4819,7 +4816,7 @@ lock_rec_queue_validate(
 	const buf_block_t*	block,	/*!< in: buffer block containing rec */
 	const rec_t*		rec,	/*!< in: record to look at */
 	const dict_index_t*	index,	/*!< in: index, or NULL if not known */
-	const offset_t*		offsets)/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*		offsets)/*!< in: rec_get_offsets(rec, index) */
 {
 	const lock_t*	lock;
 	ulint		heap_no;
@@ -4892,7 +4889,7 @@ func_exit:
 			explicit granted lock. */
 
 #ifdef WITH_WSREP
-			if (wsrep_on(other_lock->trx->mysql_thd)) {
+			if (other_lock->trx->is_wsrep()) {
 				if (!lock_get_wait(other_lock) ) {
 					ib::info() << "WSREP impl BF lock conflict for my impl lock:\n BF:" <<
 						((wsrep_thd_is_BF(impl_trx->mysql_thd, FALSE)) ? "BF" : "normal") << " exec: " <<
@@ -4986,8 +4983,8 @@ lock_rec_validate_page(
 	ulint		nth_bit		= 0;
 	ulint		i;
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(!lock_mutex_own());
@@ -5356,8 +5353,8 @@ lock_rec_insert_check_and_lock(
 #ifdef UNIV_DEBUG
 	{
 		mem_heap_t*	heap		= NULL;
-		offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-		const offset_t*	offsets;
+		rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+		const rec_offs*	offsets;
 		rec_offs_init(offsets_);
 
 		offsets = rec_get_offsets(next_rec, index, offsets_, true,
@@ -5516,7 +5513,7 @@ lock_rec_convert_impl_to_expl(
 	const buf_block_t*	block,
 	const rec_t*		rec,
 	dict_index_t*		index,
-	const offset_t*		offsets)
+	const rec_offs*		offsets)
 {
 	trx_t*		trx;
 
@@ -5587,7 +5584,7 @@ lock_clust_rec_modify_check_and_lock(
 	const rec_t*		rec,	/*!< in: record which should be
 					modified */
 	dict_index_t*		index,	/*!< in: clustered index */
-	const offset_t*		offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*		offsets,/*!< in: rec_get_offsets(rec, index) */
 	que_thr_t*		thr)	/*!< in: query thread */
 {
 	dberr_t	err;
@@ -5679,8 +5676,8 @@ lock_sec_rec_modify_check_and_lock(
 #ifdef UNIV_DEBUG
 	{
 		mem_heap_t*	heap		= NULL;
-		offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-		const offset_t*	offsets;
+		rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+		const rec_offs*	offsets;
 		rec_offs_init(offsets_);
 
 		offsets = rec_get_offsets(rec, index, offsets_, true,
@@ -5724,7 +5721,7 @@ lock_sec_rec_read_check_and_lock(
 					be read or passed over by a
 					read cursor */
 	dict_index_t*		index,	/*!< in: secondary index */
-	const offset_t*		offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*		offsets,/*!< in: rec_get_offsets(rec, index) */
 	lock_mode		mode,	/*!< in: mode of the lock which
 					the read cursor should set on
 					records: LOCK_S or LOCK_X; the
@@ -5794,7 +5791,7 @@ lock_clust_rec_read_check_and_lock(
 					be read or passed over by a
 					read cursor */
 	dict_index_t*		index,	/*!< in: clustered index */
-	const offset_t*		offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*		offsets,/*!< in: rec_get_offsets(rec, index) */
 	lock_mode		mode,	/*!< in: mode of the lock which
 					the read cursor should set on
 					records: LOCK_S or LOCK_X; the
@@ -5872,8 +5869,8 @@ lock_clust_rec_read_check_and_lock_alt(
 	que_thr_t*		thr)	/*!< in: query thread */
 {
 	mem_heap_t*	tmp_heap	= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	dberr_t		err;
 	rec_offs_init(offsets_);
 
