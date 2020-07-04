@@ -8,35 +8,37 @@
 #include <string>
 #include <algorithm>
 
+#include "file/random_access_file_reader.h"
+#include "file/sequence_file_reader.h"
 #include "file/sst_file_manager_impl.h"
+#include "file/writable_file_writer.h"
 #include "rocksdb/env.h"
-#include "util/file_reader_writer.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // Utility function to copy a file up to a specified length
-Status CopyFile(Env* env, const std::string& source,
+Status CopyFile(FileSystem* fs, const std::string& source,
                 const std::string& destination, uint64_t size, bool use_fsync) {
-  const EnvOptions soptions;
+  const FileOptions soptions;
   Status s;
   std::unique_ptr<SequentialFileReader> src_reader;
   std::unique_ptr<WritableFileWriter> dest_writer;
 
   {
-    std::unique_ptr<SequentialFile> srcfile;
-    s = env->NewSequentialFile(source, &srcfile, soptions);
+    std::unique_ptr<FSSequentialFile> srcfile;
+    s = fs->NewSequentialFile(source, soptions, &srcfile, nullptr);
     if (!s.ok()) {
       return s;
     }
-    std::unique_ptr<WritableFile> destfile;
-    s = env->NewWritableFile(destination, &destfile, soptions);
+    std::unique_ptr<FSWritableFile> destfile;
+    s = fs->NewWritableFile(destination, soptions, &destfile, nullptr);
     if (!s.ok()) {
       return s;
     }
 
     if (size == 0) {
       // default argument means copy everything
-      s = env->GetFileSize(source, &size);
+      s = fs->GetFileSize(source, IOOptions(), &size, nullptr);
       if (!s.ok()) {
         return s;
       }
@@ -67,14 +69,14 @@ Status CopyFile(Env* env, const std::string& source,
 }
 
 // Utility function to create a file with the provided contents
-Status CreateFile(Env* env, const std::string& destination,
+Status CreateFile(FileSystem* fs, const std::string& destination,
                   const std::string& contents, bool use_fsync) {
   const EnvOptions soptions;
   Status s;
   std::unique_ptr<WritableFileWriter> dest_writer;
 
-  std::unique_ptr<WritableFile> destfile;
-  s = env->NewWritableFile(destination, &destfile, soptions);
+  std::unique_ptr<FSWritableFile> destfile;
+  s = fs->NewWritableFile(destination, soptions, &destfile, nullptr);
   if (!s.ok()) {
     return s;
   }
@@ -88,12 +90,12 @@ Status CreateFile(Env* env, const std::string& destination,
 }
 
 Status DeleteDBFile(const ImmutableDBOptions* db_options,
-                     const std::string& fname, const std::string& dir_to_sync,
-                     const bool force_bg) {
+                    const std::string& fname, const std::string& dir_to_sync,
+                    const bool force_bg, const bool force_fg) {
 #ifndef ROCKSDB_LITE
   SstFileManagerImpl* sfm =
       static_cast<SstFileManagerImpl*>(db_options->sst_file_manager.get());
-  if (sfm) {
+  if (sfm && !force_fg) {
     return sfm->ScheduleFileDeletion(fname, dir_to_sync, force_bg);
   } else {
     return db_options->env->DeleteFile(fname);
@@ -101,10 +103,22 @@ Status DeleteDBFile(const ImmutableDBOptions* db_options,
 #else
   (void)dir_to_sync;
   (void)force_bg;
+  (void)force_fg;
   // SstFileManager is not supported in ROCKSDB_LITE
   // Delete file immediately
   return db_options->env->DeleteFile(fname);
 #endif
 }
 
-}  // namespace rocksdb
+bool IsWalDirSameAsDBPath(const ImmutableDBOptions* db_options) {
+  bool same = false;
+  assert(!db_options->db_paths.empty());
+  Status s = db_options->env->AreFilesSame(db_options->wal_dir,
+                                           db_options->db_paths[0].path, &same);
+  if (s.IsNotSupported()) {
+    same = db_options->wal_dir == db_options->db_paths[0].path;
+  }
+  return same;
+}
+
+}  // namespace ROCKSDB_NAMESPACE

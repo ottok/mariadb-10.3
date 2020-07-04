@@ -26,7 +26,7 @@
 #include "util/cast_util.h"
 #include "util/string_util.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 DBOptions BuildDBOptions(const ImmutableDBOptions& immutable_db_options,
                          const MutableDBOptions& mutable_db_options) {
@@ -38,6 +38,7 @@ DBOptions BuildDBOptions(const ImmutableDBOptions& immutable_db_options,
   options.error_if_exists = immutable_db_options.error_if_exists;
   options.paranoid_checks = immutable_db_options.paranoid_checks;
   options.env = immutable_db_options.env;
+  options.file_system = immutable_db_options.fs;
   options.rate_limiter = immutable_db_options.rate_limiter;
   options.sst_file_manager = immutable_db_options.sst_file_manager;
   options.info_log = immutable_db_options.info_log;
@@ -110,12 +111,16 @@ DBOptions BuildDBOptions(const ImmutableDBOptions& immutable_db_options,
       immutable_db_options.allow_concurrent_memtable_write;
   options.enable_write_thread_adaptive_yield =
       immutable_db_options.enable_write_thread_adaptive_yield;
+  options.max_write_batch_group_size_bytes =
+      immutable_db_options.max_write_batch_group_size_bytes;
   options.write_thread_max_yield_usec =
       immutable_db_options.write_thread_max_yield_usec;
   options.write_thread_slow_yield_usec =
       immutable_db_options.write_thread_slow_yield_usec;
   options.skip_stats_update_on_db_open =
       immutable_db_options.skip_stats_update_on_db_open;
+  options.skip_checking_sst_file_sizes_on_db_open =
+      immutable_db_options.skip_checking_sst_file_sizes_on_db_open;
   options.wal_recovery_mode = immutable_db_options.wal_recovery_mode;
   options.allow_2pc = immutable_db_options.allow_2pc;
   options.row_cache = immutable_db_options.row_cache;
@@ -138,7 +143,8 @@ DBOptions BuildDBOptions(const ImmutableDBOptions& immutable_db_options,
   options.atomic_flush = immutable_db_options.atomic_flush;
   options.avoid_unnecessary_blocking_io =
       immutable_db_options.avoid_unnecessary_blocking_io;
-
+  options.log_readahead_size = immutable_db_options.log_readahead_size;
+  options.sst_file_checksum_func = immutable_db_options.sst_file_checksum_func;
   return options;
 }
 
@@ -180,7 +186,6 @@ ColumnFamilyOptions BuildColumnFamilyOptions(
       mutable_cf_options.target_file_size_multiplier;
   cf_opts.max_bytes_for_level_base =
       mutable_cf_options.max_bytes_for_level_base;
-  cf_opts.snap_refresh_nanos = mutable_cf_options.snap_refresh_nanos;
   cf_opts.max_bytes_for_level_multiplier =
       mutable_cf_options.max_bytes_for_level_multiplier;
   cf_opts.ttl = mutable_cf_options.ttl;
@@ -1045,21 +1050,21 @@ Status ParseColumnFamilyOption(const std::string& name,
     } else {
       if (name == kNameComparator) {
         // Try to get comparator from object registry first.
-        std::unique_ptr<const Comparator> comp_guard;
-        const Comparator* comp =
-            NewCustomObject<const Comparator>(value, &comp_guard);
         // Only support static comparator for now.
-        if (comp != nullptr && !comp_guard) {
-          new_options->comparator = comp;
+        Status status = ObjectRegistry::NewInstance()->NewStaticObject(
+            value, &new_options->comparator);
+        if (status.ok()) {
+          return status;
         }
       } else if (name == kNameMergeOperator) {
         // Try to get merge operator from object registry first.
-        std::unique_ptr<std::shared_ptr<MergeOperator>> mo_guard;
-        std::shared_ptr<MergeOperator>* mo =
-            NewCustomObject<std::shared_ptr<MergeOperator>>(value, &mo_guard);
+        std::shared_ptr<MergeOperator> mo;
+        Status status =
+            ObjectRegistry::NewInstance()->NewSharedObject<MergeOperator>(
+                value, &new_options->merge_operator);
         // Only support static comparator for now.
-        if (mo != nullptr) {
-          new_options->merge_operator = *mo;
+        if (status.ok()) {
+          return status;
         }
       }
 
@@ -1191,10 +1196,10 @@ Status ParseDBOption(const std::string& name,
           NewGenericRateLimiter(static_cast<int64_t>(ParseUint64(value))));
     } else if (name == kNameEnv) {
       // Currently `Env` can be deserialized from object registry only.
-      std::unique_ptr<Env> env_guard;
-      Env* env = NewCustomObject<Env>(value, &env_guard);
+      Env* env = new_options->env;
+      Status status = Env::LoadEnv(value, &env);
       // Only support static env for now.
-      if (env != nullptr && !env_guard) {
+      if (status.ok()) {
         new_options->env = env;
       }
     } else {
@@ -1471,6 +1476,9 @@ std::unordered_map<std::string, OptionTypeInfo>
         {"skip_stats_update_on_db_open",
          {offsetof(struct DBOptions, skip_stats_update_on_db_open),
           OptionType::kBoolean, OptionVerificationType::kNormal, false, 0}},
+        {"skip_checking_sst_file_sizes_on_db_open",
+         {offsetof(struct DBOptions, skip_checking_sst_file_sizes_on_db_open),
+          OptionType::kBoolean, OptionVerificationType::kNormal, false, 0}},
         {"new_table_reader_for_compaction_inputs",
          {offsetof(struct DBOptions, new_table_reader_for_compaction_inputs),
           OptionType::kBoolean, OptionVerificationType::kNormal, false, 0}},
@@ -1611,6 +1619,9 @@ std::unordered_map<std::string, OptionTypeInfo>
         {"write_thread_slow_yield_usec",
          {offsetof(struct DBOptions, write_thread_slow_yield_usec),
           OptionType::kUInt64T, OptionVerificationType::kNormal, false, 0}},
+        {"max_write_batch_group_size_bytes",
+         {offsetof(struct DBOptions, max_write_batch_group_size_bytes),
+          OptionType::kUInt64T, OptionVerificationType::kNormal, false, 0}},
         {"write_thread_max_yield_usec",
          {offsetof(struct DBOptions, write_thread_max_yield_usec),
           OptionType::kUInt64T, OptionVerificationType::kNormal, false, 0}},
@@ -1664,6 +1675,12 @@ std::unordered_map<std::string, OptionTypeInfo>
          {offsetof(struct DBOptions, avoid_unnecessary_blocking_io),
           OptionType::kBoolean, OptionVerificationType::kNormal, false,
           offsetof(struct ImmutableDBOptions, avoid_unnecessary_blocking_io)}},
+        {"write_dbid_to_manifest",
+         {offsetof(struct DBOptions, write_dbid_to_manifest),
+          OptionType::kBoolean, OptionVerificationType::kNormal, false, 0}},
+        {"log_readahead_size",
+         {offsetof(struct DBOptions, log_readahead_size), OptionType::kSizeT,
+          OptionVerificationType::kNormal, false, 0}},
 };
 
 std::unordered_map<std::string, BlockBasedTableOptions::IndexType>
@@ -1671,7 +1688,9 @@ std::unordered_map<std::string, BlockBasedTableOptions::IndexType>
         {"kBinarySearch", BlockBasedTableOptions::IndexType::kBinarySearch},
         {"kHashSearch", BlockBasedTableOptions::IndexType::kHashSearch},
         {"kTwoLevelIndexSearch",
-         BlockBasedTableOptions::IndexType::kTwoLevelIndexSearch}};
+         BlockBasedTableOptions::IndexType::kTwoLevelIndexSearch},
+        {"kBinarySearchWithFirstKey",
+         BlockBasedTableOptions::IndexType::kBinarySearchWithFirstKey}};
 
 std::unordered_map<std::string, BlockBasedTableOptions::DataBlockIndexType>
     OptionsHelper::block_base_table_data_block_index_type_string_map = {
@@ -1868,6 +1887,9 @@ std::unordered_map<std::string, OptionTypeInfo>
         {"max_write_buffer_number_to_maintain",
          {offset_of(&ColumnFamilyOptions::max_write_buffer_number_to_maintain),
           OptionType::kInt, OptionVerificationType::kNormal, false, 0}},
+        {"max_write_buffer_size_to_maintain",
+         {offset_of(&ColumnFamilyOptions::max_write_buffer_size_to_maintain),
+          OptionType::kInt64T, OptionVerificationType::kNormal, false, 0}},
         {"min_write_buffer_number_to_merge",
          {offset_of(&ColumnFamilyOptions::min_write_buffer_number_to_merge),
           OptionType::kInt, OptionVerificationType::kNormal, false, 0}},
@@ -1927,9 +1949,8 @@ std::unordered_map<std::string, OptionTypeInfo>
           OptionType::kUInt64T, OptionVerificationType::kNormal, true,
           offsetof(struct MutableCFOptions, max_bytes_for_level_base)}},
         {"snap_refresh_nanos",
-         {offset_of(&ColumnFamilyOptions::snap_refresh_nanos),
-          OptionType::kUInt64T, OptionVerificationType::kNormal, true,
-          offsetof(struct MutableCFOptions, snap_refresh_nanos)}},
+         {0, OptionType::kUInt64T, OptionVerificationType::kDeprecated, true,
+          0}},
         {"max_bytes_for_level_multiplier",
          {offset_of(&ColumnFamilyOptions::max_bytes_for_level_multiplier),
           OptionType::kDouble, OptionVerificationType::kNormal, true,
@@ -2100,4 +2121,4 @@ std::unordered_map<std::string, OptionTypeInfo>
 
 #endif  // !ROCKSDB_LITE
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

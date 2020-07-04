@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2019, MariaDB
+   Copyright (c) 2008, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1226,7 +1226,7 @@ bool do_command(THD *thd)
   if (WSREP(thd))
   {
     mysql_mutex_lock(&thd->LOCK_thd_data);
-    thd->wsrep_query_state= QUERY_IDLE;
+    wsrep_thd_set_query_state(thd, QUERY_IDLE);
     if (thd->wsrep_conflict_state==MUST_ABORT)
     {
       wsrep_client_rollback(thd);
@@ -1294,7 +1294,7 @@ bool do_command(THD *thd)
       thd->store_globals();
     }
 
-    thd->wsrep_query_state= QUERY_EXEC;
+    wsrep_thd_set_query_state(thd, QUERY_EXEC);
     mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
 #endif /* WITH_WSREP */
@@ -1594,7 +1594,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     }
 
     mysql_mutex_lock(&thd->LOCK_thd_data);
-    thd->wsrep_query_state= QUERY_EXEC;
+    wsrep_thd_set_query_state(thd, QUERY_EXEC);
     if (thd->wsrep_conflict_state== RETRY_AUTOCOMMIT)
     {
       thd->wsrep_conflict_state= NO_CONFLICT;
@@ -1848,7 +1848,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     if (unlikely(parser_state.init(thd, thd->query(), thd->query_length())))
       break;
 
-    if (WSREP_ON)
+    if (WSREP(thd))
       wsrep_mysql_parse(thd, thd->query(), thd->query_length(), &parser_state,
                         is_com_multi, is_next_command);
     else
@@ -1858,7 +1858,6 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     while (!thd->killed && (parser_state.m_lip.found_semicolon != NULL) &&
            ! thd->is_error())
     {
-      thd->get_stmt_da()->set_skip_flush();
       /*
         Multiple queries exist, execute them individually
       */
@@ -1933,12 +1932,12 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
       */
       statistic_increment(thd->status_var.questions, &LOCK_status);
 
-      if(!WSREP(thd))
+      if (!WSREP(thd))
 	thd->set_time(); /* Reset the query start time. */
 
       parser_state.reset(beginning_of_next_stmt, length);
 
-      if (WSREP_ON)
+      if (WSREP(thd))
         wsrep_mysql_parse(thd, beginning_of_next_stmt, length, &parser_state,
                           is_com_multi, is_next_command);
       else
@@ -2106,7 +2105,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
       general_log_print(thd, command, "Log: '%s'  Pos: %lu", name, pos);
       if (nlen < FN_REFLEN)
         mysql_binlog_send(thd, thd->strmake(name, nlen), (my_off_t)pos, flags);
-      unregister_slave(thd,1,1);
+      unregister_slave(thd, true, true); // todo: can be extraneous
       /*  fake COM_QUIT -- if we get here, the thread needs to terminate */
       error = TRUE;
       break;

@@ -1,5 +1,5 @@
-/* Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2019, MariaDB Corporation
+/* Copyright (c) 2000, 2019, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2020, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -203,6 +203,7 @@ init_lex_with_single_table(THD *thd, TABLE *table, LEX *lex)
   table->map= 1; //To ensure correct calculation of const item
   table_list->table= table;
   table_list->cacheable_table= false;
+  lex->create_last_non_select_table= table_list;
   return FALSE;
 }
 
@@ -1240,17 +1241,27 @@ static inline uint int_token(const char *str,uint length)
 */
 bool Lex_input_stream::consume_comment(int remaining_recursions_permitted)
 {
+  // only one level of nested comments are allowed
+  DBUG_ASSERT(remaining_recursions_permitted == 0 ||
+              remaining_recursions_permitted == 1);
   uchar c;
   while (!eof())
   {
     c= yyGet();
 
-    if (remaining_recursions_permitted > 0)
+    if (remaining_recursions_permitted == 1)
     {
       if ((c == '/') && (yyPeek() == '*'))
       {
-        yySkip(); // Eat asterisk
-        consume_comment(remaining_recursions_permitted - 1);
+        yyUnput('(');  // Replace nested "/*..." with "(*..."
+        yySkip();      // and skip "("
+
+        yySkip(); /* Eat asterisk */
+        if (consume_comment(0))
+          return true;
+
+        yyUnput(')');  // Replace "...*/" with "...*)"
+        yySkip();      // and skip ")"
         continue;
       }
     }
@@ -7065,7 +7076,8 @@ Item *LEX::create_item_limit(THD *thd, const Lex_ident_cli_st *ca)
   if (unlikely(!(item= new (thd->mem_root)
                  Item_splocal(thd, rh, &sa,
                               spv->offset, spv->type_handler(),
-                              pos.pos(), pos.length()))))
+                              clone_spec_offset ? 0 : pos.pos(),
+                              clone_spec_offset ? 0 : pos.length()))))
     return NULL;
 #ifdef DBUG_ASSERT_EXISTS
   item->m_sp= sphead;
@@ -7164,14 +7176,15 @@ Item *LEX::create_item_ident_sp(THD *thd, Lex_ident_sys_st *name,
     }
 
     Query_fragment pos(thd, sphead, start, end);
+    uint f_pos= clone_spec_offset ? 0 : pos.pos();
+    uint f_length= clone_spec_offset ? 0 : pos.length();
     Item_splocal *splocal= spv->field_def.is_column_type_ref() ?
       new (thd->mem_root) Item_splocal_with_delayed_data_type(thd, rh, name,
                                                               spv->offset,
-                                                              pos.pos(),
-                                                              pos.length()) :
+                                                              f_pos, f_length) :
       new (thd->mem_root) Item_splocal(thd, rh, name,
                                        spv->offset, spv->type_handler(),
-                                       pos.pos(), pos.length());
+                                       f_pos, f_length);
     if (unlikely(splocal == NULL))
       return NULL;
 #ifdef DBUG_ASSERT_EXISTS

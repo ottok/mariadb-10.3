@@ -221,32 +221,20 @@ static int wsrep_prepare(handlerton *hton, THD *thd, bool all)
   DBUG_RETURN(0);
 }
 
+/*
+  Empty callbacks to support SAVEPOINT callbacks.
+*/
+
 static int wsrep_savepoint_set(handlerton *hton, THD *thd,  void *sv)
 {
   DBUG_ENTER("wsrep_savepoint_set");
-
-  if (thd->wsrep_exec_mode == REPL_RECV)
-  {
-    DBUG_RETURN(0);
-  }
-
-  if (!wsrep_emulate_bin_log) DBUG_RETURN(0);
-  int rcode = wsrep_binlog_savepoint_set(thd, sv);
-  DBUG_RETURN(rcode);
+  DBUG_RETURN(0);
 }
 
 static int wsrep_savepoint_rollback(handlerton *hton, THD *thd, void *sv)
 {
   DBUG_ENTER("wsrep_savepoint_rollback");
-
-  if (thd->wsrep_exec_mode == REPL_RECV)
-  {
-    DBUG_RETURN(0);
-  }
-
-  if (!wsrep_emulate_bin_log) DBUG_RETURN(0);
-  int rcode = wsrep_binlog_savepoint_rollback(thd, sv);
-  DBUG_RETURN(rcode);
+  DBUG_RETURN(0);
 }
 
 static int wsrep_rollback(handlerton *hton, THD *thd, bool all)
@@ -445,7 +433,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     DBUG_RETURN(WSREP_TRX_CERT_FAIL);
   }
 
-  thd->wsrep_query_state = QUERY_COMMITTING;
+  wsrep_thd_set_query_state(thd, QUERY_COMMITTING);
   mysql_mutex_unlock(&thd->LOCK_thd_data);
 
   cache = get_trans_log(thd);
@@ -482,7 +470,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     {
       WSREP_DEBUG("empty rbr buffer, query: %s", thd->query());
     }
-    thd->wsrep_query_state= QUERY_EXEC;
+    wsrep_thd_set_query_state(thd, QUERY_EXEC);
     DBUG_RETURN(WSREP_TRX_OK);
   }
 
@@ -594,7 +582,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     WSREP_DEBUG("commit failed for reason: %d", rcode);
     DBUG_PRINT("wsrep", ("replicating commit fail"));
 
-    thd->wsrep_query_state= QUERY_EXEC;
+    wsrep_thd_set_query_state(thd, QUERY_EXEC);
 
     if (thd->wsrep_conflict_state == MUST_ABORT) {
       thd->wsrep_conflict_state= ABORTED;
@@ -626,7 +614,7 @@ wsrep_run_wsrep_commit(THD *thd, bool all)
     DBUG_RETURN(WSREP_TRX_ERROR);
   }
 
-  thd->wsrep_query_state= QUERY_EXEC;
+  wsrep_thd_set_query_state(thd, QUERY_EXEC);
   mysql_mutex_unlock(&thd->LOCK_thd_data);
 
   DBUG_RETURN(WSREP_TRX_OK);

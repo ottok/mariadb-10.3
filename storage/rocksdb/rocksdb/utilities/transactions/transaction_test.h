@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include <cinttypes>
 #include <algorithm>
+#include <cinttypes>
 #include <functional>
 #include <string>
 #include <thread>
@@ -27,10 +27,11 @@
 #include "utilities/merge_operators.h"
 #include "utilities/merge_operators/string_append/stringappend.h"
 #include "utilities/transactions/pessimistic_transaction_db.h"
+#include "utilities/transactions/write_unprepared_txn_db.h"
 
 #include "port/port.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // Return true if the ith bit is set in combination represented by comb
 bool IsInCombination(size_t i, size_t comb) { return comb & (size_t(1) << i); }
@@ -67,6 +68,12 @@ class TransactionTestBase : public ::testing::Test {
     txn_db_options.default_lock_timeout = 0;
     txn_db_options.write_policy = write_policy;
     txn_db_options.rollback_merge_operands = true;
+    // This will stress write unprepared, by forcing write batch flush on every
+    // write.
+    txn_db_options.default_write_batch_flush_threshold = 1;
+    // Write unprepared requires all transactions to be named. This setting
+    // autogenerates the name so that existing tests can pass.
+    txn_db_options.autogenerate_name = true;
     Status s;
     if (use_stackable_db == false) {
       s = TransactionDB::Open(options, txn_db_options, dbname, &db);
@@ -122,7 +129,7 @@ class TransactionTestBase : public ::testing::Test {
     } else {
       s = OpenWithStackableDB(cfs, handles);
     }
-    assert(db != nullptr);
+    assert(!s.ok() || db != nullptr);
     return s;
   }
 
@@ -163,8 +170,6 @@ class TransactionTestBase : public ::testing::Test {
     }
     if (!s.ok()) {
       delete stackable_db;
-      // just in case it was not deleted (and not set to nullptr).
-      delete root_db;
     }
     return s;
   }
@@ -200,8 +205,6 @@ class TransactionTestBase : public ::testing::Test {
     delete handles[0];
     if (!s.ok()) {
       delete stackable_db;
-      // just in case it was not deleted (and not set to nullptr).
-      delete root_db;
     }
     return s;
   }
@@ -273,13 +276,20 @@ class TransactionTestBase : public ::testing::Test {
     if (txn_db_options.write_policy == TxnDBWritePolicy::WRITE_COMMITTED) {
       // Consume one seq per key
       exp_seq += 4;
-    } else {
+    } else if (txn_db_options.write_policy ==
+               TxnDBWritePolicy::WRITE_PREPARED) {
       // Consume one seq per batch
       exp_seq++;
       if (options.two_write_queues) {
         // Consume one seq for commit
         exp_seq++;
       }
+    } else {
+      // Flushed after each key, consume one seq per flushed batch
+      exp_seq += 4;
+      // WriteUnprepared implements CommitWithoutPrepareInternal by simply
+      // calling Prepare then Commit. Consume one seq for the prepare.
+      exp_seq++;
     }
     delete txn;
     with_empty_commits++;
@@ -303,9 +313,15 @@ class TransactionTestBase : public ::testing::Test {
     if (txn_db_options.write_policy == TxnDBWritePolicy::WRITE_COMMITTED) {
       // Consume one seq per key
       exp_seq += 5;
-    } else {
+    } else if (txn_db_options.write_policy ==
+               TxnDBWritePolicy::WRITE_PREPARED) {
       // Consume one seq per batch
       exp_seq++;
+      // Consume one seq per commit marker
+      exp_seq++;
+    } else {
+      // Flushed after each key, consume one seq per flushed batch
+      exp_seq += 5;
       // Consume one seq per commit marker
       exp_seq++;
     }
@@ -330,9 +346,19 @@ class TransactionTestBase : public ::testing::Test {
     if (txn_db_options.write_policy == TxnDBWritePolicy::WRITE_COMMITTED) {
       // No seq is consumed for deleting the txn buffer
       exp_seq += 0;
-    } else {
+    } else if (txn_db_options.write_policy ==
+               TxnDBWritePolicy::WRITE_PREPARED) {
       // Consume one seq per batch
       exp_seq++;
+      // Consume one seq per rollback batch
+      exp_seq++;
+      if (options.two_write_queues) {
+        // Consume one seq for rollback commit
+        exp_seq++;
+      }
+    } else {
+      // Flushed after each key, consume one seq per flushed batch
+      exp_seq += 5;
       // Consume one seq per rollback batch
       exp_seq++;
       if (options.two_write_queues) {
@@ -488,4 +514,4 @@ class MySQLStyleTransactionTest
   const bool with_slow_threads_;
 };
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

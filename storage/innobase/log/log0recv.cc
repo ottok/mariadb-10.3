@@ -2,7 +2,7 @@
 
 Copyright (c) 1997, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2019, MariaDB Corporation.
+Copyright (c) 2013, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -102,14 +102,6 @@ static mlog_id_t	recv_previous_parsed_rec_type;
 static ulint	recv_previous_parsed_rec_offset;
 /** The 'multi' flag of the previous parsed redo log record */
 static ulint	recv_previous_parsed_rec_is_multi;
-
-/** This many frames must be left free in the buffer pool when we scan
-the log and store the scanned log records in the buffer pool: we will
-use these free frames to read in pages when we start applying the
-log records to the database.
-This is the default value. If the actual size of the buffer pool is
-larger than 10 MB we'll set this value to 512. */
-ulint	recv_n_pool_free_frames;
 
 /** The maximum lsn we see for a page during the recovery process. If this
 is bigger than the lsn we are able to scan up to, that is an indication that
@@ -321,7 +313,7 @@ public:
 			if (!i->second.created) {
 				continue;
 			}
-			if (buf_block_t* block = buf_page_get_gen(
+			if (buf_block_t* block = buf_page_get_low(
 				    i->first, univ_page_size, RW_X_LATCH, NULL,
 				    BUF_GET_IF_IN_POOL, __FILE__, __LINE__,
 				    &mtr, NULL)) {
@@ -414,8 +406,7 @@ fil_name_process(
 	}
 
 	ut_ad(srv_operation == SRV_OPERATION_NORMAL
-	      || srv_operation == SRV_OPERATION_RESTORE
-	      || srv_operation == SRV_OPERATION_RESTORE_EXPORT);
+	      || is_mariabackup_restore_or_export());
 
 	/* We will also insert space=NULL into the map, so that
 	further checks can ensure that a MLOG_FILE_NAME record was
@@ -841,9 +832,6 @@ recv_sys_init()
 		recv_sys->flush_start = os_event_create(0);
 		recv_sys->flush_end = os_event_create(0);
 	}
-
-	recv_n_pool_free_frames =
-		buf_pool_get_n_pages() / 3;
 
 	recv_sys->buf = static_cast<byte*>(
 		ut_malloc_dontdump(RECV_PARSING_BUF_SIZE));
@@ -2265,14 +2253,106 @@ static void recv_read_in_area(const page_id_t page_id)
 	mutex_enter(&recv_sys->mutex);
 }
 
+/** This is another low level function for the recovery system
+to create a page which has buffered page intialization redo log records.
+@param[in]	page_id		page to be created using redo logs
+@param[in,out]	recv_addr	Hashed redo logs for the given page id
+@return whether the page creation successfully */
+static buf_block_t* recv_recovery_create_page_low(const page_id_t page_id,
+                                                  recv_addr_t* recv_addr)
+{
+  mtr_t mtr;
+  mlog_init_t::init &i= mlog_init.last(page_id);
+  const lsn_t end_lsn= UT_LIST_GET_LAST(recv_addr->rec_list)->end_lsn;
+
+  if (end_lsn < i.lsn)
+  {
+    DBUG_LOG("ib_log", "skip log for page "
+             << page_id
+             << " LSN " << end_lsn
+             << " < " << i.lsn);
+    recv_addr->state= RECV_PROCESSED;
+ignore:
+    ut_a(recv_sys->n_addrs);
+    recv_sys->n_addrs--;
+    return NULL;
+  }
+
+  fil_space_t *space= fil_space_acquire(recv_addr->space);
+  if (!space)
+  {
+    recv_addr->state= RECV_PROCESSED;
+    goto ignore;
+  }
+
+  if (space->enable_lsn)
+  {
+init_fail:
+    space->release();
+    recv_addr->state= RECV_NOT_PROCESSED;
+    return NULL;
+  }
+
+  /* Determine if a tablespace could be for an internal table
+  for FULLTEXT INDEX. For those tables, no MLOG_INDEX_LOAD record
+  used to be written when redo logging was disabled. Hence, we
+  cannot optimize away page reads, because all the redo
+  log records for initializing and modifying the page in the
+  past could be older than the page in the data file.
+
+  The check is too broad, causing all
+  tables whose names start with FTS_ to skip the optimization. */
+
+  if (strstr(space->name, "/FTS_"))
+    goto init_fail;
+
+  mtr.start();
+  mtr.set_log_mode(MTR_LOG_NONE);
+  buf_block_t *block= buf_page_create(page_id, page_size_t(space->flags),
+                                       &mtr);
+  if (recv_addr->state == RECV_PROCESSED)
+    /* The page happened to exist in the buffer pool, or it was
+    just being read in. Before buf_page_get_with_no_latch() returned,
+    all changes must have been applied to the page already. */
+    mtr.commit();
+  else
+  {
+    i.created= true;
+    buf_block_dbg_add_level(block, SYNC_NO_ORDER_CHECK);
+    mtr.x_latch_at_savepoint(0, block);
+    recv_recover_page(block, mtr, recv_addr, i.lsn);
+    ut_ad(mtr.has_committed());
+  }
+
+  space->release();
+  return block;
+}
+
+/** This is a low level function for the recovery system
+to create a page which has buffered intialized redo log records.
+@param[in]      page_id page to be created using redo logs
+@return whether the page creation successfully */
+buf_block_t* recv_recovery_create_page_low(const page_id_t page_id)
+{
+  buf_block_t* block= NULL;
+  mutex_enter(&recv_sys->mutex);
+  recv_addr_t* recv_addr= recv_get_fil_addr_struct(page_id.space(),
+                                                   page_id.page_no());
+  if (recv_addr && recv_addr->state == RECV_WILL_NOT_READ)
+  {
+    block= recv_recovery_create_page_low(page_id, recv_addr);
+  }
+  mutex_exit(&recv_sys->mutex);
+  return block;
+}
+
 /** Apply the hash table of stored log records to persistent data pages.
 @param[in]	last_batch	whether the change buffer merge will be
 				performed as part of the operation */
 void recv_apply_hashed_log_recs(bool last_batch)
 {
 	ut_ad(srv_operation == SRV_OPERATION_NORMAL
-	      || srv_operation == SRV_OPERATION_RESTORE
-	      || srv_operation == SRV_OPERATION_RESTORE_EXPORT);
+	      || is_mariabackup_restore_or_export());
 
 	mutex_enter(&recv_sys->mutex);
 
@@ -2290,9 +2370,8 @@ void recv_apply_hashed_log_recs(bool last_batch)
 
 	ut_ad(!last_batch == log_mutex_own());
 
-	recv_no_ibuf_operations = !last_batch
-		|| srv_operation == SRV_OPERATION_RESTORE
-		|| srv_operation == SRV_OPERATION_RESTORE_EXPORT;
+	recv_no_ibuf_operations
+		= !last_batch || is_mariabackup_restore_or_export();
 
 	ut_d(recv_no_log_write = recv_no_ibuf_operations);
 
@@ -2356,7 +2435,7 @@ ignore:
 apply:
 				mtr.start();
 				mtr.set_log_mode(MTR_LOG_NONE);
-				if (buf_block_t* block = buf_page_get_gen(
+				if (buf_block_t* block = buf_page_get_low(
 					    page_id, univ_page_size,
 					    RW_X_LATCH, NULL,
 					    BUF_GET_IF_IN_POOL,
@@ -2370,77 +2449,9 @@ apply:
 					mtr.commit();
 					recv_read_in_area(page_id);
 				}
-			} else {
-				mlog_init_t::init& i = mlog_init.last(page_id);
-				const lsn_t end_lsn = UT_LIST_GET_LAST(
-					recv_addr->rec_list)->end_lsn;
-
-				if (end_lsn < i.lsn) {
-					DBUG_LOG("ib_log", "skip log for page "
-						 << page_id
-						 << " LSN " << end_lsn
-						 << " < " << i.lsn);
-skip:
-					recv_addr->state = RECV_PROCESSED;
-					goto ignore;
-				}
-
-				fil_space_t* space = fil_space_acquire(
-					recv_addr->space);
-				if (!space) {
-					goto skip;
-				}
-
-				if (space->enable_lsn) {
-do_read:
-					space->release();
-					recv_addr->state = RECV_NOT_PROCESSED;
-					goto apply;
-				}
-
-				/* Determine if a tablespace could be
-				for an internal table for FULLTEXT INDEX.
-				For those tables, no MLOG_INDEX_LOAD record
-				used to be written when redo logging was
-				disabled. Hence, we cannot optimize
-				away page reads, because all the redo
-				log records for initializing and
-				modifying the page in the past could
-				be older than the page in the data
-				file.
-
-				The check is too broad, causing all
-				tables whose names start with FTS_ to
-				skip the optimization. */
-
-				if (strstr(space->name, "/FTS_")) {
-					goto do_read;
-				}
-
-				mtr.start();
-				mtr.set_log_mode(MTR_LOG_NONE);
-				buf_block_t* block = buf_page_create(
-					page_id, page_size_t(space->flags),
-					&mtr);
-				if (recv_addr->state == RECV_PROCESSED) {
-					/* The page happened to exist
-					in the buffer pool, or it was
-					just being read in. Before
-					buf_page_get_with_no_latch()
-					returned, all changes must have
-					been applied to the page already. */
-					mtr.commit();
-				} else {
-					i.created = true;
-					buf_block_dbg_add_level(
-						block, SYNC_NO_ORDER_CHECK);
-					mtr.x_latch_at_savepoint(0, block);
-					recv_recover_page(block, mtr,
-							  recv_addr, i.lsn);
-					ut_ad(mtr.has_committed());
-				}
-
-				space->release();
+			} else if (!recv_recovery_create_page_low(
+					page_id, recv_addr)) {
+				goto apply;
 			}
 		}
 	}
@@ -3413,9 +3424,8 @@ recv_group_scan_log_recs(
 	lsn_t	end_lsn;
 	store_t	store_to_hash	= recv_sys->mlog_checkpoint_lsn == 0
 		? STORE_NO : (last_phase ? STORE_IF_EXISTS : STORE_YES);
-	ulint	available_mem	= srv_page_size
-		* (buf_pool_get_n_pages()
-		   - (recv_n_pool_free_frames * srv_buf_pool_instances));
+	ulint	available_mem = (buf_pool_get_n_pages() * 2 / 3)
+		<< srv_page_size_shift;
 
 	log_sys.log.scanned_lsn = end_lsn = *contiguous_lsn =
 		ut_uint64_align_down(*contiguous_lsn, OS_FILE_LOG_BLOCK_SIZE);
@@ -3462,8 +3472,7 @@ static
 dberr_t
 recv_init_missing_space(dberr_t err, const recv_spaces_t::const_iterator& i)
 {
-	if (srv_operation == SRV_OPERATION_RESTORE
-	    || srv_operation == SRV_OPERATION_RESTORE_EXPORT) {
+	if (is_mariabackup_restore_or_export()) {
 		ib::warn() << "Tablespace " << i->first << " was not"
 			" found at " << i->second.name << " when"
 			" restoring a (partial?) backup. All redo log"
@@ -3640,8 +3649,7 @@ recv_recovery_from_checkpoint_start(lsn_t flush_lsn)
 	dberr_t		err = DB_SUCCESS;
 
 	ut_ad(srv_operation == SRV_OPERATION_NORMAL
-	      || srv_operation == SRV_OPERATION_RESTORE
-	      || srv_operation == SRV_OPERATION_RESTORE_EXPORT);
+	      || is_mariabackup_restore_or_export());
 
 	/* Initialize red-black tree for fast insertions into the
 	flush_list during recovery process. */

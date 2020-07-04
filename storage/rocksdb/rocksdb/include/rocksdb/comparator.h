@@ -10,7 +10,9 @@
 
 #include <string>
 
-namespace rocksdb {
+#include "rocksdb/rocksdb_namespace.h"
+
+namespace ROCKSDB_NAMESPACE {
 
 class Slice;
 
@@ -35,6 +37,7 @@ class Comparator {
 
   virtual ~Comparator() {}
 
+  static const char* Type() { return "Comparator"; }
   // Three-way comparison.  Returns value:
   //   < 0 iff "a" < "b",
   //   == 0 iff "a" == "b",
@@ -116,4 +119,4 @@ extern const Comparator* BytewiseComparator();
 // ordering.
 extern const Comparator* ReverseBytewiseComparator();
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

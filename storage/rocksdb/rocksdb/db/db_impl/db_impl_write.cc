@@ -15,7 +15,7 @@
 #include "options/options_helper.h"
 #include "test_util/sync_point.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 // Convenience methods
 Status DBImpl::Put(const WriteOptions& o, ColumnFamilyHandle* column_family,
                    const Slice& key, const Slice& val) {
@@ -131,6 +131,7 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
                               log_used, log_ref, &seq, sub_batch_cnt,
                               pre_release_callback, kDoAssignOrder,
                               kDoPublishLastSeq, disable_memtable);
+    TEST_SYNC_POINT("DBImpl::WriteImpl:UnorderedWriteAfterWriteWAL");
     if (!status.ok()) {
       return status;
     }
@@ -138,6 +139,7 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
       *seq_used = seq;
     }
     if (!disable_memtable) {
+      TEST_SYNC_POINT("DBImpl::WriteImpl:BeforeUnorderedWriteMemtable");
       status = UnorderedWriteMemtable(write_options, my_batch, callback,
                                       log_ref, seq, sub_batch_cnt);
     }
@@ -171,8 +173,10 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
           versions_->GetColumnFamilySet());
       w.status = WriteBatchInternal::InsertInto(
           &w, w.sequence, &column_family_memtables, &flush_scheduler_,
+          &trim_history_scheduler_,
           write_options.ignore_missing_column_families, 0 /*log_number*/, this,
-          true /*concurrent_memtable_writes*/, seq_per_batch_, w.batch_cnt);
+          true /*concurrent_memtable_writes*/, seq_per_batch_, w.batch_cnt,
+          batch_per_txn_, write_options.memtable_insert_hint_per_batch);
 
       PERF_TIMER_START(write_pre_and_post_process_time);
     }
@@ -292,18 +296,19 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
     // We're optimistic, updating the stats before we successfully
     // commit.  That lets us release our leader status early.
     auto stats = default_cf_internal_stats_;
-    stats->AddDBStats(InternalStats::NUMBER_KEYS_WRITTEN, total_count,
+    stats->AddDBStats(InternalStats::kIntStatsNumKeysWritten, total_count,
                       concurrent_update);
     RecordTick(stats_, NUMBER_KEYS_WRITTEN, total_count);
-    stats->AddDBStats(InternalStats::BYTES_WRITTEN, total_byte_size,
+    stats->AddDBStats(InternalStats::kIntStatsBytesWritten, total_byte_size,
                       concurrent_update);
     RecordTick(stats_, BYTES_WRITTEN, total_byte_size);
-    stats->AddDBStats(InternalStats::WRITE_DONE_BY_SELF, 1, concurrent_update);
+    stats->AddDBStats(InternalStats::kIntStatsWriteDoneBySelf, 1,
+                      concurrent_update);
     RecordTick(stats_, WRITE_DONE_BY_SELF);
     auto write_done_by_other = write_group.size - 1;
     if (write_done_by_other > 0) {
-      stats->AddDBStats(InternalStats::WRITE_DONE_BY_OTHER, write_done_by_other,
-                        concurrent_update);
+      stats->AddDBStats(InternalStats::kIntStatsWriteDoneByOther,
+                        write_done_by_other, concurrent_update);
       RecordTick(stats_, WRITE_DONE_BY_OTHER, write_done_by_other);
     }
     RecordInHistogram(stats_, BYTES_PER_WRITE, total_byte_size);
@@ -374,7 +379,8 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
         // w.sequence will be set inside InsertInto
         w.status = WriteBatchInternal::InsertInto(
             write_group, current_sequence, column_family_memtables_.get(),
-            &flush_scheduler_, write_options.ignore_missing_column_families,
+            &flush_scheduler_, &trim_history_scheduler_,
+            write_options.ignore_missing_column_families,
             0 /*recovery_log_number*/, this, parallel, seq_per_batch_,
             batch_per_txn_);
       } else {
@@ -390,9 +396,11 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
           assert(w.sequence == current_sequence);
           w.status = WriteBatchInternal::InsertInto(
               &w, w.sequence, &column_family_memtables, &flush_scheduler_,
+              &trim_history_scheduler_,
               write_options.ignore_missing_column_families, 0 /*log_number*/,
               this, true /*concurrent_memtable_writes*/, seq_per_batch_,
-              w.batch_cnt, batch_per_txn_);
+              w.batch_cnt, batch_per_txn_,
+              write_options.memtable_insert_hint_per_batch);
         }
       }
       if (seq_used != nullptr) {
@@ -499,9 +507,9 @@ Status DBImpl::PipelinedWriteImpl(const WriteOptions& write_options,
     }
 
     auto stats = default_cf_internal_stats_;
-    stats->AddDBStats(InternalStats::NUMBER_KEYS_WRITTEN, total_count);
+    stats->AddDBStats(InternalStats::kIntStatsNumKeysWritten, total_count);
     RecordTick(stats_, NUMBER_KEYS_WRITTEN, total_count);
-    stats->AddDBStats(InternalStats::BYTES_WRITTEN, total_byte_size);
+    stats->AddDBStats(InternalStats::kIntStatsBytesWritten, total_byte_size);
     RecordTick(stats_, BYTES_WRITTEN, total_byte_size);
     RecordInHistogram(stats_, BYTES_PER_WRITE, total_byte_size);
 
@@ -509,10 +517,10 @@ Status DBImpl::PipelinedWriteImpl(const WriteOptions& write_options,
 
     if (w.status.ok() && !write_options.disableWAL) {
       PERF_TIMER_GUARD(write_wal_time);
-      stats->AddDBStats(InternalStats::WRITE_DONE_BY_SELF, 1);
+      stats->AddDBStats(InternalStats::kIntStatsWriteDoneBySelf, 1);
       RecordTick(stats_, WRITE_DONE_BY_SELF, 1);
       if (wal_write_group.size > 1) {
-        stats->AddDBStats(InternalStats::WRITE_DONE_BY_OTHER,
+        stats->AddDBStats(InternalStats::kIntStatsWriteDoneByOther,
                           wal_write_group.size - 1);
         RecordTick(stats_, WRITE_DONE_BY_OTHER, wal_write_group.size - 1);
       }
@@ -544,9 +552,9 @@ Status DBImpl::PipelinedWriteImpl(const WriteOptions& write_options,
     } else {
       memtable_write_group.status = WriteBatchInternal::InsertInto(
           memtable_write_group, w.sequence, column_family_memtables_.get(),
-          &flush_scheduler_, write_options.ignore_missing_column_families,
-          0 /*log_number*/, this, false /*concurrent_memtable_writes*/,
-          seq_per_batch_, batch_per_txn_);
+          &flush_scheduler_, &trim_history_scheduler_,
+          write_options.ignore_missing_column_families, 0 /*log_number*/, this,
+          false /*concurrent_memtable_writes*/, seq_per_batch_, batch_per_txn_);
       versions_->SetLastSequence(memtable_write_group.last_sequence);
       write_thread_.ExitAsMemTableWriter(&w, memtable_write_group);
     }
@@ -558,8 +566,10 @@ Status DBImpl::PipelinedWriteImpl(const WriteOptions& write_options,
         versions_->GetColumnFamilySet());
     w.status = WriteBatchInternal::InsertInto(
         &w, w.sequence, &column_family_memtables, &flush_scheduler_,
-        write_options.ignore_missing_column_families, 0 /*log_number*/, this,
-        true /*concurrent_memtable_writes*/);
+        &trim_history_scheduler_, write_options.ignore_missing_column_families,
+        0 /*log_number*/, this, true /*concurrent_memtable_writes*/,
+        false /*seq_per_batch*/, 0 /*batch_cnt*/, true /*batch_per_txn*/,
+        write_options.memtable_insert_hint_per_batch);
     if (write_thread_.CompleteParallelMemTableWriter(&w)) {
       MemTableInsertStatusCheck(w.status);
       versions_->SetLastSequence(w.write_group->last_sequence);
@@ -589,15 +599,17 @@ Status DBImpl::UnorderedWriteMemtable(const WriteOptions& write_options,
     w.sequence = seq;
     size_t total_count = WriteBatchInternal::Count(my_batch);
     InternalStats* stats = default_cf_internal_stats_;
-    stats->AddDBStats(InternalStats::NUMBER_KEYS_WRITTEN, total_count);
+    stats->AddDBStats(InternalStats::kIntStatsNumKeysWritten, total_count);
     RecordTick(stats_, NUMBER_KEYS_WRITTEN, total_count);
 
     ColumnFamilyMemTablesImpl column_family_memtables(
         versions_->GetColumnFamilySet());
     w.status = WriteBatchInternal::InsertInto(
         &w, w.sequence, &column_family_memtables, &flush_scheduler_,
-        write_options.ignore_missing_column_families, 0 /*log_number*/, this,
-        true /*concurrent_memtable_writes*/, seq_per_batch_, sub_batch_cnt);
+        &trim_history_scheduler_, write_options.ignore_missing_column_families,
+        0 /*log_number*/, this, true /*concurrent_memtable_writes*/,
+        seq_per_batch_, sub_batch_cnt, true /*batch_per_txn*/,
+        write_options.memtable_insert_hint_per_batch);
 
     WriteStatusCheck(w.status);
     if (write_options.disableWAL) {
@@ -698,15 +710,16 @@ Status DBImpl::WriteImplWALOnly(
   // We're optimistic, updating the stats before we successfully
   // commit.  That lets us release our leader status early.
   auto stats = default_cf_internal_stats_;
-  stats->AddDBStats(InternalStats::BYTES_WRITTEN, total_byte_size,
+  stats->AddDBStats(InternalStats::kIntStatsBytesWritten, total_byte_size,
                     concurrent_update);
   RecordTick(stats_, BYTES_WRITTEN, total_byte_size);
-  stats->AddDBStats(InternalStats::WRITE_DONE_BY_SELF, 1, concurrent_update);
+  stats->AddDBStats(InternalStats::kIntStatsWriteDoneBySelf, 1,
+                    concurrent_update);
   RecordTick(stats_, WRITE_DONE_BY_SELF);
   auto write_done_by_other = write_group.size - 1;
   if (write_done_by_other > 0) {
-    stats->AddDBStats(InternalStats::WRITE_DONE_BY_OTHER, write_done_by_other,
-                      concurrent_update);
+    stats->AddDBStats(InternalStats::kIntStatsWriteDoneByOther,
+                      write_done_by_other, concurrent_update);
     RecordTick(stats_, WRITE_DONE_BY_OTHER, write_done_by_other);
   }
   RecordInHistogram(stats_, BYTES_PER_WRITE, total_byte_size);
@@ -853,6 +866,10 @@ Status DBImpl::PreprocessWrite(const WriteOptions& write_options,
     // suboptimal but still correct.
     WaitForPendingWrites();
     status = HandleWriteBufferFull(write_context);
+  }
+
+  if (UNLIKELY(status.ok() && !trim_history_scheduler_.Empty())) {
+    status = TrimMemtableHistory(write_context);
   }
 
   if (UNLIKELY(status.ok() && !flush_scheduler_.Empty())) {
@@ -1034,12 +1051,12 @@ Status DBImpl::WriteToWAL(const WriteThread::WriteGroup& write_group,
   if (status.ok()) {
     auto stats = default_cf_internal_stats_;
     if (need_log_sync) {
-      stats->AddDBStats(InternalStats::WAL_FILE_SYNCED, 1);
+      stats->AddDBStats(InternalStats::kIntStatsWalFileSynced, 1);
       RecordTick(stats_, WAL_FILE_SYNCED);
     }
-    stats->AddDBStats(InternalStats::WAL_FILE_BYTES, log_size);
+    stats->AddDBStats(InternalStats::kIntStatsWalFileBytes, log_size);
     RecordTick(stats_, WAL_FILE_BYTES, log_size);
-    stats->AddDBStats(InternalStats::WRITE_WITH_WAL, write_with_wal);
+    stats->AddDBStats(InternalStats::kIntStatsWriteWithWal, write_with_wal);
     RecordTick(stats_, WRITE_WITH_WAL, write_with_wal);
   }
   return status;
@@ -1085,9 +1102,10 @@ Status DBImpl::ConcurrentWriteToWAL(const WriteThread::WriteGroup& write_group,
   if (status.ok()) {
     const bool concurrent = true;
     auto stats = default_cf_internal_stats_;
-    stats->AddDBStats(InternalStats::WAL_FILE_BYTES, log_size, concurrent);
+    stats->AddDBStats(InternalStats::kIntStatsWalFileBytes, log_size,
+                      concurrent);
     RecordTick(stats_, WAL_FILE_BYTES, log_size);
-    stats->AddDBStats(InternalStats::WRITE_WITH_WAL, write_with_wal,
+    stats->AddDBStats(InternalStats::kIntStatsWriteWithWal, write_with_wal,
                       concurrent);
     RecordTick(stats_, WRITE_WITH_WAL, write_with_wal);
   }
@@ -1111,9 +1129,9 @@ Status DBImpl::WriteRecoverableState() {
     WriteBatchInternal::SetSequence(&cached_recoverable_state_, seq + 1);
     auto status = WriteBatchInternal::InsertInto(
         &cached_recoverable_state_, column_family_memtables_.get(),
-        &flush_scheduler_, true, 0 /*recovery_log_number*/, this,
-        false /* concurrent_memtable_writes */, &next_seq, &dont_care_bool,
-        seq_per_batch_);
+        &flush_scheduler_, &trim_history_scheduler_, true,
+        0 /*recovery_log_number*/, this, false /* concurrent_memtable_writes */,
+        &next_seq, &dont_care_bool, seq_per_batch_);
     auto last_seq = next_seq - 1;
     if (two_write_queues_) {
       versions_->FetchAddLastAllocatedSequence(last_seq - seq);
@@ -1228,15 +1246,25 @@ Status DBImpl::SwitchWAL(WriteContext* write_context) {
         cfds.push_back(cfd);
       }
     }
+    MaybeFlushStatsCF(&cfds);
   }
+  WriteThread::Writer nonmem_w;
+  if (two_write_queues_) {
+    nonmem_write_thread_.EnterUnbatched(&nonmem_w, &mutex_);
+  }
+
   for (const auto cfd : cfds) {
     cfd->Ref();
     status = SwitchMemtable(cfd, write_context);
-    cfd->Unref();
+    cfd->UnrefAndTryDelete();
     if (!status.ok()) {
       break;
     }
   }
+  if (two_write_queues_) {
+    nonmem_write_thread_.ExitUnbatched(&nonmem_w);
+  }
+
   if (status.ok()) {
     if (immutable_db_options_.atomic_flush) {
       AssignAtomicFlushSeq(cfds);
@@ -1264,7 +1292,7 @@ Status DBImpl::HandleWriteBufferFull(WriteContext* write_context) {
   // suboptimal but still correct.
   ROCKS_LOG_INFO(
       immutable_db_options_.info_log,
-      "Flushing column family with largest mem table size. Write buffer is "
+      "Flushing column family with oldest memtable entry. Write buffer is "
       "using %" ROCKSDB_PRIszt " bytes out of a total of %" ROCKSDB_PRIszt ".",
       write_buffer_manager_->memory_usage(),
       write_buffer_manager_->buffer_size());
@@ -1294,19 +1322,28 @@ Status DBImpl::HandleWriteBufferFull(WriteContext* write_context) {
     if (cfd_picked != nullptr) {
       cfds.push_back(cfd_picked);
     }
+    MaybeFlushStatsCF(&cfds);
   }
 
+  WriteThread::Writer nonmem_w;
+  if (two_write_queues_) {
+    nonmem_write_thread_.EnterUnbatched(&nonmem_w, &mutex_);
+  }
   for (const auto cfd : cfds) {
     if (cfd->mem()->IsEmpty()) {
       continue;
     }
     cfd->Ref();
     status = SwitchMemtable(cfd, write_context);
-    cfd->Unref();
+    cfd->UnrefAndTryDelete();
     if (!status.ok()) {
       break;
     }
   }
+  if (two_write_queues_) {
+    nonmem_write_thread_.ExitUnbatched(&nonmem_w);
+  }
+
   if (status.ok()) {
     if (immutable_db_options_.atomic_flush) {
       AssignAtomicFlushSeq(cfds);
@@ -1387,8 +1424,8 @@ Status DBImpl::DelayWrite(uint64_t num_bytes,
   }
   assert(!delayed || !write_options.no_slowdown);
   if (delayed) {
-    default_cf_internal_stats_->AddDBStats(InternalStats::WRITE_STALL_MICROS,
-                                           time_delayed);
+    default_cf_internal_stats_->AddDBStats(
+        InternalStats::kIntStatsWriteStallMicros, time_delayed);
     RecordTick(stats_, STALL_MICROS, time_delayed);
   }
 
@@ -1421,7 +1458,7 @@ Status DBImpl::ThrottleLowPriWritesIfNeeded(const WriteOptions& write_options,
       return Status::OK();
     }
     if (write_options.no_slowdown) {
-      return Status::Incomplete();
+      return Status::Incomplete("Low priority write stall");
     } else {
       assert(my_batch != nullptr);
       // Rate limit those writes. The reason that we don't completely wait
@@ -1432,6 +1469,66 @@ Status DBImpl::ThrottleLowPriWritesIfNeeded(const WriteOptions& write_options,
       write_controller_.low_pri_rate_limiter()->Request(
           my_batch->GetDataSize(), Env::IO_HIGH, nullptr /* stats */,
           RateLimiter::OpType::kWrite);
+    }
+  }
+  return Status::OK();
+}
+
+void DBImpl::MaybeFlushStatsCF(autovector<ColumnFamilyData*>* cfds) {
+  assert(cfds != nullptr);
+  if (!cfds->empty() && immutable_db_options_.persist_stats_to_disk) {
+    ColumnFamilyData* cfd_stats =
+        versions_->GetColumnFamilySet()->GetColumnFamily(
+            kPersistentStatsColumnFamilyName);
+    if (cfd_stats != nullptr && !cfd_stats->mem()->IsEmpty()) {
+      for (ColumnFamilyData* cfd : *cfds) {
+        if (cfd == cfd_stats) {
+          // stats CF already included in cfds
+          return;
+        }
+      }
+      // force flush stats CF when its log number is less than all other CF's
+      // log numbers
+      bool force_flush_stats_cf = true;
+      for (auto* loop_cfd : *versions_->GetColumnFamilySet()) {
+        if (loop_cfd == cfd_stats) {
+          continue;
+        }
+        if (loop_cfd->GetLogNumber() <= cfd_stats->GetLogNumber()) {
+          force_flush_stats_cf = false;
+        }
+      }
+      if (force_flush_stats_cf) {
+        cfds->push_back(cfd_stats);
+        ROCKS_LOG_INFO(immutable_db_options_.info_log,
+                       "Force flushing stats CF with automated flush "
+                       "to avoid holding old logs");
+      }
+    }
+  }
+}
+
+Status DBImpl::TrimMemtableHistory(WriteContext* context) {
+  autovector<ColumnFamilyData*> cfds;
+  ColumnFamilyData* tmp_cfd;
+  while ((tmp_cfd = trim_history_scheduler_.TakeNextColumnFamily()) !=
+         nullptr) {
+    cfds.push_back(tmp_cfd);
+  }
+  for (auto& cfd : cfds) {
+    autovector<MemTable*> to_delete;
+    cfd->imm()->TrimHistory(&to_delete, cfd->mem()->ApproximateMemoryUsage());
+    if (!to_delete.empty()) {
+      for (auto m : to_delete) {
+        delete m;
+      }
+      context->superversion_context.NewSuperVersion();
+      assert(context->superversion_context.new_superversion.get() != nullptr);
+      cfd->InstallSuperVersion(&context->superversion_context, &mutex_);
+    }
+
+    if (cfd->UnrefAndTryDelete()) {
+      cfd = nullptr;
     }
   }
   return Status::OK();
@@ -1450,20 +1547,30 @@ Status DBImpl::ScheduleFlushes(WriteContext* context) {
     while ((tmp_cfd = flush_scheduler_.TakeNextColumnFamily()) != nullptr) {
       cfds.push_back(tmp_cfd);
     }
+    MaybeFlushStatsCF(&cfds);
   }
   Status status;
+  WriteThread::Writer nonmem_w;
+  if (two_write_queues_) {
+    nonmem_write_thread_.EnterUnbatched(&nonmem_w, &mutex_);
+  }
+
   for (auto& cfd : cfds) {
     if (!cfd->mem()->IsEmpty()) {
       status = SwitchMemtable(cfd, context);
     }
-    if (cfd->Unref()) {
-      delete cfd;
+    if (cfd->UnrefAndTryDelete()) {
       cfd = nullptr;
     }
     if (!status.ok()) {
       break;
     }
   }
+
+  if (two_write_queues_) {
+    nonmem_write_thread_.ExitUnbatched(&nonmem_w);
+  }
+
   if (status.ok()) {
     if (immutable_db_options_.atomic_flush) {
       AssignAtomicFlushSeq(cfds);
@@ -1494,15 +1601,11 @@ void DBImpl::NotifyOnMemTableSealed(ColumnFamilyData* /*cfd*/,
 
 // REQUIRES: mutex_ is held
 // REQUIRES: this thread is currently at the front of the writer queue
+// REQUIRES: this thread is currently at the front of the 2nd writer queue if
+// two_write_queues_ is true (This is to simplify the reasoning.)
 Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
   mutex_.AssertHeld();
   WriteThread::Writer nonmem_w;
-  if (two_write_queues_) {
-    // SwitchMemtable is a rare event. To simply the reasoning, we make sure
-    // that there is no concurrent thread writing to WAL.
-    nonmem_write_thread_.EnterUnbatched(&nonmem_w, &mutex_);
-  }
-
   std::unique_ptr<WritableFile> lfile;
   log::Writer* new_log = nullptr;
   MemTable* new_mem = nullptr;
@@ -1512,16 +1615,6 @@ Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
   Status s = WriteRecoverableState();
   if (!s.ok()) {
     return s;
-  }
-
-  // In case of pipelined write is enabled, wait for all pending memtable
-  // writers.
-  if (immutable_db_options_.enable_pipelined_write) {
-    // Memtable writers may call DB::Get in case max_successive_merges > 0,
-    // which may lock mutex. Unlocking mutex here to avoid deadlock.
-    mutex_.Unlock();
-    write_thread_.WaitForMemTableWriters();
-    mutex_.Lock();
   }
 
   // Attempt to switch to a new memtable and trigger flush of old.
@@ -1538,7 +1631,6 @@ Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
   if (creating_new_log && immutable_db_options_.recycle_log_file_num &&
       !log_recycle_files_.empty()) {
     recycle_log_number = log_recycle_files_.front();
-    log_recycle_files_.pop_front();
   }
   uint64_t new_log_number =
       creating_new_log ? versions_->NewFileNumber() : logfile_number_;
@@ -1575,6 +1667,14 @@ Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
                  ". Immutable memtables: %d.\n",
                  cfd->GetName().c_str(), new_log_number, num_imm_unflushed);
   mutex_.Lock();
+  if (recycle_log_number != 0) {
+    // Since renaming the file is done outside DB mutex, we need to ensure
+    // concurrent full purges don't delete the file while we're recycling it.
+    // To achieve that we hold the old log number in the recyclable list until
+    // after it has been renamed.
+    assert(log_recycle_files_.front() == recycle_log_number);
+    log_recycle_files_.pop_front();
+  }
   if (s.ok() && creating_new_log) {
     log_write_mutex_.Lock();
     assert(new_log != nullptr);
@@ -1619,10 +1719,6 @@ Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
     error_handler_.SetBGError(s, BackgroundErrorReason::kMemTable);
     // Read back bg_error in order to get the right severity
     s = error_handler_.GetBGError();
-
-    if (two_write_queues_) {
-      nonmem_write_thread_.ExitUnbatched(&nonmem_w);
-    }
     return s;
   }
 
@@ -1653,9 +1749,6 @@ Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
   NotifyOnMemTableSealed(cfd, memtable_info);
   mutex_.Lock();
 #endif  // ROCKSDB_LITE
-  if (two_write_queues_) {
-    nonmem_write_thread_.ExitUnbatched(&nonmem_w);
-  }
   return s;
 }
 
@@ -1696,14 +1789,16 @@ Status DB::Put(const WriteOptions& opt, ColumnFamilyHandle* column_family,
     }
     return Write(opt, &batch);
   }
-  Slice akey;
-  std::string buf;
-  Status s = AppendTimestamp(key, *(opt.timestamp), &akey, &buf);
+  const Slice* ts = opt.timestamp;
+  assert(nullptr != ts);
+  size_t ts_sz = ts->size();
+  WriteBatch batch(key.size() + ts_sz + value.size() + 24, /*max_bytes=*/0,
+                   ts_sz);
+  Status s = batch.Put(column_family, key, value);
   if (!s.ok()) {
     return s;
   }
-  WriteBatch batch(akey.size() + value.size() + 24);
-  s = batch.Put(column_family, akey, value);
+  s = batch.AssignTimestamp(*ts);
   if (!s.ok()) {
     return s;
   }
@@ -1741,4 +1836,4 @@ Status DB::Merge(const WriteOptions& opt, ColumnFamilyHandle* column_family,
   }
   return Write(opt, &batch);
 }
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

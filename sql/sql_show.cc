@@ -592,7 +592,7 @@ static struct show_privileges_st sys_privileges[]=
   {"Create view", "Tables",  "To create new views"},
   {"Create user", "Server Admin",  "To create new users"},
   {"Delete", "Tables",  "To delete existing rows"},
-  {"Delete versioning rows", "Tables", "To delete versioning table historical rows"},
+  {"Delete history", "Tables", "To delete versioning table historical rows"},
   {"Drop", "Databases,Tables", "To drop databases, tables, and views"},
 #ifdef HAVE_EVENT_SCHEDULER
   {"Event","Server Admin","To create, alter, drop and execute events"},
@@ -8724,7 +8724,6 @@ end:
 bool optimize_schema_tables_reads(JOIN *join)
 {
   THD *thd= join->thd;
-  bool result= 0;
   DBUG_ENTER("optimize_schema_tables_reads");
 
   JOIN_TAB *tab;
@@ -8759,11 +8758,11 @@ bool optimize_schema_tables_reads(JOIN *join)
         */
         cond= tab->cache_select->cond;
       }
-
-      optimize_for_get_all_tables(thd, table_list, cond);
+      if (optimize_for_get_all_tables(thd, table_list, cond))
+        DBUG_RETURN(TRUE);   // Handle OOM
     }
   }
-  DBUG_RETURN(result);
+  DBUG_RETURN(FALSE);
 }
 
 

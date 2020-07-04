@@ -39,7 +39,7 @@
 #define ROCKSDB_PRINTF_FORMAT_ATTR(format_param, dots_param)
 #endif
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 class DynamicLibrary;
 class FileLock;
@@ -118,10 +118,10 @@ struct EnvOptions {
   bool fallocate_with_keep_size = true;
 
   // See DBOptions doc
-  size_t compaction_readahead_size;
+  size_t compaction_readahead_size = 0;
 
   // See DBOptions doc
-  size_t random_access_max_buffer_size;
+  size_t random_access_max_buffer_size = 0;
 
   // See DBOptions doc
   size_t writable_file_max_buffer_size = 1024 * 1024;
@@ -141,8 +141,20 @@ class Env {
   };
 
   Env() : thread_status_updater_(nullptr) {}
+  // No copying allowed
+  Env(const Env&) = delete;
+  void operator=(const Env&) = delete;
 
   virtual ~Env();
+
+  static const char* Type() { return "Environment"; }
+
+  // Loads the environment specified by the input value into the result
+  static Status LoadEnv(const std::string& value, Env** result);
+
+  // Loads the environment specified by the input value into the result
+  static Status LoadEnv(const std::string& value, Env** result,
+                        std::shared_ptr<Env>* guard);
 
   // Return a default environment suitable for the current operating
   // system.  Sophisticated users may wish to provide their own Env
@@ -395,9 +407,11 @@ class Env {
   // same directory.
   virtual Status GetTestDirectory(std::string* path) = 0;
 
-  // Create and return a log file for storing informational messages.
+  // Create and returns a default logger (an instance of EnvLogger) for storing
+  // informational messages. Derived classes can overide to provide custom
+  // logger.
   virtual Status NewLogger(const std::string& fname,
-                           std::shared_ptr<Logger>* result) = 0;
+                           std::shared_ptr<Logger>* result);
 
   // Returns the number of micro-seconds since some fixed point in time.
   // It is often used as system time such as in GenericRateLimiter
@@ -514,17 +528,14 @@ class Env {
     return Status::NotSupported();
   }
 
+  virtual void SanitizeEnvOptions(EnvOptions* /*env_opts*/) const {}
+
   // If you're adding methods here, remember to add them to EnvWrapper too.
 
  protected:
   // The pointer to an internal structure that will update the
   // status of each thread.
   ThreadStatusUpdater* thread_status_updater_;
-
- private:
-  // No copying allowed
-  Env(const Env&);
-  void operator=(const Env&);
 };
 
 // The factory function to construct a ThreadStatusUpdater.  Any Env
@@ -661,7 +672,7 @@ class RandomAccessFile {
   virtual size_t GetUniqueId(char* /*id*/, size_t /*max_size*/) const {
     return 0;  // Default implementation to prevent issues with backwards
                // compatibility.
-  };
+  }
 
   enum AccessPattern { NORMAL, RANDOM, SEQUENTIAL, WILLNEED, DONTNEED };
 
@@ -704,6 +715,9 @@ class WritableFile {
         io_priority_(Env::IO_TOTAL),
         write_hint_(Env::WLTH_NOT_SET),
         strict_bytes_per_sync_(options.strict_bytes_per_sync) {}
+  // No copying allowed
+  WritableFile(const WritableFile&) = delete;
+  void operator=(const WritableFile&) = delete;
 
   virtual ~WritableFile();
 
@@ -863,9 +877,6 @@ class WritableFile {
  private:
   size_t last_preallocated_block_;
   size_t preallocation_block_size_;
-  // No copying allowed
-  WritableFile(const WritableFile&);
-  void operator=(const WritableFile&);
 
  protected:
   Env::IOPriority io_priority_;
@@ -877,6 +888,10 @@ class WritableFile {
 class RandomRWFile {
  public:
   RandomRWFile() {}
+  // No copying allowed
+  RandomRWFile(const RandomRWFile&) = delete;
+  RandomRWFile& operator=(const RandomRWFile&) = delete;
+
   virtual ~RandomRWFile() {}
 
   // Indicates if the class makes use of direct I/O
@@ -907,10 +922,6 @@ class RandomRWFile {
 
   // If you're adding methods here, remember to add them to
   // RandomRWFileWrapper too.
-
-  // No copying allowed
-  RandomRWFile(const RandomRWFile&) = delete;
-  RandomRWFile& operator=(const RandomRWFile&) = delete;
 };
 
 // MemoryMappedFileBuffer object represents a memory-mapped file's raw buffer.
@@ -968,6 +979,10 @@ class Logger {
 
   explicit Logger(const InfoLogLevel log_level = InfoLogLevel::INFO_LEVEL)
       : closed_(false), log_level_(log_level) {}
+  // No copying allowed
+  Logger(const Logger&) = delete;
+  void operator=(const Logger&) = delete;
+
   virtual ~Logger();
 
   // Close the log file. Must be called before destructor. If the return
@@ -1009,9 +1024,6 @@ class Logger {
   bool closed_;
 
  private:
-  // No copying allowed
-  Logger(const Logger&);
-  void operator=(const Logger&);
   InfoLogLevel log_level_;
 };
 
@@ -1023,8 +1035,8 @@ class FileLock {
 
  private:
   // No copying allowed
-  FileLock(const FileLock&);
-  void operator=(const FileLock&);
+  FileLock(const FileLock&) = delete;
+  void operator=(const FileLock&) = delete;
 };
 
 class DynamicLibrary {
@@ -1110,13 +1122,15 @@ extern Status ReadFileToString(Env* env, const std::string& fname,
 // Useful when wrapping the default implementations.
 // Typical usage is to inherit your wrapper from *Wrapper, e.g.:
 //
-// class MySequentialFileWrapper : public rocksdb::SequentialFileWrapper {
+// class MySequentialFileWrapper : public
+// ROCKSDB_NAMESPACE::SequentialFileWrapper {
 //  public:
-//   MySequentialFileWrapper(rocksdb::SequentialFile* target):
-//     rocksdb::SequentialFileWrapper(target) {}
+//   MySequentialFileWrapper(ROCKSDB_NAMESPACE::SequentialFile* target):
+//     ROCKSDB_NAMESPACE::SequentialFileWrapper(target) {}
 //   Status Read(size_t n, Slice* result, char* scratch) override {
 //     cout << "Doing a read of size " << n << "!" << endl;
-//     return rocksdb::SequentialFileWrapper::Read(n, result, scratch);
+//     return ROCKSDB_NAMESPACE::SequentialFileWrapper::Read(n, result,
+//     scratch);
 //   }
 //   // All other methods are forwarded to target_ automatically.
 // };
@@ -1353,6 +1367,9 @@ class EnvWrapper : public Env {
   Status GetFreeSpace(const std::string& path, uint64_t* diskfree) override {
     return target_->GetFreeSpace(path, diskfree);
   }
+  void SanitizeEnvOptions(EnvOptions* env_opts) const override {
+    target_->SanitizeEnvOptions(env_opts);
+  }
 
  private:
   Env* target_;
@@ -1399,7 +1416,7 @@ class RandomAccessFileWrapper : public RandomAccessFile {
   }
   size_t GetUniqueId(char* id, size_t max_size) const override {
     return target_->GetUniqueId(id, max_size);
-  };
+  }
   void Hint(AccessPattern pattern) override { target_->Hint(pattern); }
   bool use_direct_io() const override { return target_->use_direct_io(); }
   size_t GetRequiredBufferAlignment() const override {
@@ -1563,4 +1580,10 @@ Status NewHdfsEnv(Env** hdfs_env, const std::string& fsname);
 // This is a factory method for TimedEnv defined in utilities/env_timed.cc.
 Env* NewTimedEnv(Env* base_env);
 
-}  // namespace rocksdb
+// Returns an instance of logger that can be used for storing informational
+// messages.
+// This is a factory method for EnvLogger declared in logging/env_logging.h
+Status NewEnvLogger(const std::string& fname, Env* env,
+                    std::shared_ptr<Logger>* result);
+
+}  // namespace ROCKSDB_NAMESPACE

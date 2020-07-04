@@ -653,7 +653,7 @@ public:
 
 	/** Return the next fil_space_t from key rotation list.
 	Once started, the caller must keep calling this until it returns NULL.
-	fil_space_acquire() and fil_space_release() are invoked here which
+	fil_space_acquire() and fil_space_t::release() are invoked here, which
 	blocks a concurrent operation from dropping the tablespace.
 	@param[in]      prev_space      Previous tablespace or NULL to start
 					from beginning of fil_system->rotation
@@ -907,14 +907,9 @@ bool fil_table_accessible(const dict_table_t* table)
 
 /** Delete a tablespace and associated .ibd file.
 @param[in]	id		tablespace identifier
+@param[in]	if_exists	whether to ignore missing tablespace
 @return	DB_SUCCESS or error */
-dberr_t
-fil_delete_tablespace(
-	ulint id
-#ifdef BTR_CUR_HASH_ADAPT
-	, bool drop_ahi = false /*!< whether to drop the adaptive hash index */
-#endif /* BTR_CUR_HASH_ADAPT */
-	);
+dberr_t fil_delete_tablespace(ulint id, bool if_exists= false);
 
 /** Prepare to truncate an undo tablespace.
 @param[in]	space_id	undo tablespace id

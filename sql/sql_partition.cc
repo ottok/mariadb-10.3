@@ -2840,14 +2840,34 @@ bool partition_key_modified(TABLE *table, const MY_BITMAP *fields)
 
 static inline int part_val_int(Item *item_expr, longlong *result)
 {
-  *result= item_expr->val_int();
+  switch (item_expr->cmp_type())
+  {
+  case DECIMAL_RESULT:
+  {
+    my_decimal buf;
+    my_decimal *val= item_expr->val_decimal(&buf);
+    if (val && my_decimal2int(E_DEC_FATAL_ERROR, val, item_expr->unsigned_flag,
+                              result, FLOOR) != E_DEC_OK)
+      return true;
+    break;
+  }
+  case INT_RESULT:
+    *result= item_expr->val_int();
+    break;
+  case STRING_RESULT:
+  case REAL_RESULT:
+  case ROW_RESULT:
+  case TIME_RESULT:
+    DBUG_ASSERT(0);
+    break;
+  }
   if (item_expr->null_value)
   {
     if (unlikely(current_thd->is_error()))
-      return TRUE;
+      return true;
     *result= LONGLONG_MIN;
   }
-  return FALSE;
+  return false;
 }
 
 
@@ -5988,12 +6008,30 @@ the generated partition syntax in a correct manner.
         */
         if (alter_info->partition_flags != ALTER_PARTITION_INFO ||
             !table->part_info ||
-            alter_info->requested_algorithm !=
+            alter_info->algorithm(thd) !=
               Alter_info::ALTER_TABLE_ALGORITHM_INPLACE ||
             !table->part_info->has_same_partitioning(part_info))
         {
           DBUG_PRINT("info", ("partition changed"));
           *partition_changed= true;
+        }
+      }
+
+      // In case of PARTITION BY KEY(), check if primary key has changed
+      // System versioning also implicitly adds/removes primary key parts
+      if (alter_info->partition_flags == 0 && part_info->list_of_part_fields
+          && part_info->part_field_list.elements == 0)
+      {
+        if (alter_info->flags & (ALTER_DROP_SYSTEM_VERSIONING |
+                                 ALTER_ADD_SYSTEM_VERSIONING))
+          *partition_changed= true;
+
+        List_iterator<Key> it(alter_info->key_list);
+        Key *key;
+        while((key= it++) && !*partition_changed)
+        {
+          if (key->type == Key::PRIMARY)
+            *partition_changed= true;
         }
       }
       /*

@@ -59,6 +59,8 @@ Smart ALTER TABLE
 #include "span.h"
 
 using st_::span;
+/** File format constraint for ALTER TABLE */
+extern ulong innodb_instant_alter_column_allowed;
 
 static const char *MSG_UNSUPPORTED_ALTER_ONLINE_ON_VIRTUAL_COLUMN=
 			"INPLACE ADD or DROP of virtual columns cannot be "
@@ -864,6 +866,63 @@ innobase_fts_check_doc_id_col(
 	return(false);
 }
 
+/** Check whether the table is empty.
+@param[in]	table	table to be checked
+@return true if table is empty */
+static bool innobase_table_is_empty(const dict_table_t *table)
+{
+  dict_index_t *clust_index= dict_table_get_first_index(table);
+  mtr_t mtr;
+  btr_pcur_t pcur;
+  buf_block_t *block;
+  page_cur_t *cur;
+  const rec_t *rec;
+  bool next_page= false;
+
+  mtr.start();
+  btr_pcur_open_at_index_side(true, clust_index, BTR_SEARCH_LEAF,
+                              &pcur, true, 0, &mtr);
+  btr_pcur_move_to_next_user_rec(&pcur, &mtr);
+  if (!rec_is_metadata(btr_pcur_get_rec(&pcur), clust_index))
+    btr_pcur_move_to_prev_on_page(&pcur);
+scan_leaf:
+  cur= btr_pcur_get_page_cur(&pcur);
+  page_cur_move_to_next(cur);
+next_page:
+  if (next_page)
+  {
+    uint32_t next_page_no= btr_page_get_next(page_cur_get_page(cur));
+    if (next_page_no == FIL_NULL)
+    {
+      mtr.commit();
+      return true;
+    }
+
+    next_page= false;
+    block= page_cur_get_block(cur);
+    block= btr_block_get(page_id_t(block->page.id.space(), next_page_no),
+                         block->page.size, BTR_SEARCH_LEAF, clust_index,
+                         &mtr);
+    btr_leaf_page_release(page_cur_get_block(cur), BTR_SEARCH_LEAF, &mtr);
+    page_cur_set_before_first(block, cur);
+    page_cur_move_to_next(cur);
+  }
+
+  rec= page_cur_get_rec(cur);
+  if (rec_get_deleted_flag(rec, dict_table_is_comp(table)));
+  else if (!page_rec_is_supremum(rec))
+  {
+    mtr.commit();
+    return false;
+  }
+  else
+  {
+    next_page= true;
+    goto next_page;
+  }
+  goto scan_leaf;
+}
+
 /** Check if InnoDB supports a particular alter table in-place
 @param altered_table TABLE object for new version of table.
 @param ha_alter_info Structure describing changes to be done
@@ -953,6 +1012,26 @@ ha_innobase::check_if_supported_inplace_alter(
 	}
 
 	const char* reason_rebuild = NULL;
+
+	switch (innodb_instant_alter_column_allowed) {
+	case 0: /* never */
+		if ((ha_alter_info->handler_flags
+		     & ALTER_ADD_STORED_BASE_COLUMN)
+		    || m_prebuilt->table->is_instant()) {
+			reason_rebuild =
+				"innodb_instant_alter_column_allowed=never";
+			if (ha_alter_info->handler_flags
+			    & ALTER_RECREATE_TABLE) {
+				reason_rebuild = NULL;
+			} else {
+				ha_alter_info->handler_flags
+					|= ALTER_RECREATE_TABLE;
+				ha_alter_info->unsupported_reason
+					= reason_rebuild;
+			}
+		}
+		break;
+	}
 
 	switch (ha_alter_info->handler_flags & ~INNOBASE_INPLACE_IGNORE) {
 	case ALTER_OPTIONS:
@@ -1053,6 +1132,13 @@ ha_innobase::check_if_supported_inplace_alter(
 		ib_push_frm_error(m_user_thd, m_prebuilt->table, altered_table,
 			n_indexes, true);
 
+		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
+	}
+
+	/* '0000-00-00' value isn't allowed for datetime datatype
+	for newly added column when table is not empty */
+	if (ha_alter_info->error_if_not_empty
+	    && !innobase_table_is_empty(m_prebuilt->table)) {
 		DBUG_RETURN(HA_ALTER_INPLACE_NOT_SUPPORTED);
 	}
 
@@ -1459,6 +1545,7 @@ cannot_create_many_fulltext_index:
 	}
 
 	if (need_rebuild || fts_need_rebuild) {
+		ha_alter_info->handler_flags |= ALTER_RECREATE_TABLE;
 		DBUG_RETURN(online
 			    ? HA_ALTER_INPLACE_COPY_NO_LOCK
 			    : HA_ALTER_INPLACE_COPY_LOCK);
@@ -2171,7 +2258,7 @@ innobase_rec_to_mysql(
 	struct TABLE*		table,	/*!< in/out: MySQL table */
 	const rec_t*		rec,	/*!< in: record */
 	const dict_index_t*	index,	/*!< in: index */
-	const offset_t*		offsets)/*!< in: rec_get_offsets(
+	const rec_offs*		offsets)/*!< in: rec_get_offsets(
 					rec, index, ...) */
 {
 	uint	n_fields	= table->s->fields;
@@ -4354,6 +4441,13 @@ innobase_add_instant_try(
 		return true;
 	}
 
+	/* If the table has been discarded then change the metadata alone
+	and make the index to non-instant format */
+	if (!user_table->space) {
+		index->remove_instant();
+		return false;
+	}
+
 	unsigned i = unsigned(user_table->n_cols) - DATA_N_SYS_COLS;
 	byte trx_id[DATA_TRX_ID_LEN], roll_ptr[DATA_ROLL_PTR_LEN];
 	dfield_set_data(dtuple_get_nth_field(row, i++), field_ref_zero,
@@ -4410,7 +4504,7 @@ innobase_add_instant_try(
 			uf->field_no = f;
 			uf->new_val = entry->fields[f];
 		}
-		offset_t* offsets = NULL;
+		rec_offs* offsets = NULL;
 		mem_heap_t* offsets_heap = NULL;
 		big_rec_t* big_rec;
 		err = btr_cur_pessimistic_update(

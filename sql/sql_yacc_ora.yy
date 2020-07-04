@@ -7970,10 +7970,10 @@ alter:
             lex->server_options.reset($3);
           } OPTIONS_SYM '(' server_options_list ')' { }
           /* ALTER USER foo is allowed for MySQL compatibility. */
-        | ALTER opt_if_exists USER_SYM clear_privileges grant_list
+        | ALTER USER_SYM opt_if_exists clear_privileges grant_list
           opt_require_clause opt_resource_options
           {
-            Lex->create_info.set($2);
+            Lex->create_info.set($3);
             Lex->sql_command= SQLCOM_ALTER_USER;
           }
         | ALTER SEQUENCE_SYM opt_if_exists
@@ -8468,8 +8468,8 @@ opt_index_lock_algorithm:
 alter_algorithm_option:
           ALGORITHM_SYM opt_equal DEFAULT
           {
-            Lex->alter_info.requested_algorithm=
-              Alter_info::ALTER_TABLE_ALGORITHM_DEFAULT;
+            Lex->alter_info.set_requested_algorithm(
+              Alter_info::ALTER_TABLE_ALGORITHM_DEFAULT);
           }
         | ALGORITHM_SYM opt_equal ident
           {

@@ -454,6 +454,7 @@ Check transaction state */
 	ut_ad(!(t)->id);						\
 	ut_ad(!(t)->has_logged());					\
 	ut_ad(!(t)->is_referenced());					\
+	ut_ad(!(t)->is_wsrep());					\
 	ut_ad(!(t)->read_view.is_open());				\
 	ut_ad((t)->lock.wait_thr == NULL);				\
 	ut_ad(UT_LIST_GET_LEN((t)->lock.trx_locks) == 0);		\
@@ -831,6 +832,13 @@ public:
 
 	Transitions to COMMITTED are protected by trx_t::mutex. */
 	trx_state_t	state;
+#ifdef WITH_WSREP
+	/** whether wsrep_on(mysql_thd) held at the start of transaction */
+	bool		wsrep;
+	bool is_wsrep() const { return UNIV_UNLIKELY(wsrep); }
+#else /* WITH_WSREP */
+	bool is_wsrep() const { return false; }
+#endif /* WITH_WSREP */
 
 	ReadView	read_view;	/*!< consistent read view used in the
 					transaction, or NULL if not yet set */

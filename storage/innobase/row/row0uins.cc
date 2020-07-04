@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2019, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -115,7 +115,7 @@ row_undo_ins_remove_clust_rec(
 	if (online && dict_index_is_online_ddl(index)) {
 		const rec_t*	rec	= btr_cur_get_rec(btr_cur);
 		mem_heap_t*	heap	= NULL;
-		const offset_t*	offsets	= rec_get_offsets(
+		const rec_offs*	offsets	= rec_get_offsets(
 			rec, index, NULL, true, ULINT_UNDEFINED, &heap);
 		row_log_table_delete(rec, index, offsets, NULL);
 		mem_heap_free(heap);
@@ -624,8 +624,8 @@ row_undo_ins(
 			already be holding dict_sys->mutex, which
 			would be acquired when updating statistics. */
 			if (!dict_locked) {
-				dict_stats_update_if_needed(
-					node->table, node->trx->mysql_thd);
+				dict_stats_update_if_needed(node->table,
+							    *node->trx);
 			}
 		}
 	}

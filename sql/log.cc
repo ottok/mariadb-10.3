@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2018, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2019, MariaDB Corporation
+   Copyright (c) 2009, 2020, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1818,7 +1818,7 @@ binlog_commit_flush_stmt_cache(THD *thd, bool all,
 #ifdef WITH_WSREP
   if (thd->wsrep_mysql_replicated > 0)
   {
-    DBUG_ASSERT(WSREP_ON);
+    DBUG_ASSERT(WSREP(thd));
     WSREP_DEBUG("avoiding binlog_commit_flush_trx_cache: %d",
                 thd->wsrep_mysql_replicated);
     return 0;
@@ -2251,9 +2251,6 @@ static int binlog_savepoint_set(handlerton *hton, THD *thd, void *sv)
   int error= 1;
   DBUG_ENTER("binlog_savepoint_set");
 
-  if (wsrep_emulate_bin_log)
-    DBUG_RETURN(0);
-
   char buf[1024];
 
   String log_query(buf, sizeof(buf), &my_charset_bin);
@@ -2285,9 +2282,6 @@ static int binlog_savepoint_set(handlerton *hton, THD *thd, void *sv)
 static int binlog_savepoint_rollback(handlerton *hton, THD *thd, void *sv)
 {
   DBUG_ENTER("binlog_savepoint_rollback");
-
-  if (wsrep_emulate_bin_log)
-    DBUG_RETURN(0);
 
   /*
     Write ROLLBACK TO SAVEPOINT to the binlog cache if we have updated some
@@ -3264,7 +3258,7 @@ void MYSQL_BIN_LOG::cleanup()
       DBUG_ASSERT(!binlog_xid_count_list.head());
       WSREP_XID_LIST_ENTRY("MYSQL_BIN_LOG::cleanup(): Removing xid_list_entry "
                            "for %s (%lu)", b);
-      my_free(b);
+      delete b;
     }
 
     mysql_mutex_destroy(&LOCK_log);
@@ -3629,19 +3623,10 @@ bool MYSQL_BIN_LOG::open(const char *log_name,
           know from where to start recovery.
         */
         size_t off= dirname_length(log_file_name);
-        size_t len= strlen(log_file_name) - off;
-        char *entry_mem, *name_mem;
-        if (!(new_xid_list_entry = (xid_count_per_binlog *)
-              my_multi_malloc(MYF(MY_WME),
-                              &entry_mem, sizeof(xid_count_per_binlog),
-                              &name_mem, len,
-                              NULL)))
+        uint len= static_cast<uint>(strlen(log_file_name) - off);
+        new_xid_list_entry= new xid_count_per_binlog(log_file_name+off, len);
+        if (!new_xid_list_entry)
           goto err;
-        memcpy(name_mem, log_file_name+off, len);
-        new_xid_list_entry->binlog_name= name_mem;
-        new_xid_list_entry->binlog_name_len= (int)len;
-        new_xid_list_entry->xid_count= 0;
-        new_xid_list_entry->notify_count= 0;
 
         /*
           Find the name for the Initial binlog checkpoint.
@@ -3658,8 +3643,11 @@ bool MYSQL_BIN_LOG::open(const char *log_name,
         mysql_mutex_unlock(&LOCK_xid_list);
         if (!b)
           b= new_xid_list_entry;
-        strmake(buf, b->binlog_name, b->binlog_name_len);
-        Binlog_checkpoint_log_event ev(buf, (uint)len);
+        if (b->binlog_name)
+          strmake(buf, b->binlog_name, b->binlog_name_len);
+        else
+          goto err;
+        Binlog_checkpoint_log_event ev(buf, len);
         DBUG_EXECUTE_IF("crash_before_write_checkpoint_event",
                         flush_io_cache(&log_file);
                         mysql_file_sync(log_file.file, MYF(MY_WME));
@@ -3762,7 +3750,7 @@ bool MYSQL_BIN_LOG::open(const char *log_name,
     {
       WSREP_XID_LIST_ENTRY("MYSQL_BIN_LOG::open(): Removing xid_list_entry for "
                            "%s (%lu)", b);
-      my_free(binlog_xid_count_list.get());
+      delete binlog_xid_count_list.get();
     }
     mysql_cond_broadcast(&COND_xid_list);
     WSREP_XID_LIST_ENTRY("MYSQL_BIN_LOG::open(): Adding new xid_list_entry for "
@@ -3812,7 +3800,7 @@ err:
 #endif
   sql_print_error(fatal_log_error, name, tmp_errno);
   if (new_xid_list_entry)
-    my_free(new_xid_list_entry);
+    delete new_xid_list_entry;
   if (file >= 0)
     mysql_file_close(file, MYF(0));
   close(LOG_CLOSE_INDEX);
@@ -4298,7 +4286,7 @@ err:
       DBUG_ASSERT(b->xid_count == 0);
       WSREP_XID_LIST_ENTRY("MYSQL_BIN_LOG::reset_logs(): Removing "
                            "xid_list_entry for %s (%lu)", b);
-      my_free(binlog_xid_count_list.get());
+      delete binlog_xid_count_list.get();
     }
     mysql_cond_broadcast(&COND_xid_list);
     reset_master_pending--;
@@ -6692,14 +6680,15 @@ int MYSQL_BIN_LOG::rotate(bool force_rotate, bool* check_purge)
   int error= 0;
   DBUG_ENTER("MYSQL_BIN_LOG::rotate");
 
-  if (wsrep_to_isolation)
+#ifdef WITH_WSREP
+  if (WSREP_ON && wsrep_to_isolation)
   {
-    DBUG_ASSERT(WSREP_ON);
     *check_purge= false;
-    WSREP_DEBUG("avoiding binlog rotate due to TO isolation: %d", 
+    WSREP_DEBUG("avoiding binlog rotate due to TO isolation: %d",
                 wsrep_to_isolation);
     DBUG_RETURN(0);
   }
+#endif /* WITH_WSREP */
 
   //todo: fix the macro def and restore safe_mutex_assert_owner(&LOCK_log);
   *check_purge= false;
@@ -9833,7 +9822,7 @@ TC_LOG_BINLOG::mark_xid_done(ulong binlog_id, bool write_checkpoint)
       break;
     WSREP_XID_LIST_ENTRY("TC_LOG_BINLOG::mark_xid_done(): Removing "
                          "xid_list_entry for %s (%lu)", b);
-    my_free(binlog_xid_count_list.get());
+    delete binlog_xid_count_list.get();
   }
 
   mysql_mutex_unlock(&LOCK_xid_list);

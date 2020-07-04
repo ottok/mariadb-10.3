@@ -140,8 +140,6 @@ INCLUDE(mysql_version)
 INCLUDE(cpack_source_ignore_files)
 INCLUDE(install_layout)
 INCLUDE(wsrep)
-INCLUDE(cpack_rpm)
-INCLUDE(cpack_deb)
 
 # Add macros
 INCLUDE(character_sets)
@@ -221,7 +219,7 @@ ENDIF()
 
 OPTION(WITH_UBSAN "Enable undefined behavior sanitizer" OFF)
 IF (WITH_UBSAN)
-  MY_CHECK_AND_SET_COMPILER_FLAG("-fsanitize=undefined -fno-sanitize=alignment -U_FORTIFY_SOURCE" DEBUG RELWITHDEBINFO)
+  MY_CHECK_AND_SET_COMPILER_FLAG("-fsanitize=undefined -fno-sanitize=alignment -U_FORTIFY_SOURCE -DWITH_UBSAN" DEBUG RELWITHDEBINFO)
 ENDIF()
 
 OPTION(WITH_MSAN "Enable memory sanitizer" OFF)
@@ -248,6 +246,11 @@ IF(NOT WITH_TSAN)
     MY_CHECK_AND_SET_COMPILER_FLAG("-fstack-protector --param=ssp-buffer-size=4")
     MY_CHECK_AND_SET_COMPILER_FLAG("-D_FORTIFY_SOURCE=2" RELEASE RELWITHDEBINFO)
   ENDIF()
+ENDIF()
+
+OPTION(WITH_DBUG_TRACE "Enable DBUG_ENTER()/DBUG_EXIT()" ON)
+IF(WITH_DBUG_TRACE)
+  ADD_DEFINITIONS(-DDBUG_TRACE)
 ENDIF()
 
 # Always enable debug sync for debug builds.
@@ -369,8 +372,6 @@ MYSQL_CHECK_SSL()
 MYSQL_CHECK_READLINE()
 
 SET(MALLOC_LIBRARY "system")
-SET(PYTHON_SHEBANG "/usr/bin/env python" CACHE STRING "python shebang")
-MARK_AS_ADVANCED(PYTHON_SHEBANG)
 
 CHECK_PCRE()
 
@@ -407,6 +408,12 @@ SET (MYSQLD_STATIC_PLUGIN_LIBS "" CACHE INTERNAL "")
 
 INCLUDE(submodules)
 INCLUDE(mariadb_connector_c) # this does ADD_SUBDIRECTORY(libmariadb)
+
+INCLUDE(cpack_rpm)
+INCLUDE(cpack_deb)
+
+SET(PYTHON_SHEBANG "/usr/bin/env python" CACHE STRING "python shebang")
+MARK_AS_ADVANCED(PYTHON_SHEBANG)
 
 # Add storage engines and plugins.
 CONFIGURE_PLUGINS()
