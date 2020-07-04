@@ -8,4 +8,4 @@ usr/lib/*/libmysqlservices.a
 usr/share/aclocal/mysql.m4
 usr/share/man/man1/mysql_config.1
 usr/lib/pkgconfig/libmariadb.pc usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/
-usr/share/pkgconfig/mariadb.pc usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/
+usr/lib/*/pkgconfig/mariadb.pc
