@@ -1,3 +1,15 @@
+mariadb-10.3 (1:10.3.23-0+deb10u1) buster; urgency=high
+
+  * SECURITY UPDATE: New upstream version 10.3.23. Includes fixes for the
+    following security vulnerabilities (Closes: #961849):
+    - CVE-2020-2752
+    - CVE-2020-2760
+    - CVE-2020-2812
+    - CVE-2020-2814
+    - CVE-2020-13249
+
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 04 Jul 2020 15:31:51 +0300
+
 mariadb-10.3 (1:10.3.22-0+deb10u1) buster; urgency=high
 
   * SECURITY UPDATE: New upstream version 10.3.22. Includes fixes for the
