@@ -1,5 +1,6 @@
 mariadb-10.3 (1:10.3.23-1) unstable; urgency=medium
 
+  [ Otto Kekäläinen ]
   * SECURITY UPDATE: New upstream version 10.3.23. Includes fixes for the
     following security vulnerabilities (Closes: #961849):
     - CVE-2020-2752
@@ -7,8 +8,24 @@ mariadb-10.3 (1:10.3.23-1) unstable; urgency=medium
     - CVE-2020-2812
     - CVE-2020-2814
     - CVE-2020-13249
-  - Inludes fix for MDEV-21586: Server does not start if lc_messages setting
+  - Includes fix for MDEV-21586: Server does not start if lc_messages setting
     was not English (Closes: #951059)
+  - Backport packaging improvements from MariaDB 10.4:
+    - Fix RocksDB build failure on arch riscv64
+    - Amend changelog with #951059 reference
+    - Properly use DH_ and DEB_ flag in d/rules
+    - Detect MySQL 8.0 based on undo_001 file as *.flag is buggy in mysql-8.0
+    - Make mariadb-client-10.4 Recommends libdbd-mariadb-perl as primary option
+    - Update package to use debhelper level 10
+    - Delete pam_mariadb_mtr.so test plugin from build completely
+    - Fix minor typos in docs and in-line comments
+    - Sync server stopping logic from MariaDB 10.4 preinst/postinst/postrm
+    - Sync AppArmor profile handling from MariaDB 10.4
+    - Sync non-functional delta from upstream 10.4
+    - Simplify autopkgtest 'smoke' to be easier to debug
+
+  [ Christian Ehrhardt ]
+  * Fix RocksDB build failure on arch riscv64
 
  -- Otto Kekäläinen <otto@debian.org>  Sun, 05 Jul 2020 21:28:11 +0300
 
