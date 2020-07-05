@@ -8,6 +8,7 @@ libmariadb.so.3 libmariadb3 #MINVER#
  mariadb_connection@libmariadb_3 3.0.0
  mariadb_convert_string@libmariadb_3 3.0.0
  mariadb_deinitialize_ssl@libmariadb_3 3.0.0
+ mariadb_field_attr@libmariadb_3 3.1.8
  mariadb_free_rpl_event@libmariadb_3 3.1.0
  mariadb_get_charset_by_name@libmariadb_3 3.0.0
  mariadb_get_charset_by_nr@libmariadb_3 3.0.0
