@@ -1,3 +1,15 @@
+mariadb-10.3 (1:10.3.23-1) unstable; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.23. Includes fixes for the
+    following security vulnerabilities (Closes: #961849):
+    - CVE-2020-2752
+    - CVE-2020-2760
+    - CVE-2020-2812
+    - CVE-2020-2814
+    - CVE-2020-13249
+
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 05 Jul 2020 21:28:11 +0300
+
 mariadb-10.3 (1:10.3.22-1) unstable; urgency=medium
 
   [ Otto Kekäläinen ]

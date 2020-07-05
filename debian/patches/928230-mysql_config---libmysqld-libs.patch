@@ -15,19 +15,19 @@ Forwarded: https://github.com/MariaDB/mariadb-connector-c/pull/109
  #define TLS_LIBRARY_VERSION "@TLS_LIBRARY_VERSION@"
 +#define EMBED_LIBS "-L@CMAKE_INSTALL_PREFIX@/@INSTALL_LIBDIR@/ -lmariadbd @extra_dynamic_LDFLAGS@"
  
- static struct option long_options[]=
- {
-@@ -30,6 +31,9 @@ static struct option long_options[]=
-   {"port", no_argument, 0, 'i'},
-   {"plugindir", no_argument, 0, 'j'},
-   {"tlsinfo", no_argument, 0, 'k'},
-+  {"libmysqld-libs", no_argument, 0, 'm' },
-+  {"embedded-libs", no_argument, 0, 'm' },
-+  {"embedded", no_argument, 0, 'm' },
+ #if defined(SOLARIS) || defined(__sun)
+ #define OPT_STRING_TYPE (char *)
+@@ -35,6 +36,9 @@ static struct option long_options[]=
+   {OPT_STRING_TYPE "port", no_argument, 0, 'i'},
+   {OPT_STRING_TYPE "plugindir", no_argument, 0, 'j'},
+   {OPT_STRING_TYPE "tlsinfo", no_argument, 0, 'k'},
++  {OPT_STRING_TYPE "libmysqld-libs", no_argument, 0, 'm' },
++  {OPT_STRING_TYPE "embedded-libs", no_argument, 0, 'm' },
++  {OPT_STRING_TYPE "embedded", no_argument, 0, 'm' },
    {NULL, 0, 0, 0}
  };
  
-@@ -46,7 +50,10 @@ static const char *values[]=
+@@ -51,7 +55,10 @@ static const char *values[]=
    SOCKET,
    PORT,
    PLUGIN_DIR,
@@ -39,7 +39,7 @@ Forwarded: https://github.com/MariaDB/mariadb-connector-c/pull/109
  };
  
  void usage(void)
-@@ -115,6 +122,9 @@ int main(int argc, char **argv)
+@@ -120,6 +127,9 @@ int main(int argc, char **argv)
      case 'l':
        puts(LIBS_SYS);
        break;
