@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2019, MariaDB Corporation.
+Copyright (c) 2015, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -511,9 +511,7 @@ trx_free_at_shutdown(trx_t *trx)
 	ut_a(trx_state_eq(trx, TRX_STATE_PREPARED)
 	     || trx_state_eq(trx, TRX_STATE_PREPARED_RECOVERED)
 	     || (trx_state_eq(trx, TRX_STATE_ACTIVE)
-		 && (!srv_was_started
-		     || srv_operation == SRV_OPERATION_RESTORE
-		     || srv_operation == SRV_OPERATION_RESTORE_EXPORT
+		 && (!srv_was_started || is_mariabackup_restore_or_export()
 		     || srv_read_only_mode
 		     || srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO
 		     || (!srv_is_being_started
@@ -1479,15 +1477,13 @@ trx_commit_in_memory(
 
 	trx_mutex_enter(trx);
 	trx->dict_operation = TRX_DICT_OP_NONE;
-
-#ifdef WITH_WSREP
-	if (trx->mysql_thd && wsrep_on(trx->mysql_thd)) {
-		trx->lock.was_chosen_as_deadlock_victim = FALSE;
-	}
-#endif
+	trx->lock.was_chosen_as_deadlock_victim = false;
 
 	DBUG_LOG("trx", "Commit in memory: " << trx);
 	trx->state = TRX_STATE_NOT_STARTED;
+#ifdef WITH_WSREP
+	trx->wsrep = false;
+#endif
 
 	assert_trx_is_free(trx);
 

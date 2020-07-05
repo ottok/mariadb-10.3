@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2000, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2019, MariaDB Corporation.
+Copyright (c) 2015, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -1038,7 +1038,7 @@ row_prebuilt_free(
 		rtr_clean_rtr_info(prebuilt->rtr_info, true);
 	}
 	if (prebuilt->table) {
-		dict_table_close(prebuilt->table, dict_locked, TRUE);
+		dict_table_close(prebuilt->table, dict_locked, FALSE);
 	}
 
 	mem_heap_free(prebuilt->heap);
@@ -1097,7 +1097,7 @@ row_get_prebuilt_insert_row(
 		may need to rebuild the row insert template. */
 
 		if (prebuilt->trx_id == table->def_trx_id
-		    && UT_LIST_GET_LEN(prebuilt->ins_node->entry_list)
+		    && prebuilt->ins_node->entry_list.size()
 		    == UT_LIST_GET_LEN(table->indexes)) {
 
 			return(prebuilt->ins_node->row);
@@ -1574,7 +1574,7 @@ error_exit:
 		memcpy(prebuilt->row_id, node->sys_buf, DATA_ROW_ID_LEN);
 	}
 
-	dict_stats_update_if_needed(table, trx->mysql_thd);
+	dict_stats_update_if_needed(table, *trx);
 	trx->op_info = "";
 
 	if (blob_heap != NULL) {
@@ -1958,7 +1958,7 @@ row_update_for_mysql(row_prebuilt_t* prebuilt)
 	}
 
 	if (update_statistics) {
-		dict_stats_update_if_needed(prebuilt->table, trx->mysql_thd);
+		dict_stats_update_if_needed(prebuilt->table, *trx);
 	} else {
 		/* Always update the table modification counter. */
 		prebuilt->table->stat_modified_counter++;
@@ -2063,8 +2063,8 @@ row_unlock_for_mysql(
 						     + index->trx_id_offset);
 		} else {
 			mem_heap_t*	heap			= NULL;
-			offset_t offsets_[REC_OFFS_NORMAL_SIZE];
-			offset_t* offsets				= offsets_;
+			rec_offs offsets_[REC_OFFS_NORMAL_SIZE];
+			rec_offs* offsets				= offsets_;
 
 			rec_offs_init(offsets_);
 			offsets = rec_get_offsets(rec, index, offsets, true,
@@ -2208,7 +2208,7 @@ static dberr_t row_update_vers_insert(que_thr_t* thr, upd_node_t* node)
 		case DB_SUCCESS:
 			srv_stats.n_rows_inserted.inc(
 				static_cast<size_t>(trx->id));
-			dict_stats_update_if_needed(table, trx->mysql_thd);
+			dict_stats_update_if_needed(table, *trx);
 			goto exit;
 		}
 	}
@@ -2302,8 +2302,7 @@ row_update_cascade_for_mysql(
 			}
 
 			if (stats) {
-				dict_stats_update_if_needed(node->table,
-							    trx->mysql_thd);
+				dict_stats_update_if_needed(node->table, *trx);
 			} else {
 				/* Always update the table
 				modification counter. */
@@ -3142,12 +3141,26 @@ row_discard_tablespace_for_mysql(
 	} else {
 		ut_ad(!table->n_foreign_key_checks_running);
 
+		bool fts_exist = (dict_table_has_fts_index(table)
+				  || DICT_TF2_FLAG_IS_SET(
+					  table, DICT_TF2_FTS_HAS_DOC_ID));
+
+		if (fts_exist) {
+			row_mysql_unlock_data_dictionary(trx);
+			fts_optimize_remove_table(table);
+			row_mysql_lock_data_dictionary(trx);
+		}
+
 		/* Do foreign key constraint checks. */
 
 		err = row_discard_tablespace_foreign_key_checks(trx, table);
 
 		if (err == DB_SUCCESS) {
 			err = row_discard_tablespace(trx, table);
+		}
+
+		if (fts_exist && err != DB_SUCCESS) {
+			fts_optimize_add_table(table);
 		}
 	}
 
@@ -3743,10 +3756,11 @@ do_drop:
 		dict_table_t. */
 		if (DICT_TF_HAS_DATA_DIR(table->flags)) {
 			dict_get_and_save_data_dir_path(table, true);
-			ut_a(table->data_dir_path);
+			ut_ad(table->data_dir_path || !space);
 			filepath = space ? NULL : fil_make_filepath(
 				table->data_dir_path,
-				table->name.m_name, IBD, true);
+				table->name.m_name, IBD,
+				table->data_dir_path != NULL);
 		} else {
 			filepath = space ? NULL : fil_make_filepath(
 				NULL, table->name.m_name, IBD, false);
@@ -3840,6 +3854,11 @@ funct_exit_all_freed:
 		if (trx_is_started(trx)) {
 
 			trx_commit_for_mysql(trx);
+		}
+
+		/* Add the table to fts queue if drop table fails */
+		if (err != DB_SUCCESS && table->fts) {
+			fts_optimize_add_table(table);
 		}
 
 		row_mysql_unlock_data_dictionary(trx);
@@ -4319,14 +4338,14 @@ row_rename_table_for_mysql(
 
 	/* SYS_TABLESPACES and SYS_DATAFILES need to be updated if
 	the table is in a single-table tablespace. */
-	if (err == DB_SUCCESS
-	    && dict_table_is_file_per_table(table)) {
-		/* Make a new pathname to update SYS_DATAFILES. */
+	if (err != DB_SUCCESS || !dict_table_is_file_per_table(table)) {
+	} else if (table->space) {
 		/* If old path and new path are the same means tablename
 		has not changed and only the database name holding the table
 		has changed so we need to make the complete filepath again. */
 		char*	new_path = dict_tables_have_same_db(old_name, new_name)
-			? row_make_new_pathname(table, new_name)
+			? os_file_make_new_pathname(
+				table->space->chain.start->name, new_name)
 			: fil_make_filepath(NULL, new_name, IBD, false);
 
 		info = pars_info_create();
@@ -4681,8 +4700,8 @@ row_scan_index_for_mysql(
 	ulint		i;
 	ulint		cnt;
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets;
 	rec_offs_init(offsets_);
 
 	*n_rows = 0;
@@ -4815,7 +4834,7 @@ not_ok:
 
 			tmp_heap = mem_heap_create(size);
 
-			offsets = static_cast<offset_t*>(
+			offsets = static_cast<rec_offs*>(
 				mem_heap_dup(tmp_heap, offsets, size));
 		}
 

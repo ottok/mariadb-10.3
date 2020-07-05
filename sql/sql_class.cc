@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2018, MariaDB Corporation.
+   Copyright (c) 2008, 2020, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -73,6 +73,7 @@
 #ifdef HAVE_SYS_SYSCALL_H
 #include <sys/syscall.h>
 #endif
+#include "repl_failsafe.h"
 
 /*
   The following is used to initialise Table_ident with a internal
@@ -605,6 +606,7 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
    m_current_stage_key(0),
    in_sub_stmt(0), log_all_errors(0),
    binlog_unsafe_warning_flags(0),
+   current_stmt_binlog_format(BINLOG_FORMAT_MIXED),
    binlog_table_maps(0),
    bulk_param(0),
    table_map_for_update(0),
@@ -730,7 +732,7 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
   query_name_consts= 0;
   semisync_info= 0;
   db_charset= global_system_variables.collation_database;
-  bzero(ha_data, sizeof(ha_data));
+  bzero((void*) ha_data, sizeof(ha_data));
   mysys_var=0;
   binlog_evt_union.do_union= FALSE;
   enable_slow_log= 0;
@@ -1225,7 +1227,7 @@ void THD::init()
 #ifdef WITH_WSREP
   wsrep_exec_mode= wsrep_applier ? REPL_RECV :  LOCAL_STATE;
   wsrep_conflict_state= NO_CONFLICT;
-  wsrep_query_state= QUERY_IDLE;
+  wsrep_thd_set_query_state(this, QUERY_IDLE);
   wsrep_last_query_id= 0;
   wsrep_trx_meta.gtid= WSREP_GTID_UNDEFINED;
   wsrep_trx_meta.depends_on= WSREP_SEQNO_UNDEFINED;
@@ -1522,6 +1524,10 @@ void THD::cleanup(void)
   DBUG_ASSERT(!mdl_context.has_locks());
 
   apc_target.destroy();
+#ifdef HAVE_REPLICATION
+  unregister_slave(this, true, true);
+#endif
+
   cleanup_done=1;
   DBUG_VOID_RETURN;
 }

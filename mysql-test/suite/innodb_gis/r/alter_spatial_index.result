@@ -269,7 +269,7 @@ c1	ST_Astext(c2)	ST_Astext(c4)
 9	POINT(120 120)	POLYGON((4010 4010,4020 4020,4030 4030,4040 4030,4020 4010,4010 4010))
 UPDATE tab SET c2 = ST_GeomFromText('POINT(4000 4000)')
 WHERE MBRIntersects(tab.c4, @g1);
-ERROR 23000: Duplicate entry '\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00@\xAF@\x' for key 'PRIMARY'
+ERROR 23000: Duplicate entry '\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00@\xAF...' for key 'PRIMARY'
 SELECT c1,ST_Astext(c2),ST_Astext(c4) FROM tab WHERE MBRIntersects(tab.c4, @g1) ORDER BY c1;
 c1	ST_Astext(c2)	ST_Astext(c4)
 7	POINT(60 70)	POLYGON((3010 3010,3020 3020,3030 3030,3040 3030,3020 3010,3010 3010))
@@ -789,13 +789,13 @@ DROP TABLE t1;
 create table t1 (p point not null default if(unix_timestamp()>10,POINT(1,1),LineString(Point(0,0),Point(1,1)))) ENGINE=innodb;
 set timestamp=10;
 insert into t1 values(default);
-ERROR 22007: Incorrect POINT value: 'GEOMETRYCOLLECTION' for column `test`.`t1`.`p` at row 1
+ERROR 22007: Incorrect POINT value: 'GEOMETRYCOLLECTION(POINT(0 0),POINT(1 1))' for column `test`.`t1`.`p` at row 1
 drop table t1;
 SET timestamp=default;
 create table t1 (p point not null default if(unix_timestamp()>10,POINT(1,1),LineString(Point(0,0),Point(1,1)))) ENGINE=innodb;
 set timestamp=10;
 alter table t1 add column i int;
-ERROR 22007: Incorrect POINT value: 'GEOMETRYCOLLECTION' for column `test`.`t1`.`p` at row 1
+ERROR 22007: Incorrect POINT value: 'GEOMETRYCOLLECTION(POINT(0 0),POINT(1 1))' for column `test`.`t1`.`p` at row 1
 drop table t1;
 SET timestamp=default;
 CREATE OR REPLACE TABLE t1 (a INT) ENGINE=InnoDB;

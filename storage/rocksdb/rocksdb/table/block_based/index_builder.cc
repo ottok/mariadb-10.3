@@ -21,7 +21,7 @@
 #include "table/format.h"
 
 // Without anonymous namespace here, we fail the warning -Wmissing-prototypes
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 // using namespace rocksdb;
 // Create a index builder based on its type.
 IndexBuilder* IndexBuilder::CreateIndexBuilder(
@@ -36,9 +36,12 @@ IndexBuilder* IndexBuilder::CreateIndexBuilder(
       result = new ShortenedIndexBuilder(
           comparator, table_opt.index_block_restart_interval,
           table_opt.format_version, use_value_delta_encoding,
-          table_opt.index_shortening);
+          table_opt.index_shortening, /* include_first_key */ false);
     } break;
     case BlockBasedTableOptions::kHashSearch: {
+      // Currently kHashSearch is incompatible with index_block_restart_interval
+      // > 1
+      assert(table_opt.index_block_restart_interval == 1);
       result = new HashIndexBuilder(
           comparator, int_key_slice_transform,
           table_opt.index_block_restart_interval, table_opt.format_version,
@@ -47,6 +50,12 @@ IndexBuilder* IndexBuilder::CreateIndexBuilder(
     case BlockBasedTableOptions::kTwoLevelIndexSearch: {
       result = PartitionedIndexBuilder::CreateIndexBuilder(
           comparator, use_value_delta_encoding, table_opt);
+    } break;
+    case BlockBasedTableOptions::kBinarySearchWithFirstKey: {
+      result = new ShortenedIndexBuilder(
+          comparator, table_opt.index_block_restart_interval,
+          table_opt.format_version, use_value_delta_encoding,
+          table_opt.index_shortening, /* include_first_key */ true);
     } break;
     default: {
       assert(!"Do not recognize the index type ");
@@ -94,7 +103,7 @@ void PartitionedIndexBuilder::MakeNewSubIndexBuilder() {
   sub_index_builder_ = new ShortenedIndexBuilder(
       comparator_, table_opt_.index_block_restart_interval,
       table_opt_.format_version, use_value_delta_encoding_,
-      table_opt_.index_shortening);
+      table_opt_.index_shortening, /* include_first_key */ false);
   flush_policy_.reset(FlushBlockBySizePolicyFactory::NewFlushBlockPolicy(
       table_opt_.metadata_block_size, table_opt_.block_size_deviation,
       // Note: this is sub-optimal since sub_index_builder_ could later reset
@@ -210,4 +219,4 @@ Status PartitionedIndexBuilder::Finish(
 }
 
 size_t PartitionedIndexBuilder::NumPartitions() const { return partition_cnt_; }
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

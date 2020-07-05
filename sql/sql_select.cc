@@ -2626,8 +2626,12 @@ int JOIN::optimize_stage2()
     having_is_correlated= MY_TEST(having->used_tables() & OUTER_REF_TABLE_BIT);
   tmp_having= having;
 
-  if ((select_lex->options & OPTION_SCHEMA_TABLE))
-    optimize_schema_tables_reads(this);
+  if ((select_lex->options & OPTION_SCHEMA_TABLE) &&
+       optimize_schema_tables_reads(this))
+    DBUG_RETURN(TRUE);
+
+  if (unlikely(thd->is_error()))
+    DBUG_RETURN(TRUE);
 
   /*
     The loose index scan access method guarantees that all grouping or
@@ -5168,7 +5172,7 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
       for (i= 0; i < join->table_count ; i++)
         if (double rr= join->best_positions[i].records_read)
           records= COST_MULT(records, rr);
-      ha_rows rows= records > HA_ROWS_MAX ? HA_ROWS_MAX : (ha_rows) records;
+      ha_rows rows= records > (double) HA_ROWS_MAX ? HA_ROWS_MAX : (ha_rows) records;
       set_if_smaller(rows, unit->select_limit_cnt);
       join->select_lex->increase_derived_records(rows);
     }
@@ -10062,6 +10066,7 @@ static bool create_ref_for_key(JOIN *join, JOIN_TAB *j,
   uchar *key_buff=j->ref.key_buff, *null_ref_key= 0;
   uint null_ref_part= NO_REF_PART;
   bool keyuse_uses_no_tables= TRUE;
+  uint not_null_keyparts= 0;
   if (ftkey)
   {
     j->ref.items[0]=((Item_func*)(keyuse->val))->key_item();
@@ -10091,6 +10096,8 @@ static bool create_ref_for_key(JOIN *join, JOIN_TAB *j,
       j->ref.items[i]=keyuse->val;		// Save for cond removal
       j->ref.cond_guards[i]= keyuse->cond_guard;
 
+      if (!keyuse->val->maybe_null || keyuse->null_rejecting)
+        not_null_keyparts++;
       /*
         Set ref.null_rejecting to true only if we are going to inject a
         "keyuse->val IS NOT NULL" predicate.
@@ -10150,12 +10157,18 @@ static bool create_ref_for_key(JOIN *join, JOIN_TAB *j,
   ulong key_flags= j->table->actual_key_flags(keyinfo);
   if (j->type == JT_CONST)
     j->table->const_table= 1;
-  else if (!((keyparts == keyinfo->user_defined_key_parts && 
-              ((key_flags & (HA_NOSAME | HA_NULL_PART_KEY)) == HA_NOSAME)) ||
-	     (keyparts > keyinfo->user_defined_key_parts &&   // true only for extended keys 
-              MY_TEST(key_flags & HA_EXT_NOSAME) &&
-              keyparts == keyinfo->ext_key_parts)) ||
-	    null_ref_key)
+  else if (!((keyparts == keyinfo->user_defined_key_parts &&
+              (
+                (key_flags & (HA_NOSAME | HA_NULL_PART_KEY)) == HA_NOSAME ||
+                /* Unique key and all keyparts are NULL rejecting */
+                ((key_flags & HA_NOSAME) && keyparts == not_null_keyparts)
+              )) ||
+              /* true only for extended keys */
+              (keyparts > keyinfo->user_defined_key_parts &&
+               MY_TEST(key_flags & HA_EXT_NOSAME) &&
+               keyparts == keyinfo->ext_key_parts)
+            ) ||
+            null_ref_key)
   {
     /* Must read with repeat */
     j->type= null_ref_key ? JT_REF_OR_NULL : JT_REF;

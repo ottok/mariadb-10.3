@@ -17,7 +17,7 @@
 #include "logging/log_buffer.h"
 #include "util/string_util.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 namespace {
 uint64_t GetTotalFilesSize(const std::vector<FileMetaData*>& files) {
   uint64_t total_size = 0;
@@ -53,6 +53,15 @@ Compaction* FIFOCompactionPicker::PickTTLCompaction(
     return nullptr;
   }
   const uint64_t current_time = static_cast<uint64_t>(_current_time);
+
+  if (!level0_compactions_in_progress_.empty()) {
+    ROCKS_LOG_BUFFER(
+        log_buffer,
+        "[%s] FIFO compaction: Already executing compaction. No need "
+        "to run parallel compactions since compactions are very fast",
+        cf_name.c_str());
+    return nullptr;
+  }
 
   std::vector<CompactionInputFiles> inputs;
   inputs.emplace_back();
@@ -193,7 +202,8 @@ Compaction* FIFOCompactionPicker::PickSizeCompaction(
 
 Compaction* FIFOCompactionPicker::PickCompaction(
     const std::string& cf_name, const MutableCFOptions& mutable_cf_options,
-    VersionStorageInfo* vstorage, LogBuffer* log_buffer) {
+    VersionStorageInfo* vstorage, LogBuffer* log_buffer,
+    SequenceNumber /*earliest_memtable_seqno*/) {
   assert(vstorage->num_levels() == 1);
 
   Compaction* c = nullptr;
@@ -228,5 +238,5 @@ Compaction* FIFOCompactionPicker::CompactRange(
   return c;
 }
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 #endif  // !ROCKSDB_LITE

@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2019, MariaDB Corporation.
+   Copyright (c) 2008, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2189,16 +2189,12 @@ static void mysqld_exit(int exit_code)
   shutdown_performance_schema();        // we do it as late as possible
 #endif
   set_malloc_size_cb(NULL);
-  if (opt_endinfo && global_status_var.global_memory_used)
-    fprintf(stderr, "Warning: Memory not freed: %ld\n",
-            (long) global_status_var.global_memory_used);
-  if (!opt_debugging && !my_disable_leak_check && exit_code == 0 &&
-      debug_assert_on_not_freed_memory)
+  if (global_status_var.global_memory_used)
   {
-#ifdef SAFEMALLOC
-    sf_report_leaked_memory(0);
-#endif
-    DBUG_SLOW_ASSERT(global_status_var.global_memory_used == 0);
+    fprintf(stderr, "Warning: Memory not freed: %lld\n",
+            (longlong) global_status_var.global_memory_used);
+    if (exit_code == 0)
+      SAFEMALLOC_REPORT_MEMORY(0);
   }
   cleanup_tls();
   DBUG_LEAVE;
@@ -4495,7 +4491,7 @@ static int init_common_variables()
     min_connections= 10;
     /* MyISAM requires two file handles per table. */
     wanted_files= (extra_files + max_connections + extra_max_connections +
-                   tc_size * 2);
+                   tc_size * 2 * tc_instances);
 #if defined(HAVE_POOL_OF_THREADS) && !defined(__WIN__)
     // add epoll or kevent fd for each threadpool group, in case pool of threads is used
     wanted_files+= (thread_handling > SCHEDULER_NO_THREADS) ? 0 : threadpool_size;
@@ -4524,6 +4520,14 @@ static int init_common_variables()
     if (files < wanted_files && global_system_variables.log_warnings)
       sql_print_warning("Could not increase number of max_open_files to more than %u (request: %u)", files, wanted_files);
 
+    /* If we required too much tc_instances than we reduce */
+    SYSVAR_AUTOSIZE_IF_CHANGED(tc_instances,
+                               (uint32) MY_MIN(MY_MAX((files - extra_files -
+                                                      max_connections)/
+                                                      2/tc_size,
+                                                     1),
+                                              tc_instances),
+                               uint32);
     /*
       If we have requested too much file handles than we bring
       max_connections in supported bounds. Still leave at least
@@ -4531,7 +4535,7 @@ static int init_common_variables()
     */
     SYSVAR_AUTOSIZE_IF_CHANGED(max_connections,
                                (ulong) MY_MAX(MY_MIN(files- extra_files-
-                                                     min_tc_size*2,
+                                                     min_tc_size*2*tc_instances,
                                                      max_connections),
                                               min_connections),
                                ulong);
@@ -4544,7 +4548,7 @@ static int init_common_variables()
     */
     SYSVAR_AUTOSIZE_IF_CHANGED(tc_size,
                                (ulong) MY_MIN(MY_MAX((files - extra_files -
-                                                      max_connections) / 2,
+                                                      max_connections) / 2 / tc_instances,
                                                      min_tc_size),
                                               tc_size), ulong);
     DBUG_PRINT("warning",
@@ -6009,8 +6013,10 @@ int mysqld_main(int argc, char **argv)
       set_user(mysqld_user, user_info);
   }
 
+#ifdef WITH_WSREP
   if (WSREP_ON && wsrep_check_opts())
     global_system_variables.wsrep_on= 0;
+#endif
 
   /* 
    The subsequent calls may take a long time : e.g. innodb log read.
@@ -8642,9 +8648,9 @@ SHOW_VAR status_vars[]= {
   {"Key",                      (char*) &show_default_keycache, SHOW_FUNC},
   {"Last_query_cost",          (char*) offsetof(STATUS_VAR, last_query_cost), SHOW_DOUBLE_STATUS},
   {"Max_statement_time_exceeded", (char*) offsetof(STATUS_VAR, max_statement_time_exceeded), SHOW_LONG_STATUS},
-  {"Master_gtid_wait_count",   (char*) offsetof(STATUS_VAR, master_gtid_wait_count), SHOW_LONGLONG_STATUS},
-  {"Master_gtid_wait_timeouts", (char*) offsetof(STATUS_VAR, master_gtid_wait_timeouts), SHOW_LONGLONG_STATUS},
-  {"Master_gtid_wait_time",    (char*) offsetof(STATUS_VAR, master_gtid_wait_time), SHOW_LONGLONG_STATUS},
+  {"Master_gtid_wait_count",   (char*) offsetof(STATUS_VAR, master_gtid_wait_count), SHOW_LONG_STATUS},
+  {"Master_gtid_wait_timeouts", (char*) offsetof(STATUS_VAR, master_gtid_wait_timeouts), SHOW_LONG_STATUS},
+  {"Master_gtid_wait_time",    (char*) offsetof(STATUS_VAR, master_gtid_wait_time), SHOW_LONG_STATUS},
   {"Max_used_connections",     (char*) &max_used_connections,  SHOW_LONG},
   {"Memory_used",              (char*) &show_memory_used, SHOW_SIMPLE_FUNC},
   {"Memory_used_initial",      (char*) &start_memory_used, SHOW_LONGLONG},

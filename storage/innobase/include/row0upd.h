@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2018, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -124,7 +124,7 @@ row_upd_rec_sys_fields(
 	page_zip_des_t*	page_zip,/*!< in/out: compressed page whose
 				uncompressed part will be updated, or NULL */
 	dict_index_t*	index,	/*!< in: clustered index */
-	const offset_t*	offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets,/*!< in: rec_get_offsets(rec, index) */
 	const trx_t*	trx,	/*!< in: transaction */
 	roll_ptr_t	roll_ptr);/*!< in: DB_ROLL_PTR to the undo log */
 /*********************************************************************//**
@@ -166,7 +166,7 @@ ibool
 row_upd_changes_field_size_or_external(
 /*===================================*/
 	dict_index_t*	index,	/*!< in: index */
-	const offset_t*	offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets,/*!< in: rec_get_offsets(rec, index) */
 	const upd_t*	update);/*!< in: update vector */
 /***********************************************************//**
 Returns true if row update contains disowned external fields.
@@ -187,7 +187,7 @@ row_upd_rec_in_place(
 /*=================*/
 	rec_t*		rec,	/*!< in/out: record where replaced */
 	dict_index_t*	index,	/*!< in: the index the record belongs to */
-	const offset_t*	offsets,/*!< in: array returned by rec_get_offsets() */
+	const rec_offs*	offsets,/*!< in: array returned by rec_get_offsets() */
 	const upd_t*	update,	/*!< in: update vector */
 	page_zip_des_t*	page_zip);/*!< in: compressed page with enough space
 				available, or NULL */
@@ -202,7 +202,7 @@ row_upd_build_sec_rec_difference_binary(
 /*====================================*/
 	const rec_t*	rec,	/*!< in: secondary index record */
 	dict_index_t*	index,	/*!< in: index */
-	const offset_t*	offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets,/*!< in: rec_get_offsets(rec, index) */
 	const dtuple_t*	entry,	/*!< in: entry to insert */
 	mem_heap_t*	heap)	/*!< in: memory heap from which allocated */
 	MY_ATTRIBUTE((warn_unused_result, nonnull));
@@ -228,7 +228,7 @@ row_upd_build_difference_binary(
 	dict_index_t*	index,
 	const dtuple_t*	entry,
 	const rec_t*	rec,
-	const offset_t*	offsets,
+	const rec_offs*	offsets,
 	bool		no_sys,
 	trx_t*		trx,
 	mem_heap_t*	heap,
@@ -363,16 +363,6 @@ row_upd_changes_some_index_ord_field_binary(
 /*========================================*/
 	const dict_table_t*	table,	/*!< in: table */
 	const upd_t*		update);/*!< in: update vector for the row */
-/** Stores to the heap the row on which the node->pcur is positioned.
-@param[in]	node		row update node
-@param[in]	thd		mysql thread handle
-@param[in,out]	mysql_table	NULL, or mysql table object when
-				user thread invokes dml */
-void
-row_upd_store_row(
-	upd_node_t*	node,
-	THD*		thd,
-	TABLE*		mysql_table);
 /***********************************************************//**
 Updates a row in a table. This is a high-level function used
 in SQL execution graphs.
@@ -400,7 +390,7 @@ row_upd_rec_sys_fields_in_recovery(
 /*===============================*/
 	rec_t*		rec,	/*!< in/out: record */
 	page_zip_des_t*	page_zip,/*!< in/out: compressed page, or NULL */
-	const offset_t*	offsets,/*!< in: array returned by rec_get_offsets() */
+	const rec_offs*	offsets,/*!< in: array returned by rec_get_offsets() */
 	ulint		pos,	/*!< in: TRX_ID position in rec */
 	trx_id_t	trx_id,	/*!< in: transaction id */
 	roll_ptr_t	roll_ptr);/*!< in: roll ptr of the undo log record */
