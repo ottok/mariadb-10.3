@@ -7,9 +7,6 @@ mariadb-10.3 (1:10.3.23-0+deb10u1) buster; urgency=high
     - CVE-2020-2812
     - CVE-2020-2814
     - CVE-2020-13249
-  * Remove mariadb.pc from package as upstream no longer provides it.
-    Update the mysqlclient.pc link to point to the libmariadb.pc file
-    instead to keep backwards compatibility.
   * Backport upstream patch to fix regression in RocksDB ZSTD detection
     which prevents a serious bug and also autopkgtest detectable
     regression.
