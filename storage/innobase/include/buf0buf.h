@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2020 MariaDB Corporation.
+Copyright (c) 2013, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -71,11 +71,13 @@ struct fil_addr_t;
 /* @} */
 /** @name Modes for buf_page_get_known_nowait */
 /* @{ */
-#define BUF_MAKE_YOUNG	51		/*!< Move the block to the
+#ifdef BTR_CUR_HASH_ADAPT
+# define BUF_MAKE_YOUNG	51		/*!< Move the block to the
 					start of the LRU list if there
 					is a danger that the block
 					would drift out of the buffer
 					pool*/
+#endif /* BTR_CUR_HASH_ADAPT */
 #define BUF_KEEP_OLD	52		/*!< Preserve the current LRU
 					position of the block. */
 /* @} */
@@ -281,12 +283,6 @@ when waked up either performs a resizing and sleeps again.
 extern "C"
 os_thread_ret_t
 DECLARE_THREAD(buf_resize_thread)(void*);
-
-#ifdef BTR_CUR_HASH_ADAPT
-/** Clear the adaptive hash index on all pages in the buffer pool. */
-void
-buf_pool_clear_hash_index();
-#endif /* BTR_CUR_HASH_ADAPT */
 
 /*********************************************************************//**
 Gets the current size of buffer buf_pool in bytes.
@@ -1508,11 +1504,6 @@ public:
 					zip.data == NULL means an active
 					buf_pool->watch */
 
-	ulint           write_size;	/* Write size is set when this
-					page is first time written and then
-					if written again we check is TRIM
-					operation needed. */
-
 	ulint           real_size;	/*!< Real size of the page
 					Normal pages == srv_page_size
 					page compressed pages, payload
@@ -1746,7 +1737,7 @@ struct buf_block_t{
 #  define assert_block_ahi_empty(block)					\
 	ut_a(my_atomic_addlint(&(block)->n_pointers, 0) == 0)
 #  define assert_block_ahi_empty_on_init(block) do {			\
-	UNIV_MEM_VALID(&(block)->n_pointers, sizeof (block)->n_pointers); \
+	MEM_MAKE_DEFINED(&(block)->n_pointers, sizeof (block)->n_pointers); \
 	assert_block_ahi_empty(block);					\
 } while (0)
 #  define assert_block_ahi_valid(block)					\
@@ -1777,9 +1768,6 @@ struct buf_block_t{
 # define assert_block_ahi_empty_on_init(block) /* nothing */
 # define assert_block_ahi_valid(block) /* nothing */
 #endif /* BTR_CUR_HASH_ADAPT */
-	bool		skip_flush_check;
-					/*!< Skip check in buf_dblwr_check_block
-					during bulk load, protected by lock.*/
 # ifdef UNIV_DEBUG
 	/** @name Debug fields */
 	/* @{ */

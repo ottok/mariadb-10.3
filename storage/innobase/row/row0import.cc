@@ -26,6 +26,9 @@ Created 2012-02-08 by Sunny Bains.
 
 #include "row0import.h"
 #include "btr0pcur.h"
+#ifdef BTR_CUR_HASH_ADAPT
+# include "btr0sea.h"
+#endif
 #include "que0que.h"
 #include "dict0boot.h"
 #include "dict0load.h"
@@ -523,14 +526,6 @@ protected:
 	/** Space id of the file being iterated over. */
 	ulint			m_space;
 
-	/** Minimum page number for which the free list has not been
-	initialized: the pages >= this limit are, by definition, free;
-	note that in a single-table tablespace where size < 64 pages,
-	this number is 64, i.e., we have initialized the space about
-	the first extent, but have not physically allocted those pages
-	to the file. @see FSP_LIMIT. */
-	ulint			m_free_limit;
-
 	/** Current size of the space in pages */
 	ulint			m_size;
 
@@ -588,7 +583,6 @@ AbstractCallback::init(
 	}
 
 	m_size  = mach_read_from_4(page + FSP_SIZE);
-	m_free_limit = mach_read_from_4(page + FSP_FREE_LIMIT);
 	if (m_space == ULINT_UNDEFINED) {
 		m_space = mach_read_from_4(FSP_HEADER_OFFSET + FSP_SPACE_ID
 					   + page);
@@ -1867,7 +1861,7 @@ PageConverter::update_index_page(
 
 		row_index_t*	index = find_index(id);
 
-		if (index == 0) {
+		if (UNIV_UNLIKELY(!index)) {
 			ib::error() << "Page for tablespace " << m_space
 				<< " is index page with id " << id
 				<< " but that index is not found from"
@@ -2132,7 +2126,7 @@ row_import_discard_changes(
 
 	ib::info() << "Discarding tablespace of table "
 		<< prebuilt->table->name
-		<< ": " << ut_strerr(err);
+		<< ": " << err;
 
 	if (trx->dict_operation_lock_mode != RW_X_LATCH) {
 		ut_a(trx->dict_operation_lock_mode == 0);
@@ -4013,15 +4007,12 @@ row_import_for_mysql(
 	index entries that point to cached garbage pages in the buffer
 	pool, because PageConverter::operator() only evicted those
 	pages that were replaced by the imported pages. We must
-	discard all remaining adaptive hash index entries, because the
+	detach any remaining adaptive hash index entries, because the
 	adaptive hash index must be a subset of the table contents;
 	false positives are not tolerated. */
-	while (buf_LRU_drop_page_hash_for_tablespace(table)) {
-		if (trx_is_interrupted(trx)
-		    || srv_shutdown_state != SRV_SHUTDOWN_NONE) {
-			err = DB_INTERRUPTED;
-			break;
-		}
+	for (dict_index_t* index = UT_LIST_GET_FIRST(table->indexes); index;
+	     index = UT_LIST_GET_NEXT(indexes, index)) {
+		index = index->clone_if_needed();
 	}
 #endif /* BTR_CUR_HASH_ADAPT */
 

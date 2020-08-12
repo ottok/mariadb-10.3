@@ -322,15 +322,12 @@ struct ha_innobase_inplace_ctx : public inplace_alter_handler_ctx
 	@return whether the table will be rebuilt */
 	bool need_rebuild () const { return(old_table != new_table); }
 
-	/** Clear uncommmitted added indexes after a failed operation. */
-	void clear_added_indexes()
-	{
-		for (ulint i = 0; i < num_to_add_index; i++) {
-			if (!add_index[i]->is_committed()) {
-				add_index[i]->detach_columns();
-			}
-		}
-	}
+  /** Clear uncommmitted added indexes after a failed operation. */
+  void clear_added_indexes()
+  {
+    for (ulint i= 0; i < num_to_add_index; i++)
+      add_index[i]->detach_columns(true);
+  }
 
 	/** Convert table-rebuilding ALTER to instant ALTER. */
 	void prepare_instant()
@@ -5034,6 +5031,7 @@ prepare_inplace_alter_table_dict(
 	create_table_info_t info(ctx->prebuilt->trx->mysql_thd, altered_table,
 				 ha_alter_info->create_info, NULL, NULL,
 				 srv_file_per_table);
+	ut_d(bool stats_wait = false);
 
 	/* The primary index would be rebuilt if a FTS Doc ID
 	column is to be added, and the primary index definition
@@ -5085,6 +5083,7 @@ prepare_inplace_alter_table_dict(
 	XXX what may happen if bg stats opens the table after we
 	have unlocked data dictionary below? */
 	dict_stats_wait_bg_to_stop_using_table(user_table, ctx->trx);
+	ut_d(stats_wait = true);
 
 	online_retry_drop_indexes_low(ctx->new_table, ctx->trx);
 
@@ -5989,7 +5988,8 @@ error_handled:
 		/* n_ref_count must be 1, because purge cannot
 		be executing on this very table as we are
 		holding dict_operation_lock X-latch. */
-		DBUG_ASSERT(user_table->get_ref_count() == 1 || ctx->online);
+		ut_ad(!stats_wait || ctx->online
+		      || user_table->get_ref_count() == 1);
 
 		online_retry_drop_indexes_with_trx(user_table, ctx->trx);
 	} else {
@@ -9065,6 +9065,7 @@ commit_cache_norebuild(
 			dict_index_remove_from_cache(index->table, index);
 		}
 
+		fts_clear_all(ctx->old_table, trx);
 		trx_commit_for_mysql(trx);
 	}
 
@@ -9790,11 +9791,6 @@ foreign_fail:
 
 	log_append_on_checkpoint(NULL);
 
-	/* Tell the InnoDB server that there might be work for
-	utility threads: */
-
-	srv_active_wake_master_thread();
-
 	if (fail) {
 		for (inplace_alter_handler_ctx** pctx = ctx_array;
 		     *pctx; pctx++) {
@@ -9842,21 +9838,14 @@ foreign_fail:
 	}
 
 	if (ctx0->num_to_drop_vcol || ctx0->num_to_add_vcol) {
+		/* FIXME: this workaround does not seem to work with
+		partitioned tables */
 		DBUG_ASSERT(ctx0->old_table->get_ref_count() == 1);
 
 		trx_commit_for_mysql(m_prebuilt->trx);
-#ifdef BTR_CUR_HASH_ADAPT
-		if (btr_search_enabled) {
-			btr_search_disable(false);
-			btr_search_enable();
-		}
-#endif /* BTR_CUR_HASH_ADAPT */
 
-		char	tb_name[FN_REFLEN];
-		ut_strcpy(tb_name, m_prebuilt->table->name.m_name);
-
-		tb_name[strlen(m_prebuilt->table->name.m_name)] = 0;
-
+		char	tb_name[NAME_LEN * 2 + 1 + 1];
+		strcpy(tb_name, m_prebuilt->table->name.m_name);
 		dict_table_close(m_prebuilt->table, true, false);
 		dict_table_remove_from_cache(m_prebuilt->table);
 		m_prebuilt->table = dict_table_open_on_name(
@@ -9986,7 +9975,7 @@ foreign_fail:
 			trx_start_for_ddl(trx, TRX_DICT_OP_TABLE);
 			dberr_t error = row_merge_drop_table(trx, ctx->old_table);
 
-			if (error != DB_SUCCESS) {
+			if (UNIV_UNLIKELY(error != DB_SUCCESS)) {
 				ib::error() << "Inplace alter table " << ctx->old_table->name
 					    << " dropping copy of the old table failed error "
 					    << error

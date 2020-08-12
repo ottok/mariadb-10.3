@@ -146,7 +146,7 @@ struct property {
   my_bool *var;			/* Actual variable */
   my_bool set;			/* Has been set for ONE command */
   my_bool old;			/* If set, thus is the old value */
-  my_bool reverse;		/* Varible is true if disabled */
+  my_bool reverse;		/* Variable is true if disabled */
   const char *env_name;		/* Env. variable name */
 };
 
@@ -566,7 +566,7 @@ DYNAMIC_ARRAY regex_arr; /* stores a list of st_regex subsitutions */
 Temporary storage areas for substitutions. To reduce unnessary copying
 and memory freeing/allocation, we pre-allocate two buffers, and alternate
 their use, one for input/one for output, the roles changing on the next
-st_regex substition. At the end of substitutions  buf points to the
+st_regex substitution. At the end of substitutions  buf points to the
 one containing the final result.
 */
 char* buf;
@@ -587,9 +587,10 @@ ATTRIBUTE_NORETURN
 static void cleanup_and_exit(int exit_code);
 
 ATTRIBUTE_NORETURN
-void really_die(const char *msg);
+static void really_die(const char *msg);
 void report_or_die(const char *fmt, ...);
-void die(const char *fmt, ...);
+ATTRIBUTE_NORETURN
+static void die(const char *fmt, ...);
 static void make_error_message(char *buf, size_t len, const char *fmt, va_list args);
 ATTRIBUTE_NORETURN ATTRIBUTE_FORMAT(printf, 1, 2)
 void abort_not_supported_test(const char *fmt, ...);
@@ -1555,7 +1556,7 @@ static void make_error_message(char *buf, size_t len, const char *fmt, va_list a
   s+= my_snprintf(s, end -s, "\n");
 }
 
-void die(const char *fmt, ...)
+static void die(const char *fmt, ...)
 {
   char buff[DIE_BUFF_SIZE];
   va_list args;
@@ -1564,7 +1565,7 @@ void die(const char *fmt, ...)
   really_die(buff);
 }
 
-void really_die(const char *msg)
+static void really_die(const char *msg)
 {
   static int dying= 0;
   fflush(stdout);
@@ -3109,7 +3110,7 @@ void open_file(const char *name)
       strxnmov(buff, sizeof(buff), opt_overlay_dir, suffix, name, NullS);
 
       /*
-        Overlayed rty/include/thing.inc can contain the line
+        Overlaid rty/include/thing.inc can contain the line
         --source thing.inc
         which would mean to include qwe/include/thing.inc.
         But it looks like including "itself", so don't try to open the file,
@@ -4817,7 +4818,7 @@ int do_save_master_pos()
 	mysql_errno(mysql), mysql_error(mysql));
 
   if (!(res = mysql_store_result(mysql)))
-    die("mysql_store_result() retuned NULL for '%s'", query);
+    die("mysql_store_result() returned NULL for '%s'", query);
   if (!(row = mysql_fetch_row(res)))
     die("empty result in show master status");
   strnmov(master_pos.file, row[0], sizeof(master_pos.file)-1);
@@ -5364,7 +5365,7 @@ void do_get_errcodes(struct st_command *command)
         p++;
       }
 
-      /* Convert the sting to int */
+      /* Convert the string to int */
       if (!str2int(start, 10, (long) INT_MIN, (long) INT_MAX, &val))
 	die("Invalid argument to error: '%s'", command->first_argument);
 
@@ -5756,7 +5757,7 @@ int connect_n_handle_errors(struct st_command *command,
     dynstr_append_mem(ds, delimiter, delimiter_length);
     dynstr_append_mem(ds, "\n", 1);
   }
-  /* Simlified logging if enabled */
+  /* Simplified logging if enabled */
   if (!disable_connect_log && !disable_query_log)
   {
     replace_dynstr_append(ds, command->query);
@@ -8221,7 +8222,7 @@ void handle_no_error(struct st_command *command)
   SYNPOSIS
   run_query_stmt
   mysql - mysql handle
-  command - currrent command pointer
+  command - current command pointer
   query - query string to execute
   query_len - length query string to execute
   ds - output buffer where to store result form query
@@ -8461,7 +8462,7 @@ end:
 /*
   Create a util connection if one does not already exists
   and use that to run the query
-  This is done to avoid implict commit when creating/dropping objects such
+  This is done to avoid implicit commit when creating/dropping objects such
   as view, sp etc.
 */
 
@@ -8502,7 +8503,7 @@ int util_query(MYSQL* org_mysql, const char* query){
   SYNPOSIS
     run_query()
      mysql	mysql handle
-     command	currrent command pointer
+     command	current command pointer
 
   flags control the phased/stages of query execution to be performed
   if QUERY_SEND_FLAG bit is on, the query will be sent. If QUERY_REAP_FLAG
@@ -10178,7 +10179,7 @@ void append_replace_regex(char* expr, char *expr_end, struct st_replace_regex* r
     /* Allow variable for the *entire* list of replacements */
     if (*p == '$')
     {
-      const char *v_end;
+      const char *v_end= 0;
       VAR *val= var_get(p, &v_end, 0, 1);
 
       if (val)
@@ -10263,7 +10264,7 @@ int multi_reg_replace(struct st_replace_regex* r,char* val)
     if (!reg_replace(&out_buf, buf_len_p, re.pattern, re.replace,
                      in_buf, re.icase))
     {
-      /* if the buffer has been reallocated, make adjustements */
+      /* if the buffer has been reallocated, make adjustments */
       if (save_out_buf != out_buf)
       {
         if (save_out_buf == r->even_buf)
@@ -10530,7 +10531,7 @@ typedef struct st_rep_set {
   uint	found_len;			/* Best match to date */
   int	found_offset;
   uint	table_offset;
-  uint	size_of_bits;			/* For convinience */
+  uint	size_of_bits;			/* For convenience */
 } REP_SET;
 
 typedef struct st_rep_sets {
@@ -10633,7 +10634,7 @@ REPLACE *init_replace(char * *from, char * *to,uint count,
     DBUG_RETURN(0);
   }
   (void) make_new_set(&sets);			/* Set starting set */
-  make_sets_invisible(&sets);			/* Hide previus sets */
+  make_sets_invisible(&sets);			/* Hide previous sets */
   used_sets=-1;
   word_states=make_new_set(&sets);		/* Start of new word */
   start_states=make_new_set(&sets);		/* This is first state */
@@ -10819,7 +10820,7 @@ REPLACE *init_replace(char * *from, char * *to,uint count,
     for (i=1 ; i <= found_sets ; i++)
     {
       pos=from[found_set[i-1].table_offset];
-      rep_str[i].found= !memcmp(pos, "\\^", 3) ? 2 : 1;
+      rep_str[i].found= !strncmp(pos, "\\^", 3) ? 2 : 1;
       rep_str[i].replace_string=to_array[found_set[i-1].table_offset];
       rep_str[i].to_offset=found_set[i-1].found_offset-start_at_word(pos);
       rep_str[i].from_offset=found_set[i-1].found_offset-replace_len(pos)+
@@ -11131,13 +11132,16 @@ void replace_dynstr_append_mem(DYNAMIC_STRING *ds, const char *val, size_t len)
     {
       /* Convert to lower case, and do this first */
       char *c= lower;
-      for (const char *v= val;  *v;  v++)
+      for (const char *v= val, *end_v= v + len;  v < end_v;  v++)
         *c++= my_tolower(charset_info, *v);
       *c= '\0';
       /* Copy from this buffer instead */
     }
     else
-      memcpy(lower, val, len+1);
+    {
+      memcpy(lower, val, len);
+      lower[len]= 0;
+    }
     fix_win_paths(lower, len);
     val= lower;
   }

@@ -638,6 +638,7 @@ btr_cur_optimistic_latch_leaves(
 {
 	ulint		mode;
 	ulint		left_page_no;
+	ulint		curr_page_no;
 
 	switch (*latch_mode) {
 	case BTR_SEARCH_LEAF:
@@ -664,17 +665,33 @@ btr_cur_optimistic_latch_leaves(
 
 			goto unpin_failed;
 		}
+
+		curr_page_no = block->page.id.page_no();
 		left_page_no = btr_page_get_prev(
 			buf_block_get_frame(block));
 		rw_lock_s_unlock(&block->lock);
 
 		if (left_page_no != FIL_NULL) {
-			cursor->left_block = btr_block_get(
+			dberr_t	err = DB_SUCCESS;
+			cursor->left_block = buf_page_get_gen(
 				page_id_t(cursor->index->table->space_id,
 					  left_page_no),
 				page_size_t(cursor->index->table->space
 					    ->flags),
-				mode, cursor->index, mtr);
+				mode, NULL, BUF_GET_POSSIBLY_FREED,
+				__FILE__, __LINE__, mtr, &err);
+
+			if (err == DB_DECRYPTION_FAILED) {
+				cursor->index->table->file_unreadable = true;
+			}
+
+			if (btr_page_get_next(cursor->left_block->frame)
+			    != curr_page_no) {
+				/* release the left block */
+				btr_leaf_page_release(
+					cursor->left_block, mode, mtr);
+				goto unpin_failed;
+			}
 		} else {
 			cursor->left_block = NULL;
 		}
@@ -1179,10 +1196,10 @@ btr_cur_search_to_nth_level_func(
 	ut_ad(!(index->type & DICT_FTS));
 	ut_ad(index->page != FIL_NULL);
 
-	UNIV_MEM_INVALID(&cursor->up_match, sizeof cursor->up_match);
-	UNIV_MEM_INVALID(&cursor->up_bytes, sizeof cursor->up_bytes);
-	UNIV_MEM_INVALID(&cursor->low_match, sizeof cursor->low_match);
-	UNIV_MEM_INVALID(&cursor->low_bytes, sizeof cursor->low_bytes);
+	MEM_UNDEFINED(&cursor->up_match, sizeof cursor->up_match);
+	MEM_UNDEFINED(&cursor->up_bytes, sizeof cursor->up_bytes);
+	MEM_UNDEFINED(&cursor->low_match, sizeof cursor->low_match);
+	MEM_UNDEFINED(&cursor->low_bytes, sizeof cursor->low_bytes);
 #ifdef UNIV_DEBUG
 	cursor->up_match = ULINT_UNDEFINED;
 	cursor->low_match = ULINT_UNDEFINED;
@@ -1694,10 +1711,9 @@ retry_page_get:
 				node_seq_t      root_seq_no;
 
 				root_seq_no = page_get_ssn_id(page);
-
-				mutex_enter(&(index->rtr_ssn.mutex));
-				index->rtr_ssn.seq_no = root_seq_no + 1;
-				mutex_exit(&(index->rtr_ssn.mutex));
+				my_atomic_store32_explicit(
+					&index->rtr_ssn, root_seq_no + 1,
+					MY_MEMORY_ORDER_RELAXED);
 			}
 
 			/* Save the MBR */
@@ -3274,7 +3290,7 @@ btr_cur_optimistic_insert(
 	page_t*		page;
 	rec_t*		dummy;
 	bool		leaf;
-	bool		reorg;
+	bool		reorg __attribute__((unused));
 	bool		inherit = true;
 	ulint		rec_size;
 	dberr_t		err;
@@ -3294,12 +3310,12 @@ btr_cur_optimistic_insert(
 
 	const page_size_t&	page_size = block->page.size;
 
-#ifdef UNIV_DEBUG_VALGRIND
+#ifdef HAVE_valgrind
 	if (page_size.is_compressed()) {
-		UNIV_MEM_ASSERT_RW(page, page_size.logical());
-		UNIV_MEM_ASSERT_RW(block->page.zip.data, page_size.physical());
+		MEM_CHECK_DEFINED(page, page_size.logical());
+		MEM_CHECK_DEFINED(block->page.zip.data, page_size.physical());
 	}
-#endif /* UNIV_DEBUG_VALGRIND */
+#endif /* HAVE_valgrind */
 
 	leaf = page_is_leaf(page);
 
@@ -4287,7 +4303,7 @@ btr_cur_optimistic_update(
 				   ULINT_UNDEFINED, heap);
 #if defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
 	ut_a(!rec_offs_any_null_extern(rec, *offsets)
-	     || trx_is_recv(thr_get_trx(thr)));
+	     || thr_get_trx(thr) == trx_roll_crash_recv_trx);
 #endif /* UNIV_DEBUG || UNIV_BLOB_LIGHT_DEBUG */
 
 	const bool is_metadata = update->info_bits == REC_INFO_METADATA;
@@ -7058,29 +7074,19 @@ btr_blob_free(
 	mtr_t*		mtr)	/*!< in: mini-transaction to commit */
 {
 	buf_pool_t*	buf_pool = buf_pool_from_block(block);
-	ulint		space = block->page.id.space();
-	ulint		page_no	= block->page.id.page_no();
-
+	const page_id_t	page_id(block->page.id);
 	ut_ad(mtr_memo_contains(mtr, block, MTR_MEMO_PAGE_X_FIX));
-
 	mtr_commit(mtr);
 
 	buf_pool_mutex_enter(buf_pool);
 
-	/* Only free the block if it is still allocated to
-	the same file page. */
-
-	if (buf_block_get_state(block)
-	    == BUF_BLOCK_FILE_PAGE
-	    && block->page.id.space() == space
-	    && block->page.id.page_no() == page_no) {
-
-		if (!buf_LRU_free_page(&block->page, all)
-		    && all && block->page.zip.data) {
+	if (buf_page_t* bpage = buf_page_hash_get(buf_pool, page_id)) {
+		if (!buf_LRU_free_page(bpage, all)
+		    && all && bpage->zip.data) {
 			/* Attempt to deallocate the uncompressed page
 			if the whole block cannot be deallocted. */
 
-			buf_LRU_free_page(&block->page, false);
+			buf_LRU_free_page(bpage, false);
 		}
 	}
 
@@ -7325,9 +7331,7 @@ btr_store_big_rec_extern_fields(
 			     BTR_EXTERN_FIELD_REF_SIZE));
 #endif /* UNIV_DEBUG || UNIV_BLOB_LIGHT_DEBUG */
 		extern_len = big_rec_vec->fields[i].len;
-		UNIV_MEM_ASSERT_RW(big_rec_vec->fields[i].data,
-				   extern_len);
-
+		MEM_CHECK_DEFINED(big_rec_vec->fields[i].data, extern_len);
 		ut_a(extern_len > 0);
 
 		prev_page_no = FIL_NULL;
@@ -7996,7 +8000,7 @@ btr_copy_blob_prefix(
 		mtr_commit(&mtr);
 
 		if (page_no == FIL_NULL || copy_len != part_len) {
-			UNIV_MEM_ASSERT_RW(buf, copied_len);
+			MEM_CHECK_DEFINED(buf, copied_len);
 			return(copied_len);
 		}
 
@@ -8152,7 +8156,7 @@ end_of_blob:
 func_exit:
 	inflateEnd(&d_stream);
 	mem_heap_free(heap);
-	UNIV_MEM_ASSERT_RW(buf, d_stream.total_out);
+	MEM_CHECK_DEFINED(buf, d_stream.total_out);
 	return(d_stream.total_out);
 }
 

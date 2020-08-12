@@ -547,13 +547,13 @@ decompress:
 decompress_with_slot:
 		ut_d(fil_page_type_validate(dst_frame));
 
-		bpage->write_size = fil_page_decompress(slot->crypt_buf,
-							dst_frame);
+		ulint write_size = fil_page_decompress(slot->crypt_buf,
+						       dst_frame);
 		slot->release();
 
-		ut_ad(!bpage->write_size || fil_page_type_validate(dst_frame));
+		ut_ad(!write_size || fil_page_type_validate(dst_frame));
 		ut_ad(space->pending_io());
-		return bpage->write_size != 0;
+		return write_size != 0;
 	}
 
 	if (space->crypt_data
@@ -1527,8 +1527,6 @@ buf_block_init(
 	buf_block_t*	block,		/*!< in: pointer to control block */
 	byte*		frame)		/*!< in: pointer to buffer frame */
 {
-	UNIV_MEM_DESC(frame, srv_page_size);
-
 	/* This function should only be executed at database startup or by
 	buf_pool_resize(). Either way, adaptive hash index must not exist. */
 	assert_block_ahi_empty_on_init(block);
@@ -1542,7 +1540,6 @@ buf_block_init(
 	block->page.io_fix = BUF_IO_NONE;
 	block->page.flush_observer = NULL;
 	block->page.real_size = 0;
-	block->page.write_size = 0;
 	block->modify_clock = 0;
 	block->page.slot = NULL;
 
@@ -1551,8 +1548,6 @@ buf_block_init(
 #ifdef BTR_CUR_HASH_ADAPT
 	block->index = NULL;
 #endif /* BTR_CUR_HASH_ADAPT */
-	block->skip_flush_check = false;
-
 	ut_d(block->page.in_page_hash = FALSE);
 	ut_d(block->page.in_zip_hash = FALSE);
 	ut_d(block->page.in_flush_list = FALSE);
@@ -1677,7 +1672,7 @@ buf_chunk_init(
 	for (i = chunk->size; i--; ) {
 
 		buf_block_init(buf_pool, block, frame);
-		UNIV_MEM_INVALID(block->frame, srv_page_size);
+		MEM_UNDEFINED(block->frame, srv_page_size);
 
 		/* Add the block to the free list */
 		UT_LIST_ADD_LAST(buf_pool->free, &block->page);
@@ -2223,8 +2218,6 @@ buf_page_realloc(
 		if (block->page.zip.data != NULL) {
 			ut_ad(block->in_unzip_LRU_list);
 			ut_d(new_block->in_unzip_LRU_list = TRUE);
-			UNIV_MEM_DESC(&new_block->page.zip.data,
-				      page_zip_get_size(&new_block->page.zip));
 
 			buf_block_t*	prev_block = UT_LIST_GET_PREV(unzip_LRU, block);
 			UT_LIST_REMOVE(buf_pool->unzip_LRU, block);
@@ -2258,7 +2251,7 @@ buf_page_realloc(
 		buf_block_modify_clock_inc(block);
 		memset(block->frame + FIL_PAGE_OFFSET, 0xff, 4);
 		memset(block->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, 0xff, 4);
-		UNIV_MEM_INVALID(block->frame, srv_page_size);
+		MEM_UNDEFINED(block->frame, srv_page_size);
 		buf_block_set_state(block, BUF_BLOCK_REMOVE_HASH);
 		block->page.id
 		    = page_id_t(ULINT32_UNDEFINED, ULINT32_UNDEFINED);
@@ -2742,7 +2735,7 @@ buf_pool_resize()
 		btr_search_s_unlock_all();
 	}
 
-	btr_search_disable(true);
+	btr_search_disable();
 
 	if (btr_search_disabled) {
 		ib::info() << "disabled adaptive hash index.";
@@ -2912,6 +2905,22 @@ withdraw_retry:
 
 			while (chunk < echunk) {
 				buf_block_t*	block = chunk->blocks;
+
+				/* buf_LRU_block_free_non_file_page()
+				invokes MEM_NOACCESS() on any blocks
+				that are in free_list. We must
+				cancel the effect of that. In MemorySanitizer,
+				MEM_NOACCESS() is no-op, so we must not do
+				anything special for it here. */
+#ifdef HAVE_valgrind
+# if !__has_feature(memory_sanitizer)
+				MEM_MAKE_DEFINED(chunk->mem,
+						 chunk->mem_size());
+# endif
+#else
+				MEM_MAKE_ADDRESSABLE(chunk->mem,
+						     chunk->mem_size());
+#endif
 
 				for (ulint j = chunk->size;
 				     j--; block++) {
@@ -3117,10 +3126,6 @@ calc_buf_pool_size:
 			* (srv_buf_pool_size >> srv_page_size_shift);
 		lock_sys.resize(srv_lock_table_size);
 
-		/* normalize btr_search_sys */
-		btr_search_sys_resize(
-			buf_pool_get_curr_size() / sizeof(void*) / 64);
-
 		/* normalize dict_sys */
 		dict_resize();
 
@@ -3145,7 +3150,7 @@ calc_buf_pool_size:
 #ifdef BTR_CUR_HASH_ADAPT
 	/* enable AHI if needed */
 	if (btr_search_disabled) {
-		btr_search_enable();
+		btr_search_enable(true);
 		ib::info() << "Re-enabled adaptive hash index.";
 	}
 #endif /* BTR_CUR_HASH_ADAPT */
@@ -3209,66 +3214,6 @@ DECLARE_THREAD(buf_resize_thread)(void*)
 
 	OS_THREAD_DUMMY_RETURN;
 }
-
-#ifdef BTR_CUR_HASH_ADAPT
-/** Clear the adaptive hash index on all pages in the buffer pool. */
-void
-buf_pool_clear_hash_index()
-{
-	ulint	p;
-
-	ut_ad(btr_search_own_all(RW_LOCK_X));
-	ut_ad(!buf_pool_resizing);
-	ut_ad(!btr_search_enabled);
-
-	for (p = 0; p < srv_buf_pool_instances; p++) {
-		buf_pool_t*	buf_pool = buf_pool_from_array(p);
-		buf_chunk_t*	chunks	= buf_pool->chunks;
-		buf_chunk_t*	chunk	= chunks + buf_pool->n_chunks;
-
-		while (--chunk >= chunks) {
-			buf_block_t*	block	= chunk->blocks;
-			ulint		i	= chunk->size;
-
-			for (; i--; block++) {
-				dict_index_t*	index	= block->index;
-				assert_block_ahi_valid(block);
-
-				/* We can set block->index = NULL
-				and block->n_pointers = 0
-				when btr_search_own_all(RW_LOCK_X);
-				see the comments in buf0buf.h */
-
-				if (!index) {
-# if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
-					ut_a(!block->n_pointers);
-# endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
-					continue;
-				}
-
-				ut_d(buf_page_state state
-				     = buf_block_get_state(block));
-				/* Another thread may have set the
-				state to BUF_BLOCK_REMOVE_HASH in
-				buf_LRU_block_remove_hashed().
-
-				The state change in buf_page_realloc()
-				is not observable here, because in
-				that case we would have !block->index.
-
-				In the end, the entire adaptive hash
-				index will be removed. */
-				ut_ad(state == BUF_BLOCK_FILE_PAGE
-				      || state == BUF_BLOCK_REMOVE_HASH);
-# if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
-				block->n_pointers = 0;
-# endif /* UNIV_AHI_DEBUG || UNIV_DEBUG */
-				block->index = NULL;
-			}
-		}
-	}
-}
-#endif /* BTR_CUR_HASH_ADAPT */
 
 /********************************************************************//**
 Relocate a buffer control block.  Relocates the block on the LRU list
@@ -3834,9 +3779,9 @@ lookup:
 		ut_ad(!hash_lock);
 		dberr_t err = buf_read_page(page_id, page_size);
 
-		if (err != DB_SUCCESS) {
+		if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
 			ib::error() << "Reading compressed page " << page_id
-				<< " failed with error: " << ut_strerr(err);
+				<< " failed with error: " << err;
 
 			goto err_exit;
 		}
@@ -3935,7 +3880,6 @@ buf_block_init_low(
 /*===============*/
 	buf_block_t*	block)	/*!< in: block to init */
 {
-	block->skip_flush_check = false;
 #ifdef BTR_CUR_HASH_ADAPT
 	/* No adaptive hash index entries may point to a previously
 	unused (and now freshly allocated) block. */
@@ -4237,6 +4181,46 @@ buf_wait_for_read(
 	}
 }
 
+#ifdef BTR_CUR_HASH_ADAPT
+/** If a stale adaptive hash index exists on the block, drop it.
+Multiple executions of btr_search_drop_page_hash_index() on the
+same block must be prevented by exclusive page latch. */
+ATTRIBUTE_COLD
+static void buf_defer_drop_ahi(buf_block_t *block, mtr_memo_type_t fix_type)
+{
+  switch (fix_type) {
+  case MTR_MEMO_BUF_FIX:
+    /* We do not drop the adaptive hash index, because safely doing
+    so would require acquiring block->lock, and that is not safe
+    to acquire in some RW_NO_LATCH access paths. Those code paths
+    should have no business accessing the adaptive hash index anyway. */
+    break;
+  case MTR_MEMO_PAGE_S_FIX:
+    /* Temporarily release our S-latch. */
+    rw_lock_s_unlock(&block->lock);
+    rw_lock_x_lock(&block->lock);
+    if (dict_index_t *index= block->index)
+      if (index->freed())
+        btr_search_drop_page_hash_index(block);
+    rw_lock_x_unlock(&block->lock);
+    rw_lock_s_lock(&block->lock);
+    break;
+  case MTR_MEMO_PAGE_SX_FIX:
+    rw_lock_sx_unlock(&block->lock);
+    rw_lock_x_lock(&block->lock);
+    if (dict_index_t *index= block->index)
+      if (index->freed())
+        btr_search_drop_page_hash_index(block);
+    rw_lock_x_unlock(&block->lock);
+    rw_lock_sx_lock(&block->lock);
+    break;
+  default:
+    ut_ad(fix_type == MTR_MEMO_PAGE_X_FIX);
+    btr_search_drop_page_hash_index(block);
+  }
+}
+#endif /* BTR_CUR_HASH_ADAPT */
+
 /** Lock the page with the given latch type.
 @param[in,out]	block		block to be locked
 @param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
@@ -4255,7 +4239,7 @@ static buf_block_t* buf_page_mtr_lock(buf_block_t *block,
   {
   case RW_NO_LATCH:
     fix_type= MTR_MEMO_BUF_FIX;
-    break;
+    goto done;
   case RW_S_LATCH:
     rw_lock_s_lock_inline(&block->lock, 0, file, line);
     fix_type= MTR_MEMO_PAGE_S_FIX;
@@ -4271,6 +4255,15 @@ static buf_block_t* buf_page_mtr_lock(buf_block_t *block,
     break;
   }
 
+#ifdef BTR_CUR_HASH_ADAPT
+  {
+    dict_index_t *index= block->index;
+    if (index && index->freed())
+      buf_defer_drop_ahi(block, fix_type);
+  }
+#endif /* BTR_CUR_HASH_ADAPT */
+
+done:
   mtr_memo_push(mtr, block, fix_type);
   return block;
 }
@@ -4593,6 +4586,7 @@ evict_from_pool:
 			buf_pool_mutex_exit(buf_pool);
 			return(NULL);
 		}
+
 		break;
 
 	case BUF_BLOCK_ZIP_PAGE:
@@ -4687,9 +4681,6 @@ evict_from_pool:
 		block->lock_hash_val = lock_rec_hash(page_id.space(),
 						     page_id.page_no());
 
-		UNIV_MEM_DESC(&block->page.zip.data,
-			      page_zip_get_size(&block->page.zip));
-
 		if (buf_page_get_state(&block->page) == BUF_BLOCK_ZIP_PAGE) {
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
 			UT_LIST_REMOVE(buf_pool->zip_clean, &block->page);
@@ -4711,7 +4702,7 @@ evict_from_pool:
 		buf_block_set_io_fix(block, BUF_IO_READ);
 		rw_lock_x_lock_inline(&block->lock, 0, file, line);
 
-		UNIV_MEM_INVALID(bpage, sizeof *bpage);
+		MEM_UNDEFINED(bpage, sizeof *bpage);
 
 		rw_lock_x_unlock(hash_lock);
 		buf_pool->n_pend_unzip++;
@@ -4728,7 +4719,7 @@ evict_from_pool:
 		buf_pool->mutex or block->mutex. */
 
 		{
-			bool	success = buf_zip_decompress(block, TRUE);
+			bool	success = buf_zip_decompress(block, false);
 
 			if (!success) {
 				buf_pool_mutex_enter(buf_pool);
@@ -5136,9 +5127,11 @@ buf_page_get_known_nowait(
 
 	buf_pool = buf_pool_from_block(block);
 
+#ifdef BTR_CUR_HASH_ADAPT
 	if (mode == BUF_MAKE_YOUNG) {
 		buf_page_make_young_if_needed(&block->page);
 	}
+#endif /* BTR_CUR_HASH_ADAPT */
 
 	ut_ad(!ibuf_inside(mtr) || mode == BUF_KEEP_OLD);
 
@@ -5181,9 +5174,12 @@ buf_page_get_known_nowait(
 		deleting a record from SYS_INDEXES. This check will be
 		skipped in recv_recover_page() as well. */
 
-		buf_page_mutex_enter(block);
-		ut_a(!block->page.file_page_was_freed);
-		buf_page_mutex_exit(block);
+# ifdef BTR_CUR_HASH_ADAPT
+		ut_ad(!block->page.file_page_was_freed
+		      || (block->index && block->index->freed()));
+# else /* BTR_CUR_HASH_ADAPT */
+		ut_ad(!block->page.file_page_was_freed);
+# endif /* BTR_CUR_HASH_ADAPT */
 	}
 #endif /* UNIV_DEBUG */
 
@@ -5290,7 +5286,6 @@ buf_page_init_low(
 	bpage->access_time = 0;
 	bpage->newest_modification = 0;
 	bpage->oldest_modification = 0;
-	bpage->write_size = 0;
 	bpage->real_size = 0;
 	bpage->slot = NULL;
 
@@ -5325,15 +5320,6 @@ buf_page_init(
 	/* Set the state of the block */
 	buf_block_set_file_page(block, page_id);
 
-#ifdef UNIV_DEBUG_VALGRIND
-	if (is_system_tablespace(page_id.space())) {
-		/* Silence valid Valgrind warnings about uninitialized
-		data being written to data files.  There are some unused
-		bytes on some pages that InnoDB does not initialize. */
-		UNIV_MEM_VALID(block->frame, srv_page_size);
-	}
-#endif /* UNIV_DEBUG_VALGRIND */
-
 	buf_block_init_low(block);
 
 	block->lock_hash_val = lock_rec_hash(page_id.space(),
@@ -5347,7 +5333,8 @@ buf_page_init(
 
 	if (hash_page == NULL) {
 		/* Block not found in hash table */
-	} else if (buf_pool_watch_is_sentinel(buf_pool, hash_page)) {
+	} else if (UNIV_LIKELY(buf_pool_watch_is_sentinel(buf_pool,
+							  hash_page))) {
 		/* Preserve the reference count. */
 		ib_uint32_t	buf_fix_count = hash_page->buf_fix_count;
 
@@ -5357,18 +5344,8 @@ buf_page_init(
 
 		buf_pool_watch_remove(buf_pool, hash_page);
 	} else {
-
-		ib::error() << "Page " << page_id
-			<< " already found in the hash table: "
-			<< hash_page << ", " << block;
-
-		ut_d(buf_page_mutex_exit(block));
-		ut_d(buf_pool_mutex_exit(buf_pool));
-		ut_d(buf_print());
-		ut_d(buf_LRU_print());
-		ut_d(buf_validate());
-		ut_d(buf_LRU_validate());
-		ut_error;
+		ib::fatal() << "Page already foudn in the hash table: "
+			    << page_id;
 	}
 
 	ut_ad(!block->page.in_zip_hash);
@@ -5569,7 +5546,6 @@ buf_page_init_for_read(
 		bpage->size.copy_from(page_size);
 
 		mutex_enter(&buf_pool->zip_mutex);
-		UNIV_MEM_DESC(bpage->zip.data, bpage->size.physical());
 
 		buf_page_init_low(bpage);
 
@@ -5670,11 +5646,32 @@ buf_page_create(
 	    && !buf_pool_watch_is_sentinel(buf_pool, &block->page)) {
 		ut_d(block->page.file_page_was_freed = FALSE);
 
+#ifdef BTR_CUR_HASH_ADAPT
+		bool drop_hash_entry =
+			(block->page.state == BUF_BLOCK_FILE_PAGE
+			 && block->index);
+
+		if (drop_hash_entry) {
+			mutex_enter(&block->mutex);
+			buf_page_set_sticky(&block->page);
+			mutex_exit(&block->mutex);
+		}
+#endif
 		/* Page can be found in buf_pool */
 		buf_pool_mutex_exit(buf_pool);
 		rw_lock_x_unlock(hash_lock);
 
 		buf_block_free(free_block);
+#ifdef BTR_CUR_HASH_ADAPT
+		if (drop_hash_entry) {
+			btr_search_drop_page_hash_index(block);
+			buf_pool_mutex_enter(buf_pool);
+			mutex_enter(&block->mutex);
+			buf_page_unset_sticky(&block->page);
+			mutex_exit(&block->mutex);
+			buf_pool_mutex_exit(buf_pool);
+		}
+#endif /* BTR_CUR_HASH_ADAPT */
 
 		if (!recv_recovery_is_on()) {
 			return buf_page_get_with_no_latch(page_id, page_size,
@@ -6111,9 +6108,8 @@ buf_page_io_complete(buf_page_t* bpage, bool dblwr, bool evict)
 
 		err = buf_page_check_corrupt(bpage, space);
 
-database_corrupted:
-
 		if (err != DB_SUCCESS) {
+database_corrupted:
 			/* Not a real corruption if it was triggered by
 			error injection */
 			DBUG_EXECUTE_IF(
@@ -6129,6 +6125,11 @@ database_corrupted:
 				err = DB_SUCCESS;
 				goto page_not_corrupt;
 			);
+
+			if (uncompressed && bpage->zip.data) {
+				memset(reinterpret_cast<buf_block_t*>(bpage)
+				       ->frame, 0, srv_page_size);
+			}
 
 			if (err == DB_PAGE_CORRUPTED) {
 				ib::error()
@@ -7341,6 +7342,7 @@ operator<<(
 	return(out);
 }
 
+#if defined UNIV_DEBUG_PRINT || defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
 /** Print the given buf_pool_t object.
 @param[in,out]	out		the output stream
 @param[in]	buf_pool	the buf_pool_t object to be printed
@@ -7368,6 +7370,7 @@ operator<<(
 		<< ", written=" << buf_pool.stat.n_pages_written << "]";
 	return(out);
 }
+#endif /* UNIV_DEBUG_PRINT || UNIV_DEBUG || UNIV_BUF_DEBUG */
 
 /** Encrypt a buffer of temporary tablespace
 @param[in]	offset		Page offset

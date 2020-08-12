@@ -203,6 +203,16 @@ bool check_sequence_fields(LEX *lex, List<Create_field> *fields)
     reason= "Sequence tables cannot have any keys";
     goto err;
   }
+  if (lex->alter_info.check_constraint_list.elements > 0)
+  {
+    reason= "Sequence tables cannot have any constraints";
+    goto err;
+  }
+  if (lex->alter_info.flags & ALTER_ORDER)
+  {
+    reason= "ORDER BY";
+    goto err;
+  }
 
   for (field_no= 0; (field= it++); field_no++)
   {
@@ -210,7 +220,8 @@ bool check_sequence_fields(LEX *lex, List<Create_field> *fields)
     if (my_strcasecmp(system_charset_info, field_def->field_name,
                       field->field_name.str) ||
         field->flags != field_def->flags ||
-        field->type_handler() != field_def->type_handler)
+        field->type_handler() != field_def->type_handler ||
+        field->check_constraint || field->vcol_info)
     {
       reason= field->field_name.str;
       goto err;
@@ -355,8 +366,10 @@ bool sequence_insert(THD *thd, LEX *lex, TABLE_LIST *org_table_list)
   seq->reserved_until= seq->start;
   error= seq->write_initial_sequence(table);
 
-  trans_commit_stmt(thd);
-  trans_commit_implicit(thd);
+  if (trans_commit_stmt(thd))
+    error= 1;
+  if (trans_commit_implicit(thd))
+    error= 1;
 
   if (!temporary_table)
   {
@@ -472,6 +485,10 @@ int SEQUENCE::read_initial_values(TABLE *table)
       if (mdl_lock_used)
         thd->mdl_context.release_lock(mdl_request.ticket);
       write_unlock(table);
+
+      if (!has_active_transaction && !thd->transaction.stmt.is_empty() &&
+          !thd->in_sub_stmt)
+        trans_commit_stmt(thd);
       DBUG_RETURN(HA_ERR_LOCK_WAIT_TIMEOUT);
     }
     DBUG_ASSERT(table->reginfo.lock_type == TL_READ);

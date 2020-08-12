@@ -506,7 +506,7 @@ Item *Item_func::transform(THD *thd, Item_transformer transformer, uchar *argume
   callback functions.
 
     First the function applies the analyzer to the root node of
-    the Item_func object. Then if the analizer succeeeds (returns TRUE)
+    the Item_func object. Then if the analyzer succeeds (returns TRUE)
     the function recursively applies the compile method to each argument
     of the Item_func node.
     If the call of the method for an argument item returns a new item
@@ -1627,6 +1627,8 @@ my_decimal *Item_func_div::decimal_op(my_decimal *decimal_value)
     null_value= 1;
     return 0;
   }
+  my_decimal_round(E_DEC_FATAL_ERROR, decimal_value,
+                   decimals, FALSE, decimal_value);
   return decimal_value;
 }
 
@@ -1683,7 +1685,7 @@ bool Item_func_div::fix_length_and_dec()
   DBUG_ENTER("Item_func_div::fix_length_and_dec");
   DBUG_PRINT("info", ("name %s", func_name()));
   prec_increment= current_thd->variables.div_precincrement;
-  maybe_null= 1; // devision by zero
+  maybe_null= 1; // division by zero
 
   const Type_aggregator *aggregator= &type_handler_data->m_type_aggregator_for_div;
   DBUG_EXECUTE_IF("num_op", aggregator= &type_handler_data->m_type_aggregator_non_commutative_test;);
@@ -2276,6 +2278,12 @@ longlong Item_func_bit_neg::val_int()
 
 void Item_func_int_val::fix_length_and_dec_int_or_decimal()
 {
+  /*
+    The INT branch of this code should be revised.
+    It creates too large data types, e.g.
+      CREATE OR REPLACE TABLE t2 AS SELECT FLOOR(9999999.999) AS fa;
+    results in a BININT(10) column, while INT(7) should probably be enough.
+  */
   ulonglong tmp_max_length= (ulonglong ) args[0]->max_length - 
     (args[0]->decimals ? args[0]->decimals + 1 : 0) + 2;
   max_length= tmp_max_length > (ulonglong) UINT_MAX32 ?
@@ -2290,6 +2298,9 @@ void Item_func_int_val::fix_length_and_dec_int_or_decimal()
   */
   if (args[0]->max_length - args[0]->decimals >= DECIMAL_LONGLONG_DIGITS - 2)
   {
+    fix_char_length(
+      my_decimal_precision_to_length_no_truncation(
+        args[0]->decimal_int_part(), 0, false));
     set_handler(&type_handler_newdecimal);
   }
   else
@@ -2424,6 +2435,8 @@ void Item_func_round::fix_length_and_dec_decimal(uint decimals_to_set)
   set_handler(&type_handler_newdecimal);
   unsigned_flag= args[0]->unsigned_flag;
   decimals= decimals_to_set;
+  if (!precision)
+    precision= 1; // DECIMAL(0,0) -> DECIMAL(1,0)
   max_length= my_decimal_precision_to_length_no_truncation(precision,
                                                            decimals,
                                                            unsigned_flag);
@@ -4654,7 +4667,7 @@ bool Item_func_set_user_var::register_field_in_bitmap(void *arg)
   @param type           type of new value
   @param cs             charset info for new value
   @param dv             derivation for new value
-  @param unsigned_arg   indiates if a value of type INT_RESULT is unsigned
+  @param unsigned_arg   indicates if a value of type INT_RESULT is unsigned
 
   @note Sets error and fatal error if allocation fails.
 
@@ -6562,7 +6575,7 @@ Item_func_sp::fix_fields(THD *thd, Item **ref)
     /*
       Here we check privileges of the stored routine only during view
       creation, in order to validate the view.  A runtime check is
-      perfomed in Item_func_sp::execute(), and this method is not
+      performed in Item_func_sp::execute(), and this method is not
       called during context analysis.  Notice, that during view
       creation we do not infer into stored routine bodies and do not
       check privileges of its statements, which would probably be a

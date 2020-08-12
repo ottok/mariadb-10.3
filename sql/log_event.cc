@@ -4522,7 +4522,7 @@ get_str_len_and_pointer(const Log_event::Byte **src,
                         const Log_event::Byte *end)
 {
   if (*src >= end)
-    return -1;       // Will be UINT_MAX in two-complement arithmetics
+    return -1;       // Will be UINT_MAX in two-complement arithmetic
   uint length= **src;
   if (length > 0)
   {
@@ -4886,7 +4886,7 @@ Query_log_event::Query_log_event(const char* buf, uint event_len,
 
   /* A 2nd variable part; this is common to all versions */ 
   memcpy((char*) start, end, data_len);          // Copy db and query
-  start[data_len]= '\0';              // End query with \0 (For safetly)
+  start[data_len]= '\0';              // End query with \0 (For safety)
   db= (char *)start;
   query= (char *)(start + db_len + 1);
   q_len= data_len - db_len -1;
@@ -5358,8 +5358,7 @@ bool Query_log_event::print(FILE* file, PRINT_EVENT_INFO* print_event_info)
     }
     else if (strcmp("COMMIT", query) == 0)
     {
-      if (my_b_write(&cache, (uchar*) "BEGIN", 5) ||
-          my_b_printf(&cache, "\n%s\n", print_event_info->delimiter))
+      if (my_b_printf(&cache, "START TRANSACTION\n%s\n", print_event_info->delimiter))
         goto err;
     }
   }
@@ -6582,7 +6581,7 @@ int Format_description_log_event::do_update_pos(rpl_group_info *rgi)
       If we do not skip stepping the group log position (and the
       server id was changed when restarting the server), it might well
       be that we start executing at a position that is invalid, e.g.,
-      at a Rows_log_event or a Query_log_event preceeded by a
+      at a Rows_log_event or a Query_log_event preceded by a
       Intvar_log_event instead of starting at a Table_map_log_event or
       the Intvar_log_event respectively.
      */
@@ -6694,7 +6693,7 @@ Format_description_log_event::is_version_before_checksum(const master_version_sp
    
    @return  the version-safe checksum alg descriptor where zero
             designates no checksum, 255 - the orginator is
-            checksum-unaware (effectively no checksum) and the actuall
+            checksum-unaware (effectively no checksum) and the actual
             [1-254] range alg descriptor.
 */
 enum enum_binlog_checksum_alg get_checksum_alg(const char* buf, ulong len)
@@ -7421,7 +7420,7 @@ int Load_log_event::do_apply_event(NET* net, rpl_group_info *rgi,
         /*
           When replication is running fine, if it was DUP_ERROR on the
           master then we could choose IGNORE here, because if DUP_ERROR
-          suceeded on master, and data is identical on the master and slave,
+          succeeded on master, and data is identical on the master and slave,
           then there should be no uniqueness errors on slave, so IGNORE is
           the same as DUP_ERROR. But in the unlikely case of uniqueness errors
           (because the data on the master and slave happen to be different
@@ -7967,7 +7966,7 @@ Gtid_log_event::Gtid_log_event(THD *thd_arg, uint64 seq_no_arg,
 
 /*
   Used to record GTID while sending binlog to slave, without having to
-  fully contruct every Gtid_log_event() needlessly.
+  fully construct every Gtid_log_event() needlessly.
 */
 bool
 Gtid_log_event::peek(const char *event_start, size_t event_len,
@@ -8254,7 +8253,8 @@ Gtid_log_event::print(FILE *file, PRINT_EVENT_INFO *print_event_info)
         goto err;
   }
   if (!(flags2 & FL_STANDALONE))
-    if (my_b_printf(&cache, is_flashback ? "COMMIT\n%s\n" : "BEGIN\n%s\n", print_event_info->delimiter))
+    if (my_b_printf(&cache, is_flashback ? "COMMIT\n%s\n" :
+                    "START TRANSACTION\n%s\n", print_event_info->delimiter))
       goto err;
 
   return cache.flush_data();
@@ -8535,7 +8535,7 @@ err:
 
 /*
   Used to record gtid_list event while sending binlog to slave, without having to
-  fully contruct the event object.
+  fully construct the event object.
 */
 bool
 Gtid_list_log_event::peek(const char *event_start, size_t event_len,
@@ -8615,7 +8615,7 @@ Intvar_log_event::Intvar_log_event(const char* buf,
                                    const Format_description_log_event* description_event)
   :Log_event(buf, description_event)
 {
-  /* The Post-Header is empty. The Varible Data part begins immediately. */
+  /* The Post-Header is empty. The Variable Data part begins immediately. */
   buf+= description_event->common_header_len +
     description_event->post_header_len[INTVAR_EVENT-1];
   type= buf[I_TYPE_OFFSET];
@@ -8937,7 +8937,7 @@ bool Xid_log_event::print(FILE* file, PRINT_EVENT_INFO* print_event_info)
         my_b_printf(&cache, "\tXid = %s\n", buf))
       goto err;
   }
-  if (my_b_printf(&cache, is_flashback ? "BEGIN%s\n" : "COMMIT%s\n",
+  if (my_b_printf(&cache, is_flashback ? "START TRANSACTION%s\n" : "COMMIT%s\n",
                   print_event_info->delimiter))
     goto err;
 
@@ -9910,7 +9910,7 @@ void Create_file_log_event::pack_info(Protocol *protocol)
 
 /**
   Create_file_log_event::do_apply_event()
-  Constructor for Create_file_log_event to intantiate an event
+  Constructor for Create_file_log_event to instantiate an event
   from the relay log on the slave.
 
   @retval
@@ -10741,6 +10741,8 @@ const char *sql_ex_info::init(const char *buf, const char *buf_end,
   }
   else
   {
+    if (buf_end - buf < 7)
+      return 0;                                 // Wrong data
     field_term_len= enclosed_len= line_term_len= line_start_len= escaped_len=1;
     field_term = buf++;			// Use first byte in string
     enclosed=	 buf++;
@@ -10982,7 +10984,7 @@ Rows_log_event::Rows_log_event(const char *buf, uint event_len,
     DBUG_VOID_RETURN;
   }
 
-  /* if my_bitmap_init fails, catched in is_valid() */
+  /* if my_bitmap_init fails, caught in is_valid() */
   if (likely(!my_bitmap_init(&m_cols,
                           m_width <= sizeof(m_bitbuf)*8 ? m_bitbuf : NULL,
                           m_width,
@@ -11399,7 +11401,7 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
     */
 
     {
-      DBUG_PRINT("debug", ("Checking compability of tables to lock - tables_to_lock: %p",
+      DBUG_PRINT("debug", ("Checking compatibility of tables to lock - tables_to_lock: %p",
                            rgi->tables_to_lock));
 
       /**
@@ -11454,7 +11456,7 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
                                ptr->table->s->table_name.str));
           /*
             We should not honour --slave-skip-errors at this point as we are
-            having severe errors which should not be skiped.
+            having severe errors which should not be skipped.
           */
           thd->is_slave_error= 1;
           /* remove trigger's tables */
@@ -11836,7 +11838,7 @@ static int rows_event_stmt_cleanup(rpl_group_info *rgi, THD * thd)
 /**
    The method either increments the relay log position or
    commits the current statement and increments the master group 
-   possition if the event is STMT_END_F flagged and
+   position if the event is STMT_END_F flagged and
    the statement corresponds to the autocommit query (i.e replicated
    without wrapping in BEGIN/COMMIT)
 
@@ -12048,7 +12050,7 @@ err:
 
 /**
   Print an event "body" cache to @c file possibly in two fragments.
-  Each fragement is optionally per @c do_wrap to produce an SQL statement.
+  Each fragment is optionally per @c do_wrap to produce an SQL statement.
 
   @param file      a file to print to
   @param body      the "body" IO_CACHE of event
@@ -13861,7 +13863,7 @@ record_compare_exit:
   Find the best key to use when locating the row in @c find_row().
 
   A primary key is preferred if it exists; otherwise a unique index is
-  preferred. Else we pick the index with the smalles rec_per_key value.
+  preferred. Else we pick the index with the smallest rec_per_key value.
 
   If a suitable key is found, set @c m_key, @c m_key_nr and @c m_key_info
   member fields appropriately.
@@ -13995,7 +13997,7 @@ static int row_not_found_error(rpl_group_info *rgi)
   Locate the current row in event's table.
 
   The current row is pointed by @c m_curr_row. Member @c m_width tells
-  how many columns are there in the row (this can be differnet from
+  how many columns are there in the row (this can be different from
   the number of columns in the table). It is assumed that event's
   table is already open and pointed by @c m_table.
 
@@ -14036,7 +14038,7 @@ int Rows_log_event::find_row(rpl_group_info *rgi)
     rpl_row_tabledefs.test specifies that
     if the extra field on the slave does not have a default value
     and this is okay with Delete or Update events.
-    Todo: fix wl3228 hld that requires defauls for all types of events
+    Todo: fix wl3228 hld that requires defaults for all types of events
   */
   
   prepare_record(table, m_width, FALSE);
@@ -14289,7 +14291,7 @@ int Rows_log_event::find_row(rpl_group_info *rgi)
     while (record_compare(table));
     
     /* 
-      Note: above record_compare will take into accout all record fields 
+      Note: above record_compare will take into account all record fields 
       which might be incorrect in case a partial row was given in the event
      */
 
@@ -14300,7 +14302,6 @@ end:
   if (is_table_scan || is_index_scan)
     issue_long_find_row_warning(get_general_type_code(), m_table->alias.c_ptr(), 
                                 is_index_scan, rgi);
-  table->default_column_bitmaps();
   DBUG_RETURN(error);
 }
 
@@ -14631,7 +14632,13 @@ Update_rows_log_event::do_exec_row(rpl_group_info *rgi)
 #endif /* WSREP_PROC_INFO */
 
   thd_proc_info(thd, message);
-  int error= find_row(rgi); 
+  // Temporary fix to find out why it fails [/Matz]
+  memcpy(m_table->read_set->bitmap, m_cols.bitmap, (m_table->read_set->n_bits + 7) / 8);
+  memcpy(m_table->write_set->bitmap, m_cols_ai.bitmap, (m_table->write_set->n_bits + 7) / 8);
+
+  m_table->mark_columns_per_binlog_row_image();
+
+  int error= find_row(rgi);
   if (unlikely(error))
   {
     /*
@@ -14701,11 +14708,6 @@ Update_rows_log_event::do_exec_row(rpl_group_info *rgi)
     goto err;
   }
 
-  // Temporary fix to find out why it fails [/Matz]
-  memcpy(m_table->read_set->bitmap, m_cols.bitmap, (m_table->read_set->n_bits + 7) / 8);
-  memcpy(m_table->write_set->bitmap, m_cols_ai.bitmap, (m_table->write_set->n_bits + 7) / 8);
-
-  m_table->mark_columns_per_binlog_row_image();
   if (m_vers_from_plain && m_table->versioned(VERS_TIMESTAMP))
     m_table->vers_update_fields();
   error= m_table->file->ha_update_row(m_table->record[1], m_table->record[0]);

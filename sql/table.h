@@ -1,7 +1,7 @@
 #ifndef TABLE_INCLUDED
 #define TABLE_INCLUDED
 /* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2019, MariaDB
+   Copyright (c) 2009, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -581,15 +581,94 @@ enum open_frm_error {
   from persistent statistical tables
 */
 
-struct TABLE_STATISTICS_CB
+class TABLE_STATISTICS_CB
 {
+  class Statistics_state
+  {
+    enum state_codes
+    {
+      EMPTY,   /** data is not loaded */
+      LOADING, /** data is being loaded in some connection */
+      READY    /** data is loaded and available for use */
+    };
+    int32 state;
+
+  public:
+    /** No state copy */
+    Statistics_state &operator=(const Statistics_state &) { return *this; }
+
+    /** Checks if data loading have been completed */
+    bool is_ready() const
+    {
+      return my_atomic_load32_explicit(const_cast<int32*>(&state),
+                                       MY_MEMORY_ORDER_ACQUIRE) == READY;
+    }
+
+    /**
+      Sets mutual exclusion for data loading
+
+      If stats are in LOADING state, waits until state change.
+
+      @return
+        @retval true atomic EMPTY -> LOADING transfer completed, ok to load
+        @retval false stats are in READY state, no need to load
+    */
+    bool start_load()
+    {
+      for (;;)
+      {
+        int32 expected= EMPTY;
+        if (my_atomic_cas32_weak_explicit(&state, &expected, LOADING,
+                                          MY_MEMORY_ORDER_RELAXED,
+                                          MY_MEMORY_ORDER_RELAXED))
+          return true;
+        if (expected == READY)
+          return false;
+        (void) LF_BACKOFF();
+      }
+    }
+
+    /** Marks data available for subsequent use */
+    void end_load()
+    {
+      DBUG_ASSERT(my_atomic_load32_explicit(&state, MY_MEMORY_ORDER_RELAXED) ==
+                  LOADING);
+      my_atomic_store32_explicit(&state, READY, MY_MEMORY_ORDER_RELEASE);
+    }
+
+    /** Restores empty state on error (e.g. OOM) */
+    void abort_load()
+    {
+      DBUG_ASSERT(my_atomic_load32_explicit(&state, MY_MEMORY_ORDER_RELAXED) ==
+                  LOADING);
+      my_atomic_store32_explicit(&state, EMPTY, MY_MEMORY_ORDER_RELAXED);
+    }
+  };
+
+  class Statistics_state stats_state;
+  class Statistics_state hist_state;
+
+public:
   MEM_ROOT  mem_root; /* MEM_ROOT to allocate statistical data for the table */
   Table_statistics *table_stats; /* Structure to access the statistical data */
-  bool stats_can_be_read;        /* Memory for statistical data is allocated */
-  bool stats_is_read;            /* Statistical data for table has been read
-                                    from statistical tables */
-  bool histograms_can_be_read;
-  bool histograms_are_read;   
+  ulong total_hist_size;         /* Total size of all histograms */
+
+  bool histograms_are_ready() const
+  {
+    return !total_hist_size || hist_state.is_ready();
+  }
+
+  bool start_histograms_load()
+  {
+    return total_hist_size && hist_state.start_load();
+  }
+
+  void end_histograms_load() { hist_state.end_load(); }
+  void abort_histograms_load() { hist_state.abort_load(); }
+  bool stats_are_ready() const { return stats_state.is_ready(); }
+  bool start_stats_load() { return stats_state.start_load(); }
+  void end_stats_load() { stats_state.end_load(); }
+  void abort_stats_load() { stats_state.abort_load(); }
 };
 
 /**
@@ -1320,8 +1399,8 @@ public:
   bool insert_or_update;             /* Can be used by the handler */
   bool alias_name_used;              /* true if table_name is alias */
   bool get_fields_in_item_tree;      /* Signal to fix_field */
-  bool m_needs_reopen;
 private:
+  bool m_needs_reopen;
   bool created;    /* For tmp tables. TRUE <=> tmp table was actually created.*/
 public:
 #ifdef HAVE_REPLICATION
@@ -1441,6 +1520,16 @@ public:
   /** Should this instance of the table be reopened? */
   inline bool needs_reopen()
   { return !db_stat || m_needs_reopen; }
+  /*
+    Mark that all current connection instances of the table should be
+    reopen at end of statement
+  */
+  void mark_table_for_reopen();
+  /* Should only be called from Locked_tables_list::mark_table_for_reopen() */
+  void internal_set_needs_reopen(bool value)
+  {
+    m_needs_reopen= value;
+  }
 
   bool alloc_keys(uint key_count);
   bool check_tmp_key(uint key, uint key_parts,
@@ -1510,6 +1599,7 @@ public:
                                       TABLE *tmp_table,
                                       TMP_TABLE_PARAM *tmp_table_param,
                                       bool with_cleanup);
+  int fix_vcol_exprs(THD *thd);
   Field *find_field_by_name(LEX_CSTRING *str) const;
   bool export_structure(THD *thd, class Row_definition_list *defs);
   bool is_splittable() { return spl_opt_info != NULL; }
@@ -2093,6 +2183,7 @@ struct TABLE_LIST
     parsing 'this' is a NATURAL/USING join iff (natural_join != NULL).
   */
   TABLE_LIST *natural_join;
+  bool part_of_natural_join;
   /*
     True if 'this' represents a nested join that is a NATURAL JOIN.
     For one of the operands of 'this', the member 'natural_join' points
@@ -2843,9 +2934,11 @@ typedef struct st_nested_join
     Before each use the counters are zeroed by reset_nj_counters.
   */
   uint              counter;
+
   /*
-    Number of elements in join_list that were not (or contain table(s) that 
-    weren't) removed by table elimination.
+    Number of elements in join_list that participate in the join plan choice:
+    - Base tables that were not removed by table elimination
+    - Join nests that were not removed by mark_join_nest_as_const
   */
   uint              n_tables;
   nested_join_map   nj_map;          /* Bit used to identify this nested join*/
