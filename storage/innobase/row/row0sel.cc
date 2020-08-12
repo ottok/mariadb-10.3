@@ -2,7 +2,7 @@
 
 Copyright (c) 1997, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, Google Inc.
-Copyright (c) 2015, 2019, MariaDB Corporation.
+Copyright (c) 2015, 2020, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -982,9 +982,9 @@ row_sel_get_clust_rec(
 		switch (err) {
 		case DB_SUCCESS:
 		case DB_SUCCESS_LOCKED_REC:
-			/* Declare the variable uninitialized in Valgrind.
+			/* Declare the variable uninitialized.
 			It should be set to DB_SUCCESS at func_exit. */
-			UNIV_MEM_INVALID(&err, sizeof err);
+			MEM_UNDEFINED(&err, sizeof err);
 			break;
 		default:
 			goto err_exit;
@@ -1288,10 +1288,6 @@ void
 row_sel_open_pcur(
 /*==============*/
 	plan_t*		plan,	/*!< in: table plan */
-#ifdef BTR_CUR_HASH_ADAPT
-	rw_lock_t*	ahi_latch,
-				/*!< in: the adaptive hash index latch */
-#endif /* BTR_CUR_HASH_ADAPT */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
 	dict_index_t*	index;
@@ -1335,7 +1331,7 @@ row_sel_open_pcur(
 
 		btr_pcur_open_with_no_init(index, plan->tuple, plan->mode,
 					   BTR_SEARCH_LEAF, &plan->pcur,
-					   ahi_latch, mtr);
+					   NULL, mtr);
 	} else {
 		/* Open the cursor to the start or the end of the index
 		(FALSE: no init) */
@@ -1480,16 +1476,12 @@ row_sel_try_search_shortcut(
 	ut_ad(plan->unique_search);
 	ut_ad(!plan->must_get_clust);
 
-	rw_lock_t* ahi_latch = btr_get_search_latch(index);
-	rw_lock_s_lock(ahi_latch);
-
-	row_sel_open_pcur(plan, ahi_latch, mtr);
+	row_sel_open_pcur(plan, mtr);
 
 	const rec_t* rec = btr_pcur_get_rec(&(plan->pcur));
 
 	if (!page_rec_is_user_rec(rec) || rec_is_metadata(rec, index)) {
 retry:
-		rw_lock_s_unlock(ahi_latch);
 		return(SEL_RETRY);
 	}
 
@@ -1501,7 +1493,6 @@ retry:
 
 	if (btr_pcur_get_up_match(&(plan->pcur)) < plan->n_exact_match) {
 exhausted:
-		rw_lock_s_unlock(ahi_latch);
 		return(SEL_EXHAUSTED);
 	}
 
@@ -1547,7 +1538,6 @@ exhausted:
 	ut_ad(plan->pcur.latch_mode == BTR_SEARCH_LEAF);
 
 	plan->n_rows_fetched++;
-	rw_lock_s_unlock(ahi_latch);
 
 	if (UNIV_LIKELY_NULL(heap)) {
 		mem_heap_free(heap);
@@ -1669,11 +1659,7 @@ table_loop:
 	if (!plan->pcur_is_open) {
 		/* Evaluate the expressions to build the search tuple and
 		open the cursor */
-		row_sel_open_pcur(plan,
-#ifdef BTR_CUR_HASH_ADAPT
-				  NULL,
-#endif /* BTR_CUR_HASH_ADAPT */
-				  &mtr);
+		row_sel_open_pcur(plan, &mtr);
 
 		cursor_just_opened = TRUE;
 
@@ -2752,9 +2738,9 @@ row_sel_field_store_in_mysql_format_func(
 #endif /* UNIV_DEBUG */
 
 	ut_ad(len != UNIV_SQL_NULL);
-	UNIV_MEM_ASSERT_RW(data, len);
-	UNIV_MEM_ASSERT_W(dest, templ->mysql_col_len);
-	UNIV_MEM_INVALID(dest, templ->mysql_col_len);
+	MEM_CHECK_DEFINED(data, len);
+	MEM_CHECK_ADDRESSABLE(dest, templ->mysql_col_len);
+	MEM_UNDEFINED(dest, templ->mysql_col_len);
 
 	switch (templ->type) {
 		const byte*	field_end;
@@ -3006,9 +2992,9 @@ row_sel_store_mysql_field(
 			NULL value is set to the default value. */
 			ut_ad(templ->mysql_null_bit_mask);
 
-			UNIV_MEM_ASSERT_RW(prebuilt->default_rec
-					   + templ->mysql_col_offset,
-					   templ->mysql_col_len);
+			MEM_CHECK_DEFINED(prebuilt->default_rec
+					  + templ->mysql_col_offset,
+					  templ->mysql_col_len);
 			mysql_rec[templ->mysql_null_byte_offset]
 				|= (byte) templ->mysql_null_bit_mask;
 			memcpy(mysql_rec + templ->mysql_col_offset,
@@ -3653,7 +3639,7 @@ row_sel_copy_cached_field_for_mysql(
 	buf += templ->mysql_col_offset;
 	cache += templ->mysql_col_offset;
 
-	UNIV_MEM_ASSERT_W(buf, templ->mysql_col_len);
+	MEM_CHECK_ADDRESSABLE(buf, templ->mysql_col_len);
 
 	if (templ->mysql_type == DATA_MYSQL_TRUE_VARCHAR
 	    && (templ->type != DATA_INT)) {
@@ -3663,7 +3649,7 @@ row_sel_copy_cached_field_for_mysql(
 		row_mysql_read_true_varchar(
 			&len, cache, templ->mysql_length_bytes);
 		len += templ->mysql_length_bytes;
-		UNIV_MEM_INVALID(buf, templ->mysql_col_len);
+		MEM_UNDEFINED(buf, templ->mysql_col_len);
 	} else {
 		len = templ->mysql_col_len;
 	}
@@ -3722,7 +3708,7 @@ row_sel_dequeue_cached_row_for_mysql(
 	ut_ad(prebuilt->n_fetch_cached > 0);
 	ut_ad(prebuilt->mysql_prefix_len <= prebuilt->mysql_row_len);
 
-	UNIV_MEM_ASSERT_W(buf, prebuilt->mysql_row_len);
+	MEM_CHECK_ADDRESSABLE(buf, prebuilt->mysql_row_len);
 
 	cached_rec = prebuilt->fetch_cache[prebuilt->fetch_cache_first];
 
@@ -3732,7 +3718,7 @@ row_sel_dequeue_cached_row_for_mysql(
 		/* The record is long. Copy it field by field, in case
 		there are some long VARCHAR column of which only a
 		small length is being used. */
-		UNIV_MEM_INVALID(buf, prebuilt->mysql_prefix_len);
+		MEM_UNDEFINED(buf, prebuilt->mysql_prefix_len);
 
 		/* First copy the NULL bits. */
 		ut_memcpy(buf, cached_rec, prebuilt->null_bitmap_len);
@@ -3816,8 +3802,8 @@ row_sel_fetch_last_buf(
 	}
 
 	ut_ad(prebuilt->fetch_cache_first == 0);
-	UNIV_MEM_INVALID(prebuilt->fetch_cache[prebuilt->n_fetch_cached],
-			 prebuilt->mysql_row_len);
+	MEM_UNDEFINED(prebuilt->fetch_cache[prebuilt->n_fetch_cached],
+		      prebuilt->mysql_row_len);
 
 	return(prebuilt->fetch_cache[prebuilt->n_fetch_cached]);
 }

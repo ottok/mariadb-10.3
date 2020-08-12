@@ -1869,7 +1869,7 @@ row_upd_changes_ord_field_binary_func(
 			/* Silence a compiler warning without
 			silencing a Valgrind error. */
 			dfield_len = 0;
-			UNIV_MEM_INVALID(&dfield_len, sizeof dfield_len);
+			MEM_UNDEFINED(&dfield_len, sizeof dfield_len);
 			/* See if the column is stored externally. */
 			buf = row_ext_lookup(ext, col_no, &dfield_len);
 
@@ -1884,7 +1884,8 @@ row_upd_changes_ord_field_binary_func(
 					when the server had crashed before
 					storing the field. */
 					ut_ad(thr->graph->trx->is_recovered);
-					ut_ad(trx_is_recv(thr->graph->trx));
+					ut_ad(thr->graph->trx
+					      == trx_roll_crash_recv_trx);
 					return(TRUE);
 				}
 
@@ -2476,7 +2477,7 @@ row_upd_sec_index_entry(
 					err = DB_SUCCESS;
 					break;
 				case DB_LOCK_WAIT:
-					if (wsrep_debug) {
+					if (UNIV_UNLIKELY(wsrep_debug)) {
 						ib::warn() << "WSREP: sec index FK lock wait"
 							   << " index " << index->name
 							   << " table " << index->table->name
@@ -2484,7 +2485,7 @@ row_upd_sec_index_entry(
 					}
 					break;
 				case DB_DEADLOCK:
-					if (wsrep_debug) {
+					if (UNIV_UNLIKELY(wsrep_debug)) {
 						ib::warn() << "WSREP: sec index FK check fail for deadlock"
 							   << " index " << index->name
 							   << " table " << index->table->name
@@ -2492,7 +2493,7 @@ row_upd_sec_index_entry(
 					}
 					break;
 				default:
-					ib::error() << "WSREP: referenced FK check fail: " << ut_strerr(err)
+					ib::error() << "WSREP: referenced FK check fail: " << err
 						    << " index " << index->name
 						    << " table " << index->table->name
 						    << " query " << wsrep_thd_query(trx->mysql_thd);
@@ -2792,14 +2793,14 @@ check_fk:
 				err = DB_SUCCESS;
 				break;
 			case DB_DEADLOCK:
-				if (wsrep_debug) {
+				if (UNIV_UNLIKELY(wsrep_debug)) {
 					ib::warn() << "WSREP: sec index FK check fail for deadlock"
 						   << " index " << index->name
 						   << " table " << index->table->name;
 				}
 				goto err_exit;
 			default:
-				ib::error() << "WSREP: referenced FK check fail: " << ut_strerr(err)
+				ib::error() << "WSREP: referenced FK check fail: " << err
 					    << " index " << index->name
 					    << " table " << index->table->name;
 				goto err_exit;
@@ -3018,14 +3019,14 @@ row_upd_del_mark_clust_rec(
 			err = DB_SUCCESS;
 			break;
 		case DB_DEADLOCK:
-			if (wsrep_debug) {
+			if (UNIV_UNLIKELY(wsrep_debug)) {
 				ib::warn() << "WSREP: sec index FK check fail for deadlock"
 					   << " index " << index->name
 					   << " table " << index->table->name;
 			}
 			break;
 		default:
-			ib::error() << "WSREP: referenced FK check fail: " << ut_strerr(err)
+			ib::error() << "WSREP: referenced FK check fail: " << err
 				    << " index " << index->name
 				    << " table " << index->table->name;
 
@@ -3485,32 +3486,65 @@ Supposed to be called only by make_versioned_update() and
 make_versioned_delete().
 @param[in]	trx	transaction
 @param[in]	vers_sys_idx	table->row_start or table->row_end */
-void upd_node_t::make_versioned_helper(const trx_t* trx, ulint idx)
+void upd_node_t::vers_update_fields(const trx_t *trx, ulint idx)
 {
 	ut_ad(in_mysql_interface); // otherwise needs to recalculate
 				   // node->cmpl_info
 	ut_ad(idx == table->vers_start || idx == table->vers_end);
 
 	dict_index_t* clust_index = dict_table_get_first_index(table);
+        const dict_col_t *col= dict_table_get_nth_col(table, idx);
+        ulint field_no= dict_col_get_clust_pos(col, clust_index);
+        upd_field_t *ufield;
 
-	/* row_create_update_node_for_mysql() pre-allocated this much.
+        for (ulint i= 0; i < update->n_fields; ++i)
+        {
+          if (update->fields[i].field_no == field_no)
+          {
+            ufield= &update->fields[i];
+            goto skip_append;
+          }
+        }
+
+        /* row_create_update_node_for_mysql() pre-allocated this much.
 	   At least one PK column always remains unchanged. */
 	ut_ad(update->n_fields < ulint(table->n_cols + table->n_v_cols));
 
 	update->n_fields++;
-	upd_field_t* ufield = upd_get_nth_field(update, update->n_fields - 1);
-	const dict_col_t* col = dict_table_get_nth_col(table, idx);
+        ufield= upd_get_nth_field(update, update->n_fields - 1);
+        upd_field_set_field_no(ufield, field_no, clust_index);
 
-	upd_field_set_field_no(ufield, dict_col_get_clust_pos(col, clust_index),
-			       clust_index);
+skip_append:
+  char *where= reinterpret_cast<char *>(update->vers_sys_value);
+  if (col->vers_native())
+  {
+    mach_write_to_8(where, trx->id);
+  }
+  else
+  {
+    thd_get_query_start_data(trx->mysql_thd, where);
+  }
 
-	char* where = reinterpret_cast<char*>(update->vers_sys_value);
-	if (col->vers_native()) {
-		mach_write_to_8(where, trx->id);
-	} else {
-		thd_get_query_start_data(trx->mysql_thd, where);
-	}
+  dfield_set_data(&ufield->new_val, update->vers_sys_value, col->len);
 
-	dfield_set_data(&ufield->new_val, update->vers_sys_value, col->len);
+  for (ulint col_no= 0; col_no < dict_table_get_n_v_cols(table); col_no++)
+  {
+
+    const dict_v_col_t *v_col= dict_table_get_nth_v_col(table, col_no);
+    if (!v_col->m_col.ord_part)
+      continue;
+    for (ulint i= 0; i < unsigned(v_col->num_base); i++)
+    {
+      dict_col_t *base_col= v_col->base_col[i];
+      if (base_col->ind == col->ind)
+      {
+        /* Virtual column depends on system field value
+        which we updated above. Remove it from update
+        vector, so it is recalculated in
+        row_upd_store_v_row() (see !update branch). */
+        update->remove(v_col->v_pos);
+        break;
+      }
+    }
+  }
 }
-

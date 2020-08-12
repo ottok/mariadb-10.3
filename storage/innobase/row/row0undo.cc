@@ -347,7 +347,7 @@ row_undo_step(
 
 	if (UNIV_UNLIKELY(trx_get_dict_operation(trx) == TRX_DICT_OP_NONE
 			  && !srv_undo_sources
-			  && !srv_is_being_started)
+			  && srv_shutdown_state != SRV_SHUTDOWN_NONE)
 	    && (srv_fast_shutdown == 3 || trx == trx_roll_crash_recv_trx)) {
 		/* Shutdown has been initiated. */
 		trx->error_state = DB_INTERRUPTED;
@@ -368,15 +368,8 @@ row_undo_step(
 
 	trx->error_state = err;
 
-	if (err != DB_SUCCESS) {
-		/* SQL error detected */
-
-		if (err == DB_OUT_OF_FILE_SPACE) {
-			ib::fatal() << "Out of tablespace during rollback."
-				" Consider increasing your tablespace.";
-		}
-
-		ib::fatal() << "Error (" << ut_strerr(err) << ") in rollback.";
+	if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
+		ib::fatal() << "Error (" << err << ") in rollback.";
 	}
 
 	return(thr);

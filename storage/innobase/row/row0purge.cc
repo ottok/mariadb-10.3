@@ -46,7 +46,6 @@ Created 3/14/1997 Heikki Tuuri
 #include "handler.h"
 #include "ha_innodb.h"
 #include "fil0fil.h"
-#include "debug_sync.h"
 
 /*************************************************************************
 IMPORTANT NOTE: Any operation that generates redo MUST check that there
@@ -1095,7 +1094,7 @@ try_again:
 
 			dict_table_close(node->table, FALSE, FALSE);
 			rw_lock_s_unlock(&dict_operation_lock);
-			if (srv_shutdown_state != SRV_SHUTDOWN_NONE) {
+			if (srv_shutdown_state > SRV_SHUTDOWN_INITIATED) {
 				return(false);
 			}
 			os_thread_sleep(1000000);
@@ -1265,7 +1264,7 @@ row_purge(
 			ut_ad(!rw_lock_own(&dict_operation_lock, RW_LOCK_S));
 
 			if (purged
-			    || srv_shutdown_state != SRV_SHUTDOWN_NONE
+			    || srv_shutdown_state > SRV_SHUTDOWN_INITIATED
 			    || node->vcol_op_failed()) {
 				return;
 			}
@@ -1305,26 +1304,6 @@ row_purge_step(
 	node = static_cast<purge_node_t*>(thr->run_node);
 
 	node->start();
-
-#ifdef UNIV_DEBUG
-	srv_slot_t *slot = thr->thread_slot;
-	ut_ad(slot);
-
-	rw_lock_x_lock(&slot->debug_sync_lock);
-	while (UT_LIST_GET_LEN(slot->debug_sync)) {
-		srv_slot_t::debug_sync_t *sync =
-					UT_LIST_GET_FIRST(slot->debug_sync);
-		const char* sync_str = reinterpret_cast<char*>(&sync[1]);
-		bool result = debug_sync_set_action(current_thd,
-						    sync_str,
-						    strlen(sync_str));
-		ut_a(!result);
-
-		UT_LIST_REMOVE(slot->debug_sync, sync);
-		ut_free(sync);
-	}
-	rw_lock_x_unlock(&slot->debug_sync_lock);
-#endif
 
 	if (!(node->undo_recs == NULL || ib_vector_is_empty(node->undo_recs))) {
 		trx_purge_rec_t*purge_rec;

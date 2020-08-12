@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2018, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -689,19 +689,17 @@ rec_offs_make_nth_extern(
         rec_offs*	offsets,
         const ulint     n);
 
+MY_ATTRIBUTE((nonnull))
 /** Determine the number of allocated elements for an array of offsets.
 @param[in]	offsets		offsets after rec_offs_set_n_alloc()
 @return number of elements */
-inline
-ulint
-rec_offs_get_n_alloc(const rec_offs* offsets)
+inline ulint rec_offs_get_n_alloc(const rec_offs *offsets)
 {
-	ulint	n_alloc;
-	ut_ad(offsets);
-	n_alloc = offsets[0];
-	ut_ad(n_alloc > REC_OFFS_HEADER_SIZE);
-	UNIV_MEM_ASSERT_W(offsets, n_alloc * sizeof *offsets);
-	return(n_alloc);
+  ut_ad(offsets);
+  ulint n_alloc= offsets[0];
+  ut_ad(n_alloc > REC_OFFS_HEADER_SIZE);
+  MEM_CHECK_ADDRESSABLE(offsets, n_alloc * sizeof *offsets);
+  return n_alloc;
 }
 
 /** Determine the number of fields for which offsets have been initialized.
@@ -831,7 +829,11 @@ rec_get_nth_cfield(
 	ulint			n,
 	ulint*			len)
 {
-	ut_ad(rec_offs_validate(rec, index, offsets));
+	/* Because this function may be invoked by innobase_rec_to_mysql()
+	for reporting a duplicate key during ALTER TABLE or
+	CREATE UNIQUE INDEX, and in that case the rec omit the fixed-size
+	header of 5 or 6 bytes, the check
+	rec_offs_validate(rec, index, offsets) must be avoided here. */
 	if (!rec_offs_nth_default(offsets, n)) {
 		return rec_get_nth_field(rec, offsets, n, len);
 	}

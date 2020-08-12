@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2019, MariaDB
+   Copyright (c) 2009, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2224,6 +2224,13 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
     append_identifier(thd, packet, &field->field_name);
     packet->append(' ');
 
+    const Type_handler *th= field->type_handler();
+    const Schema *implied_schema= Schema::find_implied(thd);
+    if (th != implied_schema->map_data_type(thd, th))
+    {
+      packet->append(th->schema()->name(), system_charset_info);
+      packet->append(STRING_WITH_LEN("."), system_charset_info);
+    }
     type.set(tmp, sizeof(tmp), system_charset_info);
     field->sql_type(type);
     packet->append(type.ptr(), type.length(), system_charset_info);
@@ -5291,6 +5298,29 @@ bool store_schema_shemata(THD* thd, TABLE *table, LEX_CSTRING *db_name,
 }
 
 
+/*
+  Check if the specified database exists on disk.
+
+  @param dbname - the database name
+  @retval true  - on error, the database directory does not exists
+  @retval false - on success, the database directory exists
+*/
+static bool verify_database_directory_exists(const LEX_CSTRING &dbname)
+{
+  DBUG_ENTER("verify_database_directory_exists");
+  char path[FN_REFLEN + 16];
+  uint path_len;
+  MY_STAT stat_info;
+  if (!dbname.str[0])
+    DBUG_RETURN(true); // Empty database name: does not exist.
+  path_len= build_table_filename(path, sizeof(path) - 1, dbname.str, "", "", 0);
+  path[path_len - 1]= 0;
+  if (!mysql_file_stat(key_file_misc, path, &stat_info, MYF(0)))
+    DBUG_RETURN(true); // The database directory was not found: does not exist.
+  DBUG_RETURN(false);  // The database directory was found.
+}
+
+
 int fill_schema_schemata(THD *thd, TABLE_LIST *tables, COND *cond)
 {
   /*
@@ -5319,19 +5349,10 @@ int fill_schema_schemata(THD *thd, TABLE_LIST *tables, COND *cond)
     If we have lookup db value we should check that the database exists
   */
   if(lookup_field_vals.db_value.str && !lookup_field_vals.wild_db_value &&
-     db_names.at(0) != &INFORMATION_SCHEMA_NAME)
-  {
-    char path[FN_REFLEN+16];
-    uint path_len;
-    MY_STAT stat_info;
-    if (!lookup_field_vals.db_value.str[0])
-      DBUG_RETURN(0);
-    path_len= build_table_filename(path, sizeof(path) - 1,
-                                   lookup_field_vals.db_value.str, "", "", 0);
-    path[path_len-1]= 0;
-    if (!mysql_file_stat(key_file_misc, path, &stat_info, MYF(0)))
-      DBUG_RETURN(0);
-  }
+     (!db_names.elements() /* The database name was too long */||
+      (db_names.at(0) != &INFORMATION_SCHEMA_NAME &&
+       verify_database_directory_exists(lookup_field_vals.db_value))))
+    DBUG_RETURN(0);
 
   for (size_t i=0; i < db_names.elements(); i++)
   {
@@ -8169,7 +8190,10 @@ TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)
   else
     all_items= thd->free_list;
 
-  mark_all_fields_used_in_query(thd, fields_info, &bitmap, all_items);
+  if (table_list->part_of_natural_join)
+    bitmap_set_all(&bitmap);
+  else
+    mark_all_fields_used_in_query(thd, fields_info, &bitmap, all_items);
 
   for (field_count=0; fields_info->field_name; fields_info++)
   {

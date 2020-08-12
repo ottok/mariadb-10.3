@@ -1261,7 +1261,7 @@ bool wait_while_table_is_used(THD *thd, TABLE *table,
                    FALSE);
   /* extra() call must come only after all instances above are closed */
   if (function != HA_EXTRA_NOT_USED)
-    (void) table->file->extra(function);
+    DBUG_RETURN(table->file->extra(function));
   DBUG_RETURN(FALSE);
 }
 
@@ -1715,6 +1715,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
     {
       table= best_table;
       table->query_id= thd->query_id;
+      table->init(thd, table_list);
       DBUG_PRINT("info",("Using locked table"));
 #ifdef WITH_PARTITION_STORAGE_ENGINE
       part_names_error= set_partitions_as_used(table_list, table);
@@ -2011,11 +2012,12 @@ retry_share:
   }
 
   table->mdl_ticket= mdl_ticket;
+  table->reginfo.lock_type=TL_READ;		/* Assume read */
+
+  table->init(thd, table_list);
 
   table->next= thd->open_tables;		/* Link into simple list */
   thd->set_open_tables(table);
-
-  table->reginfo.lock_type=TL_READ;		/* Assume read */
 
  reset:
   /*
@@ -2048,8 +2050,6 @@ retry_share:
     my_error(ER_NOT_SEQUENCE, MYF(0), table_list->db.str, table_list->alias.str);
     DBUG_RETURN(true);
   }
-
-  table->init(thd, table_list);
 
   DBUG_RETURN(FALSE);
 
@@ -2223,9 +2223,9 @@ Locked_tables_list::init_locked_tables(THD *thd)
       in reopen_tables(). reopen_tables() is a critical
       path and we don't want to complicate it with extra allocations.
     */
-    m_reopen_array= (TABLE**)alloc_root(&m_locked_tables_root,
-                                        sizeof(TABLE*) *
-                                        (m_locked_tables_count+1));
+    m_reopen_array= (TABLE_LIST**)alloc_root(&m_locked_tables_root,
+                                             sizeof(TABLE_LIST*) *
+                                             (m_locked_tables_count+1));
     if (m_reopen_array == NULL)
     {
       reset();
@@ -2335,6 +2335,7 @@ void Locked_tables_list::reset()
   m_locked_tables_last= &m_locked_tables;
   m_reopen_array= NULL;
   m_locked_tables_count= 0;
+  some_table_marked_for_reopen= 0;
 }
 
 
@@ -2430,7 +2431,7 @@ unlink_all_closed_tables(THD *thd, MYSQL_LOCK *lock, size_t reopen_count)
         in reopen_tables() always links the opened table
         to the beginning of the open_tables list.
       */
-      DBUG_ASSERT(thd->open_tables == m_reopen_array[reopen_count]);
+      DBUG_ASSERT(thd->open_tables == m_reopen_array[reopen_count]->table);
 
       thd->open_tables->pos_in_locked_tables->table= NULL;
       thd->open_tables->pos_in_locked_tables= NULL;
@@ -2460,9 +2461,35 @@ unlink_all_closed_tables(THD *thd, MYSQL_LOCK *lock, size_t reopen_count)
 }
 
 
+/*
+  Mark all instances of the table to be reopened
+
+  This is only needed when LOCK TABLES is active
+*/
+
+void Locked_tables_list::mark_table_for_reopen(THD *thd, TABLE *table)
+{
+  TABLE_SHARE *share= table->s;
+
+    for (TABLE_LIST *table_list= m_locked_tables;
+       table_list; table_list= table_list->next_global)
+  {
+    if (table_list->table->s == share)
+      table_list->table->internal_set_needs_reopen(true);
+  }
+  /* This is needed in the case where lock tables where not used */
+  table->internal_set_needs_reopen(true);
+  some_table_marked_for_reopen= 1;
+}
+
+
 /**
   Reopen the tables locked with LOCK TABLES and temporarily closed
   by a DDL statement or FLUSH TABLES.
+
+  @param need_reopen  If set, reopen open tables that are marked with
+                      for reopen.
+                      If not set, reopen tables that where closed.
 
   @note This function is a no-op if we're not under LOCK TABLES.
 
@@ -2480,6 +2507,12 @@ Locked_tables_list::reopen_tables(THD *thd, bool need_reopen)
   MYSQL_LOCK *lock;
   MYSQL_LOCK *merged_lock;
   DBUG_ENTER("Locked_tables_list::reopen_tables");
+
+  DBUG_ASSERT(some_table_marked_for_reopen || !need_reopen);
+
+
+  /* Reset flag that some table was marked for reopen */
+  some_table_marked_for_reopen= 0;
 
   for (TABLE_LIST *table_list= m_locked_tables;
        table_list; table_list= table_list->next_global)
@@ -2504,24 +2537,32 @@ Locked_tables_list::reopen_tables(THD *thd, bool need_reopen)
     else
     {
       if (table_list->table)                      /* The table was not closed */
-          continue;
+        continue;
     }
-
-    /* Links into thd->open_tables upon success */
-    if (open_table(thd, table_list, &ot_ctx))
-    {
-      unlink_all_closed_tables(thd, 0, reopen_count);
-      DBUG_RETURN(TRUE);
-    }
-    table_list->table->pos_in_locked_tables= table_list;
-    /* See also the comment on lock type in init_locked_tables(). */
-    table_list->table->reginfo.lock_type= table_list->lock_type;
 
     DBUG_ASSERT(reopen_count < m_locked_tables_count);
-    m_reopen_array[reopen_count++]= table_list->table;
+    m_reopen_array[reopen_count++]= table_list;
   }
   if (reopen_count)
   {
+    TABLE **tables= (TABLE**) my_alloca(reopen_count * sizeof(TABLE*));
+
+    for (uint i= 0 ; i < reopen_count ; i++)
+    {
+      TABLE_LIST *table_list= m_reopen_array[i];
+      /* Links into thd->open_tables upon success */
+      if (open_table(thd, table_list, &ot_ctx))
+      {
+        unlink_all_closed_tables(thd, 0, i);
+        my_afree((void*) tables);
+        DBUG_RETURN(TRUE);
+      }
+      tables[i]= table_list->table;
+      table_list->table->pos_in_locked_tables= table_list;
+      /* See also the comment on lock type in init_locked_tables(). */
+      table_list->table->reginfo.lock_type= table_list->lock_type;
+    }
+
     thd->in_lock_tables= 1;
     /*
       We re-lock all tables with mysql_lock_tables() at once rather
@@ -2534,7 +2575,7 @@ Locked_tables_list::reopen_tables(THD *thd, bool need_reopen)
       works fine. Patching legacy code of thr_lock.c is risking to
       break something else.
     */
-    lock= mysql_lock_tables(thd, m_reopen_array, reopen_count,
+    lock= mysql_lock_tables(thd, tables, reopen_count,
                             MYSQL_OPEN_REOPEN | MYSQL_LOCK_USE_MALLOC);
     thd->in_lock_tables= 0;
     if (lock == NULL || (merged_lock=
@@ -2543,9 +2584,11 @@ Locked_tables_list::reopen_tables(THD *thd, bool need_reopen)
       unlink_all_closed_tables(thd, lock, reopen_count);
       if (! thd->killed)
         my_error(ER_LOCK_DEADLOCK, MYF(0));
+      my_afree((void*) tables);
       DBUG_RETURN(TRUE);
     }
     thd->lock= merged_lock;
+    my_afree((void*) tables);
   }
   DBUG_RETURN(FALSE);
 }
@@ -5202,6 +5245,24 @@ static void mark_real_tables_as_free_for_reuse(TABLE_LIST *table_list)
     }
 }
 
+int TABLE::fix_vcol_exprs(THD *thd)
+{
+  for (Field **vf= vfield; vf && *vf; vf++)
+    if (fix_session_vcol_expr(thd, (*vf)->vcol_info))
+      return 1;
+
+  for (Field **df= default_field; df && *df; df++)
+    if ((*df)->default_value &&
+        fix_session_vcol_expr(thd, (*df)->default_value))
+      return 1;
+
+  for (Virtual_column_info **cc= check_constraints; cc && *cc; cc++)
+    if (fix_session_vcol_expr(thd, (*cc)))
+      return 1;
+
+  return 0;
+}
+
 
 static bool fix_all_session_vcol_exprs(THD *thd, TABLE_LIST *tables)
 {
@@ -5209,36 +5270,27 @@ static bool fix_all_session_vcol_exprs(THD *thd, TABLE_LIST *tables)
   TABLE_LIST *first_not_own= thd->lex->first_not_own_table();
   DBUG_ENTER("fix_session_vcol_expr");
 
-  for (TABLE_LIST *table= tables; table && table != first_not_own;
+  int error= 0;
+  for (TABLE_LIST *table= tables; table && table != first_not_own && !error;
        table= table->next_global)
   {
     TABLE *t= table->table;
     if (!table->placeholder() && t->s->vcols_need_refixing &&
          table->lock_type >= TL_WRITE_ALLOW_WRITE)
     {
+      Query_arena *stmt_backup= thd->stmt_arena;
+      if (thd->stmt_arena->is_conventional())
+        thd->stmt_arena= t->expr_arena;
       if (table->security_ctx)
         thd->security_ctx= table->security_ctx;
 
-      for (Field **vf= t->vfield; vf && *vf; vf++)
-        if (fix_session_vcol_expr(thd, (*vf)->vcol_info))
-          goto err;
-
-      for (Field **df= t->default_field; df && *df; df++)
-        if ((*df)->default_value &&
-            fix_session_vcol_expr(thd, (*df)->default_value))
-          goto err;
-
-      for (Virtual_column_info **cc= t->check_constraints; cc && *cc; cc++)
-        if (fix_session_vcol_expr(thd, (*cc)))
-          goto err;
+      error= t->fix_vcol_exprs(thd);
 
       thd->security_ctx= save_security_ctx;
+      thd->stmt_arena= stmt_backup;
     }
   }
-  DBUG_RETURN(0);
-err:
-  thd->security_ctx= save_security_ctx;
-  DBUG_RETURN(1);
+  DBUG_RETURN(error);
 }
 
 
@@ -7724,15 +7776,11 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
     FALSE ok;  In this case *map will include the chosen index
     TRUE  error
 */
-bool setup_tables_and_check_access(THD *thd, 
-                                   Name_resolution_context *context,
+bool setup_tables_and_check_access(THD *thd, Name_resolution_context *context,
                                    List<TABLE_LIST> *from_clause,
-                                   TABLE_LIST *tables,
-                                   List<TABLE_LIST> &leaves,
-                                   bool select_insert,
-                                   ulong want_access_first,
-                                   ulong want_access,
-                                   bool full_table_list)
+                                   TABLE_LIST *tables, List<TABLE_LIST> &leaves,
+                                   bool select_insert, ulong want_access_first,
+                                   ulong want_access, bool full_table_list)
 {
   DBUG_ENTER("setup_tables_and_check_access");
 
@@ -8304,11 +8352,9 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
     if (table->next_number_field &&
         rfield->field_index ==  table->next_number_field->field_index)
       table->auto_increment_field_not_null= TRUE;
-    Item::Type type= value->type();
     const bool skip_sys_field= rfield->vers_sys_field(); // TODO: && !thd->vers_modify_history() [MDEV-16546]
     if ((rfield->vcol_info || skip_sys_field) &&
-        type != Item::DEFAULT_VALUE_ITEM &&
-        type != Item::NULL_ITEM &&
+        !value->vcol_assignment_allowed_value() &&
         table->s->table_category != TABLE_CATEGORY_TEMPORARY)
     {
       push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
@@ -8589,20 +8635,16 @@ fill_record(THD *thd, TABLE *table, Field **ptr, List<Item> &values,
 
     if (field->field_index == autoinc_index)
       table->auto_increment_field_not_null= TRUE;
-    if (unlikely(field->vcol_info) || (vers_sys_field && !ignore_errors))
+    if ((unlikely(field->vcol_info) || (vers_sys_field && !ignore_errors)) &&
+        !value->vcol_assignment_allowed_value() &&
+        table->s->table_category != TABLE_CATEGORY_TEMPORARY)
     {
-      Item::Type type= value->type();
-      if (type != Item::DEFAULT_VALUE_ITEM &&
-          type != Item::NULL_ITEM &&
-          table->s->table_category != TABLE_CATEGORY_TEMPORARY)
-      {
-        push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
-                            ER_WARNING_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN,
-                            ER_THD(thd, ER_WARNING_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN),
-                            field->field_name.str, table->s->table_name.str);
-        if (vers_sys_field)
-          continue;
-      }
+      push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+                          ER_WARNING_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN,
+                          ER_THD(thd, ER_WARNING_NON_DEFAULT_VALUE_FOR_GENERATED_COLUMN),
+                          field->field_name.str, table->s->table_name.str);
+      if (vers_sys_field)
+        continue;
     }
 
     if (use_value)

@@ -2,7 +2,7 @@
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2017, 2019, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -2023,10 +2023,9 @@ page_simple_validate_old(
 
 	n_slots = page_dir_get_n_slots(page);
 
-	if (UNIV_UNLIKELY(n_slots > srv_page_size / 4)) {
-		ib::error() << "Nonsensical number " << n_slots
-			<< " of page dir slots";
-
+	if (UNIV_UNLIKELY(n_slots < 2 || n_slots > srv_page_size / 4)) {
+		ib::error() << "Nonsensical number of page dir slots: "
+			    << n_slots;
 		goto func_exit;
 	}
 
@@ -2223,10 +2222,9 @@ page_simple_validate_new(
 
 	n_slots = page_dir_get_n_slots(page);
 
-	if (UNIV_UNLIKELY(n_slots > srv_page_size / 4)) {
-		ib::error() << "Nonsensical number " << n_slots
-			<< " of page dir slots";
-
+	if (UNIV_UNLIKELY(n_slots < 2 || n_slots > srv_page_size / 4)) {
+		ib::error() << "Nonsensical number of page dir slots: "
+			    << n_slots;
 		goto func_exit;
 	}
 
@@ -2409,7 +2407,7 @@ bool page_validate(const page_t* page, const dict_index_t* index)
 	const rec_t*		rec;
 	const rec_t*		old_rec		= NULL;
 	const rec_t*		first_rec	= NULL;
-	ulint			offs;
+	ulint			offs = 0;
 	ulint			n_slots;
 	ibool			ret		= TRUE;
 	ulint			i;
@@ -2438,6 +2436,7 @@ func_exit2:
 			    << " of table " << index->table->name;
 		return FALSE;
 	}
+
 	if (page_is_comp(page)) {
 		if (UNIV_UNLIKELY(!page_simple_validate_new(page))) {
 			goto func_exit2;

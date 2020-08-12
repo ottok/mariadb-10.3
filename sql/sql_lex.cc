@@ -237,6 +237,7 @@ void
 st_parsing_options::reset()
 {
   allows_variable= TRUE;
+  lookup_keywords_after_qualifier= false;
 }
 
 
@@ -1539,7 +1540,10 @@ int Lex_input_stream::lex_one_token(YYSTYPE *yylval, THD *thd)
       yylval->lex_str.str= (char*) get_ptr();
       yylval->lex_str.length= 1;
       c= yyGet();                          // should be '.'
-      next_state= MY_LEX_IDENT_START;      // Next is ident (not keyword)
+      if (lex->parsing_options.lookup_keywords_after_qualifier)
+        next_state= MY_LEX_IDENT_OR_KEYWORD;
+      else
+        next_state= MY_LEX_IDENT_START;    // Next is ident (not keyword)
       if (!ident_map[(uchar) yyPeek()])    // Probably ` or "
         next_state= MY_LEX_START;
       return((int) c);
@@ -2344,6 +2348,7 @@ void st_select_lex::init_query()
   n_sum_items= 0;
   n_child_sum_items= 0;
   hidden_bit_fields= 0;
+  fields_in_window_functions= 0;
   subquery_in_having= explicit_limit= 0;
   is_item_list_lookup= 0;
   changed_elements= 0;
@@ -2888,7 +2893,8 @@ bool st_select_lex::setup_ref_array(THD *thd, uint order_group_num)
                        select_n_having_items +
                        select_n_where_fields +
                        order_group_num +
-                       hidden_bit_fields) * 5;
+                       hidden_bit_fields +
+                       fields_in_window_functions) * 5;
   if (!ref_pointer_array.is_null())
   {
     /*
@@ -4082,7 +4088,8 @@ bool st_select_lex::optimize_unflattened_subqueries(bool const_only)
           sl->options|= SELECT_DESCRIBE;
           inner_join->select_options|= SELECT_DESCRIBE;
         }
-        res= inner_join->optimize();
+        if ((res= inner_join->optimize()))
+          return TRUE;
         if (!inner_join->cleaned)
           sl->update_used_tables();
         sl->update_correlated_cache();
@@ -8283,4 +8290,32 @@ bool LEX::tvc_finalize_derived()
     return true;
   current_select->linkage= DERIVED_TABLE_TYPE;
   return tvc_finalize();
+}
+
+
+bool LEX::map_data_type(const Lex_ident_sys_st &schema_name,
+                        Lex_field_type_st *type) const
+{
+  const Schema *schema= schema_name.str ?
+                        Schema::find_by_name(schema_name) :
+                        Schema::find_implied(thd);
+  if (!schema)
+  {
+    char buf[128];
+    const Name type_name= type->type_handler()->name();
+    my_snprintf(buf, sizeof(buf), "%.*s.%.*s",
+                (int) schema_name.length, schema_name.str,
+                (int) type_name.length(), type_name.ptr());
+#if MYSQL_VERSION_ID > 100500
+#error Please remove the old code
+    my_error(ER_UNKNOWN_DATA_TYPE, MYF(0), buf);
+#else
+    my_printf_error(ER_UNKNOWN_ERROR, "Unknown data type: '%-.64s'",
+                    MYF(0), buf);
+#endif
+    return true;
+  }
+  const Type_handler *mapped= schema->map_data_type(thd, type->type_handler());
+  type->set_handler(mapped);
+  return false;
 }
