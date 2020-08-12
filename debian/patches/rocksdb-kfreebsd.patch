@@ -1,6 +1,6 @@
 --- a/storage/rocksdb/build_rocksdb.cmake
 +++ b/storage/rocksdb/build_rocksdb.cmake
-@@ -93,6 +93,8 @@ elseif(CMAKE_SYSTEM_NAME MATCHES "Linux"
+@@ -87,6 +87,8 @@ elseif(CMAKE_SYSTEM_NAME MATCHES "Linux"
    add_definitions(-DOS_LINUX)
  elseif(CMAKE_SYSTEM_NAME MATCHES "SunOS")
    add_definitions(-DOS_SOLARIS)

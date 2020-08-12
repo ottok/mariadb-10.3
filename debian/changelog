@@ -1,3 +1,10 @@
+mariadb-10.3 (1:10.3.24-1) UNRELEASED; urgency=medium
+
+  * New upstream version 10.3.24
+    - Drop kFreeBSD, Risv64 and ZSTD patches applied upstream
+
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 13 Aug 2020 01:19:20 +0300
+
 mariadb-10.3 (1:10.3.23-1) unstable; urgency=medium
 
   [ Otto Kekäläinen ]
