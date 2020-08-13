@@ -212,7 +212,6 @@ License: GPL-2
 
 Files: BUILD/*
  client/*
- client/echo.c
  cmake/*
  dbug/dbug_add_tags.pl
  extra/*
@@ -352,7 +351,8 @@ Copyright: 2009-2013, Monty Program Ab
            2000,2003 TXT DataKonsult Ab & Monty Program Ab
 License: BSD-2-clause
 
-Files: strings/strxmov.c  strings/strxnmov.c strings/strxnmov.c  strings/strxmov.c
+Files: strings/strxmov.c
+ strings/strxnmov.c
  strings/strnlen.c
 Copyright: 2009-2011, Monty Program Ab
            2000 TXT DataKonsult Ab & Monty Program Ab
@@ -476,7 +476,6 @@ Files: client/completion_hash.h
  support-files/MacOSX/postflight.sh
  support-files/MacOSX/preflight.sh
  mysql-test/lib/My/ConfigFactory.pm
- mysql-test/mysql-stress-test.pl
  BUILD/*.sh
  BUILD/compile-solaris-amd64
  BUILD/compile-amd64-valgrind-max
@@ -484,7 +483,6 @@ Files: client/completion_hash.h
  BUILD/compile-pentium64
  scripts/mysqlhotcopy.sh
  scripts/mysqld_multi.sh
- mysql-test/mysql-stress-test.pl
  mysql-test/std_data/checkDBI_DBD-mysql.pl
 Copyright: 2000-2013 Oracle and/or its affiliates
            2000-2007 MySQL AB
@@ -588,7 +586,6 @@ License: GPL-2+-with-bison-exception
  version 2.2 of Bison.
 
 Files: storage/innobase/fts/fts0pars.cc
- storage/innobase/fts/fts0pars.cc
  storage/innobase/include/fts0pars.h
 Copyright: 1984, 1989-1990, 2000-2006  Free Software Foundation, Inc.
 License: GPL-3+-with-bison-exception
@@ -773,7 +770,6 @@ Files: storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/build-aux/ltmain.sh
  storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/src/scripts/xzless.in
  storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/build-aux/config.sub
  storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/src/scripts/xzdiff.in
- storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/lib/getopt_int.h
  storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/lib/Makefile.am
  storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/src/scripts/xzmore.in
  storage/tokudb/PerconaFT/third_party/xz-4.999.9beta/src/scripts/xzgrep.in
