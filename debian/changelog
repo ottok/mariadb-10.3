@@ -1,9 +1,14 @@
-mariadb-10.3 (1:10.3.24-1) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.24-1) unstable; urgency=medium
 
+  [ Otto Kekäläinen ]
   * New upstream version 10.3.24
     - Drop kFreeBSD, Risv64 and ZSTD patches applied upstream
+  * Remove redundant patterns from d/copyright
 
- -- Otto Kekäläinen <otto@debian.org>  Thu, 13 Aug 2020 01:19:20 +0300
+  [ Andrius Merkys ]
+  * Fix a pair of typos in apparmor-profile
+
+ -- Otto Kekäläinen <otto@debian.org>  Wed, 19 Aug 2020 22:29:59 +0300
 
 mariadb-10.3 (1:10.3.23-1) unstable; urgency=medium
 
