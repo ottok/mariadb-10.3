@@ -4,6 +4,8 @@ mariadb-10.3 (1:10.3.24-1) unstable; urgency=medium
   * New upstream version 10.3.24
     - Drop kFreeBSD, Risv64 and ZSTD patches applied upstream
   * Remove redundant patterns from d/copyright
+  * Includes permanent upstream fixes to get RocksDB built on riscv64
+    (Closes: #933151, Closes: LP#1876814)
 
   [ Andrius Merkys ]
   * Fix a pair of typos in apparmor-profile
