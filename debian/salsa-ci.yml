@@ -310,7 +310,7 @@ libmysql* to libmariadb* upgrade:
     - dpkg -l | grep -iE 'maria|mysql|galera' || true
     - apt-get update
     # Install all libmysql* available in Debian unstable
-    - apt-get install -y pkg-config libmysqld-dev libmysqlclient-dev
+    - apt-get install -y pkg-config libmysqlclient-dev # libmysqld-dev removed due to Bug#968854
     - pkg-config --list-all
     - pkg-config --cflags mysqlclient # mysqlclient.pc from original package
     - apt-get install -y ./libmariadb3_*.deb ./mariadb-common_*.deb
@@ -325,7 +325,7 @@ libmysql* to libmariadb* upgrade:
     - apt-get install -y ./libmariadbd-dev_*.deb
     - pkg-config --list-all
     - apt-get install -y default-libmysqlclient-dev default-libmysqld-dev
-    - ldconfig -p # | grep -e mariadb -e mysql
+    - ldconfig -p | grep -e mariadb -e mysql
     - pkg-config --list-all
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
