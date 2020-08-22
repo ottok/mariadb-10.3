@@ -15,7 +15,7 @@ stages:
   - build
   - test
   - upgrade in Sid
-  - upgrade from Buster/Stretch/Jessie
+  - upgrade from Buster/Stretch
   - test extras
   - publish # Stage referenced by Salsa-CI template aptly stanza, so must exist even though not used
 
@@ -130,7 +130,7 @@ mariadb-10.3.x to mariadb-10.3.y upgrade:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-10.3.x buster to mariadb-10.3 upgrade:
-  stage: upgrade from Buster/Stretch/Jessie
+  stage: upgrade from Buster/Stretch
   dependencies:
     - build
   image: debian:buster
@@ -174,7 +174,7 @@ mariadb-10.3.x buster to mariadb-10.3 upgrade:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-10.1 to mariadb-10.3 upgrade:
-  stage: upgrade from Buster/Stretch/Jessie
+  stage: upgrade from Buster/Stretch
   dependencies:
     - build
   image: debian:stretch
@@ -361,7 +361,7 @@ default-libmysqlclient-dev upgrade:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 default-libmysqlclient-dev on buster upgrade:
-  stage: upgrade from Buster/Stretch/Jessie
+  stage: upgrade from Buster/Stretch
   dependencies:
     - build
   image: debian:buster
@@ -389,7 +389,7 @@ default-libmysqlclient-dev on buster upgrade:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 default-libmysqlclient-dev on stretch upgrade:
-  stage: upgrade from Buster/Stretch/Jessie
+  stage: upgrade from Buster/Stretch
   dependencies:
     - build
   image: debian:stretch
@@ -417,7 +417,7 @@ default-libmysqlclient-dev on stretch upgrade:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
 
 mariadb-connector-c on stretch upgrade:
-  stage: upgrade from Buster/Stretch/Jessie
+  stage: upgrade from Buster/Stretch
   dependencies:
     - build
   image: debian:stretch
@@ -440,50 +440,6 @@ mariadb-connector-c on stretch upgrade:
     - pkg-config --cflags --libs mysqlclient
     - pkg-config --cflags --libs libmariadb
     - pkg-config --cflags --libs mariadb
-  except:
-    variables:
-      - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
-
-mysql-5.5 to mariadb-10.3 upgrade:
-  stage: upgrade from Buster/Stretch/Jessie
-  dependencies:
-    - build
-  image: debian:jessie
-  artifacts:
-    when: always
-    name: "$CI_BUILD_NAME"
-    paths:
-      - ${WORKING_DIR}/debug
-  script:
-    - sed -i "s/101/0/g" -i /usr/sbin/policy-rc.d # Enable automatic restarts from maint scripts
-    - cd ${WORKING_DIR} # Don't repeat this step, it's just cd ./debian/output
-    - apt-get update
-    - apt-get install -y mysql-server
-    # Verify installation of MySQL from Jessie
-    - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
-    - service mysql status
-    - mysql --skip-column-names -e "select @@version, @@version_comment"
-    - echo 'SHOW DATABASES;' | mysql
-    # Install MariaDB built in this commit
-    - sed 's/jessie/sid/g' -i /etc/apt/sources.list # Enable next Debian release
-    - sed '/sid-updates/d' -i /etc/apt/sources.list # Remove repositories that don't exist for Sid
-    - sed '/security/d' -i /etc/apt/sources.list # Remove repositories that don't exist for Sid
-    - apt-get update; apt-get install -y apt || true # Install apt 1.4.9 so the wildcard command below works
-    - apt-get dist-upgrade -y || true # Upgrade all to avoid udev/systemd failures
-    - apt-get install -y ./*.deb || true # Allow to proceed so debug artifacts get collected
-    # Verify installation of MariaDB built in this commit
-    - dpkg -l | grep -iE 'maria|mysql|galera' || true # List installed
-    - mariadb --version # Client version
-    - service mysql status
-    - mkdir -p debug # Ensure dir exists before using it
-    - find /var/lib/mysql -ls > debug/var-lib-mysql.list
-    - cp -ra /etc/mysql debug/etc-mysql
-    - cp -ra /var/log/mysql debug/var-log-mysql
-    - mariadb --skip-column-names -e "select @@version, @@version_comment" # Show version
-    - echo 'SHOW DATABASES;' | mariadb # List databases before upgrade are still there
-    - mariadb -e "create database test; use test; create table t(a int primary key) engine=innodb; insert into t values (1); select * from t; drop table t; drop database test;" # Test InnoDB works
-  variables:
-      GIT_STRATEGY: none
   except:
     variables:
       - $CI_COMMIT_TAG != null && $SALSA_CI_ENABLE_PIPELINE_ON_TAGS !~ /^(1|yes|true)$/
