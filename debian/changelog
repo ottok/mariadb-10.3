@@ -12,6 +12,9 @@ mariadb-10.3 (1:10.3.25-0ubuntu0.20.04.1) focal-security; urgency=medium
     - CVE-2020-2752
   * Includes subquery optimizer fix done in upstream MDEV-21614 (LP: #1894855)
   * Includes Galera startup fix done in upstream MDEV-21140 (LP: #1894855)
+  * Adapt mariadb.pc location to upstream change
+  * Update libmariadb symbols for upstream release 3.1.8
+  * Remove salsa-ci.yml, does not work for Ubuntu quality assurance
 
  -- Otto Kekäläinen <otto@debian.org>  Mon, 12 Oct 2020 20:14:50 +0300
 
