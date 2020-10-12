@@ -10,7 +10,7 @@ Subject: Change the default optimization from -O3 to -O2 in
 
 --- a/cmake/build_configurations/mysql_release.cmake
 +++ b/cmake/build_configurations/mysql_release.cmake
-@@ -158,12 +158,12 @@ IF(UNIX)
+@@ -159,12 +159,12 @@ IF(UNIX)
    IF(CMAKE_COMPILER_IS_GNUCC)
      SET(COMMON_C_FLAGS               "-g -static-libgcc -fno-omit-frame-pointer -fno-strict-aliasing  -Wno-uninitialized")
      SET(CMAKE_C_FLAGS_DEBUG          "-O ${COMMON_C_FLAGS}")
@@ -25,7 +25,7 @@ Subject: Change the default optimization from -O3 to -O2 in
    ENDIF()
  
    # IBM Z flags
-@@ -212,8 +212,8 @@ IF(UNIX)
+@@ -213,8 +213,8 @@ IF(UNIX)
        ENDIF()
        SET(CMAKE_C_FLAGS_DEBUG            "${COMMON_C_FLAGS}")
        SET(CMAKE_CXX_FLAGS_DEBUG          "${COMMON_CXX_FLAGS}")
@@ -36,7 +36,7 @@ Subject: Change the default optimization from -O3 to -O2 in
        SET(WITH_SSL no)
      ENDIF()
    ENDIF()
-@@ -222,12 +222,12 @@ IF(UNIX)
+@@ -223,12 +223,12 @@ IF(UNIX)
    IF(CMAKE_C_COMPILER_ID MATCHES "Clang")
      SET(COMMON_C_FLAGS               "-g -fno-omit-frame-pointer -fno-strict-aliasing")
      SET(CMAKE_C_FLAGS_DEBUG          "${COMMON_C_FLAGS}")
@@ -53,7 +53,7 @@ Subject: Change the default optimization from -O3 to -O2 in
    # Solaris flags
 --- a/storage/tokudb/PerconaFT/cmake_modules/TokuSetupCompiler.cmake
 +++ b/storage/tokudb/PerconaFT/cmake_modules/TokuSetupCompiler.cmake
-@@ -116,10 +116,10 @@ set(CMAKE_CXX_FLAGS_DRD "-g3 -O1 ${CMAKE
+@@ -107,10 +107,10 @@ set(CMAKE_CXX_FLAGS_DRD "-g3 -O1 ${CMAKE
  ## need to set flags for RelWithDebInfo as well because we want the MySQL/MariaDB builds to use them
  if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
    # have tried -flto and -O4, both make our statically linked executables break apple's linker
@@ -68,7 +68,7 @@ Subject: Change the default optimization from -O3 to -O2 in
  else ()
    if (APPLE)
      set(FLTO_OPTS "-fwhole-program")
-@@ -127,10 +127,10 @@ else ()
+@@ -118,10 +118,10 @@ else ()
      set(FLTO_OPTS "-fuse-linker-plugin")
    endif()
    # we overwrite this because the default passes -DNDEBUG and we don't want that

@@ -1,3 +1,20 @@
+mariadb-10.3 (1:10.3.25-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.25 includes fixes for the
+    following security vulnerabilities (LP: #1899500):
+    - CVE-2020-15180
+  * Includes previous upstream version 10.3.23 which has the fixes for
+    the following security vulnerabilities:
+    - CVE-2020-13249
+    - CVE-2020-2814
+    - CVE-2020-2812
+    - CVE-2020-2760
+    - CVE-2020-2752
+  * Includes subquery optimizer fix done in upstream MDEV-21614 (LP: #1894855)
+  * Includes Galera startup fix done in upstream MDEV-21140 (LP: #1894855)
+
+ -- Otto Kekäläinen <otto@debian.org>  Mon, 12 Oct 2020 20:14:50 +0300
+
 mariadb-10.3 (1:10.3.22-1ubuntu1) focal; urgency=medium
 
   * Disable rocksdb on riscv64, as it needs -latomic weaved in.
