@@ -1,3 +1,12 @@
+mariadb-10.3 (1:10.3.22-1ubuntu1) focal; urgency=medium
+
+  * Disable rocksdb on riscv64, as it needs -latomic weaved in.
+  * Increase test timeout on riscv64 to make main.multi_update_big reliable.
+  * Mark main.sp-big unreliable on riscv64. Its internal 60s timeout is
+    insufficient.
+
+ -- William Grant <wgrant@ubuntu.com>  Thu, 12 Mar 2020 15:30:33 +1100
+
 mariadb-10.3 (1:10.3.22-1) unstable; urgency=medium
 
   [ Otto Kekäläinen ]
