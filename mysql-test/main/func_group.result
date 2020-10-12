@@ -1186,13 +1186,13 @@ i	count(*)	std(e1/e2)
 3	4	0.00000000
 select std(s1/s2) from bug22555;
 std(s1/s2)
-0.21325764
+0.21328517
 select std(o1/o2) from bug22555;
 std(o1/o2)
 0.2132576358664934
 select std(e1/e2) from bug22555;
 std(e1/e2)
-0.21325764
+0.21328517
 set @saved_div_precision_increment=@@div_precision_increment;
 set div_precision_increment=19;
 select i, count(*), std(s1/s2) from bug22555 group by i order by i;
@@ -2110,8 +2110,8 @@ avg(export_set( 3, 'y', sha(i)))	group_concat(d)
 0	2008-10-02
 0	2010-12-12
 Warnings:
-Warning	1292	Truncated incorrect DOUBLE value: 'y,y,356a192b7913b04c54574d18c28d46e6395428ab,356a192b7913b04c54574d18c28d46e6395428ab,356a192b7913b04c54574d18c28d46e6395428ab,3'
-Warning	1292	Truncated incorrect DOUBLE value: 'y,y,da4b9237bacccdf19c0760cab7aec4a8359010b0,da4b9237bacccdf19c0760cab7aec4a8359010b0,da4b9237bacccdf19c0760cab7aec4a8359010b0,d'
+Warning	1292	Truncated incorrect DOUBLE value: 'y,y,356a192b7913b04c54574d18c28d46e6395428ab,356a192b7913b04c54574d18c28d46e6395428ab,356a192b7913b04c54574d18c28d46e6395428a...'
+Warning	1292	Truncated incorrect DOUBLE value: 'y,y,da4b9237bacccdf19c0760cab7aec4a8359010b0,da4b9237bacccdf19c0760cab7aec4a8359010b0,da4b9237bacccdf19c0760cab7aec4a8359010b...'
 drop table t1;
 #
 # MDEV-4290: crash in st_select_lex::mark_as_dependent

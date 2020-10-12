@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2019, MariaDB Corporation.
+Copyright (c) 2016, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -61,68 +61,22 @@ check.
 If you make a change in this module make sure that no codepath is
 introduced where a call to log_free_check() is bypassed. */
 
-/*********************************************************************//**
-Creates an insert node struct.
-@return own: insert node struct */
-ins_node_t*
-ins_node_create(
-/*============*/
-	ulint		ins_type,	/*!< in: INS_VALUES, ... */
-	dict_table_t*	table,		/*!< in: table where to insert */
-	mem_heap_t*	heap)		/*!< in: mem heap where created */
+/** Create an row template for each index of a table. */
+static void ins_node_create_entry_list(ins_node_t *node)
 {
-	ins_node_t*	node;
+  node->entry_list.reserve(UT_LIST_GET_LEN(node->table->indexes));
 
-	node = static_cast<ins_node_t*>(
-		mem_heap_zalloc(heap, sizeof(ins_node_t)));
-
-	if (!node) {
-		return(NULL);
-	}
-
-	node->common.type = QUE_NODE_INSERT;
-
-	node->ins_type = ins_type;
-
-	node->state = INS_NODE_SET_IX_LOCK;
-	node->table = table;
-
-	node->entry_sys_heap = mem_heap_create(128);
-
-	node->magic_n = INS_NODE_MAGIC_N;
-
-	return(node);
-}
-
-/***********************************************************//**
-Creates an entry template for each index of a table. */
-static
-void
-ins_node_create_entry_list(
-/*=======================*/
-	ins_node_t*	node)	/*!< in: row insert node */
-{
-	dict_index_t*	index;
-	dtuple_t*	entry;
-
-	ut_ad(node->entry_sys_heap);
-
-	UT_LIST_INIT(node->entry_list, &dtuple_t::tuple_list);
-
-	/* We will include all indexes (include those corrupted
-	secondary indexes) in the entry list. Filteration of
-	these corrupted index will be done in row_ins() */
-
-	for (index = dict_table_get_first_index(node->table);
-	     index != 0;
-	     index = dict_table_get_next_index(index)) {
-
-		entry = row_build_index_entry_low(
-			node->row, NULL, index, node->entry_sys_heap,
-			ROW_BUILD_FOR_INSERT);
-
-		UT_LIST_ADD_LAST(node->entry_list, entry);
-	}
+  for (dict_index_t *index= dict_table_get_first_index(node->table); index;
+       index= dict_table_get_next_index(index))
+  {
+    /* Corrupted or incomplete secondary indexes will be filtered out in
+    row_ins(). */
+    dtuple_t *entry= index->online_status >= ONLINE_INDEX_ABORTED
+      ? dtuple_create(node->entry_sys_heap, 0)
+      : row_build_index_entry_low(node->row, NULL, index, node->entry_sys_heap,
+				  ROW_BUILD_FOR_INSERT);
+    node->entry_list.push_back(entry);
+  }
 }
 
 /*****************************************************************//**
@@ -189,7 +143,8 @@ ins_node_set_new_row(
 {
 	node->state = INS_NODE_SET_IX_LOCK;
 	node->index = NULL;
-	node->entry = NULL;
+	node->entry_list.clear();
+	node->entry = node->entry_list.end();
 
 	node->row = row;
 
@@ -223,7 +178,7 @@ row_ins_sec_index_entry_by_modify(
 				depending on whether mtr holds just a leaf
 				latch or also a tree latch */
 	btr_cur_t*	cursor,	/*!< in: B-tree cursor */
-	offset_t**	offsets,/*!< in/out: offsets on cursor->page_cur.rec */
+	rec_offs**	offsets,/*!< in/out: offsets on cursor->page_cur.rec */
 	mem_heap_t*	offsets_heap,
 				/*!< in/out: memory heap that can be emptied */
 	mem_heap_t*	heap,	/*!< in/out: memory heap */
@@ -318,7 +273,7 @@ row_ins_clust_index_entry_by_modify(
 	ulint		mode,	/*!< in: BTR_MODIFY_LEAF or BTR_MODIFY_TREE,
 				depending on whether mtr holds just a leaf
 				latch or also a tree latch */
-	offset_t**	offsets,/*!< out: offsets on cursor->page_cur.rec */
+	rec_offs**	offsets,/*!< out: offsets on cursor->page_cur.rec */
 	mem_heap_t**	offsets_heap,
 				/*!< in/out: pointer to memory heap that can
 				be emptied, or NULL */
@@ -940,9 +895,9 @@ row_ins_foreign_fill_virtual(
 {
 	THD*		thd = current_thd;
 	row_ext_t*	ext;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
 	rec_offs_init(offsets_);
-	const offset_t*	offsets =
+	const rec_offs*	offsets =
 		rec_get_offsets(rec, index, offsets_, true,
 				ULINT_UNDEFINED, &cascade->heap);
 	mem_heap_t*	v_heap = NULL;
@@ -1288,8 +1243,8 @@ row_ins_foreign_check_on_constraint(
 
 		update->info_bits = 0;
 		update->n_fields = foreign->n_fields;
-		UNIV_MEM_INVALID(update->fields,
-				 update->n_fields * sizeof *update->fields);
+		MEM_UNDEFINED(update->fields,
+			      update->n_fields * sizeof *update->fields);
 
 		bool affects_fulltext = false;
 
@@ -1492,7 +1447,7 @@ row_ins_set_shared_rec_lock(
 	const buf_block_t*	block,	/*!< in: buffer block of rec */
 	const rec_t*		rec,	/*!< in: record */
 	dict_index_t*		index,	/*!< in: index */
-	const offset_t*		offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*		offsets,/*!< in: rec_get_offsets(rec, index) */
 	que_thr_t*		thr)	/*!< in: query thread */
 {
 	dberr_t	err;
@@ -1523,7 +1478,7 @@ row_ins_set_exclusive_rec_lock(
 	const buf_block_t*	block,	/*!< in: buffer block of rec */
 	const rec_t*		rec,	/*!< in: record */
 	dict_index_t*		index,	/*!< in: index */
-	const offset_t*		offsets,/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*		offsets,/*!< in: rec_get_offsets(rec, index) */
 	que_thr_t*		thr)	/*!< in: query thread */
 {
 	dberr_t	err;
@@ -1570,8 +1525,8 @@ row_ins_check_foreign_constraint(
 	mtr_t		mtr;
 	trx_t*		trx		= thr_get_trx(thr);
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 
 	bool		skip_gap_lock;
 
@@ -1824,7 +1779,7 @@ row_ins_check_foreign_constraint(
 				if (check_ref) {
 					err = DB_SUCCESS;
 #ifdef WITH_WSREP
-					if (!wsrep_on(trx->mysql_thd)) {
+					if (!trx->is_wsrep()) {
 						goto end_scan;
 					}
 					enum wsrep_key_type key_type;
@@ -2074,7 +2029,7 @@ row_ins_dupl_error_with_rec(
 				the record! */
 	const dtuple_t*	entry,	/*!< in: entry to insert */
 	dict_index_t*	index,	/*!< in: index */
-	const offset_t*	offsets)/*!< in: rec_get_offsets(rec, index) */
+	const rec_offs*	offsets)/*!< in: rec_get_offsets(rec, index) */
 {
 	ulint	matched_fields;
 	ulint	n_unique;
@@ -2133,8 +2088,8 @@ row_ins_scan_sec_index_for_duplicate(
 	btr_pcur_t	pcur;
 	dberr_t		err		= DB_SUCCESS;
 	ulint		allow_duplicates;
-	offset_t	offsets_[REC_OFFS_SEC_INDEX_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_SEC_INDEX_SIZE];
+	rec_offs*	offsets		= offsets_;
 	DBUG_ENTER("row_ins_scan_sec_index_for_duplicate");
 
 	rec_offs_init(offsets_);
@@ -2267,7 +2222,7 @@ row_ins_duplicate_online(
 	ulint		n_uniq,	/*!< in: offset of DB_TRX_ID */
 	const dtuple_t*	entry,	/*!< in: entry that is being inserted */
 	const rec_t*	rec,	/*!< in: clustered index record */
-	offset_t*	offsets)/*!< in/out: rec_get_offsets(rec) */
+	rec_offs*	offsets)/*!< in/out: rec_get_offsets(rec) */
 {
 	ulint	fields	= 0;
 
@@ -2286,8 +2241,14 @@ row_ins_duplicate_online(
 		return(DB_SUCCESS);
 	}
 
-	if (fields == n_uniq + 2) {
-		/* rec is an exact match of entry. */
+	ulint trx_id_len;
+
+	if (fields == n_uniq + 2
+	    && memcmp(rec_get_nth_field(rec, offsets, n_uniq, &trx_id_len),
+		      reset_trx_id, DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN)) {
+		ut_ad(trx_id_len == DATA_TRX_ID_LEN);
+		/* rec is an exact match of entry, and DB_TRX_ID belongs
+		to a transaction that started after our ALTER TABLE. */
 		return(DB_SUCCESS_LOCKED_REC);
 	}
 
@@ -2306,7 +2267,7 @@ row_ins_duplicate_error_in_clust_online(
 	ulint		n_uniq,	/*!< in: offset of DB_TRX_ID */
 	const dtuple_t*	entry,	/*!< in: entry that is being inserted */
 	const btr_cur_t*cursor,	/*!< in: cursor on insert position */
-	offset_t**	offsets,/*!< in/out: rec_get_offsets(rec) */
+	rec_offs**	offsets,/*!< in/out: rec_get_offsets(rec) */
 	mem_heap_t**	heap)	/*!< in/out: heap for offsets */
 {
 	dberr_t		err	= DB_SUCCESS;
@@ -2355,8 +2316,8 @@ row_ins_duplicate_error_in_clust(
 	ulint	n_unique;
 	trx_t*	trx		= thr_get_trx(thr);
 	mem_heap_t*heap		= NULL;
-	offset_t offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t* offsets		= offsets_;
+	rec_offs offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs* offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(dict_index_is_clust(cursor->index));
@@ -2529,7 +2490,7 @@ dberr_t
 row_ins_index_entry_big_rec(
 	const dtuple_t*		entry,
 	const big_rec_t*	big_rec,
-	offset_t*		offsets,
+	rec_offs*		offsets,
 	mem_heap_t**		heap,
 	dict_index_t*		index,
 	const void*		thd __attribute__((unused)))
@@ -2604,8 +2565,8 @@ row_ins_clust_index_entry_low(
 	mtr_t		mtr;
 	ib_uint64_t	auto_inc	= 0;
 	mem_heap_t*	offsets_heap	= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets         = offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets         = offsets_;
 	rec_offs_init(offsets_);
 
 	DBUG_ENTER("row_ins_clust_index_entry_low");
@@ -2919,8 +2880,8 @@ row_ins_sec_index_entry_low(
 	dberr_t		err		= DB_SUCCESS;
 	ulint		n_unique;
 	mtr_t		mtr;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets         = offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets         = offsets_;
 	rec_offs_init(offsets_);
 	rtr_info_t	rtr_info;
 
@@ -3499,15 +3460,16 @@ row_ins_index_entry_step(
 
 	ut_ad(dtuple_check_typed(node->row));
 
-	err = row_ins_index_entry_set_vals(node->index, node->entry, node->row);
+	err = row_ins_index_entry_set_vals(node->index, *node->entry,
+					   node->row);
 
 	if (err != DB_SUCCESS) {
 		DBUG_RETURN(err);
 	}
 
-	ut_ad(dtuple_check_typed(node->entry));
+	ut_ad(dtuple_check_typed(*node->entry));
 
-	err = row_ins_index_entry(node->index, node->entry, thr);
+	err = row_ins_index_entry(node->index, *node->entry, thr);
 
 	DEBUG_SYNC_C_IF_THD(thr_get_trx(thr)->mysql_thd,
 			    "after_row_ins_index_entry_step");
@@ -3625,7 +3587,8 @@ row_ins(
 		row_ins_alloc_row_id_step(node);
 
 		node->index = dict_table_get_first_index(node->table);
-		node->entry = UT_LIST_GET_FIRST(node->entry_list);
+		ut_ad(node->entry_list.empty() == false);
+		node->entry = node->entry_list.begin();
 
 		if (node->ins_type == INS_SEARCHED) {
 
@@ -3651,20 +3614,16 @@ row_ins(
 		}
 
 		node->index = dict_table_get_next_index(node->index);
-		node->entry = UT_LIST_GET_NEXT(tuple_list, node->entry);
-
-		DBUG_EXECUTE_IF(
-			"row_ins_skip_sec",
-			node->index = NULL; node->entry = NULL; break;);
+		++node->entry;
 
 		/* Skip corrupted secondary index and its entry */
 		while (node->index && node->index->is_corrupted()) {
 			node->index = dict_table_get_next_index(node->index);
-			node->entry = UT_LIST_GET_NEXT(tuple_list, node->entry);
+			++node->entry;
 		}
 	}
 
-	ut_ad(node->entry == NULL);
+	ut_ad(node->entry == node->entry_list.end());
 
 	node->state = INS_NODE_ALLOC_ROW_ID;
 
@@ -3720,14 +3679,14 @@ row_ins_step(
 		DBUG_ASSERT(node->table->get_ref_count() > 0);
 		DBUG_ASSERT(node->ins_type == INS_DIRECT);
 		/* No-rollback tables can consist only of a single index. */
-		DBUG_ASSERT(UT_LIST_GET_LEN(node->entry_list) == 1);
+		DBUG_ASSERT(node->entry_list.size() == 1);
 		DBUG_ASSERT(UT_LIST_GET_LEN(node->table->indexes) == 1);
 		/* There should be no possibility for interruption and
 		restarting here. In theory, we could allow resumption
 		from the INS_NODE_INSERT_ENTRIES state here. */
 		DBUG_ASSERT(node->state == INS_NODE_SET_IX_LOCK);
 		node->index = dict_table_get_first_index(node->table);
-		node->entry = UT_LIST_GET_FIRST(node->entry_list);
+		node->entry = node->entry_list.begin();
 		node->state = INS_NODE_INSERT_ENTRIES;
 		goto do_insert;
 	}

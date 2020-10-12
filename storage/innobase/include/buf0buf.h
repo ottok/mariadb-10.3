@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2019, MariaDB Corporation.
+Copyright (c) 2013, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -33,6 +33,7 @@ Created 11/5/1995 Heikki Tuuri
 #include "fil0fil.h"
 #include "mtr0types.h"
 #include "buf0types.h"
+#include "span.h"
 #ifndef UNIV_INNOCHECKSUM
 #include "hash0hash.h"
 #include "ut0byte.h"
@@ -70,11 +71,13 @@ struct fil_addr_t;
 /* @} */
 /** @name Modes for buf_page_get_known_nowait */
 /* @{ */
-#define BUF_MAKE_YOUNG	51		/*!< Move the block to the
+#ifdef BTR_CUR_HASH_ADAPT
+# define BUF_MAKE_YOUNG	51		/*!< Move the block to the
 					start of the LRU list if there
 					is a danger that the block
 					would drift out of the buffer
 					pool*/
+#endif /* BTR_CUR_HASH_ADAPT */
 #define BUF_KEEP_OLD	52		/*!< Preserve the current LRU
 					position of the block. */
 /* @} */
@@ -281,12 +284,6 @@ extern "C"
 os_thread_ret_t
 DECLARE_THREAD(buf_resize_thread)(void*);
 
-#ifdef BTR_CUR_HASH_ADAPT
-/** Clear the adaptive hash index on all pages in the buffer pool. */
-void
-buf_pool_clear_hash_index();
-#endif /* BTR_CUR_HASH_ADAPT */
-
 /*********************************************************************//**
 Gets the current size of buffer buf_pool in bytes.
 @return size in bytes */
@@ -435,6 +432,7 @@ buf_page_get_zip(
 	const page_size_t&	page_size);
 
 /** This is the general function used to get access to a database page.
+It does page initialization and applies the buffered redo logs.
 @param[in]	page_id		page id
 @param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
 @param[in]	guess		guessed block or NULL
@@ -447,6 +445,29 @@ BUF_PEEK_IF_IN_POOL, BUF_GET_NO_LATCH, or BUF_GET_IF_IN_POOL_OR_WATCH
 @return pointer to the block or NULL */
 buf_block_t*
 buf_page_get_gen(
+	const page_id_t		page_id,
+	const page_size_t&	page_size,
+	ulint			rw_latch,
+	buf_block_t*		guess,
+	ulint			mode,
+	const char*		file,
+	unsigned		line,
+	mtr_t*			mtr,
+	dberr_t*		err);
+
+/** This is the low level function used to get access to a database page.
+@param[in]	page_id		page id
+@param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
+@param[in]	guess		guessed block or NULL
+@param[in]	mode		BUF_GET, BUF_GET_IF_IN_POOL,
+BUF_PEEK_IF_IN_POOL, BUF_GET_NO_LATCH, or BUF_GET_IF_IN_POOL_OR_WATCH
+@param[in]	file		file name
+@param[in]	line		line where called
+@param[in]	mtr		mini-transaction
+@param[out]	err		DB_SUCCESS or error code
+@return pointer to the block or NULL */
+buf_block_t*
+buf_page_get_low(
 	const page_id_t		page_id,
 	const page_size_t&	page_size,
 	ulint			rw_latch,
@@ -646,11 +667,10 @@ buf_block_unfix(buf_block_t* block);
 # endif /* UNIV_DEBUG */
 #endif /* !UNIV_INNOCHECKSUM */
 
-/** Check if a page is all zeroes.
-@param[in]	read_buf	database page
-@param[in]	page_size	page frame size
-@return whether the page is all zeroes */
-bool buf_page_is_zeroes(const void* read_buf, size_t page_size);
+/** Check if a buffer is all zeroes.
+@param[in]	buf	data to check
+@return whether the buffer is all zeroes */
+bool buf_is_zeroes(st_::span<const byte> buf);
 
 /** Checks if the page is in crc32 checksum format.
 @param[in]	read_buf		database page
@@ -1400,7 +1420,7 @@ buf_page_encrypt_before_write(
 NOTE! The definition appears here only for other modules of this
 directory (buf) to see it. Do not use from outside! */
 
-typedef struct {
+struct buf_tmp_buffer_t {
 private:
 	int32		reserved;	/*!< true if this slot is reserved
 					*/
@@ -1430,7 +1450,7 @@ public:
 		return !my_atomic_fas32_explicit(&reserved, true,
 						 MY_MEMORY_ORDER_RELAXED);
 	}
-} buf_tmp_buffer_t;
+};
 
 /** The common buffer control block structure
 for compressed and uncompressed frames */
@@ -1483,11 +1503,6 @@ public:
 					state == BUF_BLOCK_ZIP_PAGE and
 					zip.data == NULL means an active
 					buf_pool->watch */
-
-	ulint           write_size;	/* Write size is set when this
-					page is first time written and then
-					if written again we check is TRIM
-					operation needed. */
 
 	ulint           real_size;	/*!< Real size of the page
 					Normal pages == srv_page_size
@@ -1722,7 +1737,7 @@ struct buf_block_t{
 #  define assert_block_ahi_empty(block)					\
 	ut_a(my_atomic_addlint(&(block)->n_pointers, 0) == 0)
 #  define assert_block_ahi_empty_on_init(block) do {			\
-	UNIV_MEM_VALID(&(block)->n_pointers, sizeof (block)->n_pointers); \
+	MEM_MAKE_DEFINED(&(block)->n_pointers, sizeof (block)->n_pointers); \
 	assert_block_ahi_empty(block);					\
 } while (0)
 #  define assert_block_ahi_valid(block)					\
@@ -1753,9 +1768,6 @@ struct buf_block_t{
 # define assert_block_ahi_empty_on_init(block) /* nothing */
 # define assert_block_ahi_valid(block) /* nothing */
 #endif /* BTR_CUR_HASH_ADAPT */
-	bool		skip_flush_check;
-					/*!< Skip check in buf_dblwr_check_block
-					during bulk load, protected by lock.*/
 # ifdef UNIV_DEBUG
 	/** @name Debug fields */
 	/* @{ */

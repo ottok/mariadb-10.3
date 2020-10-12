@@ -87,13 +87,13 @@ row_vers_impl_x_locked_low(
 	dict_index_t*	clust_index,
 	const rec_t*	rec,
 	dict_index_t*	index,
-	const offset_t*	offsets,
+	const rec_offs*	offsets,
 	mtr_t*		mtr)
 {
 	trx_id_t	trx_id;
 	rec_t*		prev_version = NULL;
-	offset_t	clust_offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	clust_offsets = clust_offsets_;
+	rec_offs	clust_offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	clust_offsets;
 	mem_heap_t*	heap;
 	dtuple_t*	ientry = NULL;
 	mem_heap_t*	v_heap = NULL;
@@ -115,7 +115,7 @@ row_vers_impl_x_locked_low(
 
 	heap = mem_heap_create(1024);
 
-	clust_offsets = rec_get_offsets(clust_rec, clust_index, clust_offsets,
+	clust_offsets = rec_get_offsets(clust_rec, clust_index, clust_offsets_,
 					true, ULINT_UNDEFINED, &heap);
 
 	trx_id = row_get_rec_trx_id(clust_rec, clust_index, clust_offsets);
@@ -204,7 +204,7 @@ row_vers_impl_x_locked_low(
 		ut_ad(committed || prev_version
 		      || !rec_get_deleted_flag(version, comp));
 
-		/* Free version. */
+		/* Free version and clust_offsets. */
 		mem_heap_free(old_heap);
 
 		if (committed) {
@@ -239,7 +239,7 @@ not_locked:
 		}
 
 		clust_offsets = rec_get_offsets(
-			prev_version, clust_index, clust_offsets, true,
+			prev_version, clust_index, clust_offsets_, true,
 			ULINT_UNDEFINED, &heap);
 
 		vers_del = rec_get_deleted_flag(prev_version, comp);
@@ -388,7 +388,7 @@ row_vers_impl_x_locked(
 	trx_t*		caller_trx,
 	const rec_t*	rec,
 	dict_index_t*	index,
-	const offset_t*	offsets)
+	const rec_offs*	offsets)
 {
 	mtr_t		mtr;
 	trx_t*		trx;
@@ -465,7 +465,6 @@ row_vers_build_clust_v_col(
 		vcol_info->set_used();
 		maria_table = vcol_info->table();
 	}
-	DEBUG_SYNC(current_thd, "ib_clust_v_col_before_row_allocated");
 
 	innobase_allocate_row_for_vcol(thd, index,
 				       &local_heap,
@@ -520,7 +519,7 @@ row_vers_build_cur_vrow_low(
 	bool			in_purge,
 	const rec_t*		rec,
 	dict_index_t*		clust_index,
-	offset_t*		clust_offsets,
+	rec_offs*		clust_offsets,
 	dict_index_t*		index,
 	roll_ptr_t		roll_ptr,
 	trx_id_t		trx_id,
@@ -616,7 +615,6 @@ row_vers_build_cur_vrow_low(
 /** Check a virtual column value index secondary virtual index matches
 that of current cluster index record, which is recreated from information
 stored in undo log
-@param[in]	in_purge	called by purge thread
 @param[in]	rec		record in the clustered index
 @param[in]	icentry		the index entry built from a cluster row
 @param[in]	clust_index	cluster index
@@ -632,11 +630,10 @@ stored in undo log
 static
 bool
 row_vers_vc_matches_cluster(
-	bool		in_purge,
 	const rec_t*	rec,
 	const dtuple_t* icentry,
 	dict_index_t*	clust_index,
-	offset_t*	clust_offsets,
+	rec_offs*	clust_offsets,
 	dict_index_t*	index,
 	const dtuple_t* ientry,
 	roll_ptr_t	roll_ptr,
@@ -693,12 +690,6 @@ row_vers_vc_matches_cluster(
 
 	version = rec;
 
-	/* If this is called by purge thread, set TRX_UNDO_PREV_IN_PURGE
-	bit to search the undo log until we hit the current undo log with
-	roll_ptr */
-	ulint	status = (in_purge ? TRX_UNDO_PREV_IN_PURGE : 0)
-			 | TRX_UNDO_GET_OLD_V_VALUE;
-
 	while (n_cmp_v_col < n_fields - n_non_v_col) {
 		heap2 = heap;
 		heap = mem_heap_create(1024);
@@ -706,11 +697,12 @@ row_vers_vc_matches_cluster(
 			version, clust_index, clust_offsets);
 
 		ut_ad(cur_roll_ptr != 0);
-		ut_ad(in_purge == (roll_ptr != 0));
+		ut_ad(roll_ptr != 0);
 
 		trx_undo_prev_version_build(
 			rec, mtr, version, clust_index, clust_offsets,
-			heap, &prev_version, NULL, vrow, status);
+			heap, &prev_version, NULL, vrow,
+			TRX_UNDO_PREV_IN_PURGE | TRX_UNDO_GET_OLD_V_VALUE);
 
 		if (heap2) {
 			mem_heap_free(heap2);
@@ -811,7 +803,7 @@ row_vers_build_cur_vrow(
 	bool			in_purge,
 	const rec_t*		rec,
 	dict_index_t*		clust_index,
-	offset_t**		clust_offsets,
+	rec_offs**		clust_offsets,
 	dict_index_t*		index,
 	roll_ptr_t		roll_ptr,
 	trx_id_t		trx_id,
@@ -895,7 +887,7 @@ row_vers_old_has_index_entry(
 	const rec_t*	version;
 	rec_t*		prev_version;
 	dict_index_t*	clust_index;
-	offset_t*	clust_offsets;
+	rec_offs*	clust_offsets;
 	mem_heap_t*	heap;
 	mem_heap_t*	heap2;
 	dtuple_t*	row;
@@ -992,7 +984,7 @@ row_vers_old_has_index_entry(
 				secondary indexes.) */
 
 				if (entry && row_vers_vc_matches_cluster(
-					    also_curr, rec, entry,
+					    rec, entry,
 					    clust_index, clust_offsets,
 					    index, ientry, roll_ptr,
 					    trx_id, NULL, &vrow, mtr)) {
@@ -1152,7 +1144,7 @@ row_vers_build_for_consistent_read(
 				of this records */
 	mtr_t*		mtr,	/*!< in: mtr holding the latch on rec */
 	dict_index_t*	index,	/*!< in: the clustered index */
-	offset_t**	offsets,/*!< in/out: offsets returned by
+	rec_offs**	offsets,/*!< in/out: offsets returned by
 				rec_get_offsets(rec, index) */
 	ReadView*	view,	/*!< in: the consistent read view */
 	mem_heap_t**	offset_heap,/*!< in/out: memory heap from which
@@ -1268,7 +1260,7 @@ row_vers_build_for_semi_consistent_read(
 				of this records */
 	mtr_t*		mtr,	/*!< in: mtr holding the latch on rec */
 	dict_index_t*	index,	/*!< in: the clustered index */
-	offset_t**	offsets,/*!< in/out: offsets returned by
+	rec_offs**	offsets,/*!< in/out: offsets returned by
 				rec_get_offsets(rec, index) */
 	mem_heap_t**	offset_heap,/*!< in/out: memory heap from which
 				the offsets are allocated */

@@ -24,7 +24,7 @@
 #include "test_util/testutil.h"
 #include "util/random.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 class StatsHistoryTest : public DBTestBase {
  public:
@@ -36,15 +36,15 @@ TEST_F(StatsHistoryTest, RunStatsDumpPeriodSec) {
   Options options;
   options.create_if_missing = true;
   options.stats_dump_period_sec = 5;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
   int counter = 0;
-  rocksdb::SyncPoint::GetInstance()->DisableProcessing();
-  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
 #if defined(OS_MACOSX) && !defined(NDEBUG)
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "InstrumentedCondVar::TimedWaitInternal", [&](void* arg) {
         uint64_t time_us = *reinterpret_cast<uint64_t*>(arg);
         if (time_us < mock_env->RealNowMicros()) {
@@ -52,11 +52,11 @@ TEST_F(StatsHistoryTest, RunStatsDumpPeriodSec) {
         }
       });
 #endif  // OS_MACOSX && !NDEBUG
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "DBImpl::DumpStats:1", [&](void* /*arg*/) { counter++; });
-  rocksdb::SyncPoint::GetInstance()->EnableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->EnableProcessing();
   Reopen(options);
-  ASSERT_EQ(5, dbfull()->GetDBOptions().stats_dump_period_sec);
+  ASSERT_EQ(5u, dbfull()->GetDBOptions().stats_dump_period_sec);
   dbfull()->TEST_WaitForDumpStatsRun([&] { mock_env->set_current_time(5); });
   ASSERT_GE(counter, 1);
 
@@ -75,14 +75,14 @@ TEST_F(StatsHistoryTest, StatsPersistScheduling) {
   Options options;
   options.create_if_missing = true;
   options.stats_persist_period_sec = 5;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
-  rocksdb::SyncPoint::GetInstance()->DisableProcessing();
-  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
 #if defined(OS_MACOSX) && !defined(NDEBUG)
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "InstrumentedCondVar::TimedWaitInternal", [&](void* arg) {
         uint64_t time_us = *reinterpret_cast<uint64_t*>(arg);
         if (time_us < mock_env->RealNowMicros()) {
@@ -91,11 +91,11 @@ TEST_F(StatsHistoryTest, StatsPersistScheduling) {
       });
 #endif  // OS_MACOSX && !NDEBUG
   int counter = 0;
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "DBImpl::PersistStats:Entry", [&](void* /*arg*/) { counter++; });
-  rocksdb::SyncPoint::GetInstance()->EnableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->EnableProcessing();
   Reopen(options);
-  ASSERT_EQ(5, dbfull()->GetDBOptions().stats_persist_period_sec);
+  ASSERT_EQ(5u, dbfull()->GetDBOptions().stats_persist_period_sec);
   dbfull()->TEST_WaitForPersistStatsRun([&] { mock_env->set_current_time(5); });
   ASSERT_GE(counter, 1);
 
@@ -111,14 +111,14 @@ TEST_F(StatsHistoryTest, PersistentStatsFreshInstall) {
   Options options;
   options.create_if_missing = true;
   options.stats_persist_period_sec = 0;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
-  rocksdb::SyncPoint::GetInstance()->DisableProcessing();
-  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
 #if defined(OS_MACOSX) && !defined(NDEBUG)
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "InstrumentedCondVar::TimedWaitInternal", [&](void* arg) {
         uint64_t time_us = *reinterpret_cast<uint64_t*>(arg);
         if (time_us < mock_env->RealNowMicros()) {
@@ -127,12 +127,12 @@ TEST_F(StatsHistoryTest, PersistentStatsFreshInstall) {
       });
 #endif  // OS_MACOSX && !NDEBUG
   int counter = 0;
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "DBImpl::PersistStats:Entry", [&](void* /*arg*/) { counter++; });
-  rocksdb::SyncPoint::GetInstance()->EnableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->EnableProcessing();
   Reopen(options);
   ASSERT_OK(dbfull()->SetDBOptions({{"stats_persist_period_sec", "5"}}));
-  ASSERT_EQ(5, dbfull()->GetDBOptions().stats_persist_period_sec);
+  ASSERT_EQ(5u, dbfull()->GetDBOptions().stats_persist_period_sec);
   dbfull()->TEST_WaitForPersistStatsRun([&] { mock_env->set_current_time(5); });
   ASSERT_GE(counter, 1);
   Close();
@@ -143,22 +143,22 @@ TEST_F(StatsHistoryTest, GetStatsHistoryInMemory) {
   Options options;
   options.create_if_missing = true;
   options.stats_persist_period_sec = 5;
-  options.statistics = rocksdb::CreateDBStatistics();
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
 #if defined(OS_MACOSX) && !defined(NDEBUG)
-  rocksdb::SyncPoint::GetInstance()->DisableProcessing();
-  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "InstrumentedCondVar::TimedWaitInternal", [&](void* arg) {
         uint64_t time_us = *reinterpret_cast<uint64_t*>(arg);
         if (time_us < mock_env->RealNowMicros()) {
           *reinterpret_cast<uint64_t*>(arg) = mock_env->RealNowMicros() + 1000;
         }
       });
-  rocksdb::SyncPoint::GetInstance()->EnableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->EnableProcessing();
 #endif  // OS_MACOSX && !NDEBUG
 
   CreateColumnFamilies({"pikachu"}, options);
@@ -198,23 +198,23 @@ TEST_F(StatsHistoryTest, GetStatsHistoryInMemory) {
 TEST_F(StatsHistoryTest, InMemoryStatsHistoryPurging) {
   Options options;
   options.create_if_missing = true;
-  options.statistics = rocksdb::CreateDBStatistics();
+  options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
   options.stats_persist_period_sec = 1;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
 #if defined(OS_MACOSX) && !defined(NDEBUG)
-  rocksdb::SyncPoint::GetInstance()->DisableProcessing();
-  rocksdb::SyncPoint::GetInstance()->ClearAllCallBacks();
-  rocksdb::SyncPoint::GetInstance()->SetCallBack(
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
       "InstrumentedCondVar::TimedWaitInternal", [&](void* arg) {
         uint64_t time_us = *reinterpret_cast<uint64_t*>(arg);
         if (time_us < mock_env->RealNowMicros()) {
           *reinterpret_cast<uint64_t*>(arg) = mock_env->RealNowMicros() + 1000;
         }
       });
-  rocksdb::SyncPoint::GetInstance()->EnableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->EnableProcessing();
 #endif  // OS_MACOSX && !NDEBUG
 
   CreateColumnFamilies({"pikachu"}, options);
@@ -312,10 +312,10 @@ TEST_F(StatsHistoryTest, GetStatsHistoryFromDisk) {
   Options options;
   options.create_if_missing = true;
   options.stats_persist_period_sec = 5;
-  options.statistics = rocksdb::CreateDBStatistics();
+  options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
   options.persist_stats_to_disk = true;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
   CreateColumnFamilies({"pikachu"}, options);
@@ -393,10 +393,10 @@ TEST_F(StatsHistoryTest, PersitentStatsVerifyValue) {
   Options options;
   options.create_if_missing = true;
   options.stats_persist_period_sec = 5;
-  options.statistics = rocksdb::CreateDBStatistics();
+  options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
   options.persist_stats_to_disk = true;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   std::map<std::string, uint64_t> stats_map_before;
   ASSERT_TRUE(options.statistics->getTickerMap(&stats_map_before));
   mock_env->set_current_time(0);  // in seconds
@@ -472,10 +472,10 @@ TEST_F(StatsHistoryTest, PersistentStatsCreateColumnFamilies) {
   Options options;
   options.create_if_missing = true;
   options.stats_persist_period_sec = 5;
-  options.statistics = rocksdb::CreateDBStatistics();
+  options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
   options.persist_stats_to_disk = true;
-  std::unique_ptr<rocksdb::MockTimeEnv> mock_env;
-  mock_env.reset(new rocksdb::MockTimeEnv(env_));
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
   mock_env->set_current_time(0);  // in seconds
   options.env = mock_env.get();
   ASSERT_OK(TryReopen(options));
@@ -561,18 +561,93 @@ TEST_F(StatsHistoryTest, PersistentStatsReadOnly) {
   Close();
 
   // Reopen and flush memtable.
-  Reopen(options);
+  ASSERT_OK(TryReopen(options));
   Flush();
   Close();
   // Now check keys in read only mode.
   ASSERT_OK(ReadOnlyReopen(options));
 }
-#endif  // !ROCKSDB_LITE
 
-}  // namespace rocksdb
+TEST_F(StatsHistoryTest, ForceManualFlushStatsCF) {
+  Options options;
+  options.create_if_missing = true;
+  options.write_buffer_size = 1024 * 1024 * 10;  // 10 Mb
+  options.stats_persist_period_sec = 5;
+  options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
+  options.persist_stats_to_disk = true;
+  std::unique_ptr<ROCKSDB_NAMESPACE::MockTimeEnv> mock_env;
+  mock_env.reset(new ROCKSDB_NAMESPACE::MockTimeEnv(env_));
+  mock_env->set_current_time(0);  // in seconds
+  options.env = mock_env.get();
+  CreateColumnFamilies({"pikachu"}, options);
+  ReopenWithColumnFamilies({"default", "pikachu"}, options);
+  ColumnFamilyData* cfd_default =
+      static_cast<ColumnFamilyHandleImpl*>(dbfull()->DefaultColumnFamily())
+          ->cfd();
+  ColumnFamilyData* cfd_stats = static_cast<ColumnFamilyHandleImpl*>(
+                                    dbfull()->PersistentStatsColumnFamily())
+                                    ->cfd();
+  ColumnFamilyData* cfd_test =
+      static_cast<ColumnFamilyHandleImpl*>(handles_[1])->cfd();
+
+  ASSERT_OK(Put("foo", "v0"));
+  ASSERT_OK(Put("bar", "v0"));
+  ASSERT_EQ("v0", Get("bar"));
+  ASSERT_EQ("v0", Get("foo"));
+  ASSERT_OK(Put(1, "Eevee", "v0"));
+  ASSERT_EQ("v0", Get(1, "Eevee"));
+  dbfull()->TEST_WaitForPersistStatsRun([&] { mock_env->set_current_time(5); });
+  // writing to all three cf, flush default cf
+  // LogNumbers: default: 14, stats: 4, pikachu: 4
+  ASSERT_OK(Flush());
+  ASSERT_EQ(cfd_stats->GetLogNumber(), cfd_test->GetLogNumber());
+  ASSERT_LT(cfd_stats->GetLogNumber(), cfd_default->GetLogNumber());
+
+  ASSERT_OK(Put("foo1", "v1"));
+  ASSERT_OK(Put("bar1", "v1"));
+  ASSERT_EQ("v1", Get("bar1"));
+  ASSERT_EQ("v1", Get("foo1"));
+  ASSERT_OK(Put(1, "Vaporeon", "v1"));
+  ASSERT_EQ("v1", Get(1, "Vaporeon"));
+  // writing to default and test cf, flush test cf
+  // LogNumbers: default: 14, stats: 16, pikachu: 16
+  ASSERT_OK(Flush(1));
+  ASSERT_EQ(cfd_stats->GetLogNumber(), cfd_test->GetLogNumber());
+  ASSERT_GT(cfd_stats->GetLogNumber(), cfd_default->GetLogNumber());
+
+  ASSERT_OK(Put("foo2", "v2"));
+  ASSERT_OK(Put("bar2", "v2"));
+  ASSERT_EQ("v2", Get("bar2"));
+  ASSERT_EQ("v2", Get("foo2"));
+  dbfull()->TEST_WaitForPersistStatsRun(
+      [&] { mock_env->set_current_time(10); });
+  // writing to default and stats cf, flushing default cf
+  // LogNumbers: default: 19, stats: 19, pikachu: 19
+  ASSERT_OK(Flush());
+  ASSERT_EQ(cfd_stats->GetLogNumber(), cfd_test->GetLogNumber());
+  ASSERT_EQ(cfd_stats->GetLogNumber(), cfd_default->GetLogNumber());
+
+  ASSERT_OK(Put("foo3", "v3"));
+  ASSERT_OK(Put("bar3", "v3"));
+  ASSERT_EQ("v3", Get("bar3"));
+  ASSERT_EQ("v3", Get("foo3"));
+  ASSERT_OK(Put(1, "Jolteon", "v3"));
+  ASSERT_EQ("v3", Get(1, "Jolteon"));
+  dbfull()->TEST_WaitForPersistStatsRun(
+      [&] { mock_env->set_current_time(15); });
+  // writing to all three cf, flushing test cf
+  // LogNumbers: default: 19, stats: 19, pikachu: 22
+  ASSERT_OK(Flush(1));
+  ASSERT_LT(cfd_stats->GetLogNumber(), cfd_test->GetLogNumber());
+  ASSERT_EQ(cfd_stats->GetLogNumber(), cfd_default->GetLogNumber());
+  Close();
+}
+
+#endif  // !ROCKSDB_LITE
+}  // namespace ROCKSDB_NAMESPACE
 
 int main(int argc, char** argv) {
-  rocksdb::port::InstallStackTraceHandler();
+  ROCKSDB_NAMESPACE::port::InstallStackTraceHandler();
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

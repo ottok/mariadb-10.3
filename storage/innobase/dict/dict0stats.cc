@@ -409,7 +409,7 @@ dict_stats_table_clone_create(
 
 	t = (dict_table_t*) mem_heap_alloc(heap, sizeof(*t));
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->id, sizeof(table->id));
+	MEM_CHECK_DEFINED(&table->id, sizeof(table->id));
 	t->id = table->id;
 
 	t->heap = heap;
@@ -424,6 +424,9 @@ dict_stats_table_clone_create(
 	dict_table_stats_latch_create(t, false);
 
 	UT_LIST_INIT(t->indexes, &dict_index_t::indexes);
+#ifdef BTR_CUR_HASH_ADAPT
+	UT_LIST_INIT(t->freed_indexes, &dict_index_t::indexes);
+#endif /* BTR_CUR_HASH_ADAPT */
 
 	for (index = dict_table_get_first_index(table);
 	     index != NULL;
@@ -439,7 +442,7 @@ dict_stats_table_clone_create(
 
 		idx = (dict_index_t*) mem_heap_alloc(heap, sizeof(*idx));
 
-		UNIV_MEM_ASSERT_RW_ABORT(&index->id, sizeof(index->id));
+		MEM_CHECK_DEFINED(&index->id, sizeof(index->id));
 		idx->id = index->id;
 
 		idx->name = mem_heap_strdup(heap, index->name);
@@ -584,23 +587,23 @@ dict_stats_assert_initialized_index(
 /*================================*/
 	const dict_index_t*	index)	/*!< in: index */
 {
-	UNIV_MEM_ASSERT_RW_ABORT(
+	MEM_CHECK_DEFINED(
 		index->stat_n_diff_key_vals,
 		index->n_uniq * sizeof(index->stat_n_diff_key_vals[0]));
 
-	UNIV_MEM_ASSERT_RW_ABORT(
+	MEM_CHECK_DEFINED(
 		index->stat_n_sample_sizes,
 		index->n_uniq * sizeof(index->stat_n_sample_sizes[0]));
 
-	UNIV_MEM_ASSERT_RW_ABORT(
+	MEM_CHECK_DEFINED(
 		index->stat_n_non_null_key_vals,
 		index->n_uniq * sizeof(index->stat_n_non_null_key_vals[0]));
 
-	UNIV_MEM_ASSERT_RW_ABORT(
+	MEM_CHECK_DEFINED(
 		&index->stat_index_size,
 		sizeof(index->stat_index_size));
 
-	UNIV_MEM_ASSERT_RW_ABORT(
+	MEM_CHECK_DEFINED(
 		&index->stat_n_leaf_pages,
 		sizeof(index->stat_n_leaf_pages));
 }
@@ -615,32 +618,32 @@ dict_stats_assert_initialized(
 {
 	ut_a(table->stat_initialized);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stats_last_recalc,
-			   sizeof(table->stats_last_recalc));
+	MEM_CHECK_DEFINED(&table->stats_last_recalc,
+			  sizeof table->stats_last_recalc);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stat_persistent,
-			   sizeof(table->stat_persistent));
+	MEM_CHECK_DEFINED(&table->stat_persistent,
+			  sizeof table->stat_persistent);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stats_auto_recalc,
-			   sizeof(table->stats_auto_recalc));
+	MEM_CHECK_DEFINED(&table->stats_auto_recalc,
+			  sizeof table->stats_auto_recalc);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stats_sample_pages,
-			   sizeof(table->stats_sample_pages));
+	MEM_CHECK_DEFINED(&table->stats_sample_pages,
+			  sizeof table->stats_sample_pages);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stat_n_rows,
-			   sizeof(table->stat_n_rows));
+	MEM_CHECK_DEFINED(&table->stat_n_rows,
+			  sizeof table->stat_n_rows);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stat_clustered_index_size,
-			   sizeof(table->stat_clustered_index_size));
+	MEM_CHECK_DEFINED(&table->stat_clustered_index_size,
+			  sizeof table->stat_clustered_index_size);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stat_sum_of_other_index_sizes,
-			   sizeof(table->stat_sum_of_other_index_sizes));
+	MEM_CHECK_DEFINED(&table->stat_sum_of_other_index_sizes,
+			  sizeof table->stat_sum_of_other_index_sizes);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stat_modified_counter,
-			   sizeof(table->stat_modified_counter));
+	MEM_CHECK_DEFINED(&table->stat_modified_counter,
+			  sizeof table->stat_modified_counter);
 
-	UNIV_MEM_ASSERT_RW_ABORT(&table->stats_bg_flag,
-			   sizeof(table->stats_bg_flag));
+	MEM_CHECK_DEFINED(&table->stats_bg_flag,
+			  sizeof table->stats_bg_flag);
 
 	for (dict_index_t* index = dict_table_get_first_index(table);
 	     index != NULL;
@@ -1014,8 +1017,8 @@ dict_stats_analyze_index_level(
 	bool		prev_rec_is_copied;
 	byte*		prev_rec_buf = NULL;
 	ulint		prev_rec_buf_size = 0;
-	offset_t*	rec_offsets;
-	offset_t*	prev_rec_offsets;
+	rec_offs*	rec_offsets;
+	rec_offs*	prev_rec_offsets;
 	ulint		i;
 
 	DEBUG_PRINTF("    %s(table=%s, index=%s, level=" ULINTPF ")\n",
@@ -1036,9 +1039,9 @@ dict_stats_analyze_index_level(
 	i = (REC_OFFS_HEADER_SIZE + 1 + 1) + n_uniq;
 
 	heap = mem_heap_create((2 * sizeof *rec_offsets) * i);
-	rec_offsets = static_cast<offset_t*>(
+	rec_offsets = static_cast<rec_offs*>(
 		mem_heap_alloc(heap, i * sizeof *rec_offsets));
-	prev_rec_offsets = static_cast<offset_t*>(
+	prev_rec_offsets = static_cast<rec_offs*>(
 		mem_heap_alloc(heap, i * sizeof *prev_rec_offsets));
 	rec_offs_set_n_alloc(rec_offsets, i);
 	rec_offs_set_n_alloc(prev_rec_offsets, i);
@@ -1327,11 +1330,11 @@ to the number of externally stored pages which were encountered
 @return offsets1 or offsets2 (the offsets of *out_rec),
 or NULL if the page is empty and does not contain user records. */
 UNIV_INLINE
-offset_t*
+rec_offs*
 dict_stats_scan_page(
 	const rec_t**		out_rec,
-	offset_t*		offsets1,
-	offset_t*		offsets2,
+	rec_offs*		offsets1,
+	rec_offs*		offsets2,
 	const dict_index_t*	index,
 	const page_t*		page,
 	ulint			n_prefix,
@@ -1339,8 +1342,8 @@ dict_stats_scan_page(
 	ib_uint64_t*		n_diff,
 	ib_uint64_t*		n_external_pages)
 {
-	offset_t*	offsets_rec		= offsets1;
-	offset_t*	offsets_next_rec	= offsets2;
+	rec_offs*	offsets_rec		= offsets1;
+	rec_offs*	offsets_next_rec	= offsets2;
 	const rec_t*	rec;
 	const rec_t*	next_rec;
 	/* A dummy heap, to be passed to rec_get_offsets().
@@ -1453,9 +1456,9 @@ dict_stats_analyze_index_below_cur(
 	const page_t*	page;
 	mem_heap_t*	heap;
 	const rec_t*	rec;
-	offset_t*	offsets1;
-	offset_t*	offsets2;
-	offset_t*	offsets_rec;
+	rec_offs*	offsets1;
+	rec_offs*	offsets2;
+	rec_offs*	offsets_rec;
 	ulint		size;
 	mtr_t		mtr;
 
@@ -1473,10 +1476,10 @@ dict_stats_analyze_index_below_cur(
 
 	heap = mem_heap_create(size * (sizeof *offsets1 + sizeof *offsets2));
 
-	offsets1 = static_cast<offset_t*>(mem_heap_alloc(
+	offsets1 = static_cast<rec_offs*>(mem_heap_alloc(
 			heap, size * sizeof *offsets1));
 
-	offsets2 = static_cast<offset_t*>(mem_heap_alloc(
+	offsets2 = static_cast<rec_offs*>(mem_heap_alloc(
 			heap, size * sizeof *offsets2));
 
 	rec_offs_set_n_alloc(offsets1, size);
@@ -2305,20 +2308,19 @@ dict_stats_save_index_stat(
 	pars_info_add_str_literal(pinfo, "database_name", db_utf8);
 	pars_info_add_str_literal(pinfo, "table_name", table_utf8);
 	pars_info_add_str_literal(pinfo, "index_name", index->name);
-	UNIV_MEM_ASSERT_RW_ABORT(&last_update, 4);
+	MEM_CHECK_DEFINED(&last_update, 4);
 	pars_info_add_int4_literal(pinfo, "last_update", uint32(last_update));
-	UNIV_MEM_ASSERT_RW_ABORT(stat_name, strlen(stat_name));
+	MEM_CHECK_DEFINED(stat_name, strlen(stat_name));
 	pars_info_add_str_literal(pinfo, "stat_name", stat_name);
-	UNIV_MEM_ASSERT_RW_ABORT(&stat_value, 8);
+	MEM_CHECK_DEFINED(&stat_value, 8);
 	pars_info_add_ull_literal(pinfo, "stat_value", stat_value);
 	if (sample_size != NULL) {
-		UNIV_MEM_ASSERT_RW_ABORT(sample_size, 8);
+		MEM_CHECK_DEFINED(sample_size, 8);
 		pars_info_add_ull_literal(pinfo, "sample_size", *sample_size);
 	} else {
 		pars_info_add_literal(pinfo, "sample_size", NULL,
 				      UNIV_SQL_NULL, DATA_FIXBINARY, 0);
 	}
-	UNIV_MEM_ASSERT_RW_ABORT(stat_description, strlen(stat_description));
 	pars_info_add_str_literal(pinfo, "stat_description",
 				  stat_description);
 
@@ -2348,14 +2350,14 @@ dict_stats_save_index_stat(
 		");\n"
 		"END;", trx);
 
-	if (ret != DB_SUCCESS) {
+	if (UNIV_UNLIKELY(ret != DB_SUCCESS)) {
 		if (innodb_index_stats_not_found == false &&
 		    index->stats_error_printed == false) {
 		ib::error() << "Cannot save index statistics for table "
 			<< index->table->name
 			<< ", index " << index->name
 			<< ", stat name \"" << stat_name << "\": "
-			<< ut_strerr(ret);
+			<< ret;
 			index->stats_error_printed = true;
 		}
 	}
@@ -2466,9 +2468,9 @@ dict_stats_save(
 		");\n"
 		"END;", NULL);
 
-	if (ret != DB_SUCCESS) {
+	if (UNIV_UNLIKELY(ret != DB_SUCCESS)) {
 		ib::error() << "Cannot save table statistics for table "
-			<< table->name << ": " << ut_strerr(ret);
+			<< table->name << ": " << ret;
 
 		mutex_exit(&dict_sys->mutex);
 		rw_lock_x_unlock(&dict_operation_lock);
@@ -3323,7 +3325,7 @@ dict_stats_update(
 					" for table "
 					<< table->name
 					<< " from " TABLE_STATS_NAME_PRINT " and "
-					INDEX_STATS_NAME_PRINT ": " << ut_strerr(err)
+					INDEX_STATS_NAME_PRINT ": " << err
 					<< ". Using transient stats method instead.";
 			}
 
@@ -4001,6 +4003,9 @@ test_dict_stats_save()
 	table.stat_clustered_index_size = TEST_CLUSTERED_INDEX_SIZE;
 	table.stat_sum_of_other_index_sizes = TEST_SUM_OF_OTHER_INDEX_SIZES;
 	UT_LIST_INIT(table.indexes, &dict_index_t::indexes);
+#ifdef BTR_CUR_HASH_ADAPT
+	UT_LIST_INIT(table.freed_indexes, &dict_index_t::indexes);
+#endif /* BTR_CUR_HASH_ADAPT */
 	UT_LIST_ADD_LAST(table.indexes, &index1);
 	UT_LIST_ADD_LAST(table.indexes, &index2);
 	ut_d(table.magic_n = DICT_TABLE_MAGIC_N);
@@ -4150,6 +4155,9 @@ test_dict_stats_fetch_from_ps()
 	/* craft a dummy dict_table_t */
 	table.name.m_name = (char*) (TEST_DATABASE_NAME "/" TEST_TABLE_NAME);
 	UT_LIST_INIT(table.indexes, &dict_index_t::indexes);
+#ifdef BTR_CUR_HASH_ADAPT
+	UT_LIST_INIT(table.freed_indexes, &dict_index_t::indexes);
+#endif /* BTR_CUR_HASH_ADAPT */
 	UT_LIST_ADD_LAST(table.indexes, &index1);
 	UT_LIST_ADD_LAST(table.indexes, &index2);
 	ut_d(table.magic_n = DICT_TABLE_MAGIC_N);

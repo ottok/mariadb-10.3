@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2019, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -168,8 +168,8 @@ row_undo_search_clust_to_pcur(
 	row_ext_t**	ext;
 	const rec_t*	rec;
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(!node->table->skip_alter_undo);
@@ -347,7 +347,7 @@ row_undo_step(
 
 	if (UNIV_UNLIKELY(trx_get_dict_operation(trx) == TRX_DICT_OP_NONE
 			  && !srv_undo_sources
-			  && !srv_is_being_started)
+			  && srv_shutdown_state != SRV_SHUTDOWN_NONE)
 	    && (srv_fast_shutdown == 3 || trx == trx_roll_crash_recv_trx)) {
 		/* Shutdown has been initiated. */
 		trx->error_state = DB_INTERRUPTED;
@@ -360,17 +360,16 @@ row_undo_step(
 
 	err = row_undo(node, thr);
 
+#ifdef ENABLED_DEBUG_SYNC
+	if (trx->mysql_thd) {
+		DEBUG_SYNC_C("trx_after_rollback_row");
+	}
+#endif /* ENABLED_DEBUG_SYNC */
+
 	trx->error_state = err;
 
-	if (err != DB_SUCCESS) {
-		/* SQL error detected */
-
-		if (err == DB_OUT_OF_FILE_SPACE) {
-			ib::fatal() << "Out of tablespace during rollback."
-				" Consider increasing your tablespace.";
-		}
-
-		ib::fatal() << "Error (" << ut_strerr(err) << ") in rollback.";
+	if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
+		ib::fatal() << "Error (" << err << ") in rollback.";
 	}
 
 	return(thr);

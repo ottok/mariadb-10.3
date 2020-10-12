@@ -46,6 +46,9 @@ Completed by Sunny Bains and Marko Makela
 #include "row0vers.h"
 #include "handler0alter.h"
 #include "btr0bulk.h"
+#ifdef BTR_CUR_ADAPT
+# include "btr0sea.h"
+#endif /* BTR_CUR_ADAPT */
 #include "ut0stage.h"
 #include "fil0crypt.h"
 
@@ -120,7 +123,7 @@ public:
 		btr_cur_t       ins_cur;
 		mtr_t           mtr;
 		rtr_info_t      rtr_info;
-		offset_t*	ins_offsets = NULL;
+		rec_offs*	ins_offsets = NULL;
 		dberr_t		error = DB_SUCCESS;
 		dtuple_t*	dtuple;
 		ulint		count = 0;
@@ -202,7 +205,6 @@ public:
 					BTR_MODIFY_TREE,
 					&ins_cur, 0,
 					__FILE__, __LINE__, &mtr);
-
 
 				error = btr_cur_pessimistic_insert(
 						flag, &ins_cur, &ins_offsets,
@@ -1025,11 +1027,11 @@ row_merge_buf_write(
 	ut_a(b < &block[srv_sort_buf_size]);
 	ut_a(b == &block[0] + buf->total_size);
 	*b++ = 0;
-#ifdef UNIV_DEBUG_VALGRIND
+#ifdef HAVE_valgrind
 	/* The rest of the block is uninitialized.  Initialize it
 	to avoid bogus warnings. */
 	memset(b, 0xff, &block[srv_sort_buf_size] - b);
-#endif /* UNIV_DEBUG_VALGRIND */
+#endif /* HAVE_valgrind */
 	DBUG_LOG("ib_merge_sort",
 		 "write " << reinterpret_cast<const void*>(b) << ','
 		 << of->fd << ',' << of->offset << " EOF");
@@ -1046,8 +1048,8 @@ row_merge_heap_create(
 /*==================*/
 	const dict_index_t*	index,		/*!< in: record descriptor */
 	mrec_buf_t**		buf,		/*!< out: 3 buffers */
-	offset_t**		offsets1,	/*!< out: offsets */
-	offset_t**		offsets2)	/*!< out: offsets */
+	rec_offs**		offsets1,	/*!< out: offsets */
+	rec_offs**		offsets2)	/*!< out: offsets */
 {
 	ulint		i	= 1 + REC_OFFS_HEADER_SIZE
 		+ dict_index_get_n_fields(index);
@@ -1056,9 +1058,9 @@ row_merge_heap_create(
 
 	*buf = static_cast<mrec_buf_t*>(
 		mem_heap_alloc(heap, 3 * sizeof **buf));
-	*offsets1 = static_cast<offset_t*>(
+	*offsets1 = static_cast<rec_offs*>(
 		mem_heap_alloc(heap, i * sizeof **offsets1));
-	*offsets2 = static_cast<offset_t*>(
+	*offsets2 = static_cast<rec_offs*>(
 		mem_heap_alloc(heap, i * sizeof **offsets2));
 
 	rec_offs_set_n_alloc(*offsets1, i);
@@ -1180,7 +1182,7 @@ row_merge_read_rec(
 	const mrec_t**		mrec,	/*!< out: pointer to merge record,
 					or NULL on end of list
 					(non-NULL on I/O error) */
-	offset_t*		offsets,/*!< out: offsets of mrec */
+	rec_offs*		offsets,/*!< out: offsets of mrec */
 	row_merge_block_t*	crypt_block, /*!< in: crypt buf or NULL */
 	ulint			space) /*!< in: space id */
 {
@@ -1337,7 +1339,7 @@ row_merge_write_rec_low(
 	ulint		foffs,	/*!< in: file offset */
 #endif /* !DBUG_OFF */
 	const mrec_t*	mrec,	/*!< in: record to write */
-	const offset_t*	offsets)/*!< in: offsets of mrec */
+	const rec_offs*	offsets)/*!< in: offsets of mrec */
 #ifdef DBUG_OFF
 # define row_merge_write_rec_low(b, e, size, fd, foffs, mrec, offsets)	\
 	row_merge_write_rec_low(b, e, mrec, offsets)
@@ -1379,7 +1381,7 @@ row_merge_write_rec(
 	const pfs_os_file_t&	fd,	/*!< in: file descriptor */
 	ulint*			foffs,	/*!< in/out: file offset */
 	const mrec_t*		mrec,	/*!< in: record to write */
-	const offset_t*         offsets,/*!< in: offsets of mrec */
+	const rec_offs*         offsets,/*!< in: offsets of mrec */
 	row_merge_block_t*	crypt_block, /*!< in: crypt buf or NULL */
 	ulint			space)	   /*!< in: space id */
 {
@@ -1422,7 +1424,7 @@ row_merge_write_rec(
 			return(NULL);
 		}
 
-		UNIV_MEM_INVALID(&block[0], srv_sort_buf_size);
+		MEM_UNDEFINED(&block[0], srv_sort_buf_size);
 
 		/* Copy the rest. */
 		b = &block[0];
@@ -1463,20 +1465,17 @@ row_merge_write_eof(
 		 ",fd=" << fd << ',' << *foffs);
 
 	*b++ = 0;
-	UNIV_MEM_ASSERT_RW(&block[0], b - &block[0]);
-	UNIV_MEM_ASSERT_W(&block[0], srv_sort_buf_size);
+	MEM_CHECK_DEFINED(&block[0], b - &block[0]);
+	MEM_CHECK_ADDRESSABLE(&block[0], srv_sort_buf_size);
 
-#ifdef UNIV_DEBUG_VALGRIND
-	/* The rest of the block is uninitialized.  Initialize it
-	to avoid bogus warnings. */
-	memset(b, 0xff, ulint(&block[srv_sort_buf_size] - b));
-#endif /* UNIV_DEBUG_VALGRIND */
+	/* The rest of the block is uninitialized. Silence warnings. */
+	MEM_MAKE_DEFINED(b, &block[srv_sort_buf_size] - b);
 
 	if (!row_merge_write(fd, (*foffs)++, block, crypt_block, space)) {
 		DBUG_RETURN(NULL);
 	}
 
-	UNIV_MEM_INVALID(&block[0], srv_sort_buf_size);
+	MEM_UNDEFINED(&block[0], srv_sort_buf_size);
 	DBUG_RETURN(&block[0]);
 }
 
@@ -1926,7 +1925,7 @@ row_merge_read_clustered_index(
 
 		const rec_t*	rec;
 		trx_id_t	rec_trx_id;
-		offset_t*	offsets;
+		rec_offs*	offsets;
 		dtuple_t*	row;
 		row_ext_t*	ext;
 		page_cur_t*	cur	= btr_pcur_get_page_cur(&pcur);
@@ -2677,7 +2676,7 @@ write_buffers:
 						break;
 					}
 
-					UNIV_MEM_INVALID(
+					MEM_UNDEFINED(
 						&block[0], srv_sort_buf_size);
 				}
 			}
@@ -2960,8 +2959,8 @@ row_merge_blocks(
 	const mrec_t*	mrec0;	/*!< merge rec, points to block[0] or buf[0] */
 	const mrec_t*	mrec1;	/*!< merge rec, points to
 				block[srv_sort_buf_size] or buf[1] */
-	offset_t*	offsets0;/* offsets of mrec0 */
-	offset_t*	offsets1;/* offsets of mrec1 */
+	rec_offs*	offsets0;/* offsets of mrec0 */
+	rec_offs*	offsets1;/* offsets of mrec1 */
 
 	DBUG_ENTER("row_merge_blocks");
 	DBUG_LOG("ib_merge_sort",
@@ -3078,8 +3077,8 @@ row_merge_blocks_copy(
 	const byte*	b0;	/*!< pointer to block[0] */
 	byte*		b2;	/*!< pointer to block[2 * srv_sort_buf_size] */
 	const mrec_t*	mrec0;	/*!< merge rec, points to block[0] */
-	offset_t*	offsets0;/* offsets of mrec0 */
-	offset_t*	offsets1;/* dummy offsets */
+	rec_offs*	offsets0;/* offsets of mrec0 */
+	rec_offs*	offsets1;/* dummy offsets */
 
 	DBUG_ENTER("row_merge_blocks_copy");
 	DBUG_LOG("ib_merge_sort",
@@ -3174,10 +3173,10 @@ row_merge(
 	ulint		n_run	= 0;
 				/*!< num of runs generated from this merge */
 
-	UNIV_MEM_ASSERT_W(&block[0], 3 * srv_sort_buf_size);
+	MEM_CHECK_ADDRESSABLE(&block[0], 3 * srv_sort_buf_size);
 
 	if (crypt_block) {
-		UNIV_MEM_ASSERT_W(&crypt_block[0], 3 * srv_sort_buf_size);
+		MEM_CHECK_ADDRESSABLE(&crypt_block[0], 3 * srv_sort_buf_size);
 	}
 
 	ut_ad(ihalf < file->offset);
@@ -3198,7 +3197,7 @@ row_merge(
 	foffs0 = 0;
 	foffs1 = ihalf;
 
-	UNIV_MEM_INVALID(run_offset, *num_run * sizeof *run_offset);
+	MEM_UNDEFINED(run_offset, *num_run * sizeof *run_offset);
 
 	for (; foffs0 < ihalf && foffs1 < file->offset; foffs0++, foffs1++) {
 
@@ -3279,7 +3278,7 @@ row_merge(
 	*tmpfd = file->fd;
 	*file = of;
 
-	UNIV_MEM_INVALID(&block[0], 3 * srv_sort_buf_size);
+	MEM_UNDEFINED(&block[0], 3 * srv_sort_buf_size);
 
 	return(DB_SUCCESS);
 }
@@ -3392,7 +3391,7 @@ row_merge_sort(
 			break;
 		}
 
-		UNIV_MEM_ASSERT_RW(run_offset, num_runs * sizeof *run_offset);
+		MEM_CHECK_DEFINED(run_offset, num_runs * sizeof *run_offset);
 	} while (num_runs > 1);
 
 	ut_free(run_offset);
@@ -3418,7 +3417,7 @@ static
 void
 row_merge_copy_blobs(
 	const mrec_t*		mrec,
-	const offset_t*		offsets,
+	const rec_offs*		offsets,
 	const page_size_t&	page_size,
 	dtuple_t*		tuple,
 	mem_heap_t*		heap)
@@ -3527,7 +3526,7 @@ row_merge_insert_index_tuples(
 	mem_heap_t*		tuple_heap;
 	dberr_t			error = DB_SUCCESS;
 	ulint			foffs = 0;
-	offset_t*		offsets;
+	rec_offs*		offsets;
 	mrec_buf_t*		buf;
 	ulint			n_rows = 0;
 	dtuple_t*		dtuple;
@@ -3554,7 +3553,7 @@ row_merge_insert_index_tuples(
 		ulint i	= 1 + REC_OFFS_HEADER_SIZE
 			+ dict_index_get_n_fields(index);
 		heap = mem_heap_create(sizeof *buf + i * sizeof *offsets);
-		offsets = static_cast<offset_t*>(
+		offsets = static_cast<rec_offs*>(
 			mem_heap_alloc(heap, i * sizeof *offsets));
 		rec_offs_set_n_alloc(offsets, i);
 		rec_offs_set_n_fields(offsets, dict_index_get_n_fields(index));
@@ -3912,6 +3911,9 @@ row_merge_drop_indexes(
 					we should exclude FTS entries from
 					prebuilt->ins_node->entry_list
 					in ins_node_create_entry_list(). */
+#ifdef BTR_CUR_HASH_ADAPT
+					ut_ad(!index->search_info->ref_count);
+#endif /* BTR_CUR_HASH_ADAPT */
 					dict_index_remove_from_cache(
 						table, index);
 					index = prev;
@@ -3952,6 +3954,7 @@ row_merge_drop_indexes(
 			ut_error;
 		}
 
+		fts_clear_all(table, trx);
 		return;
 	}
 
@@ -4004,6 +4007,7 @@ row_merge_drop_indexes(
 		}
 	}
 
+	fts_clear_all(table, trx);
 	table->drop_aborted = FALSE;
 	ut_d(dict_table_check_for_dup_indexes(table, CHECK_ALL_COMPLETE));
 }
@@ -4270,6 +4274,7 @@ Provide a new pathname for a table that is being renamed if it belongs to
 a file-per-table tablespace.  The caller is responsible for freeing the
 memory allocated for the return value.
 @return new pathname of tablespace file, or NULL if space = 0 */
+static
 char*
 row_make_new_pathname(
 /*==================*/
@@ -4951,7 +4956,8 @@ wait_again:
 			goto func_exit;
 		}
 
-		if (indexes[i]->type & DICT_FTS && fts_enable_diag_print) {
+		if (indexes[i]->type & DICT_FTS
+		    && UNIV_UNLIKELY(fts_enable_diag_print)) {
 			ib::info() << "Finished building full-text index "
 				<< indexes[i]->name;
 		}

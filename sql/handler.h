@@ -2,7 +2,7 @@
 #define HANDLER_INCLUDED
 /*
    Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2019, MariaDB
+   Copyright (c) 2009, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License
@@ -200,7 +200,8 @@ enum enum_alter_inplace_result {
 #define HA_HAS_NEW_CHECKSUM    (1ULL << 38)
 #define HA_CAN_VIRTUAL_COLUMNS (1ULL << 39)
 #define HA_MRR_CANT_SORT       (1ULL << 40)
-#define HA_RECORD_MUST_BE_CLEAN_ON_WRITE (1ULL << 41) /* unused */
+/* All of VARCHAR is stored, including bytes after real varchar data */
+#define HA_RECORD_MUST_BE_CLEAN_ON_WRITE (1ULL << 41)
 
 /*
   This storage engine supports condition pushdown
@@ -217,7 +218,7 @@ enum enum_alter_inplace_result {
   this flag must implement start_read_removal() and end_read_removal().
   The handler may return "fake" rows constructed from the key of the row
   asked for. This is used to optimize UPDATE and DELETE by reducing the
-  numer of roundtrips between handler and storage engine.
+  number of roundtrips between handler and storage engine.
   
   Example:
   UPDATE a=1 WHERE pk IN (<keys>)
@@ -531,7 +532,7 @@ enum enum_binlog_command {
 
 /* Bits in used_fields */
 #define HA_CREATE_USED_AUTO             (1UL << 0)
-#define HA_CREATE_USED_RAID             (1UL << 1) //RAID is no longer availble
+#define HA_CREATE_USED_RAID             (1UL << 1) //RAID is no longer available
 #define HA_CREATE_USED_UNION            (1UL << 2)
 #define HA_CREATE_USED_INSERT_METHOD    (1UL << 3)
 #define HA_CREATE_USED_MIN_ROWS         (1UL << 4)
@@ -1189,7 +1190,7 @@ struct handler_iterator {
   /*
     Pointer to buffer for the iterator to use.
     Should be allocated by function which created the iterator and
-    destroied by freed by above "destroy" call
+    destroyed by freed by above "destroy" call
   */
   void *buffer;
 };
@@ -1405,7 +1406,7 @@ struct handlerton
      "cookie".
 
      The flush and call of commit_checkpoint_notify_ha() need not happen
-     immediately - it can be scheduled and performed asynchroneously (ie. as
+     immediately - it can be scheduled and performed asynchronously (ie. as
      part of next prepare(), or sync every second, or whatever), but should
      not be postponed indefinitely. It is however also permissible to do it
      immediately, before returning from commit_checkpoint_request().
@@ -1496,7 +1497,7 @@ struct handlerton
      file extention. This is implied by the open_table_error()
      and the default discovery implementation.
      
-     Second element - data file extention. This is implied
+     Second element - data file extension. This is implied
      assumed by REPAIR TABLE ... USE_FRM implementation.
    */
    const char **tablefile_extensions; // by default - empty list
@@ -2144,7 +2145,7 @@ struct HA_CREATE_INFO: public Table_scope_and_contents_source_st,
          CONVERT TO CHARACTER SET DEFAULT
       to
          CONVERT TO CHARACTER SET <character-set-of-the-current-database>
-      TODO: Should't we postpone resolution of DEFAULT until the
+      TODO: Shouldn't we postpone resolution of DEFAULT until the
       character set of the table owner database is loaded from its db.opt?
     */
     DBUG_ASSERT(cs);
@@ -2352,11 +2353,14 @@ public:
   */
   const char *unsupported_reason;
 
+  /** true when InnoDB should abort the alter when table is not empty */
+  bool error_if_not_empty;
+
   Alter_inplace_info(HA_CREATE_INFO *create_info_arg,
                      Alter_info *alter_info_arg,
                      KEY *key_info_arg, uint key_count_arg,
                      partition_info *modified_part_info_arg,
-                     bool ignore_arg)
+                     bool ignore_arg, bool error_non_empty)
     : create_info(create_info_arg),
     alter_info(alter_info_arg),
     key_info_buffer(key_info_arg),
@@ -2371,7 +2375,8 @@ public:
     modified_part_info(modified_part_info_arg),
     ignore(ignore_arg),
     online(false),
-    unsupported_reason(NULL)
+    unsupported_reason(NULL),
+    error_if_not_empty(error_non_empty)
   {}
 
   ~Alter_inplace_info()
@@ -2885,7 +2890,7 @@ public:
   ha_statistics stats;
 
   /** MultiRangeRead-related members: */
-  range_seq_t mrr_iter;    /* Interator to traverse the range sequence */
+  range_seq_t mrr_iter;    /* Iterator to traverse the range sequence */
   RANGE_SEQ_IF mrr_funcs;  /* Range sequence traversal functions */
   HANDLER_BUFFER *multi_range_buffer; /* MRR buffer info */
   uint ranges_in_seq; /* Total number of ranges in the traversed sequence */
@@ -3159,13 +3164,7 @@ public:
     start_bulk_insert(rows, flags);
     DBUG_VOID_RETURN;
   }
-  int ha_end_bulk_insert()
-  {
-    DBUG_ENTER("handler::ha_end_bulk_insert");
-    estimation_rows_to_insert= 0;
-    int ret= end_bulk_insert();
-    DBUG_RETURN(ret);
-  }
+  int ha_end_bulk_insert();
   int ha_bulk_update_row(const uchar *old_data, const uchar *new_data,
                          ha_rows *dup_key_found);
   int ha_delete_all_rows();
@@ -3869,7 +3868,7 @@ public:
     This method offers the storage engine, the possibility to store a reference
     to a table name which is going to be used with query cache. 
     The method is called each time a statement is written to the cache and can
-    be used to verify if a specific statement is cachable. It also offers
+    be used to verify if a specific statement is cacheable. It also offers
     the possibility to register a generic (but static) call back function which
     is called each time a statement is matched against the query cache.
 
@@ -4888,4 +4887,15 @@ void print_keydup_error(TABLE *table, KEY *key, myf errflag);
 
 int del_global_index_stat(THD *thd, TABLE* table, KEY* key_info);
 int del_global_table_stat(THD *thd, const  LEX_CSTRING *db, const LEX_CSTRING *table);
+#ifndef DBUG_OFF
+/** Converts XID to string.
+
+@param[out] buf output buffer
+@param[in] xid XID to convert
+
+@return pointer to converted string
+
+@note This does not need to be multi-byte safe or anything */
+char *xid_to_str(char *buf, const XID &xid);
+#endif // !DBUG_OFF
 #endif /* HANDLER_INCLUDED */

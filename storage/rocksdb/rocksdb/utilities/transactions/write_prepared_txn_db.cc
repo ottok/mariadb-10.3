@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "db/arena_wrapped_db_iter.h"
 #include "db/db_impl/db_impl.h"
 #include "rocksdb/db.h"
 #include "rocksdb/options.h"
@@ -24,12 +25,12 @@
 #include "utilities/transactions/pessimistic_transaction.h"
 #include "utilities/transactions/transaction_db_mutex_impl.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 Status WritePreparedTxnDB::Initialize(
     const std::vector<size_t>& compaction_enabled_cf_indices,
     const std::vector<ColumnFamilyHandle*>& handles) {
-  auto dbimpl = reinterpret_cast<DBImpl*>(GetRootDB());
+  auto dbimpl = static_cast_with_check<DBImpl, DB>(GetRootDB());
   assert(dbimpl != nullptr);
   auto rtxns = dbimpl->recovered_transactions();
   std::map<SequenceNumber, SequenceNumber> ordered_seq_cnt;
@@ -42,7 +43,7 @@ Status WritePreparedTxnDB::Initialize(
     ordered_seq_cnt[seq] = cnt;
   }
   // AddPrepared must be called in order
-  for (auto seq_cnt: ordered_seq_cnt) {
+  for (auto seq_cnt : ordered_seq_cnt) {
     auto seq = seq_cnt.first;
     auto cnt = seq_cnt.second;
     for (size_t i = 0; i < cnt; i++) {
@@ -226,16 +227,22 @@ Status WritePreparedTxnDB::Get(const ReadOptions& options,
                                ColumnFamilyHandle* column_family,
                                const Slice& key, PinnableSlice* value) {
   SequenceNumber min_uncommitted, snap_seq;
-  const bool backed_by_snapshot =
+  const SnapshotBackup backed_by_snapshot =
       AssignMinMaxSeqs(options.snapshot, &min_uncommitted, &snap_seq);
-  WritePreparedTxnReadCallback callback(this, snap_seq, min_uncommitted);
+  WritePreparedTxnReadCallback callback(this, snap_seq, min_uncommitted,
+                                        backed_by_snapshot);
   bool* dont_care = nullptr;
-  auto res = db_impl_->GetImpl(options, column_family, key, value, dont_care,
-                               &callback);
-  if (LIKELY(
-          ValidateSnapshot(callback.max_visible_seq(), backed_by_snapshot))) {
+  DBImpl::GetImplOptions get_impl_options;
+  get_impl_options.column_family = column_family;
+  get_impl_options.value = value;
+  get_impl_options.value_found = dont_care;
+  get_impl_options.callback = &callback;
+  auto res = db_impl_->GetImpl(options, key, get_impl_options);
+  if (LIKELY(callback.valid() && ValidateSnapshot(callback.max_visible_seq(),
+                                                  backed_by_snapshot))) {
     return res;
   } else {
+    WPRecordTick(TXN_GET_TRY_AGAIN);
     return Status::TryAgain();
   }
 }
@@ -298,7 +305,8 @@ struct WritePreparedTxnDB::IteratorState {
   IteratorState(WritePreparedTxnDB* txn_db, SequenceNumber sequence,
                 std::shared_ptr<ManagedSnapshot> s,
                 SequenceNumber min_uncommitted)
-      : callback(txn_db, sequence, min_uncommitted), snapshot(s) {}
+      : callback(txn_db, sequence, min_uncommitted, kBackedByDBSnapshot),
+        snapshot(s) {}
 
   WritePreparedTxnReadCallback callback;
   std::shared_ptr<ManagedSnapshot> snapshot;
@@ -392,6 +400,7 @@ void WritePreparedTxnDB::Init(const TransactionDBOptions& /* unused */) {
       new std::atomic<SequenceNumber>[SNAPSHOT_CACHE_SIZE] {});
   commit_cache_ = std::unique_ptr<std::atomic<CommitEntry64b>[]>(
       new std::atomic<CommitEntry64b>[COMMIT_CACHE_SIZE] {});
+  dummy_max_snapshot_.number_ = kMaxSequenceNumber;
 }
 
 void WritePreparedTxnDB::CheckPreparedAgainstMax(SequenceNumber new_max,
@@ -424,8 +433,12 @@ void WritePreparedTxnDB::CheckPreparedAgainstMax(SequenceNumber new_max,
                      " new_max=%" PRIu64,
                      static_cast<uint64_t>(delayed_prepared_.size()),
                      to_be_popped, new_max);
-      prepared_txns_.pop();
       delayed_prepared_empty_.store(false, std::memory_order_release);
+      // Update prepared_txns_ after updating delayed_prepared_empty_ otherwise
+      // there will be a point in time that the entry is neither in
+      // prepared_txns_ nor in delayed_prepared_, which will not be checked if
+      // delayed_prepared_empty_ is false.
+      prepared_txns_.pop();
     }
     if (locked) {
       prepared_txns_.push_pop_mutex()->Lock();
@@ -957,7 +970,9 @@ WritePreparedTxnDB::~WritePreparedTxnDB() {
   // At this point there could be running compaction/flush holding a
   // SnapshotChecker, which holds a pointer back to WritePreparedTxnDB.
   // Make sure those jobs finished before destructing WritePreparedTxnDB.
-  db_impl_->CancelAllBackgroundWork(true /*wait*/);
+  if (!db_impl_->shutting_down_) {
+    db_impl_->CancelAllBackgroundWork(true /*wait*/);
+  }
 }
 
 void SubBatchCounter::InitWithComp(const uint32_t cf) {
@@ -979,5 +994,5 @@ void SubBatchCounter::AddKey(const uint32_t cf, const Slice& key) {
   }
 }
 
-}  //  namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 #endif  // ROCKSDB_LITE

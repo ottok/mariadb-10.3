@@ -2234,14 +2234,14 @@ AIO::linux_create_io_ctx(
 			}
 
 			/* Have tried enough. Better call it a day. */
-			ib::error()
+			ib::warn()
 				<< "io_setup() failed with EAGAIN after "
 				<< OS_AIO_IO_SETUP_RETRY_ATTEMPTS
 				<< " attempts.";
 			break;
 
 		case -ENOSYS:
-			ib::error()
+			ib::warn()
 				<< "Linux Native AIO interface"
 				" is not supported on this platform. Please"
 				" check your OS documentation and install"
@@ -2250,7 +2250,7 @@ AIO::linux_create_io_ctx(
 			break;
 
 		default:
-			ib::error()
+			ib::warn()
 				<< "Linux Native AIO setup"
 				<< " returned following error["
 				<< ret << "]";
@@ -2414,12 +2414,12 @@ AIO::is_linux_native_aio_supported()
 /** Retrieves the last error number if an error occurs in a file io function.
 The number should be retrieved before any other OS calls (because they may
 overwrite the error number). If the number is not known to this program,
-the OS error number + 100 is returned.
+the OS error number + OS_FILE_ERROR_MAX is returned.
 @param[in]	report_all_errors	true if we want an error message
 					printed of all errors
 @param[in]	on_error_silent		true then don't print any diagnostic
 					to the log
-@return error number, or OS error number + 100 */
+@return error number, or OS error number + OS_FILE_ERROR_MAX */
 static
 ulint
 os_file_get_last_error_low(
@@ -5381,7 +5381,7 @@ fallback:
 			? 0 : posix_fallocate(file, current_size,
 					      size - current_size);
 	} while (err == EINTR
-		 && srv_shutdown_state == SRV_SHUTDOWN_NONE);
+		 && srv_shutdown_state <= SRV_SHUTDOWN_INITIATED);
 
 	switch (err) {
 	case 0:
@@ -5419,7 +5419,7 @@ fallback:
 	os_offset_t	current_size = os_file_get_size(file);
 
 	while (current_size < size
-	       && srv_shutdown_state == SRV_SHUTDOWN_NONE) {
+	       && srv_shutdown_state <= SRV_SHUTDOWN_INITIATED) {
 		ulint	n_bytes;
 
 		if (size - current_size < (os_offset_t) buf_size) {

@@ -109,7 +109,13 @@ struct st_mariadb_extension {
 };
 
 #define OPT_EXT_VAL(a,key) \
-  ((a)->options.extension && (a)->options.extension->key) ?\
-    (a)->options.extension->key : 0
+  (((a)->options.extension && (a)->options.extension->key) ?\
+    (a)->options.extension->key : 0)
 
 #endif
+
+
+typedef struct st_mariadb_field_extension
+{
+  MARIADB_CONST_STRING metadata[MARIADB_FIELD_ATTR_LAST+1]; /* 10.5 */
+} MA_FIELD_EXTENSION;

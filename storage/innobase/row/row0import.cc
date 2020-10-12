@@ -26,6 +26,9 @@ Created 2012-02-08 by Sunny Bains.
 
 #include "row0import.h"
 #include "btr0pcur.h"
+#ifdef BTR_CUR_HASH_ADAPT
+# include "btr0sea.h"
+#endif
 #include "que0que.h"
 #include "dict0boot.h"
 #include "dict0load.h"
@@ -264,7 +267,7 @@ public:
 	bool remove(
 		const dict_index_t*	index,
 		page_zip_des_t*		page_zip,
-		offset_t*		offsets) UNIV_NOTHROW
+		rec_offs*		offsets) UNIV_NOTHROW
 	{
 		/* We can't end up with an empty page unless it is root. */
 		if (page_get_n_recs(m_cur.block->frame) <= 1) {
@@ -523,14 +526,6 @@ protected:
 	/** Space id of the file being iterated over. */
 	ulint			m_space;
 
-	/** Minimum page number for which the free list has not been
-	initialized: the pages >= this limit are, by definition, free;
-	note that in a single-table tablespace where size < 64 pages,
-	this number is 64, i.e., we have initialized the space about
-	the first extent, but have not physically allocted those pages
-	to the file. @see FSP_LIMIT. */
-	ulint			m_free_limit;
-
 	/** Current size of the space in pages */
 	ulint			m_size;
 
@@ -588,7 +583,6 @@ AbstractCallback::init(
 	}
 
 	m_size  = mach_read_from_4(page + FSP_SIZE);
-	m_free_limit = mach_read_from_4(page + FSP_FREE_LIMIT);
 	if (m_space == ULINT_UNDEFINED) {
 		m_space = mach_read_from_4(FSP_HEADER_OFFSET + FSP_SPACE_ID
 					   + page);
@@ -846,7 +840,7 @@ private:
 	@return DB_SUCCESS or error code */
 	dberr_t	adjust_cluster_index_blob_column(
 		rec_t*		rec,
-		const offset_t*	offsets,
+		const rec_offs*	offsets,
 		ulint		i) UNIV_NOTHROW;
 
 	/** Adjusts the BLOB reference in the clustered index row for all
@@ -856,7 +850,7 @@ private:
 	@return DB_SUCCESS or error code */
 	dberr_t	adjust_cluster_index_blob_columns(
 		rec_t*		rec,
-		const offset_t*	offsets) UNIV_NOTHROW;
+		const rec_offs*	offsets) UNIV_NOTHROW;
 
 	/** In the clustered index, adjist the BLOB pointers as needed.
 	Also update the BLOB reference, write the new space id.
@@ -865,7 +859,7 @@ private:
 	@return DB_SUCCESS or error code */
 	dberr_t	adjust_cluster_index_blob_ref(
 		rec_t*		rec,
-		const offset_t*	offsets) UNIV_NOTHROW;
+		const rec_offs*	offsets) UNIV_NOTHROW;
 
 	/** Purge delete-marked records, only if it is possible to do
 	so without re-organising the B+tree.
@@ -878,7 +872,7 @@ private:
 	@return DB_SUCCESS or error code. */
 	dberr_t	adjust_cluster_record(
 		rec_t*			rec,
-		const offset_t*		offsets) UNIV_NOTHROW;
+		const rec_offs*		offsets) UNIV_NOTHROW;
 
 	/** Find an index with the matching id.
 	@return row_index_t* instance or 0 */
@@ -912,10 +906,10 @@ private:
 	RecIterator		m_rec_iter;
 
 	/** Record offset */
-	offset_t		m_offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs		m_offsets_[REC_OFFS_NORMAL_SIZE];
 
 	/** Pointer to m_offsets_ */
-	offset_t*		m_offsets;
+	rec_offs*		m_offsets;
 
 	/** Memory heap for the record offsets */
 	mem_heap_t*		m_heap;
@@ -1642,7 +1636,7 @@ inline
 dberr_t
 PageConverter::adjust_cluster_index_blob_column(
 	rec_t*		rec,
-	const offset_t*	offsets,
+	const rec_offs*	offsets,
 	ulint		i) UNIV_NOTHROW
 {
 	ulint		len;
@@ -1686,7 +1680,7 @@ inline
 dberr_t
 PageConverter::adjust_cluster_index_blob_columns(
 	rec_t*		rec,
-	const offset_t*	offsets) UNIV_NOTHROW
+	const rec_offs*	offsets) UNIV_NOTHROW
 {
 	ut_ad(rec_offs_any_extern(offsets));
 
@@ -1719,7 +1713,7 @@ inline
 dberr_t
 PageConverter::adjust_cluster_index_blob_ref(
 	rec_t*		rec,
-	const offset_t*	offsets) UNIV_NOTHROW
+	const rec_offs*	offsets) UNIV_NOTHROW
 {
 	if (rec_offs_any_extern(offsets)) {
 		dberr_t	err;
@@ -1762,7 +1756,7 @@ inline
 dberr_t
 PageConverter::adjust_cluster_record(
 	rec_t*			rec,
-	const offset_t*		offsets) UNIV_NOTHROW
+	const rec_offs*		offsets) UNIV_NOTHROW
 {
 	dberr_t	err;
 
@@ -1867,7 +1861,7 @@ PageConverter::update_index_page(
 
 		row_index_t*	index = find_index(id);
 
-		if (index == 0) {
+		if (UNIV_UNLIKELY(!index)) {
 			ib::error() << "Page for tablespace " << m_space
 				<< " is index page with id " << id
 				<< " but that index is not found from"
@@ -1885,6 +1879,23 @@ PageConverter::update_index_page(
 	then ignore the error. */
 	if (m_cfg->m_missing && (m_index == 0 || m_index->m_srv_index == 0)) {
 		return(DB_SUCCESS);
+	}
+
+	if (m_index && block->page.id.page_no() == m_index->m_page_no) {
+		byte *b = FIL_PAGE_DATA + PAGE_BTR_SEG_LEAF + FSEG_HDR_SPACE
+			+ page;
+		mach_write_to_4(b, block->page.id.space());
+
+		memcpy(FIL_PAGE_DATA + PAGE_BTR_SEG_TOP + FSEG_HDR_SPACE
+		       + page, b, 4);
+		if (UNIV_LIKELY_NULL(block->page.zip.data)) {
+			memcpy(&block->page.zip.data[FIL_PAGE_DATA
+						     + PAGE_BTR_SEG_TOP
+						     + FSEG_HDR_SPACE], b, 4);
+			memcpy(&block->page.zip.data[FIL_PAGE_DATA
+						     + PAGE_BTR_SEG_LEAF
+						     + FSEG_HDR_SPACE], b, 4);
+		}
 	}
 
 #ifdef UNIV_ZIP_DEBUG
@@ -2115,7 +2126,7 @@ row_import_discard_changes(
 
 	ib::info() << "Discarding tablespace of table "
 		<< prebuilt->table->name
-		<< ": " << ut_strerr(err);
+		<< ": " << err;
 
 	if (trx->dict_operation_lock_mode != RW_X_LATCH) {
 		ut_a(trx->dict_operation_lock_mode == 0);
@@ -2360,8 +2371,8 @@ row_import_set_sys_max_row_id(
 		ulint		len;
 		const byte*	field;
 		mem_heap_t*	heap = NULL;
-		offset_t	offsets_[1 + REC_OFFS_HEADER_SIZE];
-		offset_t*	offsets;
+		rec_offs	offsets_[1 + REC_OFFS_HEADER_SIZE];
+		rec_offs*	offsets;
 
 		rec_offs_init(offsets_);
 
@@ -3996,15 +4007,12 @@ row_import_for_mysql(
 	index entries that point to cached garbage pages in the buffer
 	pool, because PageConverter::operator() only evicted those
 	pages that were replaced by the imported pages. We must
-	discard all remaining adaptive hash index entries, because the
+	detach any remaining adaptive hash index entries, because the
 	adaptive hash index must be a subset of the table contents;
 	false positives are not tolerated. */
-	while (buf_LRU_drop_page_hash_for_tablespace(table)) {
-		if (trx_is_interrupted(trx)
-		    || srv_shutdown_state != SRV_SHUTDOWN_NONE) {
-			err = DB_INTERRUPTED;
-			break;
-		}
+	for (dict_index_t* index = UT_LIST_GET_FIRST(table->indexes); index;
+	     index = UT_LIST_GET_NEXT(indexes, index)) {
+		index = index->clone_if_needed();
 	}
 #endif /* BTR_CUR_HASH_ADAPT */
 

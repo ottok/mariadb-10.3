@@ -11,11 +11,15 @@
 #include <vector>
 #include "db/db_impl/db_impl.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 class DBImplReadOnly : public DBImpl {
  public:
   DBImplReadOnly(const DBOptions& options, const std::string& dbname);
+  // No copying allowed
+  DBImplReadOnly(const DBImplReadOnly&) = delete;
+  void operator=(const DBImplReadOnly&) = delete;
+
   virtual ~DBImplReadOnly();
 
   // Implementations of the DB interface
@@ -115,13 +119,19 @@ class DBImplReadOnly : public DBImpl {
     return Status::NotSupported("Not supported operation in read only mode.");
   }
 
+  using DB::CreateColumnFamilyWithImport;
+  virtual Status CreateColumnFamilyWithImport(
+      const ColumnFamilyOptions& /*options*/,
+      const std::string& /*column_family_name*/,
+      const ImportColumnFamilyOptions& /*import_options*/,
+      const ExportImportFilesMetaData& /*metadata*/,
+      ColumnFamilyHandle** /*handle*/) override {
+    return Status::NotSupported("Not supported operation in read only mode.");
+  }
+
  private:
   friend class DB;
-
-  // No copying allowed
-  DBImplReadOnly(const DBImplReadOnly&);
-  void operator=(const DBImplReadOnly&);
 };
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 
 #endif  // !ROCKSDB_LITE

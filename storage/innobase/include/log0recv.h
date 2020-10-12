@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2019, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -181,23 +181,35 @@ struct recv_t{
 			rec_list;/*!< list of log records for this page */
 };
 
-struct recv_dblwr_t {
-	/** Add a page frame to the doublewrite recovery buffer. */
-	void add(byte* page) {
-		pages.push_back(page);
-	}
+struct recv_dblwr_t
+{
+  /** Add a page frame to the doublewrite recovery buffer. */
+  void add(byte *page) { pages.push_back(page); }
 
-	/** Find a doublewrite copy of a page.
-	@param[in]	space_id	tablespace identifier
-	@param[in]	page_no		page number
-	@return	page frame
-	@retval NULL if no page was found */
-	const byte* find_page(ulint space_id, ulint page_no);
+  /** Validate the page.
+  @param page_id  page identifier
+  @param page     page contents
+  @param space    the tablespace of the page (not available for page 0)
+  @param tmp_buf  2*srv_page_size for decrypting and decompressing any
+  page_compressed or encrypted pages
+  @return whether the page is valid */
+  bool validate_page(const page_id_t page_id, const byte *page,
+                     const fil_space_t *space, byte *tmp_buf);
 
-	typedef std::list<byte*, ut_allocator<byte*> >	list;
+  /** Find a doublewrite copy of a page.
+  @param page_id  page identifier
+  @param space    tablespace (not available for page_id.page_no()==0)
+  @param tmp_buf  2*srv_page_size for decrypting and decompressing any
+  page_compressed or encrypted pages
+  @return page frame
+  @retval NULL if no valid page for page_id was found */
+  byte* find_page(const page_id_t page_id, const fil_space_t *space= NULL,
+                  byte *tmp_buf= NULL);
 
-	/** Recovered doublewrite buffer page frames */
-	list	pages;
+  typedef std::list<byte*, ut_allocator<byte*> > list;
+
+  /** Recovered doublewrite buffer page frames */
+  list pages;
 };
 
 /** Recovery system data structure */
@@ -329,10 +341,22 @@ times! */
 roll-forward */
 #define RECV_SCAN_SIZE		(4U << srv_page_size_shift)
 
-/** This many frames must be left free in the buffer pool when we scan
-the log and store the scanned log records in the buffer pool: we will
-use these free frames to read in pages when we start applying the
-log records to the database. */
-extern ulint	recv_n_pool_free_frames;
+/** This is a low level function for the recovery system
+to create a page which has buffered intialized redo log records.
+@param[in]	page_id	page to be created using redo logs
+@return whether the page creation successfully */
+buf_block_t* recv_recovery_create_page_low(const page_id_t page_id);
+
+/** Recovery system creates a page which has buffered intialized
+redo log records.
+@param[in]	page_id	page to be created using redo logs
+@return block which contains page was initialized */
+inline buf_block_t* recv_recovery_create_page(const page_id_t page_id)
+{
+  if (UNIV_LIKELY(!recv_recovery_on))
+    return NULL;
+
+  return recv_recovery_create_page_low(page_id);
+}
 
 #endif

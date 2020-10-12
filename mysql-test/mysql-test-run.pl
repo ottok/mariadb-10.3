@@ -1,8 +1,8 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 # -*- cperl -*-
 
 # Copyright (c) 2004, 2014, Oracle and/or its affiliates.
-# Copyright (c) 2009, 2018, MariaDB Corporation
+# Copyright (c) 2009, 2020, MariaDB Corporation
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -128,6 +128,8 @@ our $path_testlog;
 our $default_vardir;
 our $opt_vardir;                # Path to use for var/ dir
 our $plugindir;
+our $opt_xml_report;            # XML output
+
 my $path_vardir_trace;          # unix formatted opt_vardir for trace files
 my $opt_tmpdir;                 # Path to use for tmp/ dir
 my $opt_tmpdir_pid;
@@ -177,6 +179,7 @@ my @DEFAULT_SUITES= qw(
     binlog_encryption-
     csv-
     compat/oracle-
+    compat/maxdb-
     encryption-
     federated-
     funcs_1-
@@ -198,6 +201,7 @@ my @DEFAULT_SUITES= qw(
     plugins-
     roles-
     rpl-
+    stress-
     sys_vars-
     sql_sequence-
     unit-
@@ -261,8 +265,12 @@ our %gprof_dirs;
 
 our $glob_debugger= 0;
 our $opt_gdb;
+my $opt_rr;
+my $opt_rr_dir;
+my @rr_record_args;
 our $opt_client_gdb;
 my $opt_boot_gdb;
+my $opt_boot_rr;
 our $opt_dbx;
 our $opt_client_dbx;
 my $opt_boot_dbx;
@@ -609,7 +617,7 @@ sub main {
   }
   
   #######################################################################
-  my $num_tests= @$tests;
+  my $num_tests= $mtr_report::tests_total= @$tests;
   if ( $opt_parallel eq "auto" ) {
     # Try to find a suitable value for number of workers
     if (IS_WINDOWS)
@@ -619,10 +627,7 @@ sub main {
     else
     {
       my $sys_info= My::SysInfo->new();
-      $opt_parallel= $sys_info->num_cpus();
-      for my $limit (2000, 1500, 1000, 500){
-        $opt_parallel-- if ($sys_info->min_bogomips() < $limit);
-      }
+      $opt_parallel= $sys_info->num_cpus()+int($sys_info->min_bogomips()/500)-4;
     }
     my $max_par= $ENV{MTR_MAX_PARALLEL} || 8;
     $opt_parallel= $max_par if ($opt_parallel > $max_par);
@@ -719,6 +724,7 @@ sub main {
     # Create minimalistic "test" for the reporting
     my $tinfo = My::Test->new
       (
+       suite          => { name => 'valgrind', },
        name           => 'valgrind_report',
       );
     # Set dummy worker id to align report with normal tests
@@ -738,7 +744,6 @@ sub main {
   mtr_print_line();
 
   print_total_times($opt_parallel) if $opt_report_times;
-
   mtr_report_stats($prefix, $fail, $completed, $extra_warnings);
 
   if ($opt_gcov) {
@@ -849,8 +854,7 @@ sub run_test_server ($$$) {
                   My::CoreDump->show($core_file, $exe_mysqld, $opt_parallel);
 
                   # Limit number of core files saved
-                  if ($opt_max_save_core > 0 &&
-                      $num_saved_cores >= $opt_max_save_core)
+                  if ($num_saved_cores >= $opt_max_save_core)
                   {
                     mtr_report(" - deleting it, already saved",
                                "$opt_max_save_core");
@@ -866,8 +870,7 @@ sub run_test_server ($$$) {
             },
             $worker_savedir);
 
-	    if ($opt_max_save_datadir > 0 &&
-		$num_saved_datadir >= $opt_max_save_datadir)
+	    if ($num_saved_datadir >= $opt_max_save_datadir)
 	    {
 	      mtr_report(" - skipping '$worker_savedir/'");
 	      rmtree($worker_savedir);
@@ -876,9 +879,9 @@ sub run_test_server ($$$) {
             {
 	      mtr_report(" - saving '$worker_savedir/' to '$savedir/'");
 	      rename($worker_savedir, $savedir);
+	      $num_saved_datadir++;
 	    }
 	    resfile_print_test();
-	    $num_saved_datadir++;
 	    $num_failed_test++ unless ($result->{retries} ||
                                        $result->{exp_fail});
 
@@ -922,7 +925,14 @@ sub run_test_server ($$$) {
               if ( $result->is_failed() ) {
                 my $worker_logdir= $result->{savedir};
                 my $log_file_name=dirname($worker_logdir)."/".$result->{shortname}.".log";
-                rename $log_file_name,$log_file_name.".failed";
+
+                if (-e $log_file_name) {
+                  $result->{'logfile-failed'} = mtr_lastlinesfromfile($log_file_name, 20);
+                } else {
+                  $result->{'logfile-failed'} = "";
+                }
+
+                rename $log_file_name, $log_file_name.".failed";
               }
 	      delete($result->{result});
 	      $result->{retries}= $retries+1;
@@ -1045,8 +1055,6 @@ sub run_test_server ($$$) {
 	  $next= splice(@$tests, $second_best, 1);
 	  delete $next->{reserved};
 	}
-
-        xterm_stat(scalar(@$tests));
 
 	if ($next) {
 	  # We don't need this any more
@@ -1241,6 +1249,7 @@ sub print_global_resfile {
   resfile_global("warnings", $opt_warnings ? 1 : 0);
   resfile_global("max-connections", $opt_max_connections);
   resfile_global("product", "MySQL");
+  resfile_global("xml-report", $opt_xml_report);
   # Somewhat hacky code to convert numeric version back to dot notation
   my $v1= int($mysql_version_id / 10000);
   my $v2= int(($mysql_version_id % 10000)/100);
@@ -1315,10 +1324,14 @@ sub command_line_setup {
              'debug-common'             => \$opt_debug_common,
              'debug-server'             => \$opt_debug_server,
              'gdb=s'                    => \$opt_gdb,
+             'rr'                       => \$opt_rr,
+             'rr-arg=s'                 => \@rr_record_args,
+             'rr-dir=s'                 => \$opt_rr_dir,
              'client-gdb'               => \$opt_client_gdb,
              'manual-gdb'               => \$opt_manual_gdb,
              'manual-lldb'              => \$opt_manual_lldb,
 	     'boot-gdb'                 => \$opt_boot_gdb,
+	     'boot-rr'                  => \$opt_boot_rr,
              'manual-debug'             => \$opt_manual_debug,
              'ddd'                      => \$opt_ddd,
              'client-ddd'               => \$opt_client_ddd,
@@ -1407,7 +1420,8 @@ sub command_line_setup {
              'help|h'                   => \$opt_usage,
 	     # list-options is internal, not listed in help
 	     'list-options'             => \$opt_list_options,
-             'skip-test-list=s'         => \@opt_skip_test_list
+             'skip-test-list=s'         => \@opt_skip_test_list,
+             'xml-report=s'             => \$opt_xml_report
            );
 
   # fix options (that take an optional argument and *only* after = sign
@@ -1422,6 +1436,17 @@ sub command_line_setup {
   # --------------------------------------------------------------------------
   if ($opt_verbose != 0){
     report_option('verbose', $opt_verbose);
+  }
+
+  # Negative values aren't meaningful on integer options
+  foreach(grep(/=i$/, keys %options))
+  {
+    if (defined ${$options{$_}} &&
+        do { no warnings "numeric"; int ${$options{$_}} < 0})
+    {
+      my $v= (split /=/)[0];
+      die("$v doesn't accept a negative value:");
+    }
   }
 
   # Find the absolute path to the test directory
@@ -1781,8 +1806,8 @@ sub command_line_setup {
   # --------------------------------------------------------------------------
   # Check debug related options
   # --------------------------------------------------------------------------
-  if ( $opt_gdb || $opt_client_gdb || $opt_ddd || $opt_client_ddd || 
-       $opt_manual_gdb || $opt_manual_lldb || $opt_manual_ddd || 
+  if ( $opt_gdb || $opt_client_gdb || $opt_ddd || $opt_client_ddd || $opt_rr ||
+       $opt_manual_gdb || $opt_manual_lldb || $opt_manual_ddd ||
        $opt_manual_debug || $opt_dbx || $opt_client_dbx || $opt_manual_dbx || 
        $opt_debugger || $opt_client_debugger )
   {
@@ -3355,7 +3380,8 @@ sub mysql_install_db {
   # ----------------------------------------------------------------------
   # export MYSQLD_BOOTSTRAP_CMD variable containing <path>/mysqld <args>
   # ----------------------------------------------------------------------
-  $ENV{'MYSQLD_BOOTSTRAP_CMD'}= "$exe_mysqld_bootstrap " . join(" ", @$args);
+  $ENV{'MYSQLD_BOOTSTRAP_CMD'}= "$exe_mysqld_bootstrap " . join(" ", @$args)
+    unless defined $ENV{'MYSQLD_BOOTSTRAP_CMD'};
 
   # Extra options can come not only from the command line, but also
   # from option files or combinations. We want them on a command line
@@ -3385,6 +3411,13 @@ sub mysql_install_db {
     if ($opt_boot_ddd) {
       ddd_arguments(\$args, \$exe_mysqld_bootstrap, $mysqld->name(),
         $bootstrap_sql_file);
+    }
+    if ($opt_boot_rr) {
+      $args= ["record", @rr_record_args, $exe_mysqld_bootstrap, @$args];
+      $exe_mysqld_bootstrap= "rr";
+      my $rr_dir= $opt_rr_dir ? $opt_rr_dir : "$opt_vardir/rr.boot";
+      $ENV{'_RR_TRACE_DIR'}= $rr_dir;
+      mkpath($rr_dir);
     }
 
     my $path_sql= my_find_file($install_basedir,
@@ -3578,8 +3611,11 @@ sub do_before_run_mysqltest($)
     # to be able to distinguish them from manually created
     # version-controlled results, and to ignore them in git.
     my $dest = "$base_file$suites.result~";
-    my @cmd = ($exe_patch, qw/--binary -r - -f -s -o/,
-               $dest, $base_result, $resfile);
+    my @cmd = ($exe_patch);
+    if ($^O eq "MSWin32") {
+      push @cmd, '--binary';
+    }
+    push @cmd, (qw/-r - -f -s -o/, $dest, $base_result, $resfile);
     if (-w $resdir) {
       # don't rebuild a file if it's up to date
       unless (-e $dest and -M $dest < -M $resfile
@@ -4732,8 +4768,8 @@ sub extract_warning_lines ($$) {
      qr/InnoDB: See also */,
      qr/InnoDB: Cannot open .*ib_buffer_pool.* for reading: No such file or directory*/,
      qr/InnoDB: Table .*mysql.*innodb_table_stats.* not found./,
-     qr/InnoDB: User stopword table .* does not exist./
-
+     qr/InnoDB: User stopword table .* does not exist./,
+     qr/Detected table cache mutex contention at instance .* waits. Additional table cache instance cannot be activated: consider raising table_open_cache_instances. Number of active instances/
     );
 
   my $matched_lines= [];
@@ -5371,6 +5407,14 @@ sub mysqld_start ($$) {
 
      # Indicate the exe should not be started
     $exe= undef;
+  }
+  elsif ( $opt_rr )
+  {
+    $args= ["record", @rr_record_args, "$exe", @$args];
+    $exe= "rr";
+    my $rr_dir= $opt_rr_dir ? $opt_rr_dir : "$opt_vardir/rr". $mysqld->after('mysqld');
+    $ENV{'_RR_TRACE_DIR'}= $rr_dir;
+    mkpath($rr_dir);
   }
   else
   {
@@ -6522,12 +6566,12 @@ Options for debugging the product
                         test(s)
   max-save-core         Limit the number of core files saved (to avoid filling
                         up disks for heavily crashing server). Defaults to
-                        $opt_max_save_core, set to 0 for no limit. Set
-                        it's default with MTR_MAX_SAVE_CORE
+                        $opt_max_save_core. Set its default with
+                        MTR_MAX_SAVE_CORE
   max-save-datadir      Limit the number of datadir saved (to avoid filling
                         up disks for heavily crashing server). Defaults to
-                        $opt_max_save_datadir, set to 0 for no limit. Set
-                        it's default with MTR_MAX_SAVE_DATADIR
+                        $opt_max_save_datadir. Set its default with
+                        MTR_MAX_SAVE_DATADIR
   max-test-fail         Limit the number of test failures before aborting
                         the current test run. Defaults to
                         $opt_max_test_fail, set to 0 for no limit. Set
@@ -6556,6 +6600,15 @@ Options for strace
   strace-option=ARGS    Option to give strace, appends to existing options.
   stracer=<EXE>         Specify name and path to the trace program to use.
                         Default is "strace". Example: $0 --stracer=ktrace.
+
+Options for rr (Record and Replay)
+  rr                    Run the "mysqld" executables using rr. Default run
+                        option is "rr record mysqld mysqld_options"
+  boot-rr               Start bootstrap server in rr
+  rr-arg=ARG            Option to give rr record, can be specified more then once
+  rr-dir=DIR            The directory where rr recordings are stored. Defaults
+                        to 'vardir'/rr.0 (rr.boot for bootstrap instance and
+                        rr.1, ..., rr.N for slave instances).
 
 Misc options
   user=USER             User for connecting to mysqld(default: $opt_user)
@@ -6622,6 +6675,7 @@ Misc options
                         phases of test execution.
   stress=ARGS           Run stress test, providing options to
                         mysql-stress-test.pl. Options are separated by comma.
+  xml-report=<file>     Output jUnit xml file of the results.
   tail-lines=N          Number of lines of the result to include in a failure
                         report.
 
@@ -6644,27 +6698,4 @@ sub list_options ($) {
   }
 
   exit(1);
-}
-
-sub time_format($) {
-  sprintf '%d:%02d:%02d', $_[0]/3600, ($_[0]/60)%60, $_[0]%60;
-}
-
-our $num_tests;
-
-sub xterm_stat {
-  if (-t STDOUT and defined $ENV{TERM} and $ENV{TERM} =~ /xterm/) {
-    my ($left) = @_;
-
-    # 2.5 -> best by test
-    $num_tests = $left + 2.5 unless $num_tests;
-
-    my $done = $num_tests - $left;
-    my $spent = time - $^T;
-
-    syswrite STDOUT, sprintf
-           "\e];mtr: spent %s on %d tests. %s (%d tests) left\a",
-           time_format($spent), $done,
-           time_format($spent/$done * $left), $left;
-  }
 }

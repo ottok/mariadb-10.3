@@ -2,7 +2,7 @@
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2018, 2019, MariaDB Corporation.
+Copyright (c) 2018, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -67,8 +67,8 @@ page_cur_try_search_shortcut(
 	ibool		success		= FALSE;
 	const page_t*	page		= buf_block_get_frame(block);
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(dtuple_check_typed(tuple));
@@ -151,8 +151,8 @@ page_cur_try_search_shortcut_bytes(
 	ibool		success		= FALSE;
 	const page_t*	page		= buf_block_get_frame(block);
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(dtuple_check_typed(tuple));
@@ -223,7 +223,7 @@ page_cur_rec_field_extends(
 /*=======================*/
 	const dtuple_t*	tuple,	/*!< in: data tuple */
 	const rec_t*	rec,	/*!< in: record */
-	const offset_t*	offsets,/*!< in: array returned by rec_get_offsets() */
+	const rec_offs*	offsets,/*!< in: array returned by rec_get_offsets() */
 	ulint		n)	/*!< in: compare nth field */
 {
 	const dtype_t*	type;
@@ -299,8 +299,8 @@ page_cur_search_with_match(
 	const page_zip_des_t*	page_zip = buf_block_get_page_zip(block);
 #endif /* UNIV_ZIP_DEBUG */
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(dtuple_validate(tuple));
@@ -558,8 +558,8 @@ page_cur_search_with_match_bytes(
 	const page_zip_des_t*	page_zip = buf_block_get_page_zip(block);
 #endif /* UNIV_ZIP_DEBUG */
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(dtuple_validate(tuple));
@@ -821,11 +821,11 @@ page_cur_insert_rec_write_log(
 
 	{
 		mem_heap_t*	heap		= NULL;
-		offset_t	cur_offs_[REC_OFFS_NORMAL_SIZE];
-		offset_t	ins_offs_[REC_OFFS_NORMAL_SIZE];
+		rec_offs	cur_offs_[REC_OFFS_NORMAL_SIZE];
+		rec_offs	ins_offs_[REC_OFFS_NORMAL_SIZE];
 
-		offset_t*	cur_offs;
-		offset_t*	ins_offs;
+		rec_offs*	cur_offs;
+		rec_offs*	ins_offs;
 
 		rec_offs_init(cur_offs_);
 		rec_offs_init(ins_offs_);
@@ -1001,8 +1001,8 @@ page_cur_parse_insert_rec(
 	ulint		info_and_status_bits = 0; /* remove warning */
 	page_cur_t	cursor;
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	page = block ? buf_block_get_frame(block) : NULL;
@@ -1219,7 +1219,7 @@ page_cur_insert_rec_low(
 				which the new record is inserted */
 	dict_index_t*	index,	/*!< in: record descriptor */
 	const rec_t*	rec,	/*!< in: pointer to a physical record */
-	offset_t*	offsets,/*!< in/out: rec_get_offsets(rec, index) */
+	rec_offs*	offsets,/*!< in/out: rec_get_offsets(rec, index) */
 	mtr_t*		mtr)	/*!< in: mini-transaction handle, or NULL */
 {
 	byte*		insert_buf;
@@ -1248,7 +1248,7 @@ page_cur_insert_rec_low(
 	/* 1. Get the size of the physical record in the page */
 	rec_size = rec_offs_size(offsets);
 
-#ifdef UNIV_DEBUG_VALGRIND
+#ifdef HAVE_valgrind
 	{
 		const void*	rec_start
 			= rec - rec_offs_extra_size(offsets);
@@ -1259,19 +1259,19 @@ page_cur_insert_rec_low(
 			   : REC_N_OLD_EXTRA_BYTES);
 
 		/* All data bytes of the record must be valid. */
-		UNIV_MEM_ASSERT_RW(rec, rec_offs_data_size(offsets));
+		MEM_CHECK_DEFINED(rec, rec_offs_data_size(offsets));
 		/* The variable-length header must be valid. */
-		UNIV_MEM_ASSERT_RW(rec_start, extra_size);
+		MEM_CHECK_DEFINED(rec_start, extra_size);
 	}
-#endif /* UNIV_DEBUG_VALGRIND */
+#endif /* HAVE_valgrind */
 
 	/* 2. Try to find suitable space from page memory management */
 
 	free_rec = page_header_get_ptr(page, PAGE_FREE);
 	if (UNIV_LIKELY_NULL(free_rec)) {
 		/* Try to allocate from the head of the free list. */
-		offset_t	foffsets_[REC_OFFS_NORMAL_SIZE];
-		offset_t*	foffsets	= foffsets_;
+		rec_offs	foffsets_[REC_OFFS_NORMAL_SIZE];
+		rec_offs*	foffsets	= foffsets_;
 		mem_heap_t*	heap		= NULL;
 
 		rec_offs_init(foffsets_);
@@ -1365,8 +1365,8 @@ use_heap:
 		rec_set_heap_no_old(insert_rec, heap_no);
 	}
 
-	UNIV_MEM_ASSERT_RW(rec_get_start(insert_rec, offsets),
-			   rec_offs_size(offsets));
+	MEM_CHECK_DEFINED(rec_get_start(insert_rec, offsets),
+			  rec_offs_size(offsets));
 	/* 6. Update the last insertion info in page header */
 
 	last_insert = page_header_get_ptr(page, PAGE_LAST_INSERT);
@@ -1442,7 +1442,7 @@ page_cur_insert_rec_zip(
 	page_cur_t*	cursor,	/*!< in/out: page cursor */
 	dict_index_t*	index,	/*!< in: record descriptor */
 	const rec_t*	rec,	/*!< in: pointer to a physical record */
-	offset_t*	offsets,/*!< in/out: rec_get_offsets(rec, index) */
+	rec_offs*	offsets,/*!< in/out: rec_get_offsets(rec, index) */
 	mtr_t*		mtr)	/*!< in: mini-transaction handle, or NULL */
 {
 	byte*		insert_buf;
@@ -1478,7 +1478,7 @@ page_cur_insert_rec_zip(
 	/* 1. Get the size of the physical record in the page */
 	rec_size = rec_offs_size(offsets);
 
-#ifdef UNIV_DEBUG_VALGRIND
+#ifdef HAVE_valgrind
 	{
 		const void*	rec_start
 			= rec - rec_offs_extra_size(offsets);
@@ -1489,11 +1489,11 @@ page_cur_insert_rec_zip(
 			   : REC_N_OLD_EXTRA_BYTES);
 
 		/* All data bytes of the record must be valid. */
-		UNIV_MEM_ASSERT_RW(rec, rec_offs_data_size(offsets));
+		MEM_CHECK_DEFINED(rec, rec_offs_data_size(offsets));
 		/* The variable-length header must be valid. */
-		UNIV_MEM_ASSERT_RW(rec_start, extra_size);
+		MEM_CHECK_DEFINED(rec_start, extra_size);
 	}
-#endif /* UNIV_DEBUG_VALGRIND */
+#endif /* HAVE_valgrind */
 
 	const bool reorg_before_insert = page_has_garbage(page)
 		&& rec_size > page_get_max_insert_size(page, 1)
@@ -1683,8 +1683,8 @@ page_cur_insert_rec_zip(
 	if (UNIV_LIKELY_NULL(free_rec)) {
 		/* Try to allocate from the head of the free list. */
 		lint	extra_size_diff;
-		offset_t	foffsets_[REC_OFFS_NORMAL_SIZE];
-		offset_t*	foffsets	= foffsets_;
+		rec_offs	foffsets_[REC_OFFS_NORMAL_SIZE];
+		rec_offs*	foffsets	= foffsets_;
 		mem_heap_t*	heap		= NULL;
 
 		rec_offs_init(foffsets_);
@@ -1821,8 +1821,8 @@ use_heap:
 	rec_set_n_owned_new(insert_rec, NULL, 0);
 	rec_set_heap_no_new(insert_rec, heap_no);
 
-	UNIV_MEM_ASSERT_RW(rec_get_start(insert_rec, offsets),
-			   rec_offs_size(offsets));
+	MEM_CHECK_DEFINED(rec_get_start(insert_rec, offsets),
+			  rec_offs_size(offsets));
 
 	page_zip_dir_insert(page_zip, cursor->rec, free_rec, insert_rec);
 
@@ -2006,8 +2006,8 @@ page_copy_rec_list_end_to_created_page(
 	byte*	log_ptr;
 	ulint	log_data_len;
 	mem_heap_t*	heap		= NULL;
-	offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-	offset_t*	offsets		= offsets_;
+	rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
 	ut_ad(page_dir_get_n_heap(new_page) == PAGE_HEAP_NO_USER_LOW);
@@ -2230,7 +2230,7 @@ page_cur_parse_delete_rec(
 	if (block) {
 		page_t*		page		= buf_block_get_frame(block);
 		mem_heap_t*	heap		= NULL;
-		offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
+		rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
 		rec_t*		rec		= page + offset;
 		rec_offs_init(offsets_);
 
@@ -2258,7 +2258,7 @@ page_cur_delete_rec(
 /*================*/
 	page_cur_t*		cursor,	/*!< in/out: a page cursor */
 	const dict_index_t*	index,	/*!< in: record descriptor */
-	const offset_t*		offsets,/*!< in: rec_get_offsets(
+	const rec_offs*		offsets,/*!< in: rec_get_offsets(
 					cursor->rec, index) */
 	mtr_t*			mtr)	/*!< in: mini-transaction handle
 					or NULL */

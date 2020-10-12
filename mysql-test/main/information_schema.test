@@ -1910,3 +1910,82 @@ SELECT count(*) FROM information_schema.columns WHERE table_schema='test' AND (t
 SELECT count(*) FROM information_schema.columns WHERE table_schema='test' AND (table_name='tt1' AND column_name='c1') OR (table_name='tt2' AND column_name='c2');
 SELECT column_name FROM information_schema.columns WHERE (table_name, column_name) IN (('tt1','c1'),('tt2', 'c2')) ORDER BY column_name;
 DROP TABLE tt1, tt2;
+
+--echo #
+--echo # MDEV-13242 Wrong results for queries with row constructors and information_schema
+--echo #
+
+SELECT SCHEMA_NAME from information_schema.schemata where schema_name='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+SELECT SCHEMA_NAME from information_schema.schemata where schema_name=REPEAT('a',193);
+
+
+--echo #
+--echo # End of 10.1 tests
+--echo #
+
+
+--echo #
+--echo # MDEV-21201:No records produced in information_schema query,
+--echo # depending on projection
+--echo #
+
+create table t (i int, constraint a check (i > 0));
+
+--disable_warnings
+--sorted_result
+select
+  tc.TABLE_SCHEMA,
+  tc.TABLE_NAME,
+  cc.CONSTRAINT_NAME,
+  cc.CHECK_CLAUSE
+from information_schema.TABLE_CONSTRAINTS tc
+  join information_schema.CHECK_CONSTRAINTS cc
+    using (CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_NAME)
+;
+--sorted_result
+select
+  tc.TABLE_SCHEMA,
+  tc.TABLE_NAME,
+  cc.CONSTRAINT_NAME,
+  cc.CHECK_CLAUSE
+from information_schema.CHECK_CONSTRAINTS cc
+  join information_schema.TABLE_CONSTRAINTS tc
+    using (CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_NAME)
+;
+--sorted_result
+select
+  tc.TABLE_SCHEMA,
+  tc.TABLE_NAME,
+  cc.CONSTRAINT_NAME,
+  cc.CHECK_CLAUSE
+from information_schema.TABLE_CONSTRAINTS tc
+  NATURAL join information_schema.CHECK_CONSTRAINTS cc
+;
+--sorted_result
+select
+  tc.TABLE_SCHEMA,
+  tc.TABLE_NAME,
+  cc.CONSTRAINT_NAME,
+  cc.CHECK_CLAUSE
+from information_schema.CHECK_CONSTRAINTS cc
+  NATURAL join information_schema.TABLE_CONSTRAINTS tc
+;
+--sorted_result
+select
+  tc.TABLE_SCHEMA,
+  tc.TABLE_NAME,
+  cc.CONSTRAINT_NAME,
+  cc.CHECK_CLAUSE,
+  tc.CONSTRAINT_CATALOG,
+  tc.CONSTRAINT_SCHEMA
+from information_schema.TABLE_CONSTRAINTS tc
+  join information_schema.CHECK_CONSTRAINTS cc
+    using (CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_NAME)
+;
+--enable_warnings
+
+drop table t;
+
+--echo #
+--echo # End of 10.3 tests
+--echo #

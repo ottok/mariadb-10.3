@@ -24,8 +24,6 @@
 #define HAVE_WINCRYPT
 #undef HAVE_OPENSSL
 #undef HAVE_GNUTLS
-#pragma comment(lib, "crypt32.lib")
-#pragma comment(lib, "ws2_32.lib")
 #endif
 
 #if defined(HAVE_OPENSSL) || defined(HAVE_WINCRYPT) || defined(HAVE_GNUTLS)
@@ -54,8 +52,7 @@
 #include <windows.h>
 #include <wincrypt.h>
 #include <bcrypt.h>
-#pragma comment(lib, "bcrypt.lib")
-#pragma comment(lib, "crypt32.lib")
+
 extern BCRYPT_ALG_HANDLE RsaProv;
 extern BCRYPT_ALG_HANDLE Sha256Prov;
 #endif
@@ -212,13 +209,15 @@ static char *load_pub_key_file(const char *filename, int *pub_key_size)
   if (fseek(fp, 0, SEEK_END))
     goto end;
 
-  *pub_key_size= ftell(fp);
+  if ((*pub_key_size= ftell(fp)) < 0)
+    goto end;
+
   rewind(fp);
 
   if (!(buffer= malloc(*pub_key_size + 1)))
     goto end;
 
-  if (!fread(buffer, *pub_key_size, 1, fp))
+  if (fread(buffer, *pub_key_size, 1, fp) != (size_t)*pub_key_size)
     goto end;
 
   error= 0;
@@ -312,7 +311,7 @@ static int auth_caching_sha2_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql)
   {
 #if defined(HAVE_GNUTLS)
      mysql->methods->set_error(mysql, CR_AUTH_PLUGIN_ERR, "HY000", 
-                               "RSA Encrytion not supported - caching_sha2_password plugin was built with GnuTLS support");
+                               "RSA Encryption not supported - caching_sha2_password plugin was built with GnuTLS support");
      return CR_ERROR;
 #else
     /* read public key file (if specified) */

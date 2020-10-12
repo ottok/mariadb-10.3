@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2019, MariaDB
+   Copyright (c) 2008, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -934,11 +934,6 @@ void execute_init_command(THD *thd, LEX_STRING *init_command,
   char *buf= thd->strmake(init_command->str, len);
   mysql_rwlock_unlock(var_lock);
 
-#if defined(ENABLED_PROFILING)
-  thd->profiling.start_new_query();
-  thd->profiling.set_query_source(buf, len);
-#endif
-
   THD_STAGE_INFO(thd, stage_execution_of_init_command);
   save_client_capabilities= thd->client_capabilities;
   thd->client_capabilities|= CLIENT_MULTI_QUERIES;
@@ -953,9 +948,6 @@ void execute_init_command(THD *thd, LEX_STRING *init_command,
   thd->client_capabilities= save_client_capabilities;
   thd->net.vio= save_vio;
 
-#if defined(ENABLED_PROFILING)
-  thd->profiling.finish_current_query();
-#endif
 }
 
 
@@ -1226,7 +1218,7 @@ bool do_command(THD *thd)
   if (WSREP(thd))
   {
     mysql_mutex_lock(&thd->LOCK_thd_data);
-    thd->wsrep_query_state= QUERY_IDLE;
+    wsrep_thd_set_query_state(thd, QUERY_IDLE);
     if (thd->wsrep_conflict_state==MUST_ABORT)
     {
       wsrep_client_rollback(thd);
@@ -1294,7 +1286,7 @@ bool do_command(THD *thd)
       thd->store_globals();
     }
 
-    thd->wsrep_query_state= QUERY_EXEC;
+    wsrep_thd_set_query_state(thd, QUERY_EXEC);
     mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
 #endif /* WITH_WSREP */
@@ -1594,7 +1586,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     }
 
     mysql_mutex_lock(&thd->LOCK_thd_data);
-    thd->wsrep_query_state= QUERY_EXEC;
+    wsrep_thd_set_query_state(thd, QUERY_EXEC);
     if (thd->wsrep_conflict_state== RETRY_AUTOCOMMIT)
     {
       thd->wsrep_conflict_state= NO_CONFLICT;
@@ -1848,7 +1840,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     if (unlikely(parser_state.init(thd, thd->query(), thd->query_length())))
       break;
 
-    if (WSREP_ON)
+    if (WSREP(thd))
       wsrep_mysql_parse(thd, thd->query(), thd->query_length(), &parser_state,
                         is_com_multi, is_next_command);
     else
@@ -1858,7 +1850,6 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     while (!thd->killed && (parser_state.m_lip.found_semicolon != NULL) &&
            ! thd->is_error())
     {
-      thd->get_stmt_da()->set_skip_flush();
       /*
         Multiple queries exist, execute them individually
       */
@@ -1933,12 +1924,12 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
       */
       statistic_increment(thd->status_var.questions, &LOCK_status);
 
-      if(!WSREP(thd))
+      if (!WSREP(thd))
 	thd->set_time(); /* Reset the query start time. */
 
       parser_state.reset(beginning_of_next_stmt, length);
 
-      if (WSREP_ON)
+      if (WSREP(thd))
         wsrep_mysql_parse(thd, beginning_of_next_stmt, length, &parser_state,
                           is_com_multi, is_next_command);
       else
@@ -2106,7 +2097,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
       general_log_print(thd, command, "Log: '%s'  Pos: %lu", name, pos);
       if (nlen < FN_REFLEN)
         mysql_binlog_send(thd, thd->strmake(name, nlen), (my_off_t)pos, flags);
-      unregister_slave(thd,1,1);
+      unregister_slave(thd, true, true); // todo: can be extraneous
       /*  fake COM_QUIT -- if we get here, the thread needs to terminate */
       error = TRUE;
       break;
@@ -6057,7 +6048,8 @@ finish:
   lex->unit.cleanup();
 
   /* close/reopen tables that were marked to need reopen under LOCK TABLES */
-  if (! thd->lex->requires_prelocking())
+  if (unlikely(thd->locked_tables_list.some_table_marked_for_reopen) &&
+      !thd->lex->requires_prelocking())
     thd->locked_tables_list.reopen_tables(thd, true);
 
   if (! thd->in_sub_stmt)
@@ -7838,8 +7830,8 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
     sp_cache_enforce_limit(thd->sp_package_spec_cache, stored_program_cache_size);
     sp_cache_enforce_limit(thd->sp_package_body_cache, stored_program_cache_size);
     thd->end_statement();
+    thd->Item_change_list::rollback_item_tree_changes();
     thd->cleanup_after_query();
-    DBUG_ASSERT(thd->Item_change_list::is_empty());
   }
   else
   {
@@ -8653,6 +8645,11 @@ bool st_select_lex::add_window_def(THD *thd,
                                                       win_frame);
   group_list= thd->lex->save_group_list;
   order_list= thd->lex->save_order_list;
+  if (parsing_place != SELECT_LIST)
+  {
+    fields_in_window_functions+= win_part_list_ptr->elements +
+                                 win_order_list_ptr->elements;
+  }
   return (win_def == NULL || window_specs.push_back(win_def));
 }
 
@@ -8674,6 +8671,11 @@ bool st_select_lex::add_window_spec(THD *thd,
                                                          win_frame);
   group_list= thd->lex->save_group_list;
   order_list= thd->lex->save_order_list;
+  if (parsing_place != SELECT_LIST)
+  {
+    fields_in_window_functions+= win_part_list_ptr->elements +
+                                 win_order_list_ptr->elements;
+  }
   thd->lex->win_spec= win_spec;
   return (win_spec == NULL || window_specs.push_back(win_spec));
 }
@@ -8902,6 +8904,8 @@ void add_join_natural(TABLE_LIST *a, TABLE_LIST *b, List<String> *using_fields,
                       SELECT_LEX *lex)
 {
   b->natural_join= a;
+  a->part_of_natural_join= TRUE;
+  b->part_of_natural_join= TRUE;
   lex->prev_join_using= using_fields;
 }
 

@@ -1,4 +1,7 @@
 connect node_2a, 127.0.0.1, root, , test, $NODE_MYPORT_2;
+SELECT @@WSREP_ON;
+@@WSREP_ON
+0
 connection node_2;
 ALTER TABLE mysql.gtid_slave_pos engine = InnoDB;
 START SLAVE;
@@ -20,6 +23,9 @@ gtid_binlog_state_equal
 #cleanup
 connection node_1;
 DROP TABLE t1;
+connection node_2;
+connection node_3;
+connection node_1;
 reset master;
 connection node_2;
 STOP SLAVE;

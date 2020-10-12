@@ -69,6 +69,12 @@ Type_handler_geometry    type_handler_geometry;
 #endif
 
 
+Schema *Type_handler::schema() const
+{
+  return &mariadb_schema;
+}
+
+
 bool Type_handler_data::init()
 {
 #ifdef HAVE_SPATIAL
@@ -4772,7 +4778,7 @@ bool Type_handler_decimal_result::
 bool Type_handler_temporal_result::
        Item_func_plus_fix_length_and_dec(Item_func_plus *item) const
 {
-  item->fix_length_and_dec_temporal();
+  item->fix_length_and_dec_temporal(true);
   return false;
 }
 
@@ -4821,7 +4827,7 @@ bool Type_handler_decimal_result::
 bool Type_handler_temporal_result::
        Item_func_minus_fix_length_and_dec(Item_func_minus *item) const
 {
-  item->fix_length_and_dec_temporal();
+  item->fix_length_and_dec_temporal(true);
   return false;
 }
 
@@ -4870,7 +4876,7 @@ bool Type_handler_decimal_result::
 bool Type_handler_temporal_result::
        Item_func_mul_fix_length_and_dec(Item_func_mul *item) const
 {
-  item->fix_length_and_dec_temporal();
+  item->fix_length_and_dec_temporal(true);
   return false;
 }
 
@@ -4919,7 +4925,8 @@ bool Type_handler_decimal_result::
 bool Type_handler_temporal_result::
        Item_func_div_fix_length_and_dec(Item_func_div *item) const
 {
-  item->fix_length_and_dec_temporal();
+  // Item_func_div::int_op() is not implemented. Disallow DECIMAL->INT downcast.
+  item->fix_length_and_dec_temporal(false);
   return false;
 }
 
@@ -4968,7 +4975,7 @@ bool Type_handler_decimal_result::
 bool Type_handler_temporal_result::
        Item_func_mod_fix_length_and_dec(Item_func_mod *item) const
 {
-  item->fix_length_and_dec_temporal();
+  item->fix_length_and_dec_temporal(true);
   return false;
 }
 

@@ -8,15 +8,16 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include "table/block_based/block_based_filter_block.h"
-
 #include "rocksdb/filter_policy.h"
+#include "table/block_based/block_based_table_reader.h"
+#include "table/block_based/mock_block_based_table.h"
 #include "test_util/testharness.h"
 #include "test_util/testutil.h"
 #include "util/coding.h"
 #include "util/hash.h"
 #include "util/string_util.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // For testing: emit an array with one hash value per key
 class TestHashFilter : public FilterPolicy {
@@ -41,28 +42,36 @@ class TestHashFilter : public FilterPolicy {
   }
 };
 
-class FilterBlockTest : public testing::Test {
+class MockBlockBasedTable : public BlockBasedTable {
  public:
-  TestHashFilter policy_;
-  BlockBasedTableOptions table_options_;
+  explicit MockBlockBasedTable(Rep* rep)
+      : BlockBasedTable(rep, nullptr /* block_cache_tracer */) {}
+};
 
-  FilterBlockTest() {
-    table_options_.filter_policy.reset(new TestHashFilter());
-  }
+class FilterBlockTest : public mock::MockBlockBasedTableTester,
+                        public testing::Test {
+ public:
+  FilterBlockTest() : mock::MockBlockBasedTableTester(new TestHashFilter) {}
 };
 
 TEST_F(FilterBlockTest, EmptyBuilder) {
   BlockBasedFilterBlockBuilder builder(nullptr, table_options_);
-  BlockContents block(builder.Finish());
-  ASSERT_EQ("\\x00\\x00\\x00\\x00\\x0b", EscapeString(block.data));
-  BlockBasedFilterBlockReader reader(nullptr, table_options_, true,
-                                     std::move(block), nullptr);
+  Slice slice(builder.Finish());
+  ASSERT_EQ("\\x00\\x00\\x00\\x00\\x0b", EscapeString(slice));
+
+  CachableEntry<BlockContents> block(
+      new BlockContents(slice), nullptr /* cache */, nullptr /* cache_handle */,
+      true /* own_value */);
+
+  BlockBasedFilterBlockReader reader(table_.get(), std::move(block));
   ASSERT_TRUE(reader.KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader.KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/100000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 }
 
 TEST_F(FilterBlockTest, SingleChunk) {
@@ -77,30 +86,46 @@ TEST_F(FilterBlockTest, SingleChunk) {
   builder.StartBlock(300);
   builder.Add("hello");
   ASSERT_EQ(5, builder.NumAdded());
-  BlockContents block(builder.Finish());
-  BlockBasedFilterBlockReader reader(nullptr, table_options_, true,
-                                     std::move(block), nullptr);
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "box", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+  Slice slice(builder.Finish());
+
+  CachableEntry<BlockContents> block(
+      new BlockContents(slice), nullptr /* cache */, nullptr /* cache_handle */,
+      true /* own_value */);
+
+  BlockBasedFilterBlockReader reader(table_.get(), std::move(block));
+  ASSERT_TRUE(reader.KeyMayMatch("foo", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/100,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("bar", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/100,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("box", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/100,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("hello", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/100,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("foo", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/100,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "missing", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "other", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 }
 
 TEST_F(FilterBlockTest, MultiChunk) {
@@ -123,93 +148,121 @@ TEST_F(FilterBlockTest, MultiChunk) {
   builder.Add("box");
   builder.Add("hello");
 
-  BlockContents block(builder.Finish());
-  BlockBasedFilterBlockReader reader(nullptr, table_options_, true,
-                                     std::move(block), nullptr);
+  Slice slice(builder.Finish());
+
+  CachableEntry<BlockContents> block(
+      new BlockContents(slice), nullptr /* cache */, nullptr /* cache_handle */,
+      true /* own_value */);
+
+  BlockBasedFilterBlockReader reader(table_.get(), std::move(block));
 
   // Check first filter
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/2000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("foo", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/uint64_t{0},
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("bar", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/2000,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   // Check second filter
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "box", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("box", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/3100,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   // Check third filter (empty)
   ASSERT_TRUE(!reader.KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   // Check last filter
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "box", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
-  ASSERT_TRUE(reader.KeyMayMatch(
-      "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("box", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/9000,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
+  ASSERT_TRUE(reader.KeyMayMatch("hello", /*prefix_extractor=*/nullptr,
+                                 /*block_offset=*/9000,
+                                 /*no_io=*/false, /*const_ikey_ptr=*/nullptr,
+                                 /*get_context=*/nullptr,
+                                 /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader.KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 }
 
 // Test for block based filter block
 // use new interface in FilterPolicy to create filter builder/reader
-class BlockBasedFilterBlockTest : public testing::Test {
+class BlockBasedFilterBlockTest : public mock::MockBlockBasedTableTester,
+                                  public testing::Test {
  public:
-  BlockBasedTableOptions table_options_;
-
-  BlockBasedFilterBlockTest() {
-    table_options_.filter_policy.reset(NewBloomFilterPolicy(10));
-  }
-
-  ~BlockBasedFilterBlockTest() override {}
+  BlockBasedFilterBlockTest()
+      : mock::MockBlockBasedTableTester(NewBloomFilterPolicy(10, true)) {}
 };
 
 TEST_F(BlockBasedFilterBlockTest, BlockBasedEmptyBuilder) {
   FilterBlockBuilder* builder =
       new BlockBasedFilterBlockBuilder(nullptr, table_options_);
-  BlockContents block(builder->Finish());
-  ASSERT_EQ("\\x00\\x00\\x00\\x00\\x0b", EscapeString(block.data));
-  FilterBlockReader* reader = new BlockBasedFilterBlockReader(
-      nullptr, table_options_, true, std::move(block), nullptr);
+  Slice slice(builder->Finish());
+  ASSERT_EQ("\\x00\\x00\\x00\\x00\\x0b", EscapeString(slice));
+
+  CachableEntry<BlockContents> block(
+      new BlockContents(slice), nullptr /* cache */, nullptr /* cache_handle */,
+      true /* own_value */);
+
+  FilterBlockReader* reader =
+      new BlockBasedFilterBlockReader(table_.get(), std::move(block));
   ASSERT_TRUE(reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/10000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   delete builder;
   delete reader;
@@ -226,30 +279,42 @@ TEST_F(BlockBasedFilterBlockTest, BlockBasedSingleChunk) {
   builder->Add("box");
   builder->StartBlock(300);
   builder->Add("hello");
-  BlockContents block(builder->Finish());
-  FilterBlockReader* reader = new BlockBasedFilterBlockReader(
-      nullptr, table_options_, true, std::move(block), nullptr);
+  Slice slice(builder->Finish());
+
+  CachableEntry<BlockContents> block(
+      new BlockContents(slice), nullptr /* cache */, nullptr /* cache_handle */,
+      true /* own_value */);
+
+  FilterBlockReader* reader =
+      new BlockBasedFilterBlockReader(table_.get(), std::move(block));
   ASSERT_TRUE(reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "missing", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "other", /*prefix_extractor=*/nullptr, /*block_offset=*/100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   delete builder;
   delete reader;
@@ -276,71 +341,92 @@ TEST_F(BlockBasedFilterBlockTest, BlockBasedMultiChunk) {
   builder->Add("box");
   builder->Add("hello");
 
-  BlockContents block(builder->Finish());
-  FilterBlockReader* reader = new BlockBasedFilterBlockReader(
-      nullptr, table_options_, true, std::move(block), nullptr);
+  Slice slice(builder->Finish());
+
+  CachableEntry<BlockContents> block(
+      new BlockContents(slice), nullptr /* cache */, nullptr /* cache_handle */,
+      true /* own_value */);
+
+  FilterBlockReader* reader =
+      new BlockBasedFilterBlockReader(table_.get(), std::move(block));
 
   // Check first filter
   ASSERT_TRUE(reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/2000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/uint64_t{0},
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   // Check second filter
   ASSERT_TRUE(reader->KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/3100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   // Check third filter (empty)
   ASSERT_TRUE(!reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/4100,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   // Check last filter
   ASSERT_TRUE(reader->KeyMayMatch(
       "box", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(reader->KeyMayMatch(
       "hello", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "foo", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
   ASSERT_TRUE(!reader->KeyMayMatch(
       "bar", /*prefix_extractor=*/nullptr, /*block_offset=*/9000,
-      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*context=*/nullptr));
+      /*no_io=*/false, /*const_ikey_ptr=*/nullptr, /*get_context=*/nullptr,
+      /*lookup_context=*/nullptr));
 
   delete builder;
   delete reader;
 }
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

@@ -451,6 +451,8 @@ bool partition_info::set_up_default_partitions(THD *thd, handler *file,
     const char *error_string;
     if (part_type == RANGE_PARTITION)
       error_string= "RANGE";
+    else if (part_type == VERSIONING_PARTITION)
+      error_string= "SYSTEM_TIME";
     else
       error_string= "LIST";
     my_error(ER_PARTITIONS_MUST_BE_DEFINED_ERROR, MYF(0), error_string);
@@ -873,7 +875,6 @@ void partition_info::vers_set_hist_part(THD *thd)
       if (next->range_value > thd->query_start())
         return;
     }
-    goto warn;
   }
   return;
 warn:

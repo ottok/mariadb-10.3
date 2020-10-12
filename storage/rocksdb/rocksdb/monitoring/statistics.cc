@@ -5,13 +5,13 @@
 //
 #include "monitoring/statistics.h"
 
-#include <cinttypes>
-#include "rocksdb/statistics.h"
-#include "port/likely.h"
 #include <algorithm>
+#include <cinttypes>
 #include <cstdio>
+#include "port/likely.h"
+#include "rocksdb/statistics.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // The order of items listed in  Tickers should be the same as
 // the order listed in TickersNameMap
@@ -162,6 +162,7 @@ const std::vector<std::pair<Tickers, std::string>> TickersNameMap = {
      "rocksdb.txn.overhead.mutex.old.commit.map"},
     {TXN_DUPLICATE_KEY_OVERHEAD, "rocksdb.txn.overhead.duplicate.key"},
     {TXN_SNAPSHOT_MUTEX_OVERHEAD, "rocksdb.txn.overhead.mutex.snapshot"},
+    {TXN_GET_TRY_AGAIN, "rocksdb.txn.get.tryagain"},
     {NUMBER_MULTIGET_KEYS_FOUND, "rocksdb.number.multiget.keys.found"},
     {NO_ITERATOR_CREATED, "rocksdb.num.iterator.created"},
     {NO_ITERATOR_DELETED, "rocksdb.num.iterator.deleted"},
@@ -402,4 +403,4 @@ bool StatisticsImpl::HistEnabledForType(uint32_t type) const {
   return type < HISTOGRAM_ENUM_MAX;
 }
 
-} // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

@@ -37,7 +37,7 @@
 #define ROCKSDB_DEPRECATED_FUNC __declspec(deprecated)
 #endif
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 struct Options;
 struct DBOptions;
@@ -57,6 +57,7 @@ class TraceWriter;
 #ifdef ROCKSDB_LITE
 class CompactionJobInfo;
 #endif
+class FileSystem;
 
 extern const std::string kDefaultColumnFamilyName;
 extern const std::string kPersistentStatsColumnFamilyName;
@@ -116,6 +117,10 @@ struct IngestExternalFileArg {
   IngestExternalFileOptions options;
 };
 
+struct GetMergeOperandsOptions {
+  int expected_max_number_of_operands = 0;
+};
+
 // A collections of table properties objects, where
 //  key: is the table's file name.
 //  value: the table properties object of the given table.
@@ -150,7 +155,7 @@ class DB {
   // read only, you can specify only a subset of column families in the
   // database that should be opened. However, you always need to specify default
   // column family. The default column family name is 'default' and it's stored
-  // in rocksdb::kDefaultColumnFamilyName
+  // in ROCKSDB_NAMESPACE::kDefaultColumnFamilyName
   //
   // Not supported in ROCKSDB_LITE, in which case the function will
   // return Status::NotSupported.
@@ -216,7 +221,7 @@ class DB {
   // ListColumnFamilies(). Also, you can open only a subset of column families
   // for read-only access.
   // The default column family name is 'default' and it's stored
-  // in rocksdb::kDefaultColumnFamilyName.
+  // in ROCKSDB_NAMESPACE::kDefaultColumnFamilyName.
   // If everything is OK, handles will on return be the same size
   // as column_families --- handles[i] will be a handle that you
   // will use to operate on column family column_family[i].
@@ -251,6 +256,10 @@ class DB {
                                    std::vector<std::string>* column_families);
 
   DB() {}
+  // No copying allowed
+  DB(const DB&) = delete;
+  void operator=(const DB&) = delete;
+
   virtual ~DB();
 
   // Create a column_family and return the handle of column family
@@ -403,6 +412,22 @@ class DB {
     return Get(options, DefaultColumnFamily(), key, value);
   }
 
+  // Returns all the merge operands corresponding to the key. If the
+  // number of merge operands in DB is greater than
+  // merge_operands_options.expected_max_number_of_operands
+  // no merge operands are returned and status is Incomplete. Merge operands
+  // returned are in the order of insertion.
+  // merge_operands- Points to an array of at-least
+  //             merge_operands_options.expected_max_number_of_operands and the
+  //             caller is responsible for allocating it. If the status
+  //             returned is Incomplete then number_of_operands will contain
+  //             the total number of merge operands found in DB for key.
+  virtual Status GetMergeOperands(
+      const ReadOptions& options, ColumnFamilyHandle* column_family,
+      const Slice& key, PinnableSlice* merge_operands,
+      GetMergeOperandsOptions* get_merge_operands_options,
+      int* number_of_operands) = 0;
+
   // If keys[i] does not exist in the database, then the i'th returned
   // status will be one for which Status::IsNotFound() is true, and
   // (*values)[i] will be set to some arbitrary value (often ""). Otherwise,
@@ -466,6 +491,47 @@ class DB {
       values++;
     }
   }
+
+  // Overloaded MultiGet API that improves performance by batching operations
+  // in the read path for greater efficiency. Currently, only the block based
+  // table format with full filters are supported. Other table formats such
+  // as plain table, block based table with block based filters and
+  // partitioned indexes will still work, but will not get any performance
+  // benefits.
+  // Parameters -
+  // options - ReadOptions
+  // column_family - ColumnFamilyHandle* that the keys belong to. All the keys
+  //                 passed to the API are restricted to a single column family
+  // num_keys - Number of keys to lookup
+  // keys - Pointer to C style array of key Slices with num_keys elements
+  // values - Pointer to C style array of PinnableSlices with num_keys elements
+  // statuses - Pointer to C style array of Status with num_keys elements
+  // sorted_input - If true, it means the input keys are already sorted by key
+  //                order, so the MultiGet() API doesn't have to sort them
+  //                again. If false, the keys will be copied and sorted
+  //                internally by the API - the input array will not be
+  //                modified
+  virtual void MultiGet(const ReadOptions& options, const size_t num_keys,
+                        ColumnFamilyHandle** column_families, const Slice* keys,
+                        PinnableSlice* values, Status* statuses,
+                        const bool /*sorted_input*/ = false) {
+    std::vector<ColumnFamilyHandle*> cf;
+    std::vector<Slice> user_keys;
+    std::vector<Status> status;
+    std::vector<std::string> vals;
+
+    for (size_t i = 0; i < num_keys; ++i) {
+      cf.emplace_back(column_families[i]);
+      user_keys.emplace_back(keys[i]);
+    }
+    status = MultiGet(options, cf, user_keys, &vals);
+    std::copy(status.begin(), status.end(), statuses);
+    for (auto& value : vals) {
+      values->PinSelf(value);
+      values++;
+    }
+  }
+
   // If the key definitely does not exist in the database, then this method
   // returns false, else true. If the caller wants to obtain value when the key
   // is found in memory, a bool for 'value_found' must be passed. 'value_found'
@@ -650,6 +716,10 @@ class DB {
     //      timestamp of oldest unreleased snapshot.
     static const std::string kOldestSnapshotTime;
 
+    //  "rocksdb.oldest-snapshot-sequence" - returns number representing
+    //      sequence number of oldest unreleased snapshot.
+    static const std::string kOldestSnapshotSequence;
+
     //  "rocksdb.num-live-versions" - returns number of live versions. `Version`
     //      is an internal data structure. See version_set.h for details. More
     //      live versions often mean more SST files are held from being deleted,
@@ -808,7 +878,7 @@ class DB {
   // stats should be included, or file stats approximation or both
   enum SizeApproximationFlags : uint8_t {
     NONE = 0,
-    INCLUDE_MEMTABLES = 1,
+    INCLUDE_MEMTABLES = 1 << 0,
     INCLUDE_FILES = 1 << 1
   };
 
@@ -818,14 +888,24 @@ class DB {
   // Note that the returned sizes measure file system space usage, so
   // if the user data compresses by a factor of ten, the returned
   // sizes will be one-tenth the size of the corresponding user data size.
-  //
-  // If include_flags defines whether the returned size should include
-  // the recently written data in the mem-tables (if
-  // the mem-table type supports it), data serialized to disk, or both.
-  // include_flags should be of type DB::SizeApproximationFlags
+  virtual Status GetApproximateSizes(const SizeApproximationOptions& options,
+                                     ColumnFamilyHandle* column_family,
+                                     const Range* range, int n,
+                                     uint64_t* sizes) = 0;
+
+  // Simpler versions of the GetApproximateSizes() method above.
+  // The include_flags argumenbt must of type DB::SizeApproximationFlags
+  // and can not be NONE.
   virtual void GetApproximateSizes(ColumnFamilyHandle* column_family,
                                    const Range* range, int n, uint64_t* sizes,
-                                   uint8_t include_flags = INCLUDE_FILES) = 0;
+                                   uint8_t include_flags = INCLUDE_FILES) {
+    SizeApproximationOptions options;
+    options.include_memtabtles =
+        (include_flags & SizeApproximationFlags::INCLUDE_MEMTABLES) != 0;
+    options.include_files =
+        (include_flags & SizeApproximationFlags::INCLUDE_FILES) != 0;
+    GetApproximateSizes(options, column_family, range, n, sizes);
+  }
   virtual void GetApproximateSizes(const Range* range, int n, uint64_t* sizes,
                                    uint8_t include_flags = INCLUDE_FILES) {
     GetApproximateSizes(DefaultColumnFamily(), range, n, sizes, include_flags);
@@ -965,6 +1045,9 @@ class DB {
   virtual Status EnableAutoCompaction(
       const std::vector<ColumnFamilyHandle*>& column_family_handles) = 0;
 
+  virtual void DisableManualCompaction() = 0;
+  virtual void EnableManualCompaction() = 0;
+
   // Number of levels used for this DB.
   virtual int NumberLevels(ColumnFamilyHandle* column_family) = 0;
   virtual int NumberLevels() { return NumberLevels(DefaultColumnFamily()); }
@@ -988,6 +1071,8 @@ class DB {
 
   // Get Env object from the DB
   virtual Env* GetEnv() const = 0;
+
+  virtual FileSystem* GetFileSystem() const;
 
   // Get DB Options that we use.  During the process of opening the
   // column family, the options provided when calling DB::Open() or
@@ -1093,6 +1178,28 @@ class DB {
   // Retrieve the sorted list of all wal files with earliest file first
   virtual Status GetSortedWalFiles(VectorLogPtr& files) = 0;
 
+  // Retrieve information about the current wal file
+  //
+  // Note that the log might have rolled after this call in which case
+  // the current_log_file would not point to the current log file.
+  //
+  // Additionally, for the sake of optimization current_log_file->StartSequence
+  // would always be set to 0
+  virtual Status GetCurrentWalFile(
+      std::unique_ptr<LogFile>* current_log_file) = 0;
+
+  // Retrieves the creation time of the oldest file in the DB.
+  // This API only works if max_open_files = -1, if it is not then
+  // Status returned is Status::NotSupported()
+  // The file creation time is set using the env provided to the DB.
+  // If the DB was created from a very old release then its possible that
+  // the SST files might not have file_creation_time property and even after
+  // moving to a newer release its possible that some files never got compacted
+  // and may not have file_creation_time property. In both the cases
+  // file_creation_time is considered 0 which means this API will return
+  // creation_time = 0 as there wouldn't be a timestamp lower than 0.
+  virtual Status GetCreationTimeOfOldestFile(uint64_t* creation_time) = 0;
+
   // Note: this API is not yet consistent with WritePrepared transactions.
   // Sets iter to an iterator that is positioned at a write-batch containing
   // seq_number. If the sequence number is non existent, it returns an iterator
@@ -1174,7 +1281,30 @@ class DB {
   virtual Status IngestExternalFiles(
       const std::vector<IngestExternalFileArg>& args) = 0;
 
-  virtual Status VerifyChecksum() = 0;
+  // CreateColumnFamilyWithImport() will create a new column family with
+  // column_family_name and import external SST files specified in metadata into
+  // this column family.
+  // (1) External SST files can be created using SstFileWriter.
+  // (2) External SST files can be exported from a particular column family in
+  //     an existing DB.
+  // Option in import_options specifies whether the external files are copied or
+  // moved (default is copy). When option specifies copy, managing files at
+  // external_file_path is caller's responsibility. When option specifies a
+  // move, the call ensures that the specified files at external_file_path are
+  // deleted on successful return and files are not modified on any error
+  // return.
+  // On error return, column family handle returned will be nullptr.
+  // ColumnFamily will be present on successful return and will not be present
+  // on error return. ColumnFamily may be present on any crash during this call.
+  virtual Status CreateColumnFamilyWithImport(
+      const ColumnFamilyOptions& options, const std::string& column_family_name,
+      const ImportColumnFamilyOptions& import_options,
+      const ExportImportFilesMetaData& metadata,
+      ColumnFamilyHandle** handle) = 0;
+
+  virtual Status VerifyChecksum(const ReadOptions& read_options) = 0;
+
+  virtual Status VerifyChecksum() { return VerifyChecksum(ReadOptions()); }
 
   // AddFile() is deprecated, please use IngestExternalFile()
   ROCKSDB_DEPRECATED_FUNC virtual Status AddFile(
@@ -1280,9 +1410,9 @@ class DB {
 
 #endif  // ROCKSDB_LITE
 
-  // Sets the globally unique ID created at database creation time by invoking
-  // Env::GenerateUniqueId(), in identity. Returns Status::OK if identity could
-  // be set properly
+  // Returns the unique ID which is read from IDENTITY file during the opening
+  // of database by setting in the identity variable
+  // Returns Status::OK if identity could be set properly
   virtual Status GetDbIdentity(std::string& identity) const = 0;
 
   // Returns default column family handle
@@ -1359,11 +1489,6 @@ class DB {
     return Status::NotSupported("Supported only by secondary instance");
   }
 #endif  // !ROCKSDB_LITE
-
- private:
-  // No copying allowed
-  DB(const DB&);
-  void operator=(const DB&);
 };
 
 // Destroy the contents of the specified database.
@@ -1397,4 +1522,4 @@ Status RepairDB(const std::string& dbname, const Options& options);
 
 #endif
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

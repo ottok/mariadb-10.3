@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2019, MariaDB Corporation.
+Copyright (c) 2016, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -27,6 +27,8 @@ Created 7/19/1997 Heikki Tuuri
 #include "ibuf0ibuf.h"
 #include "sync0sync.h"
 #include "btr0sea.h"
+
+using st_::span;
 
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
 my_bool	srv_ibuf_disable_background_merge;
@@ -2098,7 +2100,7 @@ ibuf_remove_free_page(void)
 
 	compile_time_assert(IBUF_SPACE_ID == 0);
 	fseg_free_page(header_page + IBUF_HEADER + IBUF_TREE_SEG_HEADER,
-		       fil_system.sys_space, page_no, false, &mtr);
+		       fil_system.sys_space, page_no, &mtr);
 
 	const page_id_t	page_id(IBUF_SPACE_ID, page_no);
 
@@ -2603,7 +2605,7 @@ ibuf_merge(
 	when a slow shutdown is being executed. During a slow
 	shutdown, the insert buffer merge must be completed. */
 
-	if (ibuf->empty && !srv_shutdown_state) {
+	if (ibuf->empty && srv_shutdown_state <= SRV_SHUTDOWN_INITIATED) {
 		return(0);
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
 	} else if (ibuf_debug) {
@@ -2735,42 +2737,28 @@ ibuf_contract_after_insert(
 	} while (size > 0 && sum_sizes < entry_size);
 }
 
-/*********************************************************************//**
-Determine if an insert buffer record has been encountered already.
-@return TRUE if a new record, FALSE if possible duplicate */
-static
-ibool
-ibuf_get_volume_buffered_hash(
-/*==========================*/
-	const rec_t*	rec,	/*!< in: ibuf record in post-4.1 format */
-	const byte*	types,	/*!< in: fields */
-	const byte*	data,	/*!< in: start of user record data */
-	ulint		comp,	/*!< in: 0=ROW_FORMAT=REDUNDANT,
-				nonzero=ROW_FORMAT=COMPACT */
-	ulint*		hash,	/*!< in/out: hash array */
-	ulint		size)	/*!< in: number of elements in hash array */
+/** Determine if a change buffer record has been encountered already.
+@param rec   change buffer record in the MySQL 5.5 format
+@param hash  hash table of encountered records
+@param size  number of elements in hash
+@retval true if a distinct record
+@retval false if this may be duplicating an earlier record */
+static bool ibuf_get_volume_buffered_hash(const rec_t *rec, ulint *hash,
+                                          ulint size)
 {
-	ulint		len;
-	ulint		fold;
-	ulint		bitmask;
+  ut_ad(rec_get_n_fields_old(rec) > IBUF_REC_FIELD_USER);
+  const ulint start= rec_get_field_start_offs(rec, IBUF_REC_FIELD_USER);
+  const ulint len= rec_get_data_size_old(rec) - start;
+  const uint32_t fold= ut_crc32(rec + start, len);
+  hash+= (fold / (CHAR_BIT * sizeof *hash)) % size;
+  ulint bitmask= static_cast<ulint>(1) << (fold % (CHAR_BIT * sizeof(*hash)));
 
-	len = ibuf_rec_get_size(
-		rec, types,
-		rec_get_n_fields_old(rec) - IBUF_REC_FIELD_USER, comp);
-	fold = ut_fold_binary(data, len);
+  if (*hash & bitmask)
+    return false;
 
-	hash += (fold / (CHAR_BIT * sizeof *hash)) % size;
-	bitmask = static_cast<ulint>(1) << (fold % (CHAR_BIT * sizeof(*hash)));
-
-	if (*hash & bitmask) {
-
-		return(FALSE);
-	}
-
-	/* We have not seen this record yet.  Insert it. */
-	*hash |= bitmask;
-
-	return(TRUE);
+  /* We have not seen this record yet. Remember it. */
+  *hash|= bitmask;
+  return true;
 }
 
 #ifdef UNIV_DEBUG
@@ -2863,11 +2851,7 @@ ibuf_get_volume_buffered_count_func(
 	case IBUF_OP_DELETE_MARK:
 		/* There must be a record to delete-mark.
 		See if this record has been already buffered. */
-		if (n_recs && ibuf_get_volume_buffered_hash(
-			    rec, types + IBUF_REC_INFO_SIZE,
-			    types + len,
-			    types[IBUF_REC_OFFSET_FLAGS] & IBUF_REC_COMPACT,
-			    hash, size)) {
+		if (n_recs && ibuf_get_volume_buffered_hash(rec, hash, size)) {
 			(*n_recs)++;
 		}
 
@@ -3310,7 +3294,7 @@ ibuf_insert_low(
 	dtuple_t*	ibuf_entry;
 	mem_heap_t*	offsets_heap	= NULL;
 	mem_heap_t*	heap;
-	offset_t*	offsets		= NULL;
+	rec_offs*	offsets		= NULL;
 	ulint		buffered;
 	lint		min_n_recs;
 	rec_t*		ins_rec;
@@ -3770,7 +3754,7 @@ ibuf_insert_to_index_page_low(
 	buf_block_t*	block,	/*!< in/out: index page where the buffered
 				entry should be placed */
 	dict_index_t*	index,	/*!< in: record descriptor */
-	offset_t**	offsets,/*!< out: offsets on *rec */
+	rec_offs**	offsets,/*!< out: offsets on *rec */
 	mem_heap_t*	heap,	/*!< in/out: memory heap */
 	mtr_t*		mtr,	/*!< in/out: mtr */
 	page_cur_t*	page_cur)/*!< in/out: cursor positioned on the record
@@ -3850,7 +3834,7 @@ ibuf_insert_to_index_page(
 	ulint		low_match;
 	page_t*		page		= buf_block_get_frame(block);
 	rec_t*		rec;
-	offset_t*	offsets;
+	rec_offs*	offsets;
 	mem_heap_t*	heap;
 
 	DBUG_ENTER("ibuf_insert_to_index_page");
@@ -4107,8 +4091,8 @@ ibuf_delete(
 		/* TODO: the below should probably be a separate function,
 		it's a bastardized version of btr_cur_optimistic_delete. */
 
-		offset_t	offsets_[REC_OFFS_NORMAL_SIZE];
-		offset_t*	offsets	= offsets_;
+		rec_offs	offsets_[REC_OFFS_NORMAL_SIZE];
+		rec_offs*	offsets	= offsets_;
 		mem_heap_t*	heap = NULL;
 		ulint		max_ins_size = 0;
 
@@ -4948,7 +4932,8 @@ dberr_t ibuf_check_bitmap_on_import(const trx_t* trx, fil_space_t* space)
 		bitmap_page = ibuf_bitmap_get_map_page(
 			page_id_t(space->id, page_no), page_size, &mtr);
 
-		if (buf_page_is_zeroes(bitmap_page, page_size.physical())) {
+		if (buf_is_zeroes(span<const byte>(bitmap_page,
+					     page_size.physical()))) {
 			/* This means we got all-zero page instead of
 			ibuf bitmap page. The subsequent page should be
 			all-zero pages. */
@@ -4960,8 +4945,8 @@ dberr_t ibuf_check_bitmap_on_import(const trx_t* trx, fil_space_t* space)
 					page_id_t(space->id, curr_page),
 					page_size, RW_S_LATCH, &mtr);
 	                        page_t*	page = buf_block_get_frame(block);
-				ut_ad(buf_page_is_zeroes(
-					page, page_size.physical()));
+				ut_ad(buf_is_zeroes(span<const byte>(
+					page, page_size.physical())));
 			}
 #endif /* UNIV_DEBUG */
 			ibuf_exit(&mtr);

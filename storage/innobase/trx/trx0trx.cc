@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2019, MariaDB Corporation.
+Copyright (c) 2015, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -397,9 +397,8 @@ void trx_free(trx_t*& trx)
 	ut_ad(!trx->mysql_n_tables_locked);
 	ut_ad(!trx->internal);
 
-	if (trx->declared_to_be_inside_innodb) {
-
-		ib::error() << "Freeing a trx (" << trx << ", "
+	if (UNIV_UNLIKELY(trx->declared_to_be_inside_innodb)) {
+		ib::error() << "Freeing a trx ("
 			<< trx_get_id_for_print(trx) << ") which is declared"
 			" to be processing inside InnoDB";
 
@@ -451,12 +450,22 @@ void trx_free(trx_t*& trx)
 	ut_ad(trx->will_lock == 0);
 
 	trx_pools->mem_free(trx);
+#ifdef __SANITIZE_ADDRESS__
 	/* Unpoison the memory for innodb_monitor_set_option;
 	it is operating also on the freed transaction objects. */
-	MEM_UNDEFINED(&trx->mutex, sizeof trx->mutex);
-	/* Declare the contents as initialized for Valgrind;
-	we checked that it was initialized in trx_pools->mem_free(trx). */
-	UNIV_MEM_VALID(&trx->mutex, sizeof trx->mutex);
+	MEM_MAKE_ADDRESSABLE(&trx->mutex, sizeof trx->mutex);
+	/* For innobase_kill_connection() */
+	MEM_MAKE_ADDRESSABLE(&trx->state, sizeof trx->state);
+	MEM_MAKE_ADDRESSABLE(&trx->mysql_thd, sizeof trx->mysql_thd);
+#endif
+	/* Unpoison the memory for innodb_monitor_set_option;
+	it is operating also on the freed transaction objects.
+	We checked that these were initialized in
+	trx_pools->mem_free(trx). */
+	MEM_MAKE_DEFINED(&trx->mutex, sizeof trx->mutex);
+	/* For innobase_kill_connection() */
+	MEM_MAKE_DEFINED(&trx->state, sizeof trx->state);
+	MEM_MAKE_DEFINED(&trx->mysql_thd, sizeof trx->mysql_thd);
 
 	trx = NULL;
 }
@@ -511,9 +520,7 @@ trx_free_at_shutdown(trx_t *trx)
 	ut_a(trx_state_eq(trx, TRX_STATE_PREPARED)
 	     || trx_state_eq(trx, TRX_STATE_PREPARED_RECOVERED)
 	     || (trx_state_eq(trx, TRX_STATE_ACTIVE)
-		 && (!srv_was_started
-		     || srv_operation == SRV_OPERATION_RESTORE
-		     || srv_operation == SRV_OPERATION_RESTORE_EXPORT
+		 && (!srv_was_started || is_mariabackup_restore_or_export()
 		     || srv_read_only_mode
 		     || srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO
 		     || (!srv_is_being_started
@@ -1288,7 +1295,8 @@ trx_update_mod_tables_timestamp(
 		dict_table_t* table = it->first;
 		table->update_time = now;
 #ifdef UNIV_DEBUG
-		if (preserve_tables || table->get_ref_count()) {
+		if (preserve_tables || table->get_ref_count()
+		    || UT_LIST_GET_LEN(table->locks)) {
 			/* do not evict when committing DDL operations
 			or if some other transaction is holding the
 			table handle */
@@ -1297,7 +1305,11 @@ trx_update_mod_tables_timestamp(
 		/* recheck while holding the mutex that blocks
 		table->acquire() */
 		mutex_enter(&dict_sys_mutex);
-		if (!table->get_ref_count()) {
+		mutex_enter(&lock_sys.mutex);
+		const bool do_evict = !table->get_ref_count()
+			&& !UT_LIST_GET_LEN(table->locks);
+		mutex_exit(&lock_sys.mutex);
+		if (do_evict) {
 # if MYSQL_VERSION_ID >= 100405
 			dict_sys.remove(table, true);
 # else
@@ -1458,12 +1470,6 @@ trx_commit_in_memory(
 		}
 
 		trx->commit_lsn = lsn;
-
-		/* Tell server some activity has happened, since the trx
-		does changes something. Background utility threads like
-		master thread, purge thread or page_cleaner thread might
-		have some work to do. */
-		srv_active_wake_master_thread();
 	}
 
 	ut_ad(!trx->rsegs.m_noredo.undo);
@@ -1479,15 +1485,13 @@ trx_commit_in_memory(
 
 	trx_mutex_enter(trx);
 	trx->dict_operation = TRX_DICT_OP_NONE;
-
-#ifdef WITH_WSREP
-	if (trx->mysql_thd && wsrep_on(trx->mysql_thd)) {
-		trx->lock.was_chosen_as_deadlock_victim = FALSE;
-	}
-#endif
+	trx->lock.was_chosen_as_deadlock_victim = false;
 
 	DBUG_LOG("trx", "Commit in memory: " << trx);
 	trx->state = TRX_STATE_NOT_STARTED;
+#ifdef WITH_WSREP
+	trx->wsrep = false;
+#endif
 
 	assert_trx_is_free(trx);
 

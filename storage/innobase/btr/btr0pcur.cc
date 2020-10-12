@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2019, MariaDB Corporation.
+Copyright (c) 2016, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -302,10 +302,10 @@ btr_pcur_restore_position_func(
 			if (cursor->rel_pos == BTR_PCUR_ON) {
 #ifdef UNIV_DEBUG
 				const rec_t*	rec;
-				offset_t	offsets1_[REC_OFFS_NORMAL_SIZE];
-				offset_t	offsets2_[REC_OFFS_NORMAL_SIZE];
-				offset_t*	offsets1 = offsets1_;
-				offset_t*	offsets2 = offsets2_;
+				rec_offs	offsets1_[REC_OFFS_NORMAL_SIZE];
+				rec_offs	offsets2_[REC_OFFS_NORMAL_SIZE];
+				rec_offs*	offsets1 = offsets1_;
+				rec_offs*	offsets2 = offsets2_;
 				rec = btr_pcur_get_rec(cursor);
 
 				rec_offs_init(offsets1_);
@@ -375,7 +375,7 @@ btr_pcur_restore_position_func(
 	ut_ad(cursor->rel_pos == BTR_PCUR_ON
 	      || cursor->rel_pos == BTR_PCUR_BEFORE
 	      || cursor->rel_pos == BTR_PCUR_AFTER);
-	offset_t offsets[REC_OFFS_NORMAL_SIZE];
+	rec_offs offsets[REC_OFFS_NORMAL_SIZE];
 	rec_offs_init(offsets);
 	if (cursor->rel_pos == BTR_PCUR_ON
 	    && btr_pcur_is_on_user_rec(cursor)

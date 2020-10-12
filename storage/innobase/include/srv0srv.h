@@ -494,6 +494,8 @@ enum srv_operation_mode {
 	SRV_OPERATION_BACKUP,
 	/** Mariabackup restoring a backup for subsequent --copy-back */
 	SRV_OPERATION_RESTORE,
+	/** Mariabackup restoring a backup with rolling back prepared XA's*/
+	SRV_OPERATION_RESTORE_ROLLBACK_XA,
 	/** Mariabackup restoring the incremental part of a backup */
 	SRV_OPERATION_RESTORE_DELTA,
 	/** Mariabackup restoring a backup for subsequent --export */
@@ -502,6 +504,21 @@ enum srv_operation_mode {
 
 /** Current mode of operation */
 extern enum srv_operation_mode srv_operation;
+
+inline bool is_mariabackup_restore()
+{
+	/* To rollback XA's trx_sys must be initialized, the rest is the same
+	as regular backup restore, that is why we join this two operations in
+	the most cases. */
+	return srv_operation == SRV_OPERATION_RESTORE
+	       || srv_operation == SRV_OPERATION_RESTORE_ROLLBACK_XA;
+}
+
+inline bool is_mariabackup_restore_or_export()
+{
+	return is_mariabackup_restore()
+	       || srv_operation == SRV_OPERATION_RESTORE_EXPORT;
+}
 
 extern my_bool	srv_print_innodb_monitor;
 extern my_bool	srv_print_innodb_lock_monitor;
@@ -771,19 +788,6 @@ srv_reset_io_thread_op_info();
 /** Wake up the purge threads if there is work to do. */
 void
 srv_wake_purge_thread_if_not_active();
-/** Wake up the InnoDB master thread if it was suspended (not sleeping). */
-void
-srv_active_wake_master_thread_low();
-
-#define srv_active_wake_master_thread()					\
-	do {								\
-		if (!srv_read_only_mode) {				\
-			srv_active_wake_master_thread_low();		\
-		}							\
-	} while (0)
-/** Wake up the master thread if it is suspended or being suspended. */
-void
-srv_wake_master_thread();
 
 /******************************************************************//**
 Outputs to a file the output of the InnoDB Monitor.
@@ -812,13 +816,13 @@ reading this value as it is only used in heuristics.
 ulint
 srv_get_activity_count(void);
 /*========================*/
-/*******************************************************************//**
-Check if there has been any activity.
+
+/** Check if there has been any activity.
+@param[in,out]  activity_count  recent activity count to be returned
+if there is a change
 @return FALSE if no change in activity counter. */
-ibool
-srv_check_activity(
-/*===============*/
-	ulint		old_activity_count);	/*!< old activity count */
+bool srv_check_activity(ulint *activity_count);
+
 /******************************************************************//**
 Increment the server activity counter. */
 void
@@ -1107,13 +1111,6 @@ struct srv_slot_t{
 						to do */
 	que_thr_t*	thr;			/*!< suspended query thread
 						(only used for user threads) */
-#ifdef UNIV_DEBUG
-	struct debug_sync_t {
-		UT_LIST_NODE_T(debug_sync_t) debug_sync_list;
-	};
-	UT_LIST_BASE_NODE_T(debug_sync_t) debug_sync;
-	rw_lock_t debug_sync_lock;
-#endif
 };
 
 #ifdef UNIV_DEBUG

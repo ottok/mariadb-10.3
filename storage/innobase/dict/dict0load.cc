@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2019, MariaDB Corporation.
+Copyright (c) 2016, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -784,7 +784,7 @@ err_len:
 @param[in]	space_id	Tablespace ID
 @return First filepath (caller must invoke ut_free() on it)
 @retval NULL if no SYS_DATAFILES entry was found. */
-char*
+static char*
 dict_get_first_path(
 	ulint	space_id)
 {
@@ -842,7 +842,7 @@ dict_get_first_path(
 			ut_ad(len > 0);
 			ut_ad(len < OS_FILE_MAX_PATH);
 
-			if (len > 0 && len != UNIV_SQL_NULL) {
+			if (len > 0 && len < UNIV_SQL_NULL) {
 				filepath = mem_strdupl(
 					reinterpret_cast<const char*>(field),
 					len);
@@ -904,7 +904,7 @@ dict_update_filepath(
 	trx->dict_operation_lock_mode = 0;
 	trx_free(trx);
 
-	if (err == DB_SUCCESS) {
+	if (UNIV_LIKELY(err == DB_SUCCESS)) {
 		/* We just updated SYS_DATAFILES due to the contents in
 		a link file.  Make a note that we did this. */
 		ib::info() << "The InnoDB data dictionary table SYS_DATAFILES"
@@ -914,7 +914,7 @@ dict_update_filepath(
 		ib::warn() << "Error occurred while updating InnoDB data"
 			" dictionary table SYS_DATAFILES for tablespace ID "
 			<< space_id << " to file " << filepath << ": "
-			<< ut_strerr(err) << ".";
+			<< err << ".";
 	}
 
 	return(err);
@@ -1361,6 +1361,7 @@ static ulint dict_check_sys_tables()
 
 	for (rec = dict_startscan_system(&pcur, &mtr, SYS_TABLES);
 	     rec != NULL;
+	     mtr.commit(), mtr.start(),
 	     rec = dict_getnext_system(&pcur, &mtr)) {
 		const byte*	field;
 		ulint		len;
@@ -1539,7 +1540,7 @@ dict_load_column_low(
 	ulint		pos;
 	ulint		num_base;
 
-	ut_ad(table || column);
+	ut_ad(!table == !!column);
 
 	if (rec_get_deleted_flag(rec, 0)) {
 		return(dict_load_column_del);
@@ -1646,7 +1647,7 @@ err_len:
 	}
 	num_base = mach_read_from_4(field);
 
-	if (column == NULL) {
+	if (table) {
 		if (prtype & DATA_VIRTUAL) {
 #ifdef UNIV_DEBUG
 			dict_v_col_t*	vcol =
