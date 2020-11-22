@@ -167,7 +167,6 @@ PRIMARY KEY  (store_id),
 UNIQUE KEY idx_unique_manager (manager_staff_id),
 CONSTRAINT fk_store_staff FOREIGN KEY (manager_staff_id) REFERENCES staff (staff_id) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
-SET FOREIGN_KEY_CHECKS=DEFAULT;
 LOCK TABLE staff WRITE;
 UNLOCK TABLES;
 DROP TABLES staff, store;
@@ -406,6 +405,55 @@ Opened_table_definitions	2
 Opened_tables	2
 drop function foo;
 drop table t2, t1;
+CREATE TABLE t1 (pk INT, a INT, PRIMARY KEY (pk)) ENGINE=InnoDB;
+XA START 'xid';
+INSERT INTO t1 VALUES (1,2);
+CREATE TABLE x AS SELECT * FROM t1;
+ERROR XAE07: XAER_RMFAIL: The command cannot be executed when global transaction is in the  ACTIVE state
+connect  con1,localhost,root,,test;
+SET foreign_key_checks= OFF, innodb_lock_wait_timeout= 1;
+ALTER TABLE t1 ADD FOREIGN KEY f (a) REFERENCES t1 (pk), LOCK=EXCLUSIVE;
+ERROR HY000: Lock wait timeout exceeded; try restarting transaction
+disconnect con1;
+connection default;
+XA END 'xid';
+XA ROLLBACK 'xid';
+DROP TABLE t1;
+CREATE TABLE t1 (pk INT PRIMARY KEY,
+f1 VARCHAR(10), f2 VARCHAR(10),
+f3 VARCHAR(10), f4 VARCHAR(10),
+f5 VARCHAR(10), f6 VARCHAR(10),
+f7 VARCHAR(10), f8 VARCHAR(10),
+INDEX(f1), INDEX(f2), INDEX(f3), INDEX(f4),
+INDEX(f5), INDEX(f6), INDEX(f7), INDEX(f8)) ENGINE=InnoDB;
+INSERT INTO t1 VALUES (1, 'mariadb', 'mariadb', 'mariadb', 'mariadb',
+'mariadb', 'mariadb', 'mariadb', 'mariadb'),
+(2, 'mariadb', 'mariadb', 'mariadb', 'mariadb',
+'mariadb', 'mariadb', 'mariadb', 'mariadb'),
+(3, 'innodb', 'innodb', 'innodb', 'innodb',
+'innodb', 'innodb', 'innodb', 'innodb');
+ALTER TABLE t1 ADD FOREIGN KEY (f1) REFERENCES t1 (f2) ON DELETE SET NULL;
+START TRANSACTION;
+DELETE FROM t1 where f1='mariadb';
+SELECT * FROM t1;
+pk	f1	f2	f3	f4	f5	f6	f7	f8
+2	NULL	mariadb	mariadb	mariadb	mariadb	mariadb	mariadb	mariadb
+3	innodb	innodb	innodb	innodb	innodb	innodb	innodb	innodb
+ROLLBACK;
+ALTER TABLE t1 ADD FOREIGN KEY (f3) REFERENCES t1 (f4) ON DELETE CASCADE;
+START TRANSACTION;
+DELETE FROM t1 where f3='mariadb';
+SELECT * FROM t1;
+pk	f1	f2	f3	f4	f5	f6	f7	f8
+3	innodb	innodb	innodb	innodb	innodb	innodb	innodb	innodb
+ROLLBACK;
+ALTER TABLE t1 ADD FOREIGN KEY (f5) REFERENCES t1 (f6) ON UPDATE SET NULL;
+UPDATE t1 SET f6='update';
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t1`, CONSTRAINT `t1_ibfk_3` FOREIGN KEY (`f5`) REFERENCES `t1` (`f6`) ON UPDATE SET NULL)
+ALTER TABLE t1 ADD FOREIGN KEY (f7) REFERENCES t1 (f8) ON UPDATE CASCADE;
+UPDATE t1 SET f6='cascade';
+ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t1`, CONSTRAINT `t1_ibfk_3` FOREIGN KEY (`f5`) REFERENCES `t1` (`f6`) ON UPDATE SET NULL)
+DROP TABLE t1;
 # Start of 10.2 tests
 #
 # MDEV-13246 Stale rows despite ON DELETE CASCADE constraint
@@ -658,6 +706,7 @@ SET GLOBAL innodb_purge_rseg_truncate_frequency = @saved_frequency;
 # MDEV-17187 table doesn't exist in engine after ALTER other tables
 # with CONSTRAINTs
 #
+call mtr.add_suppression("\\[Warning\\] InnoDB: In ALTER TABLE `test`\\.`t2` has or is referenced in foreign key constraints which are not compatible with the new table definition.");
 set foreign_key_checks=on;
 create table t1 (id int not null primary key) engine=innodb;
 create table t2 (id int not null primary key, fid int not null,
@@ -713,4 +762,41 @@ drop table t1,t2;
 ERROR 23000: Cannot delete or update a parent row: a foreign key constraint fails
 drop table t1,t2;
 ERROR 42S02: Unknown table 'test.t2'
+#
+# MDEV-22934 Table disappear after two alter table command
+#
+CREATE TABLE t1(f1 INT NOT NULL AUTO_INCREMENT,
+f2 INT NOT NULL,
+PRIMARY KEY (f1), INDEX (f2))ENGINE=InnoDB;
+CREATE TABLE t2(f1 INT NOT NULL,
+f2 INT NOT NULL, f3 INT NOT NULL,
+PRIMARY KEY(f1, f2), UNIQUE KEY(f2),
+CONSTRAINT `t2_ibfk_1` FOREIGN KEY (f2) REFERENCES t1(f2) ON DELETE CASCADE,
+CONSTRAINT `t2_ibfk_2` FOREIGN KEY (f1) REFERENCES t1(f1) ON DELETE CASCADE
+) ENGINE=InnoDB;
+SET FOREIGN_KEY_CHECKS=0;
+ALTER TABLE t2 DROP PRIMARY KEY, ADD PRIMARY KEY(f3), ALGORITHM=INPLACE;
+ALTER TABLE t2 DROP INDEX `f2`, ALGORITHM=COPY;
+SHOW CREATE TABLE t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `f1` int(11) NOT NULL,
+  `f2` int(11) NOT NULL,
+  `f3` int(11) NOT NULL,
+  PRIMARY KEY (`f3`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1
+CREATE TABLE t2 (f1 INT NOT NULL)ENGINE=InnoDB;
+ERROR 42S01: Table 't2' already exists
+DROP TABLE t2, t1;
+#
+# MDEV-23685 SIGSEGV on ADD FOREIGN KEY after failed attempt
+# to create unique key on virtual column
+#
+CREATE TABLE t1 (pk INT PRIMARY KEY, a INT, b INT AS (a)) ENGINE=InnODB;
+INSERT INTO t1 (pk,a) VALUES (1,10),(2,10);
+ALTER TABLE t1 ADD UNIQUE INDEX ind9 (b), LOCK=SHARED;
+ERROR 23000: Duplicate entry '10' for key 'ind9'
+SET FOREIGN_KEY_CHECKS= 0;
+ALTER TABLE t1 ADD FOREIGN KEY (a) REFERENCES t1 (pk);
+DROP TABLE t1;
 # End of 10.2 tests

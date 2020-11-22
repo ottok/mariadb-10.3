@@ -1,4 +1,4 @@
-/* Copyright 2008-2015 Codership Oy <http://www.codership.com>
+/* Copyright 2008-2020 Codership Oy <http://www.codership.com>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1545,10 +1545,13 @@ static void* sst_donor_thread (void* a)
   char         out_buf[out_len];
 
   wsrep_uuid_t  ret_uuid= WSREP_UUID_UNDEFINED;
-  wsrep_seqno_t ret_seqno= WSREP_SEQNO_UNDEFINED; // seqno of complete SST
+  // seqno of complete SST
+  wsrep_seqno_t ret_seqno= WSREP_SEQNO_UNDEFINED;
 
-  wsp::thd thd(FALSE); // we turn off wsrep_on for this THD so that it can
-                       // operate with wsrep_ready == OFF
+  // We turn off wsrep_on for this THD so that it can
+  // operate with wsrep_ready == OFF
+  // We also set this SST thread THD as system thread
+  wsp::thd thd(FALSE, true);
   wsp::process proc(arg->cmd, "r", arg->env);
 
   err= proc.error();

@@ -1445,7 +1445,7 @@ out:
 
 void backup_fix_ddl(void);
 
-static lsn_t get_current_lsn(MYSQL *connection)
+lsn_t get_current_lsn(MYSQL *connection)
 {
 	static const char lsn_prefix[] = "\nLog sequence number ";
 	lsn_t lsn = 0;
@@ -1783,7 +1783,7 @@ apply_log_finish()
 bool
 copy_back()
 {
-	bool ret;
+	bool ret = false;
 	datadir_iter_t *it = NULL;
 	datadir_node_t node;
 	char *dst_dir;

@@ -284,7 +284,7 @@ the index.
 ulint
 btr_height_get(
 /*===========*/
-	dict_index_t*	index,	/*!< in: index tree */
+	const dict_index_t*	index,	/*!< in: index tree */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
 {
 	ulint		height=0;
@@ -591,7 +591,7 @@ Gets the number of pages in a B-tree.
 ulint
 btr_get_size(
 /*=========*/
-	dict_index_t*	index,	/*!< in: index */
+	const dict_index_t*	index,	/*!< in: index */
 	ulint		flag,	/*!< in: BTR_N_LEAF_PAGES or BTR_TOTAL_SIZE */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction where index
 				is s-latched */
@@ -1082,8 +1082,7 @@ btr_create(
 	if (type & DICT_IBUF) {
 		/* Allocate first the ibuf header page */
 		buf_block_t*	ibuf_hdr_block = fseg_create(
-			space, 0,
-			IBUF_HEADER + IBUF_TREE_SEG_HEADER, mtr);
+			space, IBUF_HEADER + IBUF_TREE_SEG_HEADER, mtr);
 
 		if (ibuf_hdr_block == NULL) {
 			return(FIL_NULL);
@@ -1114,7 +1113,7 @@ btr_create(
 		flst_init(block->frame + PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST,
 			  mtr);
 	} else {
-		block = fseg_create(space, 0,
+		block = fseg_create(space,
 				    PAGE_HEADER + PAGE_BTR_SEG_TOP, mtr);
 
 		if (block == NULL) {
@@ -1123,8 +1122,9 @@ btr_create(
 
 		buf_block_dbg_add_level(block, SYNC_TREE_NODE_NEW);
 
-		if (!fseg_create(space, block->page.id.page_no(),
-				 PAGE_HEADER + PAGE_BTR_SEG_LEAF, mtr)) {
+		if (!fseg_create(space,
+				 PAGE_HEADER + PAGE_BTR_SEG_LEAF, mtr,
+				 false, block)) {
 			/* Not enough space for new segment, free root
 			segment before return. */
 			btr_free_root(block, mtr,
@@ -5260,7 +5260,6 @@ btr_validate_index(
 
 		if (!btr_validate_level(index, trx, n - i, lockout)) {
 			err = DB_CORRUPTION;
-			break;
 		}
 	}
 

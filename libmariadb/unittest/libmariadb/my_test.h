@@ -55,6 +55,24 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 # define TRUE 1
 #endif
 
+#define IS_SKYSQL(a) ((a) && strstr((a), "db.skysql.net"))
+#define SKIP_SKYSQL \
+if (IS_SKYSQL(hostname)) \
+{ \
+  diag("Not supported by SkySQL"); \
+  return SKIP; \
+}
+
+#ifndef HAVE_SSL
+#define SKIP_NOTLS \
+{ \
+  diag("TLS not supported"); \
+  return SKIP;\
+}
+#else
+#define SKIP_NOTLS
+#endif
+
 #define MAX_KEY MAX_INDEXES
 #define MAX_KEY_LENGTH_DECIMAL_WIDTH 4          /* strlen("4096") */
 
@@ -107,7 +125,7 @@ do {\
 do {\
   if (expr)\
   {\
-    diag("Error: %s (%s: %d)", (reason) ? reason : "", __FILE__, __LINE__);\
+    diag("Error: %s (%s: %d)", reason, __FILE__, __LINE__);\
     return FAIL;\
   }\
 } while(0)
@@ -453,7 +471,7 @@ int check_variable(MYSQL *mysql, const char *variable, const char *value)
 MYSQL *test_connect(struct my_tests_st *test)
 {
   MYSQL *mysql;
-  int i= 0;
+  int i= 0, rc;
   int timeout= 10;
   my_bool truncation_report= 1;
   if (!(mysql = mysql_init(NULL))) {
@@ -484,6 +502,16 @@ MYSQL *test_connect(struct my_tests_st *test)
     mysql_close(mysql);
     return(NULL);
   }
+
+  /* Clear sql_mode when establishing a new connection. */
+  rc= mysql_query(mysql, "SET sql_mode=''");
+  if (rc)
+  {
+    diag("Error (%d): %s (%d) in %s line %d", rc, mysql_error(mysql),
+         mysql_errno(mysql), __FILE__, __LINE__);
+    return(NULL);
+  }
+
   return(mysql);
 }
 
@@ -514,6 +542,8 @@ void get_envvars() {
 
   if (!hostname && (envvar= getenv("MYSQL_TEST_HOST")))
     hostname= envvar;
+
+
   if (!username)
   {
     if ((envvar= getenv("MYSQL_TEST_USER")))

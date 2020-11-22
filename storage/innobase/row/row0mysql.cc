@@ -1522,7 +1522,7 @@ error_exit:
 		srv_stats.n_rows_inserted.inc(size_t(trx->id));
 	}
 
-	/* Not protected by dict_table_stats_lock() for performance
+	/* Not protected by dict_sys->mutex for performance
 	reasons, we would rather get garbage in stat_n_rows (which is
 	just an estimate anyway) than protecting the following code
 	with a latch. */
@@ -1892,7 +1892,7 @@ row_update_for_mysql(row_prebuilt_t* prebuilt)
 	ut_ad(is_delete == (node->is_delete == PLAIN_DELETE));
 
 	if (is_delete) {
-		/* Not protected by dict_table_stats_lock() for performance
+		/* Not protected by dict_sys->mutex for performance
 		reasons, we would rather get garbage in stat_n_rows (which is
 		just an estimate anyway) than protecting the following code
 		with a latch. */
@@ -2244,7 +2244,7 @@ row_update_cascade_for_mysql(
 
 			if (node->is_delete == PLAIN_DELETE) {
 				/* Not protected by
-				dict_table_stats_lock() for
+				dict_sys->mutex for
 				performance reasons, we would rather
 				get garbage in stat_n_rows (which is
 				just an estimate anyway) than
@@ -2592,7 +2592,7 @@ row_drop_table_for_mysql_in_background(
 
 	trx_commit_for_mysql(trx);
 
-	trx_free(trx);
+	trx->free();
 
 	return(error);
 }
@@ -2773,7 +2773,7 @@ row_mysql_drop_garbage_tables()
 	btr_pcur_close(&pcur);
 	mtr.commit();
 	row_mysql_unlock_data_dictionary(trx);
-	trx_free(trx);
+	trx->free();
 	mem_heap_free(heap);
 }
 
@@ -3817,7 +3817,7 @@ funct_exit_all_freed:
 
 	trx->op_info = "";
 
-	srv_inc_activity_count();
+	srv_wake_master_thread();
 
 	DBUG_RETURN(err);
 }
@@ -3937,9 +3937,21 @@ loop:
 		avoid accessing dropped fts aux tables in information
 		scheam when parent table still exists.
 		Note: Drop parent table will drop fts aux tables. */
-		char*	parent_table_name;
-		parent_table_name = fts_get_parent_table_name(
-				table_name, strlen(table_name));
+		char*		parent_table_name = NULL;
+		table_id_t	table_id;
+		index_id_t	index_id;
+
+		if (fts_check_aux_table(
+				table_name, &table_id, &index_id)) {
+			dict_table_t* parent_table = dict_table_open_on_id(
+					table_id, TRUE, DICT_TABLE_OP_NORMAL);
+			if (parent_table != NULL) {
+				parent_table_name = mem_strdupl(
+					parent_table->name.m_name,
+					strlen(parent_table->name.m_name));
+				dict_table_close(parent_table, TRUE, FALSE);
+			}
+		}
 
 		if (parent_table_name != NULL) {
 			ut_free(table_name);
@@ -4528,12 +4540,20 @@ end:
 		if (err != DB_SUCCESS) {
 
 			if (old_is_tmp) {
-				ib::error() << "In ALTER TABLE "
+				/* In case of copy alter, ignore the
+				loading of foreign key constraint
+				when foreign_key_check is disabled */
+				ib::error_or_warn(trx->check_foreigns)
+					<< "In ALTER TABLE "
 					<< ut_get_name(trx, new_name)
 					<< " has or is referenced in foreign"
 					" key constraints which are not"
 					" compatible with the new table"
 					" definition.";
+				if (!trx->check_foreigns) {
+					err = DB_SUCCESS;
+					goto funct_exit;
+				}
 			} else {
 				ib::error() << "In RENAME TABLE table "
 					<< ut_get_name(trx, new_name)
@@ -4605,7 +4625,7 @@ funct_exit:
 
 		trx_bg->dict_operation_lock_mode = 0;
 		trx_commit_for_mysql(trx_bg);
-		trx_free(trx_bg);
+		trx_bg->free();
 	}
 
 	if (table != NULL) {

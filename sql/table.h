@@ -1312,9 +1312,16 @@ public:
   /* number of select if it is derived table */
   uint          derived_select_number;
   /*
-    0 or JOIN_TYPE_{LEFT|RIGHT}. Currently this is only compared to 0.
-    If maybe_null !=0, this table is inner w.r.t. some outer join operation,
-    and null_row may be true.
+    Possible values:
+     - 0 by default
+     - JOIN_TYPE_{LEFT|RIGHT} if the table is inner w.r.t an outer join
+       operation
+     - 1 if the SELECT has mixed_implicit_grouping=1. example:
+       select max(col1), col2 from t1. In this case, the query produces
+       one row with all columns having NULL values.
+
+    Interpetation: If maybe_null!=0, all fields of the table are considered
+    NULLable (and have NULL values when null_row=true)
   */
   uint maybe_null;
   int		current_lock;           /* Type of lock on table */
@@ -2183,7 +2190,6 @@ struct TABLE_LIST
     parsing 'this' is a NATURAL/USING join iff (natural_join != NULL).
   */
   TABLE_LIST *natural_join;
-  bool part_of_natural_join;
   /*
     True if 'this' represents a nested join that is a NATURAL JOIN.
     For one of the operands of 'this', the member 'natural_join' points

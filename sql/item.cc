@@ -2743,8 +2743,6 @@ bool Type_std_attributes::agg_item_set_converter(const DTCollation &coll,
     Item* conv= (*arg)->safe_charset_converter(thd, coll.collation);
     if (conv == *arg)
       continue;
-    if (!conv && ((*arg)->collation.repertoire == MY_REPERTOIRE_ASCII))
-      conv= new (thd->mem_root) Item_func_conv_charset(thd, *arg, coll.collation, 1);
 
     if (!conv)
     {
@@ -7616,7 +7614,6 @@ Item *find_producing_item(Item *item, st_select_lex *sel)
   DBUG_ASSERT(item->type() == Item::FIELD_ITEM ||
               (item->type() == Item::REF_ITEM &&
                ((Item_ref *) item)->ref_type() == Item_ref::VIEW_REF)); 
-  Item *producing_item;
   Item_field *field_item= NULL;
   Item_equal *item_equal= item->get_item_equal();
   table_map tab_map= sel->master_unit()->derived->table->map;
@@ -7638,6 +7635,7 @@ Item *find_producing_item(Item *item, st_select_lex *sel)
   List_iterator_fast<Item> li(sel->item_list);
   if (field_item)
   {
+    Item *producing_item= NULL;
     uint field_no= field_item->field->field_index;
     for (uint i= 0; i <= field_no; i++)
       producing_item= li++;

@@ -94,7 +94,6 @@ static const char *commands[]= {
   "COM_SET_OPTION",
   "COM_STMT_FETCH",
   "COM_DAEMON",
-  "COM_MULTI",
   "COM_END"
 };
 
@@ -213,7 +212,7 @@ static int trace_init(char *errormsg,
 }
 /* }}} */
 
-static int trace_deinit()
+static int trace_deinit(void)
 {
   /* unregister plugin */
   while(trace_info)

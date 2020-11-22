@@ -339,14 +339,6 @@ buf_pool_t*	buf_pool_ptr;
 /** true when resizing buffer pool is in the critical path. */
 volatile bool	buf_pool_resizing;
 
-/** true when withdrawing buffer pool pages might cause page relocation */
-volatile bool	buf_pool_withdrawing;
-
-/** the clock is incremented every time a pointer to a page may become obsolete;
-if the withdrwa clock has not changed, the pointer is still valid in buffer
-pool. if changed, the pointer might not be in buffer pool any more. */
-volatile ulint	buf_withdraw_clock;
-
 /** Map of buffer pool chunks by its first frame address
 This is newly made by initialization of buffer pool and buf_resize_thread.
 Currently, no need mutex protection for update. */
@@ -2110,8 +2102,6 @@ buf_pool_init(
 	NUMA_MEMPOLICY_INTERLEAVE_IN_SCOPE;
 
 	buf_pool_resizing = false;
-	buf_pool_withdrawing = false;
-	buf_withdraw_clock = 0;
 
 	buf_pool_ptr = (buf_pool_t*) ut_zalloc_nokey(
 		n_instances * sizeof *buf_pool_ptr);
@@ -2171,7 +2161,6 @@ buf_page_realloc(
 {
 	buf_block_t*	new_block;
 
-	ut_ad(buf_pool_withdrawing);
 	ut_ad(buf_pool_mutex_own(buf_pool));
 	ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
 
@@ -2593,9 +2582,6 @@ buf_pool_withdraw_blocks(
 	ib::info() << "buffer pool " << i << " : withdrawn target "
 		<< UT_LIST_GET_LEN(buf_pool->withdraw) << " blocks.";
 
-	/* retry is not needed */
-	++buf_withdraw_clock;
-
 	return(false);
 }
 
@@ -2692,7 +2678,6 @@ buf_pool_resize()
 	NUMA_MEMPOLICY_INTERLEAVE_IN_SCOPE;
 
 	ut_ad(!buf_pool_resizing);
-	ut_ad(!buf_pool_withdrawing);
 	ut_ad(srv_buf_pool_chunk_unit > 0);
 
 	new_instance_size = srv_buf_pool_size / srv_buf_pool_instances;
@@ -2760,7 +2745,6 @@ buf_pool_resize()
 
 			ut_ad(buf_pool->withdraw_target == 0);
 			buf_pool->withdraw_target = withdraw_target;
-			buf_pool_withdrawing = true;
 		}
 	}
 
@@ -2785,7 +2769,6 @@ withdraw_retry:
 
 	if (srv_shutdown_state != SRV_SHUTDOWN_NONE) {
 		/* abort to resize for shutdown. */
-		buf_pool_withdrawing = false;
 		return;
 	}
 
@@ -2847,7 +2830,6 @@ withdraw_retry:
 		goto withdraw_retry;
 	}
 
-	buf_pool_withdrawing = false;
 
 	buf_resize_status("Latching whole of buffer pool.");
 
@@ -4046,37 +4028,6 @@ buf_block_from_ahi(const byte* ptr)
 
 /********************************************************************//**
 Find out if a pointer belongs to a buf_block_t. It can be a pointer to
-the buf_block_t itself or a member of it. This functions checks one of
-the buffer pool instances.
-@return TRUE if ptr belongs to a buf_block_t struct */
-static
-ibool
-buf_pointer_is_block_field_instance(
-/*================================*/
-	buf_pool_t*	buf_pool,	/*!< in: buffer pool instance */
-	const void*	ptr)		/*!< in: pointer not dereferenced */
-{
-	const buf_chunk_t*		chunk	= buf_pool->chunks;
-	const buf_chunk_t* const	echunk	= chunk + ut_min(
-		buf_pool->n_chunks, buf_pool->n_chunks_new);
-
-	/* TODO: protect buf_pool->chunks with a mutex (the older pointer will
-	currently remain while during buf_pool_resize()) */
-	while (chunk < echunk) {
-		if (ptr >= (void*) chunk->blocks
-		    && ptr < (void*) (chunk->blocks + chunk->size)) {
-
-			return(TRUE);
-		}
-
-		chunk++;
-	}
-
-	return(FALSE);
-}
-
-/********************************************************************//**
-Find out if a pointer belongs to a buf_block_t. It can be a pointer to
 the buf_block_t itself or a member of it
 @return TRUE if ptr belongs to a buf_block_t struct */
 ibool
@@ -4087,35 +4038,12 @@ buf_pointer_is_block_field(
 	ulint	i;
 
 	for (i = 0; i < srv_buf_pool_instances; i++) {
-		ibool	found;
-
-		found = buf_pointer_is_block_field_instance(
-			buf_pool_from_array(i), ptr);
-		if (found) {
+		if (buf_pool_from_array(i)->is_block_field(ptr)) {
 			return(TRUE);
 		}
 	}
 
 	return(FALSE);
-}
-
-/********************************************************************//**
-Find out if a buffer block was created by buf_chunk_init().
-@return TRUE if "block" has been added to buf_pool->free by buf_chunk_init() */
-static
-ibool
-buf_block_is_uncompressed(
-/*======================*/
-	buf_pool_t*		buf_pool,	/*!< in: buffer pool instance */
-	const buf_block_t*	block)		/*!< in: pointer to block,
-						not dereferenced */
-{
-	if ((((ulint) block) % sizeof *block) != 0) {
-		/* The pointer should be aligned. */
-		return(FALSE);
-	}
-
-	return(buf_pointer_is_block_field_instance(buf_pool, (void*) block));
 }
 
 #if defined UNIV_DEBUG || defined UNIV_IBUF_DEBUG
@@ -4356,7 +4284,7 @@ loop:
 		has been allocated by buf_page_alloc_descriptor(),
 		it may have been freed by buf_relocate(). */
 
-		if (!buf_block_is_uncompressed(buf_pool, block)
+		if (!buf_pool->is_block_field(block)
 		    || page_id != block->page.id
 		    || buf_block_get_state(block) != BUF_BLOCK_FILE_PAGE) {
 
@@ -5626,14 +5554,13 @@ buf_page_create(
 	buf_frame_t*	frame;
 	buf_block_t*	block;
 	buf_block_t*	free_block	= NULL;
-	buf_pool_t*	buf_pool = buf_pool_get(page_id);
+	buf_pool_t*	buf_pool= buf_pool_get(page_id);
 	rw_lock_t*	hash_lock;
 
 	ut_ad(mtr->is_active());
 	ut_ad(page_id.space() != 0 || !page_size.is_compressed());
-
+loop:
 	free_block = buf_LRU_get_free_block(buf_pool);
-
 	buf_pool_mutex_enter(buf_pool);
 
 	hash_lock = buf_page_hash_lock_get(buf_pool, page_id);
@@ -5645,42 +5572,107 @@ buf_page_create(
 	    && buf_page_in_file(&block->page)
 	    && !buf_pool_watch_is_sentinel(buf_pool, &block->page)) {
 		ut_d(block->page.file_page_was_freed = FALSE);
-
+		buf_page_state page_state = buf_block_get_state(block);
 #ifdef BTR_CUR_HASH_ADAPT
-		bool drop_hash_entry =
-			(block->page.state == BUF_BLOCK_FILE_PAGE
-			 && block->index);
-
-		if (drop_hash_entry) {
-			mutex_enter(&block->mutex);
-			buf_page_set_sticky(&block->page);
-			mutex_exit(&block->mutex);
-		}
+		const dict_index_t *drop_hash_entry= NULL;
 #endif
+		switch (page_state) {
+		default:
+			ut_ad(0);
+			break;
+		case BUF_BLOCK_ZIP_PAGE:
+		case BUF_BLOCK_ZIP_DIRTY:
+			buf_block_init_low(free_block);
+			mutex_enter(&buf_pool->zip_mutex);
+
+			buf_page_mutex_enter(free_block);
+			if (buf_page_get_io_fix(&block->page) != BUF_IO_NONE) {
+				mutex_exit(&buf_pool->zip_mutex);
+				rw_lock_x_unlock(hash_lock);
+				buf_LRU_block_free_non_file_page(free_block);
+				buf_pool_mutex_exit(buf_pool);
+				buf_page_mutex_exit(free_block);
+
+				goto loop;
+			}
+
+			rw_lock_x_lock(&free_block->lock);
+
+			buf_relocate(&block->page, &free_block->page);
+			if (page_state == BUF_BLOCK_ZIP_DIRTY) {
+				ut_ad(block->page.in_flush_list);
+				ut_ad(block->page.oldest_modification > 0);
+				buf_flush_relocate_on_flush_list(
+					&block->page, &free_block->page);
+			} else {
+				ut_ad(block->page.oldest_modification == 0);
+				ut_ad(!block->page.in_flush_list);
+#ifdef UNIV_DEBUG
+				UT_LIST_REMOVE(
+					buf_pool->zip_clean, &block->page);
+#endif
+			}
+
+			free_block->page.state = BUF_BLOCK_FILE_PAGE;
+			mutex_exit(&buf_pool->zip_mutex);
+			free_block->lock_hash_val = lock_rec_hash(
+					page_id.space(), page_id.page_no());
+			buf_unzip_LRU_add_block(free_block, false);
+			buf_page_free_descriptor(&block->page);
+			block = free_block;
+			buf_block_fix(block);
+			buf_page_mutex_exit(free_block);
+			free_block = NULL;
+			break;
+		case BUF_BLOCK_FILE_PAGE:
+			buf_block_fix(block);
+			const int32_t num_fix_count =
+				mtr->get_fix_count(block) + 1;
+			buf_page_mutex_enter(block);
+			while (buf_block_get_io_fix(block) != BUF_IO_NONE
+			       || (num_fix_count
+				   != block->page.buf_fix_count)) {
+				buf_page_mutex_exit(block);
+				buf_pool_mutex_exit(buf_pool);
+				rw_lock_x_unlock(hash_lock);
+
+				os_thread_yield();
+
+				buf_pool_mutex_enter(buf_pool);
+				rw_lock_x_lock(hash_lock);
+				buf_page_mutex_enter(block);
+			}
+
+			rw_lock_x_lock(&block->lock);
+			buf_page_mutex_exit(block);
+#ifdef BTR_CUR_HASH_ADAPT
+			drop_hash_entry = block->index;
+#endif
+			break;
+		}
 		/* Page can be found in buf_pool */
 		buf_pool_mutex_exit(buf_pool);
 		rw_lock_x_unlock(hash_lock);
 
-		buf_block_free(free_block);
+		if (free_block) {
+			buf_block_free(free_block);
+		}
 #ifdef BTR_CUR_HASH_ADAPT
 		if (drop_hash_entry) {
 			btr_search_drop_page_hash_index(block);
-			buf_pool_mutex_enter(buf_pool);
-			mutex_enter(&block->mutex);
-			buf_page_unset_sticky(&block->page);
-			mutex_exit(&block->mutex);
-			buf_pool_mutex_exit(buf_pool);
 		}
 #endif /* BTR_CUR_HASH_ADAPT */
 
-		if (!recv_recovery_is_on()) {
-			return buf_page_get_with_no_latch(page_id, page_size,
-							  mtr);
+#ifdef UNIV_DEBUG
+		if (!fsp_is_system_temporary(page_id.space())) {
+			rw_lock_s_lock_nowait(
+				&block->debug_latch,
+				__FILE__, __LINE__);
 		}
+#endif /* UNIV_DEBUG */
 
-		mutex_exit(&recv_sys->mutex);
-		block = buf_page_get_with_no_latch(page_id, page_size, mtr);
-		mutex_enter(&recv_sys->mutex);
+		mtr_memo_push(mtr, block, MTR_MEMO_PAGE_X_FIX);
+
 		return block;
 	}
 
@@ -5694,6 +5686,8 @@ buf_page_create(
 	buf_page_mutex_enter(block);
 
 	buf_page_init(buf_pool, page_id, page_size, block);
+
+	rw_lock_x_lock(&block->lock);
 
 	rw_lock_x_unlock(hash_lock);
 
@@ -5712,7 +5706,6 @@ buf_page_create(
 		by IO-fixing and X-latching the block. */
 
 		buf_page_set_io_fix(&block->page, BUF_IO_READ);
-		rw_lock_x_lock(&block->lock);
 
 		buf_page_mutex_exit(block);
 		/* buf_pool->mutex may be released and reacquired by
@@ -5734,12 +5727,11 @@ buf_page_create(
 		buf_unzip_LRU_add_block(block, FALSE);
 
 		buf_page_set_io_fix(&block->page, BUF_IO_NONE);
-		rw_lock_x_unlock(&block->lock);
 	}
 
 	buf_pool_mutex_exit(buf_pool);
 
-	mtr_memo_push(mtr, block, MTR_MEMO_BUF_FIX);
+	mtr_memo_push(mtr, block, MTR_MEMO_PAGE_X_FIX);
 
 	buf_page_set_accessed(&block->page);
 

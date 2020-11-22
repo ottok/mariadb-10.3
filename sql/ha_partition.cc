@@ -1,6 +1,6 @@
 /*
   Copyright (c) 2005, 2019, Oracle and/or its affiliates.
-  Copyright (c) 2009, 2019, MariaDB
+  Copyright (c) 2009, 2020, MariaDB
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -2025,6 +2025,7 @@ int ha_partition::change_partitions(HA_CREATE_INFO *create_info,
     DBUG_ASSERT(part_elem->part_state == PART_TO_BE_REORGED);
     part_elem->part_state= PART_TO_BE_DROPPED;
   }
+  DBUG_ASSERT(m_new_file == 0);
   m_new_file= new_file_array;
   if (unlikely((error= copy_partitions(copied, deleted))))
   {
@@ -2033,6 +2034,7 @@ int ha_partition::change_partitions(HA_CREATE_INFO *create_info,
       They will later be deleted through the ddl-log.
     */
     cleanup_new_partition(part_count);
+    m_new_file= 0;
   }
   DBUG_RETURN(error);
 }
@@ -2124,6 +2126,8 @@ int ha_partition::copy_partitions(ulonglong * const copied,
     file->ha_rnd_end();
     reorg_part++;
   }
+  DBUG_EXECUTE_IF("debug_abort_copy_partitions",
+                  DBUG_RETURN(HA_ERR_UNSUPPORTED); );
   DBUG_RETURN(FALSE);
 error:
   m_reorged_file[reorg_part]->ha_rnd_end();
@@ -6380,7 +6384,7 @@ ha_rows ha_partition::multi_range_read_info(uint keyno, uint n_ranges,
 {
   uint i;
   handler **file;
-  ha_rows rows;
+  ha_rows rows= 0;
   DBUG_ENTER("ha_partition::multi_range_read_info");
   DBUG_PRINT("enter", ("partition this: %p", this));
 
@@ -9516,7 +9520,6 @@ double ha_partition::read_time(uint index, uint ranges, ha_rows rows)
 
 ha_rows ha_partition::records()
 {
-  int error;
   ha_rows tot_rows= 0;
   uint i;
   DBUG_ENTER("ha_partition::records");
@@ -9525,9 +9528,10 @@ ha_rows ha_partition::records()
        i < m_tot_parts;
        i= bitmap_get_next_set(&m_part_info->read_partitions, i))
   {
-    ha_rows rows;
-    if (unlikely((error= m_file[i]->pre_records()) ||
-                 (rows= m_file[i]->records()) == HA_POS_ERROR))
+    if (unlikely(m_file[i]->pre_records()))
+      DBUG_RETURN(HA_POS_ERROR);
+    const ha_rows rows= m_file[i]->records();
+    if (unlikely(rows == HA_POS_ERROR))
       DBUG_RETURN(HA_POS_ERROR);
     tot_rows+= rows;
   }
@@ -11015,7 +11019,7 @@ TABLE_LIST *ha_partition::get_next_global_for_child()
 
 const COND *ha_partition::cond_push(const COND *cond)
 {
-  handler **file= m_file;
+  uint i;
   COND *res_cond= NULL;
   DBUG_ENTER("ha_partition::cond_push");
 
@@ -11025,26 +11029,35 @@ const COND *ha_partition::cond_push(const COND *cond)
       We want to do this in a separate loop to not come into a situation
       where we have only done cond_push() to some of the tables
     */
-    do
+    for (i= bitmap_get_first_set(&m_partitions_to_reset);
+         i < m_tot_parts;
+         i= bitmap_get_next_set(&m_partitions_to_reset, i))
     {
-      if (((*file)->set_top_table_and_fields(top_table,
-                                             top_table_field,
-                                             top_table_fields)))
-        DBUG_RETURN(cond);                      // Abort cond push, no error
-    } while (*(++file));
-    file= m_file;
+      if (bitmap_is_set(&m_opened_partitions, i))
+      {
+        if ((m_file[i]->set_top_table_and_fields(top_table,
+                                                 top_table_field,
+                                                 top_table_fields)))
+          DBUG_RETURN(cond);                      // Abort cond push, no error
+      }
+    }
   }
 
-  do
+  for (i= bitmap_get_first_set(&m_partitions_to_reset);
+       i < m_tot_parts;
+       i= bitmap_get_next_set(&m_partitions_to_reset, i))
   {
-    if ((*file)->pushed_cond != cond)
+    if (bitmap_is_set(&m_opened_partitions, i))
     {
-      if ((*file)->cond_push(cond))
-        res_cond= (COND *) cond;
-      else
-        (*file)->pushed_cond= cond;
+      if (m_file[i]->pushed_cond != cond)
+      {
+        if (m_file[i]->cond_push(cond))
+          res_cond= (COND *) cond;
+        else
+          m_file[i]->pushed_cond= cond;
+      }
     }
-  } while (*(++file));
+  }
   DBUG_RETURN(res_cond);
 }
 
@@ -11056,13 +11069,18 @@ const COND *ha_partition::cond_push(const COND *cond)
 
 void ha_partition::cond_pop()
 {
-  handler **file= m_file;
+  uint i;
   DBUG_ENTER("ha_partition::cond_pop");
 
-  do
+  for (i= bitmap_get_first_set(&m_partitions_to_reset);
+       i < m_tot_parts;
+       i= bitmap_get_next_set(&m_partitions_to_reset, i))
   {
-    (*file)->cond_pop();
-  } while (*(++file));
+    if (bitmap_is_set(&m_opened_partitions, i))
+    {
+      m_file[i]->cond_pop();
+    }
+  }
   DBUG_VOID_RETURN;
 }
 
@@ -11638,23 +11656,29 @@ int ha_partition::pre_direct_delete_rows()
 
 int ha_partition::info_push(uint info_type, void *info)
 {
-  int error= 0;
-  handler **file= m_file;
+  int error= 0, tmp;
+  uint i;
   DBUG_ENTER("ha_partition::info_push");
 
-  do
+  for (i= bitmap_get_first_set(&m_partitions_to_reset);
+       i < m_tot_parts;
+       i= bitmap_get_next_set(&m_partitions_to_reset, i))
   {
-    int tmp;
-    if ((tmp= (*file)->info_push(info_type, info)))
-      error= tmp;
-  } while (*(++file));
+    if (bitmap_is_set(&m_opened_partitions, i))
+    {
+      if ((tmp= m_file[i]->info_push(info_type, info)))
+      {
+        error= tmp;
+      }
+    }
+  }
   DBUG_RETURN(error);
 }
 
 
 void ha_partition::clear_top_table_fields()
 {
-  handler **file;
+  uint i;
   DBUG_ENTER("ha_partition::clear_top_table_fields");
 
   if (set_top_table_fields)
@@ -11663,8 +11687,15 @@ void ha_partition::clear_top_table_fields()
     top_table= NULL;
     top_table_field= NULL;
     top_table_fields= 0;
-    for (file= m_file; *file; file++)
-      (*file)->clear_top_table_fields();
+    for (i= bitmap_get_first_set(&m_partitions_to_reset);
+         i < m_tot_parts;
+         i= bitmap_get_next_set(&m_partitions_to_reset, i))
+    {
+      if (bitmap_is_set(&m_opened_partitions, i))
+      {
+        m_file[i]->clear_top_table_fields();
+      }
+    }
   }
   DBUG_VOID_RETURN;
 }

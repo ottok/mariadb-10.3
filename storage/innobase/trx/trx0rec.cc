@@ -1915,7 +1915,6 @@ dberr_t trx_undo_report_rename(trx_t* trx, const dict_table_t* table)
 
 			if (ulint offset = trx_undo_page_report_rename(
 				    trx, table, block, &mtr)) {
-				undo->withdraw_clock = buf_withdraw_clock;
 				undo->top_page_no = undo->last_page_no;
 				undo->top_offset  = offset;
 				undo->top_undo_no = trx->undo_no++;
@@ -2055,7 +2054,6 @@ trx_undo_report_row_operation(
 			mtr_commit(&mtr);
 		} else {
 			/* Success */
-			undo->withdraw_clock = buf_withdraw_clock;
 			mtr_commit(&mtr);
 
 			undo->top_page_no = undo_block->page.id.page_no();
@@ -2377,7 +2375,11 @@ trx_undo_prev_version_build(
 		/* The page containing the clustered index record
 		corresponding to entry is latched in mtr.  Thus the
 		following call is safe. */
-		row_upd_index_replace_new_col_vals(entry, index, update, heap);
+		if (!row_upd_index_replace_new_col_vals(entry, *index, update,
+							heap)) {
+			ut_a(v_status & TRX_UNDO_PREV_IN_PURGE);
+			return false;
+		}
 
 		/* Get number of externally stored columns in updated record */
 		const ulint n_ext = dtuple_get_n_ext(entry);

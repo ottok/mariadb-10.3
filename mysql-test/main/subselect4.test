@@ -7,6 +7,8 @@ drop table if exists t0,t1,t2,t3,t4,t5,t6;
 drop view if exists v1, v2;
 --enable_warnings
 
+--source include/have_sequence.inc
+
 set @subselect4_tmp= @@optimizer_switch;
 set optimizer_switch='semijoin=on,firstmatch=on,loosescan=on';
 set optimizer_switch='semijoin_with_cache=on';
@@ -2142,6 +2144,31 @@ SET @@optimizer_switch= @save_optimizer_switch;
 DROP TABLE t1;
 
 --echo #
+--echo # MDEV-9513: Assertion `join->group_list || !join->is_in_subquery()' failed in create_sort_index
+--echo #
+
+CREATE TABLE t1 (a INT);
+INSERT INTO t1 VALUES (1),(2);
+
+CREATE TABLE t2 (a INT);
+INSERT INTO t2 VALUES (2),(3);
+EXPLAIN
+SELECT t1.a FROM t1 WHERE t1.a IN ( SELECT A.a FROM t1 A UNION SELECT B.a FROM t2 B ORDER BY 1);
+SELECT t1.a FROM t1 WHERE t1.a IN ( SELECT A.a FROM t1 A UNION SELECT B.a FROM t2 B ORDER BY 1);
+
+EXPLAIN
+SELECT t1.a FROM t1 WHERE EXISTS (SELECT A.a FROM t1 A UNION SELECT B.a FROM t2 B ORDER BY 1);
+SELECT t1.a FROM t1 WHERE EXISTS (SELECT A.a FROM t1 A UNION SELECT B.a FROM t2 B ORDER BY 1);
+
+EXPLAIN
+SELECT t1.a FROM t1 WHERE t1.a IN ( SELECT A.a FROM t1 A UNION ALL SELECT B.a FROM t2 B ORDER BY 1);
+SELECT t1.a FROM t1 WHERE t1.a IN ( SELECT A.a FROM t1 A UNION ALL SELECT B.a FROM t2 B ORDER BY 1);
+
+DROP TABLE t1,t2;
+
+--echo # end of 10.1 tests
+
+--echo #
 --echo # MDEV-22852: SIGSEGV in sortlength (optimized builds)
 --echo #
 
@@ -2152,5 +2179,62 @@ INSERT INTO t1 VALUES (0,0),(0,0);
 SELECT (SELECT DISTINCT t1i.b FROM t1 t1i GROUP BY t1i.a ORDER BY MAX(t1o.b)) FROM t1 AS t1o;
 SET @@optimizer_switch= @save_optimizer_switch;
 DROP TABLE t1;
+
+--echo #
+--echo # MDEV-17066: Bytes lost or Assertion `status_var.local_memory_used == 0 after DELETE
+--echo # with subquery with ROLLUP
+--echo #
+
+CREATE TABLE t1 (i INT DEFAULT 0, c VARCHAR(2048));
+INSERT INTO t1  SELECT 0, seq FROM seq_1_to_6000;
+
+CREATE TABLE t2 (f VARCHAR(2048) DEFAULT '');
+INSERT INTO t2 VALUES ('1'),('bar');
+
+EXPLAIN
+SELECT * FROM t2 WHERE f IN ( SELECT MAX(c) FROM t1 GROUP BY c WITH ROLLUP);
+SELECT * FROM t2 WHERE f IN ( SELECT MAX(c) FROM t1 GROUP BY c WITH ROLLUP);
+
+SELECT * FROM t2;
+DELETE FROM t2 WHERE f IN ( SELECT MAX(c) FROM t1 GROUP BY c WITH ROLLUP );
+SELECT * FROM t2;
+
+DROP TABLE t1, t2;
+
+--echo #
+--echo # MDEV-18335: Assertion `!error || error == 137' failed in subselect_rowid_merge_engine::init
+--echo #
+
+CREATE TABLE t1 (i1 int,v1 varchar(1),KEY (v1,i1));
+INSERT INTO t1 VALUES
+(9,'y'),(4,'q'),(0,null),(0,'p'),(null,'j');
+
+CREATE TABLE t2 (pk int);
+INSERT INTO t2 VALUES (1),(2);
+
+CREATE TABLE t3 (v2 varchar(1));
+INSERT INTO t3 VALUES
+('p'),('j'),('y'),('q');
+
+CREATE TABLE t4 (v2 varchar(1));
+INSERT INTO t4 VALUES
+('a'),('a'),('b'),('b'),('c'),('c'),
+('d'),('d'),('e'),('e'),('f'),('f'),
+('g'),('g'),('h'),('h'),('i'),('i'),
+('j'),('j'),('k'),('k'),('l'),('l'),
+('m'),('m'),('n'),('n'),('o'),('o'),
+('p'),('p'),('q'),('q'),('r'),('r'),
+('s'),('s'),('t'),('t'),('u'),('u'),('v'),('v'),
+('w'),('w'),('x'),('x'), (NULL),(NULL);
+
+SET @save_join_cache_level=@@join_cache_level;
+SET join_cache_level=0;
+
+select 1
+from t2 join t1 on
+('i','w') not in (select t1.v1,t4.v2 from t4,t1,t3 where t3.v2 = t1.v1) LIMIT ROWS EXAMINED 500;
+SET join_cache_level= @save_join_cache_level;
+
+DROP TABLE t1,t2,t3,t4;
 
 --echo # End of 10.2 tests

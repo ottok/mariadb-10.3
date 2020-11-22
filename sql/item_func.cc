@@ -621,8 +621,7 @@ void Item_func::print_op(String *str, enum_query_type query_type)
     str->append(func_name());
     str->append(' ');
   }
-  args[arg_count-1]->print_parenthesised(str, query_type,
-                                         (enum precedence)(precedence() + 1));
+  args[arg_count-1]->print_parenthesised(str, query_type, higher_precedence());
 }
 
 
@@ -1627,8 +1626,6 @@ my_decimal *Item_func_div::decimal_op(my_decimal *decimal_value)
     null_value= 1;
     return 0;
   }
-  my_decimal_round(E_DEC_FATAL_ERROR, decimal_value,
-                   decimals, FALSE, decimal_value);
   return decimal_value;
 }
 
@@ -3880,6 +3877,8 @@ int Interruptible_wait::wait(mysql_cond_t *cond, mysql_mutex_t *mutex)
       timeout= m_abs_timeout;
 
     error= mysql_cond_timedwait(cond, mutex, &timeout);
+    if (m_thd->check_killed())
+      break;
     if (error == ETIMEDOUT || error == ETIME)
     {
       /* Return error if timed out or connection is broken. */

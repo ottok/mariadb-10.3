@@ -2928,6 +2928,8 @@ static int test_bug6059(MYSQL *mysql)
   const char *stmt_text;
   int rc;
 
+  SKIP_SKYSQL;
+
   stmt_text= "SELECT 'foo' INTO OUTFILE 'x.3'";
 
   stmt= mysql_stmt_init(mysql);
@@ -5197,7 +5199,85 @@ static int test_mdev_21920(MYSQL *mysql)
   return OK; 
 }
 
+static int test_returning(MYSQL *mysql)
+{
+  MYSQL_STMT *stmt= mysql_stmt_init(mysql);
+  MYSQL_RES *result;
+  int rc;
+
+  diag("MDEV-23768 not fixed yet");
+  mysql_stmt_close(stmt);
+  return SKIP;
+
+  rc= mysql_query(mysql, "CREATE TEMPORARY TABLE t1 (a int not null auto_increment primary key, b json)");
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_query(mysql, "INSERT INTO t1 (a,b) VALUES (NULL, '[incorrect json]') RETURNING a");
+  check_mysql_rc(rc, mysql);
+
+  if (!rc) diag("should have fail");
+
+  result= mysql_store_result(mysql);
+  mysql_free_result(result);
+
+  diag("Error: %s", mysql_error(mysql));
+
+  rc= mysql_stmt_prepare(stmt, SL("INSERT INTO t1 (a,b) VALUES (NULL, '[incorrect json]') RETURNING a"));
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_execute(stmt);
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_close(stmt);
+
+  return OK;
+}
+
+static int test_conc504(MYSQL *mysql)
+{
+  int rc;
+  MYSQL_STMT *stmt= mysql_stmt_init(mysql);
+  const char *sp= "CREATE PROCEDURE p1()\n" \
+                  "BEGIN\n"\
+                  "  SELECT 1;\n"\
+                  "  SELECT 2;\n"\
+                  "  SELECT 3;\n"\
+                  "END";
+
+  rc= mysql_query(mysql, "DROP PROCEDURE IF EXISTS p1");
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_query(mysql, sp);
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_stmt_prepare(stmt, SL("CALL p1()"));
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_execute(stmt);
+  check_stmt_rc(rc, stmt);
+
+  mysql_stmt_store_result(stmt);
+  FAIL_IF(mysql_stmt_num_rows(stmt) != 1, "Expected 1 row");
+
+  mysql_stmt_next_result(stmt);
+  mysql_stmt_store_result(stmt);
+  FAIL_IF(mysql_stmt_num_rows(stmt) != 1, "Expected 1 row");
+
+  mysql_stmt_next_result(stmt);
+  mysql_stmt_store_result(stmt);
+  FAIL_IF(mysql_stmt_num_rows(stmt) != 1, "Expected 1 row");
+
+  mysql_stmt_close(stmt);
+
+  rc= mysql_query(mysql, "DROP PROCEDURE p1");
+  check_mysql_rc(rc, mysql);
+
+  return OK;
+}
+
 struct my_tests_st my_tests[] = {
+  {"test_conc504", test_conc504, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
+  {"test_returning", test_returning, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_mdev_21920", test_mdev_21920, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_maxparam", test_maxparam, TEST_CONNECTION_NEW, 0, NULL, NULL},
   {"test_conc424", test_conc424, TEST_CONNECTION_NEW, 0, NULL, NULL},

@@ -2901,7 +2901,7 @@ i_s_fts_deleted_generic_fill(
 
 	rw_lock_s_unlock(&dict_operation_lock);
 
-	trx_free(trx);
+	trx->free();
 
 	fields = table->field;
 
@@ -3481,7 +3481,7 @@ i_s_fts_index_table_fill_selected(
 	que_graph_free(graph);
 	mutex_exit(&dict_sys->mutex);
 
-	trx_free(trx);
+	trx->free();
 
 	if (fetch.total_memory >= fts_result_cache_limit) {
 		error = DB_FTS_EXCEED_RESULT_CACHE_LIMIT;
@@ -3968,7 +3968,7 @@ no_fts:
 
 	rw_lock_s_unlock(&dict_operation_lock);
 
-	trx_free(trx);
+	trx->free();
 
 	DBUG_RETURN(ret);
 }
@@ -6270,37 +6270,42 @@ i_s_dict_fill_sys_tablestats(
 	OK(field_store_string(fields[SYS_TABLESTATS_NAME],
 			      table->name.m_name));
 
-	dict_table_stats_lock(table, RW_S_LATCH);
+	{
+		struct Locking
+		{
+			Locking() { mutex_enter(&dict_sys->mutex); }
+			~Locking() { mutex_exit(&dict_sys->mutex); }
+		} locking;
 
-	if (table->stat_initialized) {
-		OK(field_store_string(fields[SYS_TABLESTATS_INIT],
-				      "Initialized"));
+		if (table->stat_initialized) {
+			OK(field_store_string(fields[SYS_TABLESTATS_INIT],
+					      "Initialized"));
 
-		OK(fields[SYS_TABLESTATS_NROW]->store(table->stat_n_rows,
-						      true));
+			OK(fields[SYS_TABLESTATS_NROW]->store(
+				   table->stat_n_rows, true));
 
-		OK(fields[SYS_TABLESTATS_CLUST_SIZE]->store(
-			   table->stat_clustered_index_size, true));
+			OK(fields[SYS_TABLESTATS_CLUST_SIZE]->store(
+				   table->stat_clustered_index_size, true));
 
-		OK(fields[SYS_TABLESTATS_INDEX_SIZE]->store(
-			   table->stat_sum_of_other_index_sizes, true));
+			OK(fields[SYS_TABLESTATS_INDEX_SIZE]->store(
+				   table->stat_sum_of_other_index_sizes,
+				   true));
 
-		OK(fields[SYS_TABLESTATS_MODIFIED]->store(
-			   table->stat_modified_counter, true));
-	} else {
-		OK(field_store_string(fields[SYS_TABLESTATS_INIT],
-				      "Uninitialized"));
+			OK(fields[SYS_TABLESTATS_MODIFIED]->store(
+				   table->stat_modified_counter, true));
+		} else {
+			OK(field_store_string(fields[SYS_TABLESTATS_INIT],
+					      "Uninitialized"));
 
-		OK(fields[SYS_TABLESTATS_NROW]->store(0, true));
+			OK(fields[SYS_TABLESTATS_NROW]->store(0, true));
 
-		OK(fields[SYS_TABLESTATS_CLUST_SIZE]->store(0, true));
+			OK(fields[SYS_TABLESTATS_CLUST_SIZE]->store(0, true));
 
-		OK(fields[SYS_TABLESTATS_INDEX_SIZE]->store(0, true));
+			OK(fields[SYS_TABLESTATS_INDEX_SIZE]->store(0, true));
 
-		OK(fields[SYS_TABLESTATS_MODIFIED]->store(0, true));
+			OK(fields[SYS_TABLESTATS_MODIFIED]->store(0, true));
+		}
 	}
-
-	dict_table_stats_unlock(table, RW_S_LATCH);
 
 	OK(fields[SYS_TABLESTATS_AUTONINC]->store(table->autoinc, true));
 
@@ -8579,8 +8584,7 @@ i_s_tablespaces_encryption_fill_table(
 	for (fil_space_t* space = UT_LIST_GET_FIRST(fil_system.space_list);
 	     space; space = UT_LIST_GET_NEXT(space_list, space)) {
 		if (space->purpose == FIL_TYPE_TABLESPACE
-		    && !space->is_stopping()) {
-			space->acquire();
+		    && space->acquire()) {
 			mutex_exit(&fil_system.mutex);
 			if (int err = i_s_dict_fill_tablespaces_encryption(
 				    thd, space, tables->table)) {
@@ -8842,8 +8846,7 @@ i_s_tablespaces_scrubbing_fill_table(
 	for (fil_space_t* space = UT_LIST_GET_FIRST(fil_system.space_list);
 	     space; space = UT_LIST_GET_NEXT(space_list, space)) {
 		if (space->purpose == FIL_TYPE_TABLESPACE
-		    && !space->is_stopping()) {
-			space->acquire();
+		    && space->acquire()) {
 			mutex_exit(&fil_system.mutex);
 			if (int err = i_s_dict_fill_tablespaces_scrubbing(
 				    thd, space, tables->table)) {

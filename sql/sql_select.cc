@@ -392,11 +392,14 @@ bool handle_select(THD *thd, LEX *lex, select_result *result,
       If LIMIT ROWS EXAMINED interrupted query execution, issue a warning,
       continue with normal processing and produce an incomplete query result.
     */
+    bool saved_abort_on_warning= thd->abort_on_warning;
+    thd->abort_on_warning= false;
     push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
                         ER_QUERY_EXCEEDED_ROWS_EXAMINED_LIMIT,
                         ER_THD(thd, ER_QUERY_EXCEEDED_ROWS_EXAMINED_LIMIT),
                         thd->accessed_rows_and_keys,
                         thd->lex->limit_rows_examined->val_uint());
+    thd->abort_on_warning= saved_abort_on_warning;
     thd->reset_killed();
   }
   /* Disable LIMIT ROWS EXAMINED after query execution. */
@@ -695,7 +698,7 @@ bool vers_select_conds_t::init_from_sysvar(THD *thd)
 
 void vers_select_conds_t::print(String *str, enum_query_type query_type) const
 {
-  switch (type) {
+  switch (orig_type) {
   case SYSTEM_TIME_UNSPECIFIED:
     break;
   case SYSTEM_TIME_AS_OF:
@@ -784,6 +787,7 @@ int SELECT_LEX::vers_setup_conds(THD *thd, TABLE_LIST *tables)
   case SQLCOM_SELECT:
     use_sysvar= true;
     /* fall through */
+  case SQLCOM_CREATE_TABLE:
   case SQLCOM_INSERT_SELECT:
   case SQLCOM_REPLACE_SELECT:
   case SQLCOM_DELETE_MULTI:
@@ -2464,6 +2468,10 @@ int JOIN::optimize_stage2()
     (select_options & (SELECT_DESCRIBE | SELECT_NO_JOIN_CACHE)) |
     (select_lex->ftfunc_list->elements ?  SELECT_NO_JOIN_CACHE : 0);
 
+  if (select_lex->options & OPTION_SCHEMA_TABLE &&
+       optimize_schema_tables_reads(this))
+    DBUG_RETURN(1);
+
   if (make_join_readinfo(this, select_opts_for_readinfo, no_jbuf_after))
     DBUG_RETURN(1);
 
@@ -2639,10 +2647,6 @@ int JOIN::optimize_stage2()
   if (having)
     having_is_correlated= MY_TEST(having->used_tables() & OUTER_REF_TABLE_BIT);
   tmp_having= having;
-
-  if ((select_lex->options & OPTION_SCHEMA_TABLE) &&
-       optimize_schema_tables_reads(this))
-    DBUG_RETURN(TRUE);
 
   if (unlikely(thd->is_error()))
     DBUG_RETURN(TRUE);
@@ -13131,24 +13135,7 @@ void JOIN::cleanup(bool full)
       for (tab= first_linear_tab(this, WITH_BUSH_ROOTS, WITH_CONST_TABLES); tab;
            tab= next_linear_tab(this, tab, WITH_BUSH_ROOTS))
       {
-        if (!tab->table)
-          continue;
-        DBUG_PRINT("info", ("close index: %s.%s  alias: %s",
-                            tab->table->s->db.str,
-                            tab->table->s->table_name.str,
-                            tab->table->alias.c_ptr()));
-	if (tab->table->is_created())
-        {
-          tab->table->file->ha_index_or_rnd_end();
-          if (tab->aggr)
-          {
-            int tmp= 0;
-            if ((tmp= tab->table->file->extra(HA_EXTRA_NO_CACHE)))
-              tab->table->file->print_error(tmp, MYF(0));
-          }
-        }
-        delete tab->filesort_result;
-        tab->filesort_result= NULL;
+        tab->partial_cleanup();
       }
     }
   }
@@ -17151,15 +17138,11 @@ Field *Item::create_field_for_schema(THD *thd, TABLE *table)
   {
     Field *field;
     if (max_length > MAX_FIELD_VARCHARLENGTH)
-      field= new (thd->mem_root) Field_blob(max_length, maybe_null, &name,
-                                            collation.collation);
-    else if (max_length > 0)
-      field= new (thd->mem_root) Field_varstring(max_length, maybe_null, &name,
-                                                 table->s,
-                                                 collation.collation);
-    else
-      field= new Field_null((uchar*) 0, 0, Field::NONE, &name,
+      field= new Field_blob(max_length, maybe_null, &name,
                             collation.collation);
+    else
+      field= new Field_varstring(max_length, maybe_null, &name,
+                                 table->s, collation.collation);
     if (field)
       field->init(table);
     return field;
@@ -17503,8 +17486,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
     No need to change table name to lower case as we are only creating
     MyISAM, Aria or HEAP tables here
   */
-  fn_format(path, path, mysql_tmpdir, "",
-            MY_REPLACE_EXT|MY_UNPACK_FILENAME);
+  fn_format(path, path, mysql_tmpdir, "", MY_REPLACE_EXT|MY_UNPACK_FILENAME);
 
   if (group)
   {
@@ -18686,14 +18668,10 @@ bool create_internal_tmp_table(TABLE *table, KEY *keyinfo,
       }
     }
 
-    if (unlikely((error= maria_create(share->path.str,
-                                      file_type,
-                                      share->keys, &keydef,
-                                      (uint) (*recinfo-start_recinfo),
-                                      start_recinfo,
-                                      share->uniques, &uniquedef,
-                                      &create_info,
-                                      create_flags))))
+    if (unlikely((error= maria_create(share->path.str, file_type, share->keys,
+                                      &keydef, (uint) (*recinfo-start_recinfo),
+                                      start_recinfo, share->uniques, &uniquedef,
+                                      &create_info, create_flags))))
     {
       table->file->print_error(error,MYF(0));	/* purecov: inspected */
       table->db_stat=0;
@@ -18894,8 +18872,7 @@ create_internal_tmp_table_from_heap(THD *thd, TABLE *table,
   if (is_duplicate)
     *is_duplicate= FALSE;
 
-  if (table->s->db_type() != heap_hton || 
-      error != HA_ERR_RECORD_FILE_FULL)
+  if (table->s->db_type() != heap_hton || error != HA_ERR_RECORD_FILE_FULL)
   {
     /*
       We don't want this error to be converted to a warning, e.g. in case of
@@ -22806,6 +22783,9 @@ check_reverse_order:
     }
     else if (select && select->quick)
       select->quick->need_sorted_output();
+
+    tab->read_record.unlock_row= (tab->type == JT_EQ_REF) ?
+                                 join_read_key_unlock_row : rr_unlock_row;
 
   } // QEP has been modified
 
@@ -27942,6 +27922,40 @@ void JOIN::handle_implicit_grouping_with_window_funcs()
     const_tables= top_join_tab_count= table_count= 0;
   }
 }
+
+
+/*
+  @brief
+    Perform a partial cleanup for the JOIN_TAB structure
+
+  @note
+    this is used to cleanup resources for the re-execution of correlated
+    subqueries.
+*/
+void JOIN_TAB::partial_cleanup()
+{
+  if (!table)
+    return;
+
+  if (table->is_created())
+  {
+    table->file->ha_index_or_rnd_end();
+    DBUG_PRINT("info", ("close index: %s.%s  alias: %s",
+               table->s->db.str,
+               table->s->table_name.str,
+               table->alias.c_ptr()));
+    if (aggr)
+    {
+      int tmp= 0;
+      if ((tmp= table->file->extra(HA_EXTRA_NO_CACHE)))
+        table->file->print_error(tmp, MYF(0));
+    }
+  }
+  delete filesort_result;
+  filesort_result= NULL;
+  free_cache(&read_record);
+}
+
 
 /**
   @} (end of group Query_Optimizer)

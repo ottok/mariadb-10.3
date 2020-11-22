@@ -3095,7 +3095,7 @@ online_retry_drop_indexes(
 		online_retry_drop_indexes_low(table, trx);
 		trx_commit_for_mysql(trx);
 		row_mysql_unlock_data_dictionary(trx);
-		trx_free(trx);
+		trx->free();
 	}
 
 	ut_d(mutex_enter(&dict_sys->mutex));
@@ -3732,7 +3732,11 @@ innobase_pk_order_preserved(
 		if (old_pk_column) {
 			new_field_order = lint(old_field);
 		} else if (innobase_pk_col_is_existing(new_col_no, col_map,
-						       old_n_cols)) {
+						       old_n_cols)
+			   || new_clust_index->table->persistent_autoinc
+			   == new_field + 1) {
+			/* Adding an existing column or an AUTO_INCREMENT
+			column may change the existing ordering. */
 			new_field_order = lint(old_n_uniq
 					       + existing_field_count++);
 		} else {
@@ -5684,12 +5688,6 @@ error_handling_drop_uncached_1:
 			user_table);
 		dict_index_t*	new_clust_index = dict_table_get_first_index(
 			ctx->new_table);
-		ctx->skip_pk_sort = innobase_pk_order_preserved(
-			ctx->col_map, clust_index, new_clust_index);
-
-		DBUG_EXECUTE_IF("innodb_alter_table_pk_assert_no_sort",
-			DBUG_ASSERT(ctx->skip_pk_sort););
-
 		ut_ad(!new_clust_index->is_instant());
 		/* row_merge_build_index() depends on the correct value */
 		ut_ad(new_clust_index->n_core_null_bytes
@@ -5712,6 +5710,12 @@ error_handling_drop_uncached_1:
 				btr_write_autoinc(new_clust_index, autoinc);
 			}
 		}
+
+		ctx->skip_pk_sort = innobase_pk_order_preserved(
+			ctx->col_map, clust_index, new_clust_index);
+
+		DBUG_EXECUTE_IF("innodb_alter_table_pk_assert_no_sort",
+			DBUG_ASSERT(ctx->skip_pk_sort););
 
 		if (ctx->online) {
 			/* Allocate a log for online table rebuild. */
@@ -6012,9 +6016,15 @@ err_exit:
 	if (ctx->trx) {
 		row_mysql_unlock_data_dictionary(ctx->trx);
 
-		trx_free(ctx->trx);
+		ctx->trx->free();
 	}
 	trx_commit_for_mysql(ctx->prebuilt->trx);
+
+	for (uint i = 0; i < ctx->num_to_add_fk; i++) {
+		if (ctx->add_fk[i]) {
+			dict_foreign_free(ctx->add_fk[i]);
+		}
+	}
 
 	delete ctx;
 	ha_alter_info->handler_ctx = NULL;
@@ -7442,7 +7452,8 @@ rollback_inplace_alter_table(
 
 	trx_commit_for_mysql(ctx->trx);
 	row_mysql_unlock_data_dictionary(ctx->trx);
-	trx_free(ctx->trx);
+	ctx->trx->free();
+	ctx->trx = NULL;
 
 func_exit:
 #ifndef DBUG_OFF
@@ -9555,9 +9566,14 @@ ha_innobase::commit_inplace_alter_table(
 			= static_cast<ha_innobase_inplace_ctx*>(*pctx);
 
 		DBUG_ASSERT(new_clustered == ctx->need_rebuild());
-
-		fail = commit_set_autoinc(ha_alter_info, ctx, altered_table,
-					  table);
+		if (ctx->need_rebuild() && !ctx->old_table->space) {
+			my_error(ER_TABLESPACE_DISCARDED, MYF(0),
+				 table->s->table_name.str);
+			fail = true;
+		} else {
+			fail = commit_set_autoinc(ha_alter_info, ctx,
+						  altered_table, table);
+		}
 
 		if (fail) {
 		} else if (ctx->need_rebuild()) {
@@ -9791,6 +9807,11 @@ foreign_fail:
 
 	log_append_on_checkpoint(NULL);
 
+	/* Tell the InnoDB server that there might be work for
+	utility threads: */
+
+	srv_active_wake_master_thread();
+
 	if (fail) {
 		for (inplace_alter_handler_ctx** pctx = ctx_array;
 		     *pctx; pctx++) {
@@ -9814,7 +9835,7 @@ foreign_fail:
 
 		row_mysql_unlock_data_dictionary(trx);
 		if (trx != ctx0->trx) {
-			trx_free(trx);
+			trx->free();
 		}
 		DBUG_RETURN(true);
 	}
@@ -9833,7 +9854,8 @@ foreign_fail:
 			= static_cast<ha_innobase_inplace_ctx*>(*pctx);
 
 		if (ctx->trx) {
-			trx_free(ctx->trx);
+			ctx->trx->free();
+			ctx->trx = NULL;
 		}
 	}
 
@@ -9849,7 +9871,7 @@ foreign_fail:
 		dict_table_close(m_prebuilt->table, true, false);
 		dict_table_remove_from_cache(m_prebuilt->table);
 		m_prebuilt->table = dict_table_open_on_name(
-			tb_name, TRUE, TRUE, DICT_ERR_IGNORE_NONE);
+			tb_name, TRUE, TRUE, DICT_ERR_IGNORE_FK_NOKEY);
 
 		/* Drop outdated table stats. */
 		char	errstr[1024];
@@ -9869,7 +9891,7 @@ foreign_fail:
 		}
 
 		row_mysql_unlock_data_dictionary(trx);
-		trx_free(trx);
+		trx->free();
 		MONITOR_ATOMIC_DEC(MONITOR_PENDING_ALTER_TABLE);
 		DBUG_RETURN(false);
 	}
@@ -10000,7 +10022,7 @@ foreign_fail:
 	}
 
 	row_mysql_unlock_data_dictionary(trx);
-	trx_free(trx);
+	trx->free();
 
 	/* TODO: The following code could be executed
 	while allowing concurrent access to the table

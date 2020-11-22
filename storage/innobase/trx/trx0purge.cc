@@ -191,7 +191,7 @@ void purge_sys_t::close()
   ut_ad(!trx->id);
   ut_ad(trx->state == TRX_STATE_ACTIVE);
   trx->state= TRX_STATE_NOT_STARTED;
-  trx_free(trx);
+  trx->free();
   rw_lock_free(&latch);
   mutex_free(&pq_mutex);
   os_event_destroy(event);
@@ -1030,13 +1030,13 @@ not_found:
 	/* This is only executed by the srv_purge_coordinator_thread. */
 	export_vars.innodb_undo_truncations++;
 
-	/* TODO: PUNCH_HOLE the garbage (with write-ahead logging) */
+	/* In MDEV-8319 (10.5) we will PUNCH_HOLE the garbage
+	(with write-ahead logging). */
 
 	mutex_enter(&fil_system.mutex);
-	ut_ad(space->stop_new_ops);
 	ut_ad(space->is_being_truncated);
-	space->stop_new_ops = false;
 	space->is_being_truncated = false;
+	space->set_stopping(false);
 	mutex_exit(&fil_system.mutex);
 
 	if (purge_sys.rseg != NULL

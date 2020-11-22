@@ -2228,7 +2228,10 @@ MYSQL_RES * STDCALL mysql_stmt_result_metadata(MYSQL_STMT *stmt)
 
 my_bool STDCALL mysql_stmt_reset(MYSQL_STMT *stmt)
 {
-  return mysql_stmt_internal_reset(stmt, 0);
+  if (stmt->stmt_id > 0 &&
+      stmt->stmt_id != (unsigned long) -1)
+    return mysql_stmt_internal_reset(stmt, 0);
+  return 0;
 }
 
 const char * STDCALL mysql_stmt_sqlstate(MYSQL_STMT *stmt)
@@ -2371,6 +2374,7 @@ int STDCALL mysql_stmt_next_result(MYSQL_STMT *stmt)
   }
 
   stmt->field_count= stmt->mysql->field_count;
+  stmt->result.rows= 0;
 
   return(rc);
 }
@@ -2381,6 +2385,7 @@ int STDCALL mariadb_stmt_execute_direct(MYSQL_STMT *stmt,
 {
   MYSQL *mysql;
   my_bool emulate_cmd;
+  my_bool clear_result= 0;
 
   if (!stmt)
     return 1;
@@ -2448,6 +2453,10 @@ int STDCALL mariadb_stmt_execute_direct(MYSQL_STMT *stmt,
   if (mysql->methods->db_command(mysql, COM_STMT_PREPARE, stmt_str, length, 1, stmt))
     goto fail;
 
+  /* in case prepare fails, we need to clear the result package from execute, which
+     is always an error packet (invalid statement id) */
+  clear_result= 1;
+
   stmt->state= MYSQL_STMT_PREPARED;
   /* Since we can't determine stmt_id here, we need to set it to -1, so server will know that the
    * execute command belongs to previous prepare */
@@ -2463,6 +2472,8 @@ int STDCALL mariadb_stmt_execute_direct(MYSQL_STMT *stmt,
   if (mysql->methods->db_read_prepare_response &&
     mysql->methods->db_read_prepare_response(stmt))
   goto fail;
+
+  clear_result= 0;
 
   /* metadata not supported yet */
 
@@ -2498,9 +2509,11 @@ fail:
   /* check if we need to set error message */
   if (!mysql_stmt_errno(stmt))
     UPDATE_STMT_ERROR(stmt);
-  do {
-    stmt->mysql->methods->db_stmt_flush_unbuffered(stmt);
-  } while(mysql_stmt_more_results(stmt));
+  if (clear_result) {
+    do {
+      stmt->mysql->methods->db_stmt_flush_unbuffered(stmt);
+    } while(mysql_stmt_more_results(stmt));
+  }
   stmt->state= MYSQL_STMT_INITTED;
   return 1;
 }

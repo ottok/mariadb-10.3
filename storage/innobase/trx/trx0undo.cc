@@ -526,7 +526,7 @@ trx_undo_seg_create(fil_space_t* space, trx_rsegf_t* rseg_hdr, ulint* id,
 	}
 
 	/* Allocate a new file segment for the undo log */
-	block = fseg_create(space, 0, TRX_UNDO_SEG_HDR + TRX_UNDO_FSEG_HEADER,
+	block = fseg_create(space, TRX_UNDO_SEG_HDR + TRX_UNDO_FSEG_HEADER,
 			    mtr, true);
 
 	space->release_free_extents(n_reserved);
@@ -1213,7 +1213,6 @@ trx_undo_mem_create(
 	undo->top_undo_no = IB_ID_MAX;
 	undo->top_page_no = page_no;
 	undo->guess_block = NULL;
-	undo->withdraw_clock = 0;
 	ut_ad(undo->empty());
 
 	return(undo);
@@ -1402,9 +1401,7 @@ trx_undo_assign(trx_t* trx, dberr_t* err, mtr_t* mtr)
 	if (undo) {
 		return buf_page_get_gen(
 			page_id_t(undo->rseg->space->id, undo->last_page_no),
-			univ_page_size, RW_X_LATCH,
-			buf_pool_is_obsolete(undo->withdraw_clock)
-			? NULL : undo->guess_block,
+			univ_page_size, RW_X_LATCH, undo->guess_block,
 			BUF_GET, __FILE__, __LINE__, mtr, err);
 	}
 
@@ -1458,9 +1455,7 @@ trx_undo_assign_low(trx_t* trx, trx_rseg_t* rseg, trx_undo_t** undo,
 	if (*undo) {
 		return buf_page_get_gen(
 			page_id_t(rseg->space->id, (*undo)->last_page_no),
-			univ_page_size, RW_X_LATCH,
-			buf_pool_is_obsolete((*undo)->withdraw_clock)
-			? NULL : (*undo)->guess_block,
+			univ_page_size, RW_X_LATCH, (*undo)->guess_block,
 			BUF_GET, __FILE__, __LINE__, mtr, err);
 	}
 

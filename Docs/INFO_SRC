@@ -1,8 +1,8 @@
-commit: a707c7f0dd628013bd0857ff7411b3ab6633cfa3
-date: 2020-10-05 18:05:38 +0200
-build-date: 2020-10-05 16:19:49 +0000 
-short: a707c7f
+commit: dba846ce2a4c57363c4f0256b0e6d2dd1a55ac40
+date: 2020-11-10 12:29:20 +0300
+build-date: 2020-11-10 09:32:23 +0000 
+short: dba846c
 branch: HEAD
 
 
-MariaDB source 10.3.25
+MariaDB source 10.3.27

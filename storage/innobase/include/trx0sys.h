@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2019, MariaDB Corporation.
+Copyright (c) 2017, 2020, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -566,7 +566,7 @@ public:
     Releases LF_HASH pins.
 
     Must be called by thread that owns trx_t object when the latter is being
-    "detached" from thread (e.g. released to the pool by trx_free()). Can be
+    "detached" from thread (e.g. released to the pool by trx_t::free()). Can be
     called earlier if thread is expected not to use rw_trx_hash.
 
     Since pins are not allowed to be transferred to another thread,
@@ -1119,7 +1119,7 @@ public:
   }
 
   /** @return number of committed transactions waiting for purge */
-  ulint history_size() const
+  uint32 history_size() const
   {
     return uint32(my_atomic_load32(&const_cast<trx_sys_t*>(this)
                                    ->rseg_history_len));

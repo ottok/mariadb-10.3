@@ -2706,6 +2706,67 @@ static MYSQL_SOCKET activate_tcp_port(uint port)
   DBUG_RETURN(ip_sock);
 }
 
+#ifdef _WIN32
+/*
+  Create a security descriptor for pipe.
+  - Use low integrity level, so that it is possible to connect
+  from any process.
+  - Give current user read/write access to pipe.
+  - Give Everyone read/write access to pipe minus FILE_CREATE_PIPE_INSTANCE
+*/
+static void init_pipe_security_descriptor()
+{
+#define SDDL_FMT "S:(ML;; NW;;; LW) D:(A;; 0x%08x;;; WD)(A;; FRFW;;; %s)"
+#define EVERYONE_PIPE_ACCESS_MASK                                             \
+  (FILE_READ_DATA | FILE_READ_EA | FILE_READ_ATTRIBUTES | READ_CONTROL |      \
+   SYNCHRONIZE | FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES)
+
+#ifndef SECURITY_MAX_SID_STRING_CHARACTERS
+/* Old SDK does not have this constant */
+#define SECURITY_MAX_SID_STRING_CHARACTERS 187
+#endif
+
+  /*
+    Figure out SID of the user that runs the server, then create SDDL string
+    for pipe permissions, and convert it to the security descriptor.
+  */
+  char sddl_string[sizeof(SDDL_FMT) + 8 + SECURITY_MAX_SID_STRING_CHARACTERS];
+  struct
+  {
+    TOKEN_USER token_user;
+    BYTE buffer[SECURITY_MAX_SID_SIZE];
+  } token_buffer;
+  HANDLE token;
+  DWORD tmp;
+
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    goto fail;
+
+  if (!GetTokenInformation(token, TokenUser, &token_buffer,
+                           (DWORD) sizeof(token_buffer), &tmp))
+    goto fail;
+
+  CloseHandle(token);
+
+  char *current_user_string_sid;
+  if (!ConvertSidToStringSid(token_buffer.token_user.User.Sid,
+                             &current_user_string_sid))
+    goto fail;
+
+  snprintf(sddl_string, sizeof(sddl_string), SDDL_FMT,
+           EVERYONE_PIPE_ACCESS_MASK, current_user_string_sid);
+  LocalFree(current_user_string_sid);
+
+  if (ConvertStringSecurityDescriptorToSecurityDescriptor(sddl_string,
+      SDDL_REVISION_1, &saPipeSecurity.lpSecurityDescriptor, 0))
+    return;
+
+fail:
+  sql_perror("Can't start server : Initialize security descriptor");
+  unireg_abort(1);
+}
+#endif
+
 static void network_init(void)
 {
 #ifdef HAVE_SYS_UN_H
@@ -2746,19 +2807,7 @@ static void network_init(void)
 
     strxnmov(pipe_name, sizeof(pipe_name)-1, "\\\\.\\pipe\\",
 	     mysqld_unix_port, NullS);
-    /*
-      Create a security descriptor for pipe.
-      - Use low integrity level, so that it is possible to connect
-      from any process.
-      - Give Everyone read/write access to pipe.
-    */
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
-         "S:(ML;; NW;;; LW) D:(A;; FRFW;;; WD)",
-         SDDL_REVISION_1, &saPipeSecurity.lpSecurityDescriptor, NULL))
-    {
-      sql_perror("Can't start server : Initialize security descriptor");
-      unireg_abort(1);
-    }
+    init_pipe_security_descriptor();
     saPipeSecurity.nLength = sizeof(SECURITY_ATTRIBUTES);
     saPipeSecurity.bInheritHandle = FALSE;
     if ((hPipe= CreateNamedPipe(pipe_name,
@@ -3389,7 +3438,6 @@ void init_signals(void)
     sigemptyset(&sa.sa_mask);
     sigprocmask(SIG_SETMASK,&sa.sa_mask,NULL);
 
-    my_init_stacktrace();
 #if defined(__amiga__)
     sa.sa_handler=(void(*)())handle_fatal_signal;
 #else
@@ -4128,7 +4176,8 @@ rpl_make_log_name(const char *opt,
                   const char *ext)
 {
   DBUG_ENTER("rpl_make_log_name");
-  DBUG_PRINT("enter", ("opt: %s, def: %s, ext: %s", opt, def, ext));
+  DBUG_PRINT("enter", ("opt: %s, def: %s, ext: %s", opt ? opt : "(null)",
+                       def, ext));
   char buff[FN_REFLEN];
   const char *base= opt ? opt : def;
   unsigned int options=
@@ -6711,13 +6760,11 @@ void handle_connections_sockets()
   MYSQL_SOCKET sock= mysql_socket_invalid();
   MYSQL_SOCKET new_sock= mysql_socket_invalid();
   uint error_count=0;
-  CONNECT *connect;
   struct sockaddr_storage cAddr;
   int ip_flags __attribute__((unused))=0;
   int socket_flags __attribute__((unused))= 0;
   int extra_ip_flags __attribute__((unused))=0;
   int flags=0,retval;
-  bool is_unix_sock;
 #ifdef HAVE_POLL
   int socket_count= 0;
   struct pollfd fds[3]; // for ip_sock, unix_sock and extra_ip_sock
@@ -6917,41 +6964,37 @@ void handle_connections_sockets()
 
     DBUG_PRINT("info", ("Creating CONNECT for new connection"));
 
-    if ((connect= new CONNECT()))
+    if (CONNECT *connect= new CONNECT())
     {
-      is_unix_sock= (mysql_socket_getfd(sock) ==
-                     mysql_socket_getfd(unix_sock));
+      const bool is_unix_sock= (mysql_socket_getfd(sock) ==
+                                mysql_socket_getfd(unix_sock));
 
-      if (!(connect->vio=
-            mysql_socket_vio_new(new_sock,
-                                 is_unix_sock ? VIO_TYPE_SOCKET :
-                                 VIO_TYPE_TCPIP,
-                                 is_unix_sock ? VIO_LOCALHOST: 0)))
+      if ((connect->vio=
+           mysql_socket_vio_new(new_sock,
+                                is_unix_sock ? VIO_TYPE_SOCKET :
+                                VIO_TYPE_TCPIP,
+                                is_unix_sock ? VIO_LOCALHOST: 0)))
       {
-        delete connect;
-        connect= 0;                             // Error handling below
+        if (is_unix_sock)
+          connect->host= my_localhost;
+
+        if (mysql_socket_getfd(sock) == mysql_socket_getfd(extra_ip_sock))
+        {
+          connect->extra_port= 1;
+          connect->scheduler= extra_thread_scheduler;
+        }
+        create_new_thread(connect);
+        continue;
       }
+
+      delete connect;
     }
 
-    if (!connect)
-    {
-      /* Connect failure */
-      (void) mysql_socket_shutdown(new_sock, SHUT_RDWR);
-      (void) mysql_socket_close(new_sock);
-      statistic_increment(aborted_connects,&LOCK_status);
-      statistic_increment(connection_errors_internal, &LOCK_status);
-      continue;
-    }
-
-    if (is_unix_sock)
-      connect->host= my_localhost;
-
-    if (mysql_socket_getfd(sock) == mysql_socket_getfd(extra_ip_sock))
-    {
-      connect->extra_port= 1;
-      connect->scheduler= extra_thread_scheduler;
-    }
-    create_new_thread(connect);
+    /* Connect failure */
+    (void) mysql_socket_shutdown(new_sock, SHUT_RDWR);
+    (void) mysql_socket_close(new_sock);
+    statistic_increment(aborted_connects,&LOCK_status);
+    statistic_increment(connection_errors_internal, &LOCK_status);
   }
   sd_notify(0, "STOPPING=1\n"
             "STATUS=Shutdown in progress\n");
@@ -8458,8 +8501,8 @@ show_ssl_get_server_not_after(THD *thd, SHOW_VAR *var, char *buff,
 
 #endif /* HAVE_OPENSSL && !EMBEDDED_LIBRARY */
 
-static int show_default_keycache(THD *thd, SHOW_VAR *var, char *buff,
-                                 enum enum_var_type scope)
+static int show_default_keycache(THD *thd, SHOW_VAR *var, void *buff,
+                                 system_status_var *, enum_var_type)
 {
   struct st_data {
     KEY_CACHE_STATISTICS stats;
@@ -8492,7 +8535,7 @@ static int show_default_keycache(THD *thd, SHOW_VAR *var, char *buff,
 
   v->name= 0;
 
-  DBUG_ASSERT((char*)(v+1) <= buff + SHOW_VAR_FUNC_BUFF_SIZE);
+  DBUG_ASSERT((char*)(v+1) <= static_cast<char*>(buff) + SHOW_VAR_FUNC_BUFF_SIZE);
 
 #undef set_one_keycache_var
 
@@ -8516,8 +8559,8 @@ static int show_memory_used(THD *thd, SHOW_VAR *var, char *buff,
 
 
 #ifndef DBUG_OFF
-static int debug_status_func(THD *thd, SHOW_VAR *var, char *buff,
-                             enum enum_var_type scope)
+static int debug_status_func(THD *thd, SHOW_VAR *var, void *buff,
+                             system_status_var *, enum_var_type)
 {
 #define add_var(X,Y,Z)                  \
   v->name= X;                           \

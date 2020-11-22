@@ -234,6 +234,7 @@ row_undo_mod_clust(
 		mtr.set_log_mode(MTR_LOG_NO_REDO);
 	} else {
 		index->set_modified(mtr);
+		ut_ad(lock_table_has_locks(index->table));
 	}
 
 	online = dict_index_is_online_ddl(index);

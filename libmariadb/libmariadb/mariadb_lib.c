@@ -74,7 +74,7 @@
 #endif
 #include <mysql/client_plugin.h>
 #ifdef _WIN32
-#include "Shlwapi.h"
+#include "shlwapi.h"
 #define strncasecmp _strnicmp
 #endif
 
@@ -470,7 +470,7 @@ int ma_multi_command(MYSQL *mysql, enum enum_multi_status status)
   {
     size_t len= net->write_pos - net->buff - NET_HEADER_SIZE;
 
-    if (len < NET_HEADER_SIZE) /* don't send empty COM_MULTI */
+    if (len < NET_HEADER_SIZE) /* don't send empty request */
     {
       ma_net_clear(net);
       return 1;
@@ -2108,6 +2108,10 @@ mysql_close(MYSQL *mysql)
     if (mysql->extension)
       free(mysql->extension);
 
+    /* Clear pointers for better safety */
+    mysql->net.extension = NULL;
+    mysql->extension = NULL;
+
     mysql->net.pvio= 0;
     if (mysql->free_me)
       free(mysql);
@@ -2188,13 +2192,23 @@ int ma_read_ok_packet(MYSQL *mysql, uchar *pos, ulong length)
             size_t plen;
             char *data;
             si_type= (enum enum_session_state_type)net_field_length(&pos);
+
             switch(si_type) {
             case SESSION_TRACK_SCHEMA:
             case SESSION_TRACK_STATE_CHANGE:
             case SESSION_TRACK_TRANSACTION_CHARACTERISTICS:
             case SESSION_TRACK_SYSTEM_VARIABLES:
+            case SESSION_TRACK_TRANSACTION_STATE:
+            case SESSION_TRACK_GTIDS:
               if (si_type != SESSION_TRACK_STATE_CHANGE)
+              {
                 net_field_length(&pos); /* ignore total length, item length will follow next */
+              }
+              if (si_type == SESSION_TRACK_GTIDS)
+              {
+                /* skip encoding */
+                net_field_length(&pos);
+              }
               plen= net_field_length(&pos);
               if (pos + plen > end)
                 goto corrupted;

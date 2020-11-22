@@ -1800,9 +1800,10 @@ ER_WRONG_AUTO_KEY 42000 S1009
         slo "Môžete mať iba jedno AUTO pole a to musí byť definované ako kľúč"
         spa "Puede ser solamente un campo automatico y este debe ser definido como una clave"
         swe "Det får finnas endast ett AUTO_INCREMENT-fält och detta måste vara en nyckel"
-        ukr "Невірне визначення таблиці; Може бути лише один автоматичний стовбець, що повинен бути визначений як ключ"
+        ukr "Хибне визначення таблиці; Може бути лише один автоматичний стовбець, що повинен бути визначений як ключ"
 ER_BINLOG_CANT_DELETE_GTID_DOMAIN
 	eng "Could not delete gtid domain. Reason: %s."
+        ukr "Не можу видалити домен gtid. Причина: %s."
 ER_NORMAL_SHUTDOWN  
         cze "%s (%s): normální ukončení"
         dan "%s (%s): Normal nedlukning"
@@ -2203,6 +2204,7 @@ ER_INSERT_INFO
 ER_UPDATE_TABLE_USED
         eng "Table '%-.192s' is specified twice, both as a target for '%s' and as a separate source for data"
         swe "Table '%-.192s' är använd två gånger. Både för '%s' och för att hämta data"
+        ukr "Таблиця '%-.192s' вказується двічі, як цільова для '%s', так і як окреме джерело даних"
 ER_NO_SUCH_THREAD  
         cze "Neznámá identifikace threadu: %lu"
         dan "Ukendt tråd id: %lu"
@@ -2824,6 +2826,7 @@ ER_WRONG_OUTER_JOIN 42000
 ER_NULL_COLUMN_IN_INDEX 42000 
         eng "Table handler doesn't support NULL in given index. Please change column '%-.192s' to be NOT NULL or use another handler"
         swe "Tabell hanteraren kan inte indexera NULL kolumner för den givna index typen. Ändra '%-.192s' till NOT NULL eller använd en annan hanterare"
+        ukr "Вказівник таблиці не підтримує NULL у зазначенному індексі. Будь ласка, зменіть стовпчик '%-.192s' на NOT NULL або використайте інший вказівник таблиці."
 ER_CANT_FIND_UDF  
         cze "Nemohu načíst funkci '%-.192s'"
         dan "Kan ikke læse funktionen '%-.192s'"
@@ -3244,25 +3247,25 @@ ER_NONEXISTING_GRANT 42000
         swe "Det finns inget privilegium definierat för användare '%-.48s' på '%-.64s'"
         ukr "Повноважень не визначено для користувача '%-.48s' з хосту '%-.64s'"
 ER_TABLEACCESS_DENIED_ERROR 42000 
-        cze "%-.32s příkaz nepřístupný pro uživatele: '%s'@'%s' pro tabulku '%-.192s'"
-        dan "%-.32s-kommandoen er ikke tilladt for brugeren '%s'@'%s' for tabellen '%-.192s'"
-        nla "%-.32s commando geweigerd voor gebruiker: '%s'@'%s' voor tabel '%-.192s'"
-        eng "%-.32s command denied to user '%s'@'%s' for table '%-.192s'"
-        jps "コマンド %-.32s は ユーザー '%s'@'%s' ,テーブル '%-.192s' に対して許可されていません",
-        est "%-.32s käsk ei ole lubatud kasutajale '%s'@'%s' tabelis '%-.192s'"
-        fre "La commande '%-.32s' est interdite à l'utilisateur: '%s'@'%s' sur la table '%-.192s'"
-        ger "%-.32s Befehl nicht erlaubt für Benutzer '%s'@'%s' auf Tabelle '%-.192s'"
-        hun "%-.32s parancs a '%s'@'%s' felhasznalo szamara nem engedelyezett a '%-.192s' tablaban"
-        ita "Comando %-.32s negato per l'utente: '%s'@'%s' sulla tabella '%-.192s'"
-        jpn "コマンド %-.32s は ユーザー '%s'@'%s' ,テーブル '%-.192s' に対して許可されていません"
-        kor "'%-.32s' 명령은 다음 사용자에게 거부되었습니다. : '%s'@'%s' for 테이블 '%-.192s'"
-        por "Comando '%-.32s' negado para o usuário '%s'@'%s' na tabela '%-.192s'"
-        rum "Comanda %-.32s interzisa utilizatorului: '%s'@'%s' pentru tabela '%-.192s'"
-        rus "Команда %-.32s запрещена пользователю '%s'@'%s' для таблицы '%-.192s'"
-        serbian "%-.32s komanda zabranjena za korisnika '%s'@'%s' za tabelu '%-.192s'"
-        spa "%-.32s comando negado para usuario: '%s'@'%s' para tabla '%-.192s'"
-        swe "%-.32s ej tillåtet för '%s'@'%s' för tabell '%-.192s'"
-        ukr "%-.32s команда заборонена користувачу: '%s'@'%s' у таблиці '%-.192s'"
+        cze "%-.100T příkaz nepřístupný pro uživatele: '%s'@'%s' pro tabulku '%-.192s'"
+        dan "%-.100T-kommandoen er ikke tilladt for brugeren '%s'@'%s' for tabellen '%-.192s'"
+        nla "%-.100T commando geweigerd voor gebruiker: '%s'@'%s' voor tabel '%-.192s'"
+        eng "%-.100T command denied to user '%s'@'%s' for table '%-.192s'"
+        jps "コマンド %-.100T は ユーザー '%s'@'%s' ,テーブル '%-.192s' に対して許可されていません",
+        est "%-.100T käsk ei ole lubatud kasutajale '%s'@'%s' tabelis '%-.192s'"
+        fre "La commande '%-.100T' est interdite à l'utilisateur: '%s'@'%s' sur la table '%-.192s'"
+        ger "%-.100T Befehl nicht erlaubt für Benutzer '%s'@'%s' auf Tabelle '%-.192s'"
+        hun "%-.100T parancs a '%s'@'%s' felhasznalo szamara nem engedelyezett a '%-.192s' tablaban"
+        ita "Comando %-.100T negato per l'utente: '%s'@'%s' sulla tabella '%-.192s'"
+        jpn "コマンド %-.100T は ユーザー '%s'@'%s' ,テーブル '%-.192s' に対して許可されていません"
+        kor "'%-.100T' 명령은 다음 사용자에게 거부되었습니다. : '%s'@'%s' for 테이블 '%-.192s'"
+        por "Comando '%-.100T' negado para o usuário '%s'@'%s' na tabela '%-.192s'"
+        rum "Comanda %-.100T interzisa utilizatorului: '%s'@'%s' pentru tabela '%-.192s'"
+        rus "Команда %-.100T запрещена пользователю '%s'@'%s' для таблицы '%-.192s'"
+        serbian "%-.100T komanda zabranjena za korisnika '%s'@'%s' za tabelu '%-.192s'"
+        spa "%-.100T comando negado para usuario: '%s'@'%s' para tabla '%-.192s'"
+        swe "%-.100T ej tillåtet för '%s'@'%s' för tabell '%-.192s'"
+        ukr "%-.100T команда заборонена користувачу: '%s'@'%s' у таблиці '%-.192s'"
 ER_COLUMNACCESS_DENIED_ERROR 42000 
         cze "%-.32s příkaz nepřístupný pro uživatele: '%s'@'%s' pro sloupec '%-.192s' v tabulce '%-.192s'"
         dan "%-.32s-kommandoen er ikke tilladt for brugeren '%s'@'%s' for kolonne '%-.192s' in tabellen '%-.192s'"
@@ -4314,6 +4317,7 @@ ER_MASTER_INFO
         jpn "'master info '%.*s''構造体の初期化ができませんでした。MariaDBエラーログでエラーメッセージを確認してください。"
         serbian "Nisam mogao da inicijalizujem informacionu strukturu glavnog servera, proverite da li imam privilegije potrebne za pristup file-u 'master.info' '%.*s'"
         swe "Kunde inte initialisera replikationsstrukturerna för '%.*s'. See MariaDB fel fil för mera information"
+        ukr "Інформаційна структура з'єднання головного і підлеглого (master.info) для '%.*s' не може бути ініціалізована"
 ER_SLAVE_THREAD
         dan "Kunne ikke danne en slave-tråd; check systemressourcerne"
         nla "Kon slave thread niet aanmaken, controleer systeem resources"
@@ -4478,6 +4482,7 @@ ER_UNION_TABLES_IN_DIFFERENT_DIR
         serbian "Pogrešna definicija tabele; sve 'MERGE' tabele moraju biti u istoj bazi podataka"
         spa "Incorrecta definición de la tabla; Todas las tablas MERGE deben estar en el mismo banco de datos"
         swe "Felaktig tabelldefinition; alla tabeller i en MERGE-tabell måste vara i samma databas"
+        ukr "Хибне визначення таблиці; всі MERGE-таблиці повинні належити до однієї бази ланних."
 ER_LOCK_DEADLOCK 40001 
         nla "Deadlock gevonden tijdens lock-aanvraag poging; Probeer herstart van de transactie"
         eng "Deadlock found when trying to get lock; try restarting transaction"
@@ -4491,6 +4496,7 @@ ER_LOCK_DEADLOCK 40001
         serbian "Unakrsno zaključavanje pronađeno kada sam pokušao da dobijem pravo na zaključavanje; Probajte da restartujete transakciju"
         spa "Encontrado deadlock cuando tentando obtener el bloqueo; Tente recomenzar la transición"
         swe "Fick 'DEADLOCK' vid låsförsök av block/rad. Försök att starta om transaktionen"
+        ukr "Взаємне блокування знайдено під час спроби отримати блокування; спробуйте перезапустити транзакцію."
 ER_TABLE_CANT_HANDLE_FT  
         nla "Het gebruikte tabel type (%s) ondersteund geen FULLTEXT indexen"
         eng "The storage engine %s doesn't support FULLTEXT indexes"
@@ -4517,6 +4523,7 @@ ER_CANNOT_ADD_FOREIGN
         serbian "Ne mogu da dodam proveru spoljnog ključa na `%s`"
         spa "No puede adicionar clave extranjera constraint para `%s`"
         swe "Kan inte lägga till 'FOREIGN KEY constraint' för `%s`'"
+        ukr "Не можу додати обмеження зовнішнього ключа Ha `%s`"
 ER_NO_REFERENCED_ROW 23000 
         nla "Kan onderliggende rij niet toevoegen: foreign key beperking gefaald"
         eng "Cannot add or update a child row: a foreign key constraint fails"
@@ -4531,6 +4538,7 @@ ER_NO_REFERENCED_ROW 23000
         rus "Невозможно добавить или обновить дочернюю строку: проверка ограничений внешнего ключа не выполняется"
         spa "No puede adicionar una línea hijo: falla de clave extranjera constraint"
         swe "FOREIGN KEY-konflikt:  Kan inte skriva barn"
+        ukr "Не вдається додати або оновити дочірній рядок: невдала перевірка обмеження зовнішнього ключа"
 ER_ROW_IS_REFERENCED 23000 
         eng "Cannot delete or update a parent row: a foreign key constraint fails"
         fre "Impossible de supprimer un enregistrement père : une constrainte externe l'empèche"

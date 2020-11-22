@@ -148,7 +148,8 @@ extern const char *SQLSTATE_UNKNOWN;
     (a)->net.last_errno= 0;\
     strcpy((a)->net.sqlstate, "00000");\
     (a)->net.last_error[0]= '\0';\
-    (a)->net.extension->extended_errno= 0;\
+    if ((a)->net.extension)\
+      (a)->net.extension->extended_errno= 0;\
   } while (0)
 
 #define MYSQL_COUNT_ERROR (~(unsigned long long) 0)
@@ -457,9 +458,9 @@ typedef struct character_set
   const char *desc;                                     \
   unsigned int version[3];                              \
   const char *license;                                  \
-  void *mariadb_api;                                    \
+  void *mysql_api;                                      \
   int (*init)(char *, size_t, int, va_list);            \
-  int (*deinit)();                                      \
+  int (*deinit)(void);                                  \
   int (*options)(const char *option, const void *);
 struct st_mysql_client_plugin
 {

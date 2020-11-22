@@ -3285,7 +3285,7 @@ void Item_in_subselect::print(String *str, enum_query_type query_type)
     str->append(STRING_WITH_LEN("<exists>"));
   else
   {
-    left_expr->print(str, query_type);
+    left_expr->print_parenthesised(str, query_type, precedence());
     str->append(STRING_WITH_LEN(" in "));
   }
   Item_subselect::print(str, query_type);
@@ -6281,6 +6281,9 @@ subselect_rowid_merge_engine::init(MY_BITMAP *non_null_key_parts,
   while (TRUE)
   {
     error= tmp_table->file->ha_rnd_next(tmp_table->record[0]);
+
+    if (error == HA_ERR_ABORTED_BY_USER)
+      break;
     /*
       This is a temp table that we fully own, there should be no other
       cause to stop the iteration than EOF.

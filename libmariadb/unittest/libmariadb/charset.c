@@ -100,7 +100,7 @@ int bug_10214(MYSQL *mysql)
   check_mysql_rc(rc, mysql);
 
   len= mysql_real_escape_string(mysql, out, "a'b\\c", 5);
-  FAIL_IF(memcmp(out, "a\\'b\\\\c", len), NULL);
+  FAIL_IF(memcmp(out, "a\\'b\\\\c", len), "wrong result");
 
   rc= mysql_query(mysql, "set sql_mode='NO_BACKSLASH_ESCAPES'");
   check_mysql_rc(rc, mysql);
@@ -661,6 +661,10 @@ static int test_bug_54100(MYSQL *mysql)
 
 static int test_utf16_utf32_noboms(MYSQL *mysql __attribute__((unused)))
 {
+#ifndef HAVE_ICONV
+  diag("MariaDB Connector/C was built without iconv support");
+  return SKIP;
+#else
   const char *csname[]= {"utf16", "utf16le", "utf32", "utf8"};
   MARIADB_CHARSET_INFO  *csinfo[sizeof(csname)/sizeof(char*)];
 
@@ -724,6 +728,7 @@ static int test_utf16_utf32_noboms(MYSQL *mysql __attribute__((unused)))
   }
 
   return OK;
+#endif
 }
 
 static int charset_auto(MYSQL *my __attribute__((unused)))
