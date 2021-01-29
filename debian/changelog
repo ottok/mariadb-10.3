@@ -4,6 +4,9 @@ mariadb-10.3 (1:10.3.30-0ubuntu0.20.04.1) focal-updates; urgency=medium
     was compromising the results of some type of queries (subqueries with
     group by): https://jira.mariadb.org/browse/MDEV-25714 (LP: #1936727)
 
+  [ Daniel Black ]
+  * Add caching_sha2_password.so (Closes: #962597) (LP: #1913676)
+
  -- Otto Kekäläinen <otto@debian.org>  Sat, 17 Jul 2021 15:59:58 -0700
 
 mariadb-10.3 (1:10.3.29-0ubuntu0.20.04.1) focal-security; urgency=medium
