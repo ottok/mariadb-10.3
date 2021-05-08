@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2019, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2020, MariaDB Corporation.
+Copyright (c) 2017, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -141,15 +141,18 @@ trx_undo_parse_add_undo_rec(
 }
 
 /** Calculate the free space left for extending an undo log record.
-@param[in]	undo_block	undo log page
-@param[in]	ptr		current end of the undo page
+@param block   undo log page
+@param ptr     current end of the undo page
 @return bytes left */
-static ulint trx_undo_left(const buf_block_t* undo_block, const byte* ptr)
+static ulint trx_undo_left(const buf_block_t *undo_block, const byte *ptr)
 {
-	/* The 10 is a safety margin, in case we have some small
-	calculation error below */
-	return srv_page_size - ulint(ptr - undo_block->frame)
-		- (10 + FIL_PAGE_DATA_END);
+  ut_ad(ptr >= &undo_block->frame[TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_HDR_SIZE]);
+  /* The 10 is supposed to be an extra safety margin (and needed for
+  compatibility with older versions) */
+  lint left= srv_page_size - (ptr - undo_block->frame) -
+    (10 + FIL_PAGE_DATA_END);
+  ut_ad(left >= 0);
+  return left < 0 ? 0 : static_cast<ulint>(left);
 }
 
 /**********************************************************************//**
@@ -2409,7 +2412,8 @@ trx_undo_prev_version_build(
 	rec_offs offsets_dbg[REC_OFFS_NORMAL_SIZE];
 	rec_offs_init(offsets_dbg);
 	ut_a(!rec_offs_any_null_extern(
-		*old_vers, rec_get_offsets(*old_vers, index, offsets_dbg, true,
+		*old_vers, rec_get_offsets(*old_vers, index, offsets_dbg,
+					   index->n_core_fields,
 					   ULINT_UNDEFINED, &heap)));
 #endif // defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
 

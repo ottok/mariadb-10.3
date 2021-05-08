@@ -92,6 +92,12 @@ void wsrep_thd_LOCK(THD *)
 void wsrep_thd_UNLOCK(THD *)
 { }
 
+void wsrep_thd_kill_LOCK(THD *)
+{ }
+
+void wsrep_thd_kill_UNLOCK(THD *)
+{ }
+
 void wsrep_thd_awake(THD *, my_bool)
 { }
 
@@ -133,14 +139,6 @@ longlong wsrep_thd_trx_seqno(THD *)
 
 struct wsrep_ws_handle* wsrep_thd_ws_handle(THD *)
 { return 0; }
-
-void wsrep_thd_auto_increment_variables(THD *thd,
-                                        unsigned long long *offset,
-                                        unsigned long long *increment)
-{
-  *offset= thd->variables.auto_increment_offset;
-  *increment= thd->variables.auto_increment_increment;
-}
 
 void wsrep_set_load_multi_commit(THD *thd, bool split)
 { }

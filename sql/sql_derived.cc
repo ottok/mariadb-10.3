@@ -70,7 +70,6 @@ bool
 mysql_handle_derived(LEX *lex, uint phases)
 {
   bool res= FALSE;
-  THD *thd= lex->thd;
   DBUG_ENTER("mysql_handle_derived");
   DBUG_PRINT("enter", ("phases: 0x%x", phases));
   if (!lex->derived_tables)
@@ -85,8 +84,6 @@ mysql_handle_derived(LEX *lex, uint phases)
       break;
     if (!(phases & phase_flag))
       continue;
-    if (phase_flag >= DT_CREATE && !thd->fill_derived_tables())
-      break;
 
     for (SELECT_LEX *sl= lex->all_selects_list;
 	 sl && !res;
@@ -169,7 +166,6 @@ bool
 mysql_handle_single_derived(LEX *lex, TABLE_LIST *derived, uint phases)
 {
   bool res= FALSE;
-  THD *thd= lex->thd;
   uint8 allowed_phases= (derived->is_merged_derived() ? DT_PHASES_MERGE :
                          DT_PHASES_MATERIALIZE);
   DBUG_ENTER("mysql_handle_single_derived");
@@ -193,8 +189,6 @@ mysql_handle_single_derived(LEX *lex, TABLE_LIST *derived, uint phases)
     if (phase_flag != DT_PREPARE &&
         !(allowed_phases & phase_flag))
       continue;
-    if (phase_flag >= DT_CREATE && !thd->fill_derived_tables())
-      break;
 
     if ((res= (*processors[phase])(lex->thd, lex, derived)))
       break;
@@ -355,10 +349,6 @@ bool mysql_derived_merge(THD *thd, LEX *lex, TABLE_LIST *derived)
     DBUG_RETURN(FALSE);
   }
 
- if (thd->lex->sql_command == SQLCOM_UPDATE_MULTI ||
-     thd->lex->sql_command == SQLCOM_DELETE_MULTI)
-   thd->save_prep_leaf_list= TRUE;
-
   arena= thd->activate_stmt_arena_if_needed(&backup);  // For easier test
 
   if (!derived->merged_for_insert || 
@@ -436,6 +426,7 @@ bool mysql_derived_merge(THD *thd, LEX *lex, TABLE_LIST *derived)
       derived->on_expr= expr;
       derived->prep_on_expr= expr->copy_andor_structure(thd);
     }
+    thd->where= "on clause";
     if (derived->on_expr &&
         derived->on_expr->fix_fields_if_needed_for_bool(thd, &derived->on_expr))
     {
@@ -562,6 +553,32 @@ bool mysql_derived_init(THD *thd, LEX *lex, TABLE_LIST *derived)
 
 
 /*
+  @brief
+    Prevent name resolution out of context of ON expressions in derived tables
+
+  @param
+    join_list  list of tables used in from list of a derived
+
+  @details
+    The function sets the Name_resolution_context::outer_context to NULL
+    for all ON expressions contexts in the given join list. It does this
+    recursively for all nested joins the list contains.
+*/
+
+static void nullify_outer_context_for_on_clauses(List<TABLE_LIST>& join_list)
+{
+  List_iterator<TABLE_LIST> li(join_list);
+  while (TABLE_LIST *table= li++)
+  {
+    if (table->on_context)
+      table->on_context->outer_context= NULL;
+    if (table->nested_join)
+      nullify_outer_context_for_on_clauses(table->nested_join->join_list);
+  }
+}
+
+
+/*
   Create temporary table structure (but do not fill it)
 
   @param thd	     Thread handle
@@ -676,7 +693,7 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
       if (derived->is_with_table_recursive_reference())
       {
         /* Here 'derived" is a secondary recursive table reference */
-        unit->with_element->rec_result->rec_tables.push_back(derived->table);
+         unit->with_element->rec_result->rec_table_refs.push_back(derived);
       }
     }
     DBUG_ASSERT(derived->table || res);
@@ -726,7 +743,12 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
   /* prevent name resolving out of derived table */
   for (SELECT_LEX *sl= first_select; sl; sl= sl->next_select())
   {
+    // Prevent it for the WHERE clause
     sl->context.outer_context= 0;
+
+    // And for ON clauses, if there are any
+    nullify_outer_context_for_on_clauses(*sl->join_list);
+
     if (!derived->is_with_table_recursive_reference() ||
         (!derived->with->with_anchor && 
          !derived->with->is_with_prepared_anchor()))
@@ -762,17 +784,17 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
 
   derived->fill_me= FALSE;
 
-  if (!(derived->derived_result= new (thd->mem_root) select_unit(thd)))
+  if ((!derived->is_with_table_recursive_reference() ||
+       !derived->derived_result) &&
+      !(derived->derived_result= new (thd->mem_root) select_unit(thd)))
     DBUG_RETURN(TRUE); // out of memory
 
-  lex->context_analysis_only|= CONTEXT_ANALYSIS_ONLY_DERIVED;
   // st_select_lex_unit::prepare correctly work for single select
   if ((res= unit->prepare(derived, derived->derived_result, 0)))
     goto exit;
   if (derived->with &&
       (res= derived->with->rename_columns_of_derived_unit(thd, unit)))
     goto exit; 
-  lex->context_analysis_only&= ~CONTEXT_ANALYSIS_ONLY_DERIVED;
   if ((res= check_duplicate_names(thd, unit->types, 0)))
     goto exit;
 
@@ -781,7 +803,8 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
     Depending on the result field translation will or will not
     be created.
   */
-  if (derived->init_derived(thd, FALSE))
+  if (!derived->is_with_table_recursive_reference() &&
+      derived->init_derived(thd, FALSE))
     goto exit;
 
   /*
@@ -1271,7 +1294,8 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
     DBUG_RETURN(false);
 
   st_select_lex_unit *unit= derived->get_unit();
-  st_select_lex *sl= unit->first_select();
+  st_select_lex *first_sl= unit->first_select();
+  st_select_lex *sl= first_sl;
 
   if (derived->prohibit_cond_pushdown)
     DBUG_RETURN(false);
@@ -1419,7 +1443,24 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
       if (!extracted_cond_copy)
         continue;
     }
-    
+
+    /*
+      Rename the columns of all non-first selects of a union to be compatible
+      by names with the columns of the first select. It will allow to use copies
+      of the same expression pushed into having clauses of different selects.
+    */
+    if (sl != first_sl)
+    {
+      DBUG_ASSERT(sl->item_list.elements == first_sl->item_list.elements);
+      List_iterator_fast<Item> it(sl->item_list);
+      List_iterator_fast<Item> nm_it(unit->types);
+      Item * item;
+      while((item= it++))
+      {
+        item->share_name_with(nm_it++);
+      }
+    }
+
     /*
       Transform the references to the 'derived' columns from the condition
       pushed into the having clause of sl to make them usable in the new context

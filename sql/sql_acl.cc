@@ -1471,7 +1471,11 @@ static bool validate_password(LEX_USER *user, THD *thd)
   else
   {
     if (!thd->slave_thread &&
-        strict_password_validation && has_validation_plugins())
+        strict_password_validation && has_validation_plugins()
+#ifdef WITH_WSREP
+        && !thd->wsrep_applier
+#endif
+       )
     {
       my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--strict-password-validation");
       return true;
@@ -2672,6 +2676,12 @@ end:
 
 int acl_check_setrole(THD *thd, const char *rolename, ulonglong *access)
 {
+  if (!initialized)
+  {
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--skip-grant-tables");
+    return 1;
+  }
+
   return check_user_can_set_role(thd, thd->security_ctx->priv_user,
            thd->security_ctx->host, thd->security_ctx->ip, rolename, access);
 }
@@ -8938,6 +8948,8 @@ static bool show_global_privileges(THD *thd, ACL_USER_BASE *acl_entry,
     add_user_parameters(thd, &global, (ACL_USER *)acl_entry,
                         (want_access & GRANT_ACL));
 
+  else if (want_access & GRANT_ACL)
+    global.append(STRING_WITH_LEN(" WITH GRANT OPTION"));
   protocol->prepare_for_resend();
   protocol->store(global.ptr(),global.length(),global.charset());
   if (protocol->write())

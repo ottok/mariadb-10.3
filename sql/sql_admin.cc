@@ -1,5 +1,5 @@
 /* Copyright (c) 2010, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2011, 2019, MariaDB
+   Copyright (c) 2011, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ static bool admin_recreate_table(THD *thd, TABLE_LIST *table_list)
   trans_rollback_stmt(thd);
   trans_rollback(thd);
   close_thread_tables(thd);
-  thd->mdl_context.release_transactional_locks();
+  thd->release_transactional_locks();
 
   /*
     table_list->table has been closed and freed. Do not reference
@@ -91,10 +91,10 @@ static int send_check_errmsg(THD *thd, TABLE_LIST* table,
 static int prepare_for_repair(THD *thd, TABLE_LIST *table_list,
 			      HA_CHECK_OPT *check_opt)
 {
-  int error= 0;
+  int error= 0, create_error= 0;
   TABLE tmp_table, *table;
   TABLE_LIST *pos_in_locked_tables= 0;
-  TABLE_SHARE *share;
+  TABLE_SHARE *share= 0;
   bool has_mdl_lock= FALSE;
   char from[FN_REFLEN],tmp[FN_REFLEN+32];
   const char **ext;
@@ -116,7 +116,7 @@ static int prepare_for_repair(THD *thd, TABLE_LIST *table_list,
       acquire the exclusive lock to satisfy MDL asserts and avoid
       deadlocks.
     */
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     /*
       Attempt to do full-blown table open in mysql_admin_table() has failed.
       Let us try to open at least a .FRM for this table.
@@ -207,6 +207,23 @@ static int prepare_for_repair(THD *thd, TABLE_LIST *table_list,
                               HA_EXTRA_NOT_USED, NULL);
     table_list->table= 0;
   }
+  else
+  {
+    /*
+      Table open failed, maybe because we run out of memory.
+      Close all open tables and relaese all MDL locks
+    */
+#if MYSQL_VERSION < 100500
+    tdc_remove_table(thd, TDC_RT_REMOVE_UNUSED,
+                     table->s->db.str, table->s->table_name.str,
+                     TRUE);
+#else
+    tdc_release_share(share);
+    share->tdc->flush(thd, true);
+    share= 0;
+#endif
+  }
+
   /*
     After this point we have an exclusive metadata lock on our table
     in both cases when table was successfully open in mysql_admin_table()
@@ -220,11 +237,8 @@ static int prepare_for_repair(THD *thd, TABLE_LIST *table_list,
     goto end;
   }
   if (dd_recreate_table(thd, table_list->db.str, table_list->table_name.str))
-  {
-    error= send_check_errmsg(thd, table_list, "repair",
-			     "Failed generating table from .frm file");
-    goto end;
-  }
+    create_error= send_check_errmsg(thd, table_list, "repair",
+                                    "Failed generating table from .frm file");
   /*
     'FALSE' for 'using_transactions' means don't postpone
     invalidation till the end of a transaction, but do it
@@ -237,6 +251,8 @@ static int prepare_for_repair(THD *thd, TABLE_LIST *table_list,
 			     "Failed restoring .MYD file");
     goto end;
   }
+  if (create_error)
+    goto end;
 
   if (thd->locked_tables_list.locked_tables())
   {
@@ -264,11 +280,12 @@ end:
   if (table == &tmp_table)
   {
     closefrm(table);
-    tdc_release_share(table->s);
+    if (share)
+      tdc_release_share(share);
   }
   /* In case of a temporary table there will be no metadata lock. */
   if (unlikely(error) && has_mdl_lock)
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
 
   DBUG_RETURN(error);
 }
@@ -546,7 +563,7 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
       trans_rollback(thd);
       close_thread_tables(thd);
       table->table= NULL;
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       table->mdl_request.init(MDL_key::TABLE, table->db.str, table->table_name.str,
                               MDL_SHARED_NO_READ_WRITE, MDL_TRANSACTION);
     }
@@ -592,6 +609,12 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
 #endif
     DBUG_PRINT("admin", ("table: %p", table->table));
 
+    if (table->schema_table)
+    {
+      result_code= HA_ADMIN_NOT_IMPLEMENTED;
+      goto send_result;
+    }
+
     if (prepare_func)
     {
       DBUG_PRINT("admin", ("calling prepare_func"));
@@ -600,7 +623,7 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
         trans_rollback_stmt(thd);
         trans_rollback(thd);
         close_thread_tables(thd);
-        thd->mdl_context.release_transactional_locks();
+        thd->release_transactional_locks();
         DBUG_PRINT("admin", ("simple error, admin next table"));
         continue;
       case -1:           // error, message could be written to net
@@ -650,12 +673,6 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
       goto send_result;
     }
 
-    if (table->schema_table)
-    {
-      result_code= HA_ADMIN_NOT_IMPLEMENTED;
-      goto send_result;
-    }
-
     if ((table->table->db_stat & HA_READ_ONLY) && open_for_modify)
     {
       /* purecov: begin inspected */
@@ -673,7 +690,7 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
       trans_commit_stmt(thd);
       trans_commit(thd);
       close_thread_tables(thd);
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       lex->reset_query_tables_list(FALSE);
       /*
         Restore Query_tables_list::sql_command value to make statement
@@ -806,7 +823,7 @@ static bool mysql_admin_table(THD* thd, TABLE_LIST* tables,
       thd->open_options|= extra_open_options;
       close_thread_tables(thd);
       table->table= NULL;
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       table->mdl_request.init(MDL_key::TABLE, table->db.str, table->table_name.str,
                               MDL_SHARED_NO_READ_WRITE, MDL_TRANSACTION);
       table->mdl_request.set_type(MDL_SHARED_READ);
@@ -1038,7 +1055,7 @@ send_result_message:
       trans_commit_stmt(thd);
       trans_commit(thd);
       close_thread_tables(thd);
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       /* Clear references to TABLE and MDL_ticket after releasing them. */
       table->mdl_request.ticket= NULL;
 
@@ -1191,7 +1208,7 @@ send_result_message:
         goto err;
     }
     close_thread_tables(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
 
     /*
       If it is CHECK TABLE v1, v2, v3, and v1, v2, v3 are views, we will run
@@ -1229,7 +1246,7 @@ err:
     table->table= 0;
   }
   close_thread_tables(thd);			// Shouldn't be needed
-  thd->mdl_context.release_transactional_locks();
+  thd->release_transactional_locks();
   thd->resume_subsequent_commits(suspended_wfc);
   DBUG_RETURN(TRUE);
 }

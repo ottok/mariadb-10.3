@@ -2,7 +2,7 @@
 #define HANDLER_INCLUDED
 /*
    Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2020, MariaDB
+   Copyright (c) 2009, 2021, MariaDB
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License
@@ -812,8 +812,10 @@ struct xid_t {
   void set(long f, const char *g, long gl, const char *b, long bl)
   {
     formatID= f;
-    memcpy(data, g, gtrid_length= gl);
-    memcpy(data+gl, b, bqual_length= bl);
+    if ((gtrid_length= gl))
+      memcpy(data, g, gl);
+    if ((bqual_length= bl))
+      memcpy(data+gl, b, bl);
   }
   void set(ulonglong xid)
   {
@@ -1472,7 +1474,7 @@ struct handlerton
    enum handler_create_iterator_result
      (*create_iterator)(handlerton *hton, enum handler_iterator_type type,
                         struct handler_iterator *fill_this_in);
-   int (*abort_transaction)(handlerton *hton, THD *bf_thd,
+   void (*abort_transaction)(handlerton *hton, THD *bf_thd,
 			    THD *victim_thd, my_bool signal);
    int (*set_checkpoint)(handlerton *hton, const XID* xid);
    int (*get_checkpoint)(handlerton *hton, XID* xid);
@@ -1668,6 +1670,12 @@ handlerton *ha_default_tmp_handlerton(THD *thd);
 #define HTON_CAN_MERGE               (1 <<11) //Merge type table
 // Engine needs to access the main connect string in partitions
 #define HTON_CAN_READ_CONNECT_STRING_IN_PARTITION (1 <<12)
+
+/*
+  Table requires and close and reopen after truncate
+  If the handler has HTON_CAN_RECREATE, this flag is not used
+*/
+#define HTON_REQUIRES_CLOSE_AFTER_TRUNCATE (1 << 18)
 
 class Ha_trx_info;
 
@@ -2338,6 +2346,9 @@ public:
 
   /** true for online operation (LOCK=NONE) */
   bool online;
+
+  /** which ALGORITHM and LOCK are supported by the storage engine */
+  enum_alter_inplace_result inplace_supported;
 
   /**
      Can be set by handler to describe why a given operation cannot be done
@@ -3013,10 +3024,6 @@ private:
   */
   Handler_share **ha_share;
 
-  /** Stores next_insert_id for handling duplicate key errors. */
-  ulonglong m_prev_insert_id;
-
-
 public:
   handler(handlerton *ht_arg, TABLE_SHARE *share_arg)
     :table_share(share_arg), table(0),
@@ -3039,7 +3046,7 @@ public:
     auto_inc_intervals_count(0),
     m_psi(NULL), set_top_table_fields(FALSE), top_table(0),
     top_table_field(0), top_table_fields(0),
-    m_lock_type(F_UNLCK), ha_share(NULL), m_prev_insert_id(0)
+    m_lock_type(F_UNLCK), ha_share(NULL)
   {
     DBUG_PRINT("info",
                ("handler created F_UNLCK %d F_RDLCK %d F_WRLCK %d",
@@ -3701,16 +3708,6 @@ public:
     */
     next_insert_id= (prev_insert_id > 0) ? prev_insert_id :
       insert_id_for_cur_row;
-  }
-
-  /** Store and restore next_insert_id over duplicate key errors. */
-  virtual void store_auto_increment()
-  {
-    m_prev_insert_id= next_insert_id;
-  }
-  virtual void restore_auto_increment()
-  {
-    restore_auto_increment(m_prev_insert_id);
   }
 
   virtual void update_create_info(HA_CREATE_INFO *create_info) {}

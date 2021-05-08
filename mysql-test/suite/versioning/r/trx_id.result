@@ -5,7 +5,15 @@ sys_trx_start bigint(20) unsigned as row start invisible,
 sys_trx_end bigint(20) unsigned as row end invisible,
 period for system_time (sys_trx_start, sys_trx_end)
 ) with system versioning;
+# No history inside the transaction
+start transaction;
 insert into t1 (x) values (1);
+update t1 set x= x + 1;
+update t1 set x= x + 1;
+commit;
+select *, sys_trx_start > 1, sys_trx_end from t1 for system_time all;
+x	sys_trx_start > 1	sys_trx_end
+3	1	18446744073709551615
 # ALTER ADD SYSTEM VERSIONING should write to mysql.transaction_registry
 set @@system_versioning_alter_history=keep;
 create or replace table t1 (x int);
@@ -497,4 +505,10 @@ add `row_end` bigint unsigned as row end,
 add period for system_time(`row_start`,`row_end`),
 modify x int after row_start,
 with system versioning;
-create or replace database test;
+drop table t;
+#
+# MDEV-20842 Crash using versioning plugin functions after plugin was removed from server
+#
+uninstall plugin test_versioning;
+select trt_begin_ts(0);
+ERROR 42000: FUNCTION test.trt_begin_ts does not exist

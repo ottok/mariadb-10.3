@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2020, MariaDB Corporation.
+Copyright (c) 2017, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -108,7 +108,7 @@ row_undo_ins_remove_clust_rec(
 	btr_cur = btr_pcur_get_btr_cur(&node->pcur);
 
 	ut_ad(rec_get_trx_id(btr_cur_get_rec(btr_cur), btr_cur->index)
-	      == node->trx->id);
+	      == node->trx->id || node->table->is_temporary());
 	ut_ad(!rec_get_deleted_flag(
 		      btr_cur_get_rec(btr_cur),
 		      dict_table_is_comp(btr_cur->index->table)));
@@ -117,7 +117,8 @@ row_undo_ins_remove_clust_rec(
 		const rec_t*	rec	= btr_cur_get_rec(btr_cur);
 		mem_heap_t*	heap	= NULL;
 		const rec_offs*	offsets	= rec_get_offsets(
-			rec, index, NULL, true, ULINT_UNDEFINED, &heap);
+			rec, index, NULL, index->n_core_fields,
+			ULINT_UNDEFINED, &heap);
 		row_log_table_delete(rec, index, offsets, NULL);
 		mem_heap_free(heap);
 	}
@@ -459,6 +460,13 @@ close_table:
 					node->heap);
 			} else {
 				node->ref = &trx_undo_metadata;
+				if (!row_undo_search_clust_to_pcur(node)) {
+					/* An error probably occurred during
+					an insert into the clustered index,
+					after we wrote the undo log record. */
+					goto close_table;
+				}
+				return;
 			}
 
 			if (!row_undo_search_clust_to_pcur(node)) {

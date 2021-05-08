@@ -63,12 +63,12 @@ static DWORD get_last_error()
   return ERROR_INTERNAL_ERROR;
 }
 
-#define FAIL(fmt,...) \
-  {\
-   status = get_last_error();\
-   ma_format_win32_error(errmsg, errmsg_len, status, fmt, __VA_ARGS__);\
-   goto cleanup;\
-  }
+#define FAIL(...) \
+   do{\
+     status = get_last_error();\
+     ma_format_win32_error(errmsg, errmsg_len, status, __VA_ARGS__);\
+     goto cleanup;\
+  } while (0)
 
 /*
   Load file into memory. Add null terminator at the end, so it will be a valid C string.
@@ -591,7 +591,7 @@ void schannel_free_store(HCERTSTORE store)
 
 /*
 Verify server certificate against a wincrypt store
-@return 0 - success, otherwise error occured.
+@return 0 - success, otherwise error occurred.
 */
 SECURITY_STATUS schannel_verify_server_certificate(
   const CERT_CONTEXT* cert,
@@ -654,7 +654,7 @@ static SECURITY_STATUS load_private_key(CERT_CONTEXT* cert, char* private_key_st
   derbuf = LocalAlloc(0, derlen);
   if (!derbuf)
   {
-    FAIL("LocalAlloc failed")
+    FAIL("LocalAlloc failed");
   }
 
   if (!CryptStringToBinaryA(private_key_str, (DWORD)len, CRYPT_STRING_BASE64HEADER, derbuf, &derlen, NULL, NULL))
@@ -663,7 +663,7 @@ static SECURITY_STATUS load_private_key(CERT_CONTEXT* cert, char* private_key_st
   }
 
   /*
-   To accomodate for both "BEGIN PRIVATE KEY" vs "BEGIN RSA PRIVATE KEY"
+   To accommodate for both "BEGIN PRIVATE KEY" vs "BEGIN RSA PRIVATE KEY"
    sections in PEM, we try to decode with PKCS_PRIVATE_KEY_INFO first,
    and, if it fails, with PKCS_RSA_PRIVATE_KEY flag.
   */

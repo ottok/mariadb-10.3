@@ -2,7 +2,7 @@
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -292,7 +292,7 @@ dict_table_try_drop_aborted(
 	    && !UT_LIST_GET_FIRST(table->locks)) {
 		/* Silence a debug assertion in row_merge_drop_indexes(). */
 		ut_d(table->acquire());
-		row_merge_drop_indexes(trx, table, TRUE);
+		row_merge_drop_indexes(trx, table, true);
 		ut_d(table->release());
 		ut_ad(table->get_ref_count() == ref_count);
 		trx_commit_for_mysql(trx);
@@ -2162,6 +2162,7 @@ dict_index_remove_from_cache_low(
 	if (index->online_log) {
 		ut_ad(index->online_status == ONLINE_INDEX_CREATION);
 		row_log_free(index->online_log);
+		index->online_log = NULL;
 	}
 
 	/* Remove the index from the list of indexes of the table */
@@ -5034,53 +5035,15 @@ dict_index_build_node_ptr(
 
 	dtype_set(dfield_get_type(field), DATA_SYS_CHILD, DATA_NOT_NULL, 4);
 
-	rec_copy_prefix_to_dtuple(tuple, rec, index, !level, n_unique, heap);
+	rec_copy_prefix_to_dtuple(tuple, rec, index,
+				  level ? 0 : index->n_core_fields,
+				  n_unique, heap);
 	dtuple_set_info_bits(tuple, dtuple_get_info_bits(tuple)
 			     | REC_STATUS_NODE_PTR);
 
 	ut_ad(dtuple_check_typed(tuple));
 
 	return(tuple);
-}
-
-/**********************************************************************//**
-Copies an initial segment of a physical record, long enough to specify an
-index entry uniquely.
-@return pointer to the prefix record */
-rec_t*
-dict_index_copy_rec_order_prefix(
-/*=============================*/
-	const dict_index_t*	index,	/*!< in: index */
-	const rec_t*		rec,	/*!< in: record for which to
-					copy prefix */
-	ulint*			n_fields,/*!< out: number of fields copied */
-	byte**			buf,	/*!< in/out: memory buffer for the
-					copied prefix, or NULL */
-	ulint*			buf_size)/*!< in/out: buffer size */
-{
-	ulint		n;
-
-	UNIV_PREFETCH_R(rec);
-
-	if (dict_index_is_ibuf(index)) {
-		ut_ad(!dict_table_is_comp(index->table));
-		n = rec_get_n_fields_old(rec);
-	} else {
-		if (page_rec_is_leaf(rec)) {
-			n = dict_index_get_n_unique_in_tree(index);
-		} else if (dict_index_is_spatial(index)) {
-			ut_ad(dict_index_get_n_unique_in_tree_nonleaf(index)
-			      == DICT_INDEX_SPATIAL_NODEPTR_SIZE);
-			/* For R-tree, we have to compare
-			the child page numbers as well. */
-			n = DICT_INDEX_SPATIAL_NODEPTR_SIZE + 1;
-		} else {
-			n = dict_index_get_n_unique_in_tree(index);
-		}
-	}
-
-	*n_fields = n;
-	return(rec_copy_prefix_to_buf(rec, index, n, buf, buf_size));
 }
 
 /** Convert a physical record into a search tuple.
@@ -5098,11 +5061,14 @@ dict_index_build_data_tuple(
 	ulint			n_fields,
 	mem_heap_t*		heap)
 {
+	ut_ad(!index->is_clust());
+
 	dtuple_t* tuple = dtuple_create(heap, n_fields);
 
 	dict_index_copy_types(tuple, index, n_fields);
 
-	rec_copy_prefix_to_dtuple(tuple, rec, index, leaf, n_fields, heap);
+	rec_copy_prefix_to_dtuple(tuple, rec, index,
+				  leaf ? n_fields : 0, n_fields, heap);
 
 	ut_ad(dtuple_check_typed(tuple));
 
@@ -6611,144 +6577,6 @@ dict_sys_get_size()
 	return size;
 }
 
-/** Look for any dictionary objects that are found in the given tablespace.
-@param[in]	space_id	Tablespace ID to search for.
-@return true if tablespace is empty. */
-bool
-dict_space_is_empty(
-	ulint	space_id)
-{
-	btr_pcur_t	pcur;
-	const rec_t*	rec;
-	mtr_t		mtr;
-	bool		found = false;
-
-	rw_lock_x_lock(&dict_operation_lock);
-	mutex_enter(&dict_sys->mutex);
-	mtr_start(&mtr);
-
-	for (rec = dict_startscan_system(&pcur, &mtr, SYS_TABLES);
-	     rec != NULL;
-	     rec = dict_getnext_system(&pcur, &mtr)) {
-		const byte*	field;
-		ulint		len;
-		ulint		space_id_for_table;
-
-		field = rec_get_nth_field_old(
-			rec, DICT_FLD__SYS_TABLES__SPACE, &len);
-		ut_ad(len == 4);
-		space_id_for_table = mach_read_from_4(field);
-
-		if (space_id_for_table == space_id) {
-			found = true;
-		}
-	}
-
-	mtr_commit(&mtr);
-	mutex_exit(&dict_sys->mutex);
-	rw_lock_x_unlock(&dict_operation_lock);
-
-	return(!found);
-}
-
-/** Find the space_id for the given name in sys_tablespaces.
-@param[in]	name	Tablespace name to search for.
-@return the tablespace ID. */
-ulint
-dict_space_get_id(
-	const char*	name)
-{
-	btr_pcur_t	pcur;
-	const rec_t*	rec;
-	mtr_t		mtr;
-	ulint		name_len = strlen(name);
-	ulint		id = ULINT_UNDEFINED;
-
-	rw_lock_x_lock(&dict_operation_lock);
-	mutex_enter(&dict_sys->mutex);
-	mtr_start(&mtr);
-
-	for (rec = dict_startscan_system(&pcur, &mtr, SYS_TABLESPACES);
-	     rec != NULL;
-	     rec = dict_getnext_system(&pcur, &mtr)) {
-		const byte*	field;
-		ulint		len;
-
-		field = rec_get_nth_field_old(
-			rec, DICT_FLD__SYS_TABLESPACES__NAME, &len);
-		ut_ad(len > 0);
-		ut_ad(len < OS_FILE_MAX_PATH);
-
-		if (len == name_len && ut_memcmp(name, field, len) == 0) {
-
-			field = rec_get_nth_field_old(
-				rec, DICT_FLD__SYS_TABLESPACES__SPACE, &len);
-			ut_ad(len == 4);
-			id = mach_read_from_4(field);
-
-			/* This is normally called by dict_getnext_system()
-			at the end of the index. */
-			btr_pcur_close(&pcur);
-			break;
-		}
-	}
-
-	mtr_commit(&mtr);
-	mutex_exit(&dict_sys->mutex);
-	rw_lock_x_unlock(&dict_operation_lock);
-
-	return(id);
-}
-
-/** Determine the extent size (in pages) for the given table
-@param[in]	table	the table whose extent size is being
-			calculated.
-@return extent size in pages (256, 128 or 64) */
-ulint
-dict_table_extent_size(
-	const dict_table_t*	table)
-{
-	const ulint	mb_1 = 1024 * 1024;
-	const ulint	mb_2 = 2 * mb_1;
-	const ulint	mb_4 = 4 * mb_1;
-
-	page_size_t	page_size = dict_table_page_size(table);
-	ulint	pages_in_extent = FSP_EXTENT_SIZE;
-
-	if (page_size.is_compressed()) {
-
-		ulint	disk_page_size	= page_size.physical();
-
-		switch (disk_page_size) {
-		case 1024:
-			pages_in_extent = mb_1/1024;
-			break;
-		case 2048:
-			pages_in_extent = mb_1/2048;
-			break;
-		case 4096:
-			pages_in_extent = mb_1/4096;
-			break;
-		case 8192:
-			pages_in_extent = mb_1/8192;
-			break;
-		case 16384:
-			pages_in_extent = mb_1/16384;
-			break;
-		case 32768:
-			pages_in_extent = mb_2/32768;
-			break;
-		case 65536:
-			pages_in_extent = mb_4/65536;
-			break;
-		default:
-			ut_ad(0);
-		}
-	}
-
-	return(pages_in_extent);
-}
-
 size_t
 dict_table_t::get_overflow_field_local_len() const
 {
@@ -6758,4 +6586,10 @@ dict_table_t::get_overflow_field_local_len() const
 	}
 	/* up to MySQL 5.1: store a 768-byte prefix locally */
 	return BTR_EXTERN_FIELD_REF_SIZE + DICT_ANTELOPE_MAX_INDEX_COL_LEN;
+}
+
+bool dict_table_t::is_stats_table() const
+{
+  return !strcmp(name.m_name, TABLE_STATS_NAME) ||
+         !strcmp(name.m_name, INDEX_STATS_NAME);
 }

@@ -3,7 +3,7 @@
 Copyright (c) 1995, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, 2009 Google Inc.
 Copyright (c) 2009, Percona Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -256,9 +256,6 @@ ulong srv_buf_pool_load_pages_abort = LONG_MAX;
 /** Lock table size in bytes */
 ulint	srv_lock_table_size	= ULINT_MAX;
 
-/** innodb_idle_flush_pct */
-ulong	srv_idle_flush_pct;
-
 /** innodb_read_io_threads */
 ulong	srv_n_read_io_threads;
 /** innodb_write_io_threads */
@@ -491,9 +488,6 @@ current_time % 5 != 0. */
 # define	SRV_MASTER_MEM_VALIDATE_INTERVAL	(13)
 #endif /* MEM_PERIODIC_CHECK */
 # define	SRV_MASTER_DICT_LRU_INTERVAL		(47)
-
-/** Simulate compression failures. */
-UNIV_INTERN uint srv_simulate_comp_failures;
 
 /** Buffer pool dump status frequence in percentages */
 UNIV_INTERN ulong srv_buf_dump_status_frequency;
@@ -2524,6 +2518,13 @@ DECLARE_THREAD(srv_worker_thread)(
 
 	slot = srv_reserve_slot(SRV_WORKER);
 
+#ifdef UNIV_DEBUG
+	UT_LIST_INIT(slot->debug_sync,
+		     &srv_slot_t::debug_sync_t::debug_sync_list);
+	rw_lock_create(PFS_NOT_INSTRUMENTED, &slot->debug_sync_lock,
+		       SYNC_NO_ORDER_CHECK);
+#endif
+
 	ut_a(srv_n_purge_threads > 1);
 	ut_a(ulong(my_atomic_loadlint(&srv_sys.n_threads_active[SRV_WORKER]))
 	     < srv_n_purge_threads);
@@ -2544,6 +2545,8 @@ DECLARE_THREAD(srv_worker_thread)(
 			srv_wake_purge_thread_if_not_active();
 		}
 	} while (purge_sys.enabled());
+
+	ut_d(rw_lock_free(&slot->debug_sync_lock));
 
 	srv_free_slot(slot);
 
@@ -2745,6 +2748,12 @@ DECLARE_THREAD(srv_purge_coordinator_thread)(
 
 	slot = srv_reserve_slot(SRV_PURGE);
 
+#ifdef UNIV_DEBUG
+	UT_LIST_INIT(slot->debug_sync,
+		     &srv_slot_t::debug_sync_t::debug_sync_list);
+	rw_lock_create(PFS_NOT_INSTRUMENTED, &slot->debug_sync_lock,
+		       SYNC_NO_ORDER_CHECK);
+#endif
 	ulint	rseg_history_len = trx_sys.history_size();
 
 	do {
@@ -2772,6 +2781,8 @@ DECLARE_THREAD(srv_purge_coordinator_thread)(
 	/* The task queue should always be empty, independent of fast
 	shutdown state. */
 	ut_a(srv_get_task_queue_length() == 0);
+
+	ut_d(rw_lock_free(&slot->debug_sync_lock));
 
 	srv_free_slot(slot);
 

@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2019, MariaDB Corporation
+   Copyright (c) 2010, 2021, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -464,7 +464,7 @@ struct LEX_MASTER_INFO
     }
 
     host= user= password= log_file_name= ssl_key= ssl_cert= ssl_ca=
-      ssl_capath= ssl_cipher= relay_log_name= 0;
+      ssl_capath= ssl_cipher= ssl_crl= ssl_crlpath= relay_log_name= NULL;
     pos= relay_log_pos= server_id= port= connect_retry= 0;
     heartbeat_period= 0;
     ssl= ssl_verify_server_cert= heartbeat_opt=
@@ -711,6 +711,7 @@ public:
   void include_global(st_select_lex_node **plink);
   void exclude();
   void exclude_from_tree();
+  void substitute_in_tree(st_select_lex_node *subst);
 
   void set_slave(st_select_lex_node *slave_arg) { slave= slave_arg; }
   void move_node(st_select_lex_node *where_to_move)
@@ -1175,6 +1176,8 @@ public:
   /* it is for correct printing SELECT options */
   thr_lock_type lock_type;
   
+  List<List_item> save_many_values;
+  List<Item> *save_insert_list;
   table_value_constr *tvc;
   bool in_tvc;
 
@@ -1208,7 +1211,8 @@ public:
   }
   inline bool is_subquery_function() { return master_unit()->item != 0; }
 
-  bool mark_as_dependent(THD *thd, st_select_lex *last, Item *dependency);
+  bool mark_as_dependent(THD *thd, st_select_lex *last,
+                         Item_ident *dependency);
 
   void set_braces(bool value)
   {
@@ -1349,6 +1353,8 @@ public:
 
   bool save_leaf_tables(THD *thd);
   bool save_prep_leaf_tables(THD *thd);
+
+  void set_unique_exclude();
 
   bool is_merged_child_of(st_select_lex *ancestor);
 
@@ -4007,6 +4013,23 @@ public:
     return false;
   }
 
+  bool create_like() const
+  {
+    DBUG_ASSERT(!create_info.like() || !select_lex.item_list.elements);
+    return create_info.like();
+  }
+
+  bool create_select() const
+  {
+    DBUG_ASSERT(!create_info.like() || !select_lex.item_list.elements);
+    return select_lex.item_list.elements;
+  }
+
+  bool create_simple() const
+  {
+    return !create_like() && !create_select();
+  }
+
   SELECT_LEX *exclude_last_select();
   bool add_unit_in_brackets(SELECT_LEX *nselect);
   void check_automatic_up(enum sub_select_type type);
@@ -4045,12 +4068,10 @@ public:
     return false;
   }
 
-  void tvc_start()
-  {
-    field_list.empty();
-    many_values.empty();
-    insert_list= 0;
-  }
+  void save_values_list_state();
+  void restore_values_list_state();
+  void tvc_start();
+  bool tvc_start_derived();
   bool tvc_finalize();
   bool tvc_finalize_derived();
 
@@ -4319,8 +4340,8 @@ extern void lex_init(void);
 extern void lex_free(void);
 extern void lex_start(THD *thd);
 extern void lex_end(LEX *lex);
-extern void lex_end_stage1(LEX *lex);
-extern void lex_end_stage2(LEX *lex);
+extern void lex_end_nops(LEX *lex);
+extern void lex_unlock_plugins(LEX *lex);
 void end_lex_with_single_table(THD *thd, TABLE *table, LEX *old_lex);
 int init_lex_with_single_table(THD *thd, TABLE *table, LEX *lex);
 extern int MYSQLlex(union YYSTYPE *yylval, THD *thd);

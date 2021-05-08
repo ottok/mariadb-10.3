@@ -8181,8 +8181,7 @@ int spider_mbase_handler::append_update_set(
         mysql_share->append_column_name(str, (*fields)->field_index);
         str->q_append(SPIDER_SQL_EQUAL_STR, SPIDER_SQL_EQUAL_LEN);
 #ifndef DBUG_OFF
-        my_bitmap_map *tmp_map = dbug_tmp_use_all_columns(table,
-          table->read_set);
+        MY_BITMAP *tmp_map = dbug_tmp_use_all_columns(table, &table->read_set);
 #endif
         if (
           spider_db_mbase_utility->
@@ -8191,12 +8190,12 @@ int spider_mbase_handler::append_update_set(
           str->reserve(SPIDER_SQL_COMMA_LEN)
         ) {
 #ifndef DBUG_OFF
-          dbug_tmp_restore_column_map(table->read_set, tmp_map);
+          dbug_tmp_restore_column_map(&table->read_set, tmp_map);
 #endif
           DBUG_RETURN(HA_ERR_OUT_OF_MEM);
         }
 #ifndef DBUG_OFF
-        dbug_tmp_restore_column_map(table->read_set, tmp_map);
+        dbug_tmp_restore_column_map(&table->read_set, tmp_map);
 #endif
       }
       str->q_append(SPIDER_SQL_COMMA_STR, SPIDER_SQL_COMMA_LEN);
@@ -10888,8 +10887,8 @@ int spider_mbase_handler::append_insert_values(
       bitmap_is_set(table->read_set, (*field)->field_index)
     ) {
 #ifndef DBUG_OFF
-      my_bitmap_map *tmp_map =
-        dbug_tmp_use_all_columns(table, table->read_set);
+      MY_BITMAP *tmp_map =
+        dbug_tmp_use_all_columns(table, &table->read_set);
 #endif
       add_value = TRUE;
       DBUG_PRINT("info",("spider is_null()=%s",
@@ -10911,7 +10910,7 @@ int spider_mbase_handler::append_insert_values(
         if (str->reserve(SPIDER_SQL_NULL_LEN + SPIDER_SQL_COMMA_LEN))
         {
 #ifndef DBUG_OFF
-          dbug_tmp_restore_column_map(table->read_set, tmp_map);
+          dbug_tmp_restore_column_map(&table->read_set, tmp_map);
 #endif
           str->length(0);
           DBUG_RETURN(HA_ERR_OUT_OF_MEM);
@@ -10925,7 +10924,7 @@ int spider_mbase_handler::append_insert_values(
           str->reserve(SPIDER_SQL_COMMA_LEN)
         ) {
 #ifndef DBUG_OFF
-          dbug_tmp_restore_column_map(table->read_set, tmp_map);
+          dbug_tmp_restore_column_map(&table->read_set, tmp_map);
 #endif
           str->length(0);
           DBUG_RETURN(HA_ERR_OUT_OF_MEM);
@@ -10933,7 +10932,7 @@ int spider_mbase_handler::append_insert_values(
       }
       str->q_append(SPIDER_SQL_COMMA_STR, SPIDER_SQL_COMMA_LEN);
 #ifndef DBUG_OFF
-      dbug_tmp_restore_column_map(table->read_set, tmp_map);
+      dbug_tmp_restore_column_map(&table->read_set, tmp_map);
 #endif
     }
   }
@@ -14277,15 +14276,21 @@ int spider_mbase_handler::append_list_item_select(
   spider_fields *fields
 ) {
   int error_num;
-  uint32 length;
+  uint32 length, begin;
   List_iterator_fast<Item> it(*select);
   Item *item;
   Field *field;
   const char *item_name;
   DBUG_ENTER("spider_mbase_handler::append_list_item_select");
   DBUG_PRINT("info",("spider this=%p", this));
+  begin = str->length();
   while ((item = it++))
   {
+    if (item->const_item())
+    {
+      DBUG_PRINT("info",("spider const item"));
+      continue;
+    }
     if ((error_num = spider_db_print_item_type(item, NULL, spider, str,
       alias, alias_length, dbton_id, use_fields, fields)))
     {
@@ -14313,7 +14318,17 @@ int spider_mbase_handler::append_list_item_select(
     }
     str->q_append(SPIDER_SQL_COMMA_STR, SPIDER_SQL_COMMA_LEN);
   }
-  str->length(str->length() - SPIDER_SQL_COMMA_LEN);
+  if (begin == str->length())
+  {
+    /* no columns */
+    if (str->reserve(SPIDER_SQL_ONE_LEN))
+    {
+      DBUG_RETURN(HA_ERR_OUT_OF_MEM);
+    }
+    str->q_append(SPIDER_SQL_ONE_STR, SPIDER_SQL_ONE_LEN);
+  } else {
+    str->length(str->length() - SPIDER_SQL_COMMA_LEN);
+  }
   DBUG_RETURN(0);
 }
 

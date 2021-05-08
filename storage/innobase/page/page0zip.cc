@@ -2,7 +2,7 @@
 
 Copyright (c) 2005, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2014, 2020, MariaDB Corporation.
+Copyright (c) 2014, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -881,7 +881,7 @@ page_zip_compress_node_ptrs(
 	do {
 		const rec_t*	rec = *recs++;
 
-		offsets = rec_get_offsets(rec, index, offsets, false,
+		offsets = rec_get_offsets(rec, index, offsets, 0,
 					  ULINT_UNDEFINED, &heap);
 		/* Only leaf nodes may contain externally stored columns. */
 		ut_ad(!rec_offs_any_extern(offsets));
@@ -1130,7 +1130,7 @@ page_zip_compress_clust(
 	do {
 		const rec_t*	rec = *recs++;
 
-		offsets = rec_get_offsets(rec, index, offsets, true,
+		offsets = rec_get_offsets(rec, index, offsets, index->n_fields,
 					  ULINT_UNDEFINED, &heap);
 		ut_ad(rec_offs_n_fields(offsets)
 		      == dict_index_get_n_fields(index));
@@ -1369,33 +1369,6 @@ page_zip_compress(
 	}
 
 	MONITOR_INC(MONITOR_PAGE_COMPRESS);
-
-	/* Simulate a compression failure with a probability determined by
-	innodb_simulate_comp_failures, only if the page has 2 or more
-	records. */
-
-	if (srv_simulate_comp_failures
-	    && !dict_index_is_ibuf(index)
-	    && page_get_n_recs(page) >= 2
-	    && ((ulint)(rand() % 100) < srv_simulate_comp_failures)
-	    && strcmp(index->table->name.m_name, "IBUF_DUMMY")) {
-
-#ifdef UNIV_DEBUG
-		ib::error()
-			<< "Simulating a compression failure"
-			<< " for table " << index->table->name
-			<< " index "
-			<< index->name()
-			<< " page "
-			<< page_get_page_no(page)
-			<< "("
-			<< (page_is_leaf(page) ? "leaf" : "non-leaf")
-			<< ")";
-
-#endif
-
-		goto err_exit;
-	}
 
 	heap = mem_heap_create(page_zip_get_size(page_zip)
 			       + n_fields * (2 + sizeof(ulint))
@@ -2079,7 +2052,7 @@ page_zip_apply_log(
 				sorted by address (indexed by
 				heap_no - PAGE_HEAP_NO_USER_LOW) */
 	ulint		n_dense,/*!< in: size of recs[] */
-	bool		is_leaf,/*!< in: whether this is a leaf page */
+	ulint		n_core,	/*!< in: index->n_fields, or 0 for non-leaf */
 	ulint		trx_id_col,/*!< in: column number of trx_id in the index,
 				or ULINT_UNDEFINED if none */
 	ulint		heap_status,
@@ -2155,7 +2128,7 @@ page_zip_apply_log(
 			/* Clear the data bytes of the record. */
 			mem_heap_t*	heap	= NULL;
 			rec_offs*	offs;
-			offs = rec_get_offsets(rec, index, offsets, is_leaf,
+			offs = rec_get_offsets(rec, index, offsets, n_core,
 					       ULINT_UNDEFINED, &heap);
 			memset(rec, 0, rec_offs_data_size(offs));
 
@@ -2169,7 +2142,7 @@ page_zip_apply_log(
 		rec_get_offsets_reverse(data, index,
 					hs & REC_STATUS_NODE_PTR,
 					offsets);
-		rec_offs_make_valid(rec, index, is_leaf, offsets);
+		rec_offs_make_valid(rec, index, n_core != 0, offsets);
 
 		/* Copy the extra bytes (backwards). */
 		{
@@ -2349,7 +2322,7 @@ page_zip_decompress_node_ptrs(
 		}
 
 		/* Read the offsets. The status bits are needed here. */
-		offsets = rec_get_offsets(rec, index, offsets, false,
+		offsets = rec_get_offsets(rec, index, offsets, 0,
 					  ULINT_UNDEFINED, &heap);
 
 		/* Non-leaf nodes should not have any externally
@@ -2436,7 +2409,7 @@ zlib_done:
 		const byte*	mod_log_ptr;
 		mod_log_ptr = page_zip_apply_log(d_stream->next_in,
 						 d_stream->avail_in + 1,
-						 recs, n_dense, false,
+						 recs, n_dense, 0,
 						 ULINT_UNDEFINED, heap_status,
 						 index, offsets);
 
@@ -2467,7 +2440,7 @@ zlib_done:
 	for (slot = 0; slot < n_dense; slot++) {
 		rec_t*		rec	= recs[slot];
 
-		offsets = rec_get_offsets(rec, index, offsets, false,
+		offsets = rec_get_offsets(rec, index, offsets, 0,
 					  ULINT_UNDEFINED, &heap);
 		/* Non-leaf nodes should not have any externally
 		stored columns. */
@@ -2589,7 +2562,8 @@ zlib_done:
 		const byte*	mod_log_ptr;
 		mod_log_ptr = page_zip_apply_log(d_stream->next_in,
 						 d_stream->avail_in + 1,
-						 recs, n_dense, true,
+						 recs, n_dense,
+						 index->n_fields,
 						 ULINT_UNDEFINED, heap_status,
 						 index, offsets);
 
@@ -2792,7 +2766,7 @@ page_zip_decompress_clust(
 		}
 
 		/* Read the offsets. The status bits are needed here. */
-		offsets = rec_get_offsets(rec, index, offsets, true,
+		offsets = rec_get_offsets(rec, index, offsets, index->n_fields,
 					  ULINT_UNDEFINED, &heap);
 
 		/* This is a leaf page in a clustered index. */
@@ -2919,7 +2893,8 @@ zlib_done:
 		const byte*	mod_log_ptr;
 		mod_log_ptr = page_zip_apply_log(d_stream->next_in,
 						 d_stream->avail_in + 1,
-						 recs, n_dense, true,
+						 recs, n_dense,
+						 index->n_fields,
 						 trx_id_col, heap_status,
 						 index, offsets);
 
@@ -2955,7 +2930,7 @@ zlib_done:
 		rec_t*	rec	= recs[slot];
 		bool	exists	= !page_zip_dir_find_free(
 			page_zip, page_offset(rec));
-		offsets = rec_get_offsets(rec, index, offsets, true,
+		offsets = rec_get_offsets(rec, index, offsets, index->n_fields,
 					  ULINT_UNDEFINED, &heap);
 
 		dst = rec_get_nth_field(rec, offsets,
@@ -3479,7 +3454,7 @@ page_zip_validate_low(
 			page + PAGE_NEW_INFIMUM, TRUE);
 		trec = page_rec_get_next_low(
 			temp_page + PAGE_NEW_INFIMUM, TRUE);
-		const bool is_leaf = page_is_leaf(page);
+		const ulint n_core = page_is_leaf(page) ? index->n_fields : 0;
 
 		do {
 			if (page_offset(rec) != page_offset(trec)) {
@@ -3494,7 +3469,7 @@ page_zip_validate_low(
 			if (index) {
 				/* Compare the data. */
 				offsets = rec_get_offsets(
-					rec, index, offsets, is_leaf,
+					rec, index, offsets, n_core,
 					ULINT_UNDEFINED, &heap);
 
 				if (memcmp(rec - rec_offs_extra_size(offsets),

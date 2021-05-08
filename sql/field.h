@@ -980,8 +980,9 @@ public:
   virtual void reset_fields() {}
   const uchar *ptr_in_record(const uchar *record) const
   {
-    my_ptrdiff_t l_offset= (my_ptrdiff_t) (record -  table->record[0]);
-    return ptr + l_offset;
+    my_ptrdiff_t l_offset= (my_ptrdiff_t) (ptr -  table->record[0]);
+    DBUG_ASSERT(l_offset >= 0 && table->s->rec_buff_length - l_offset > 0);
+    return record + l_offset;
   }
   virtual int set_default();
 
@@ -1375,8 +1376,6 @@ public:
   virtual uint max_packed_col_length(uint max_length)
   { return max_length;}
 
-  virtual bool is_packable() const { return false; }
-
   uint offset(uchar *record) const
   {
     return (uint) (ptr - record);
@@ -1764,7 +1763,7 @@ public:
 	    uchar null_bit_arg, utype unireg_check_arg,
 	    const LEX_CSTRING *field_name_arg,
 	    const DTCollation &collation);
-  uint decimals() const { return NOT_FIXED_DEC; }
+  uint decimals() const { return is_created_from_null_item ? 0 : NOT_FIXED_DEC; }
   int  save_in_field(Field *to) { return save_in_field_str(to); }
   bool memcpy_field_possible(const Field *from) const
   {
@@ -1877,7 +1876,6 @@ public:
   bool can_optimize_range(const Item_bool_func *cond,
                           const Item *item,
                           bool is_eq_func) const;
-  bool is_packable() const { return true; }
 };
 
 /* base class for float and double and decimal (old one) */

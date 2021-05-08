@@ -458,7 +458,8 @@ static inline int add_relay_log(Relay_log_info* rli,LOG_INFO* linfo)
                     linfo->log_file_name);
     DBUG_RETURN(1);
   }
-  rli->log_space_total += s.st_size;
+  my_atomic_add64_explicit((volatile int64*)(&rli->log_space_total),
+                           s.st_size, MY_MEMORY_ORDER_RELAXED);
   DBUG_PRINT("info",("log_space_total: %llu", rli->log_space_total));
   DBUG_RETURN(0);
 }
@@ -468,7 +469,8 @@ static int count_relay_log_space(Relay_log_info* rli)
 {
   LOG_INFO linfo;
   DBUG_ENTER("count_relay_log_space");
-  rli->log_space_total= 0;
+  my_atomic_store64_explicit((volatile int64*)(&rli->log_space_total), 0,
+                             MY_MEMORY_ORDER_RELAXED);
   if (rli->relay_log.find_log_pos(&linfo, NullS, 1))
   {
     sql_print_error("Could not find first log while counting relay log space");
@@ -991,7 +993,7 @@ void Relay_log_info::inc_group_relay_log_pos(ulonglong log_pos,
   if (rgi->is_parallel_exec)
   {
     /* In case of parallel replication, do not update the position backwards. */
-    int cmp= strcmp(group_relay_log_name, rgi->event_relay_log_name);
+    int cmp= compare_log_name(group_relay_log_name, rgi->event_relay_log_name);
     if (cmp < 0)
     {
       group_relay_log_pos= rgi->future_event_relay_log_pos;
@@ -1003,7 +1005,7 @@ void Relay_log_info::inc_group_relay_log_pos(ulonglong log_pos,
       In the parallel case we need to update the master_log_name here, rather
       than in Rotate_log_event::do_update_pos().
     */
-    cmp= strcmp(group_master_log_name, rgi->future_event_master_log_name);
+    cmp= compare_log_name(group_master_log_name, rgi->future_event_master_log_name);
     if (cmp <= 0)
     {
       if (cmp < 0)
@@ -1227,8 +1229,8 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
     strmake_buf(rli->group_relay_log_name, rli->relay_log.get_log_fname());
     strmake_buf(rli->event_relay_log_name, rli->relay_log.get_log_fname());
     rli->group_relay_log_pos= rli->event_relay_log_pos= BIN_LOG_HEADER_SIZE;
-    rli->log_space_total= 0;
-
+    my_atomic_store64_explicit((volatile int64*)(&rli->log_space_total), 0,
+                               MY_MEMORY_ORDER_RELAXED);
     if (count_relay_log_space(rli))
     {
       *errmsg= "Error counting relay log space";
@@ -1706,7 +1708,7 @@ scan_all_gtid_slave_pos_table(THD *thd, int (*cb)(THD *, LEX_CSTRING *, void *),
   {
     my_error(ER_FILE_NOT_FOUND, MYF(0), path, my_errno);
     close_thread_tables(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     return 1;
   }
   else
@@ -1719,7 +1721,7 @@ scan_all_gtid_slave_pos_table(THD *thd, int (*cb)(THD *, LEX_CSTRING *, void *),
     err= ha_discover_table_names(thd, &MYSQL_SCHEMA_NAME, dirp, &tl, false);
     my_dirend(dirp);
     close_thread_tables(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     if (err)
       return err;
 
@@ -1996,7 +1998,7 @@ end:
     ha_commit_trans(thd, FALSE);
     ha_commit_trans(thd, TRUE);
     close_thread_tables(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
 
   return err;
@@ -2286,7 +2288,7 @@ void rpl_group_info::cleanup_context(THD *thd, bool error)
 
   if (unlikely(error))
   {
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
 
     if (thd == rli->sql_driver_thd)
     {
@@ -2400,10 +2402,10 @@ void rpl_group_info::slave_close_thread_tables(THD *thd)
   if (thd->transaction_rollback_request)
   {
     trans_rollback_implicit(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
   else if (! thd->in_multi_stmt_transaction_mode())
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   else
     thd->mdl_context.release_statement_locks();
 

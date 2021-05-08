@@ -52,12 +52,12 @@ ulong net_read_timeout=  NET_READ_TIMEOUT;
 ulong net_write_timeout= NET_WRITE_TIMEOUT;
 ulong net_buffer_length= 8192;	/* Default length. Enlarged if necessary */
 
-#if !defined(_WIN32) && !defined(MSDOS)
+#if !defined(_WIN32)
 #include <sys/socket.h>
 #else
 #undef MYSQL_SERVER			/* Win32 can't handle interrupts */
 #endif
-#if !defined(MSDOS) && !defined(_WIN32) && !defined(HAVE_BROKEN_NETINET_INCLUDES) && !defined(__BEOS__)
+#if !defined(_WIN32) && !defined(HAVE_BROKEN_NETINET_INCLUDES) && !defined(__BEOS__)
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -249,6 +249,9 @@ int ma_net_write_command(NET *net, uchar command,
 static int ma_net_write_buff(NET *net,const char *packet, size_t len)
 {
   size_t left_length;
+
+  if (!len)
+    return 0;
 
   if (net->max_packet > MAX_PACKET_LENGTH &&
       net->compress)

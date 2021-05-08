@@ -7528,10 +7528,10 @@ error:
   if (thd->transaction_rollback_request)
   {
     trans_rollback_implicit(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
   else if (! thd->in_multi_stmt_transaction_mode())
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   else
     thd->mdl_context.release_statement_locks();
 
@@ -9008,7 +9008,7 @@ int Xid_log_event::do_apply_event(rpl_group_info *rgi)
                     "COMMIT /* implicit, from Xid_log_event */");
   thd->variables.option_bits&= ~OPTION_GTID_BEGIN;
   res= trans_commit(thd); /* Automatically rolls back on error. */
-  thd->mdl_context.release_transactional_locks();
+  thd->release_transactional_locks();
 
 #ifdef WITH_WSREP
   if (WSREP(thd)) mysql_mutex_lock(&thd->LOCK_thd_data);
@@ -11232,7 +11232,7 @@ int Rows_log_event::do_add_row_data(uchar *row_data, size_t length)
   There was the same problem with MERGE MYISAM tables and so here we try to
   go the same way.
 */
-static void restore_empty_query_table_list(LEX *lex)
+inline void restore_empty_query_table_list(LEX *lex)
 {
   if (lex->first_not_own_table())
       (*lex->first_not_own_table()->prev_global)= NULL;
@@ -11247,6 +11247,8 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
   TABLE* table;
   DBUG_ENTER("Rows_log_event::do_apply_event(Relay_log_info*)");
   int error= 0;
+  LEX *lex= thd->lex;
+  uint8 new_trg_event_map= get_trg_event_map();
   /*
     If m_table_id == ~0ULL, then we have a dummy event that does not
     contain any data.  In that case, we just remove all tables in the
@@ -11337,25 +11339,27 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
                       DBUG_ASSERT(!debug_sync_set_action(thd, STRING_WITH_LEN(action)));
                     };);
 
-    if (slave_run_triggers_for_rbr)
+    /*
+       Trigger's procedures work with global table list. So we have to add
+       rgi->tables_to_lock content there to get trigger's in the list.
+
+       Then restore_empty_query_table_list() restore the list as it was
+    */
+    DBUG_ASSERT(lex->query_tables == NULL);
+    if ((lex->query_tables= rgi->tables_to_lock))
+      rgi->tables_to_lock->prev_global= &lex->query_tables;
+
+    for (TABLE_LIST *tables= rgi->tables_to_lock; tables;
+        tables= tables->next_global)
     {
-      LEX *lex= thd->lex;
-      uint8 new_trg_event_map= get_trg_event_map();
-
-      /*
-        Trigger's procedures work with global table list. So we have to add
-        rgi->tables_to_lock content there to get trigger's in the list.
-
-        Then restore_empty_query_table_list() restore the list as it was
-      */
-      DBUG_ASSERT(lex->query_tables == NULL);
-      if ((lex->query_tables= rgi->tables_to_lock))
-        rgi->tables_to_lock->prev_global= &lex->query_tables;
-
-      for (TABLE_LIST *tables= rgi->tables_to_lock; tables;
-           tables= tables->next_global)
+      if (slave_run_triggers_for_rbr)
       {
         tables->trg_event_map= new_trg_event_map;
+        lex->query_tables_last= &tables->next_global;
+      }
+      else
+      {
+        tables->slave_fk_event_map= new_trg_event_map;
         lex->query_tables_last= &tables->next_global;
       }
     }
@@ -11707,8 +11711,7 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
   }
 
   /* remove trigger's tables */
-  if (slave_run_triggers_for_rbr)
-    restore_empty_query_table_list(thd->lex);
+  restore_empty_query_table_list(thd->lex);
 
 #if defined(WITH_WSREP) && defined(HAVE_QUERY_CACHE)
     if (WSREP(thd) && thd->wsrep_exec_mode == REPL_RECV)
@@ -11727,8 +11730,7 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
   DBUG_RETURN(error);
 
 err:
-  if (slave_run_triggers_for_rbr)
-    restore_empty_query_table_list(thd->lex);
+  restore_empty_query_table_list(thd->lex);
   rgi->slave_close_thread_tables(thd);
   DBUG_RETURN(error);
 }
@@ -13697,11 +13699,11 @@ int Rows_log_event::update_sequence()
     /* This event come from a setval function executed on the master.
        Update the sequence next_number and round, like we do with setval()
     */
-    my_bitmap_map *old_map= dbug_tmp_use_all_columns(table,
-                                                     table->read_set);
+    MY_BITMAP *old_map= dbug_tmp_use_all_columns(table,
+                                                 &table->read_set);
     longlong nextval= table->field[NEXT_FIELD_NO]->val_int();
     longlong round= table->field[ROUND_FIELD_NO]->val_int();
-    dbug_tmp_restore_column_map(table->read_set, old_map);
+    dbug_tmp_restore_column_map(&table->read_set, old_map);
 
     return table->s->sequence->set_value(table, nextval, round, 0) > 0;
   }
@@ -15095,14 +15097,23 @@ bool copy_event_cache_to_file_and_reinit(IO_CACHE *cache, FILE *file)
 }
 
 #if defined(HAVE_REPLICATION) && !defined(MYSQL_CLIENT)
-Heartbeat_log_event::Heartbeat_log_event(const char* buf, uint event_len,
+Heartbeat_log_event::Heartbeat_log_event(const char* buf, ulong event_len,
                     const Format_description_log_event* description_event)
   :Log_event(buf, description_event)
 {
   uint8 header_size= description_event->common_header_len;
-  ident_len = event_len - header_size;
-  set_if_smaller(ident_len,FN_REFLEN-1);
-  log_ident= buf + header_size;
+  if (log_pos == 0)
+  {
+    log_pos= uint8korr(buf + header_size);
+    log_ident= buf + header_size + HB_SUB_HEADER_LEN;
+    ident_len= event_len - (header_size + HB_SUB_HEADER_LEN);
+  }
+  else
+  {
+    log_ident= buf + header_size;
+    ident_len = event_len - header_size;
+  }
+
 }
 #endif
 
