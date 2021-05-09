@@ -480,18 +480,19 @@ typedef struct st_io_cache		/* Used when caching files */
     partial.
   */
   int	seek_not_done,error;
-  /* buffer_length is memory size allocated for buffer or write_buffer */
+  /* length of the buffer used for storing un-encrypted data */
   size_t	buffer_length;
   /* read_length is the same as buffer_length except when we use async io */
   size_t  read_length;
   myf	myflags;			/* Flags used to my_read/my_write */
   /*
-    alloced_buffer is 1 if the buffer was allocated by init_io_cache() and
-    0 if it was supplied by the user.
+    alloced_buffer is set to the size of the buffer allocated for the IO_CACHE.
+    Includes the overhead(storing key to ecnrypt and decrypt) for encryption.
+    Set to 0 if nothing is allocated.
     Currently READ_NET is the only one that will use a buffer allocated
     somewhere else
   */
-  my_bool alloced_buffer;
+  size_t alloced_buffer;
 #ifdef HAVE_AIOWAIT
   /*
     As inidicated by ifdef, this is for async I/O, which is not currently
@@ -538,8 +539,11 @@ static inline int my_b_write(IO_CACHE *info, const uchar *Buffer, size_t Count)
   MEM_CHECK_DEFINED(Buffer, Count);
   if (info->write_pos + Count <= info->write_end)
   {
-    memcpy(info->write_pos, Buffer, Count);
-    info->write_pos+= Count;
+    if (Count)
+    {
+      memcpy(info->write_pos, Buffer, Count);
+      info->write_pos+= Count;
+    }
     return 0;
   }
   return _my_b_write(info, Buffer, Count);

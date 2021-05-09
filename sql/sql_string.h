@@ -131,6 +131,24 @@ uint convert_to_printable(char *to, size_t to_len,
                           const char *from, size_t from_len,
                           CHARSET_INFO *from_cs, size_t nbytes= 0);
 
+class Charset
+{
+  CHARSET_INFO *m_charset;
+public:
+  Charset() :m_charset(&my_charset_bin) { }
+  Charset(CHARSET_INFO *cs) :m_charset(cs) { }
+
+  CHARSET_INFO *charset() const { return m_charset; }
+  /*
+    Collation name without the character set name.
+    For example, in case of "latin1_swedish_ci",
+    this method returns "_swedish_ci".
+  */
+  LEX_CSTRING collation_specific_name() const;
+  bool encoding_allows_reinterpret_as(CHARSET_INFO *cs) const;
+  bool eq_collation_specific_names(CHARSET_INFO *cs) const;
+};
+
 class String : public Sql_alloc
 {
   char *Ptr;
@@ -576,7 +594,8 @@ public:
   }
   void q_append(const char *data, size_t data_len)
   {
-    memcpy(Ptr + str_length, data, data_len);
+    if (data_len)
+      memcpy(Ptr + str_length, data, data_len);
     DBUG_ASSERT(str_length <= UINT_MAX32 - data_len);
     str_length += (uint)data_len;
   }

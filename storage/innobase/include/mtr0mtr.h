@@ -437,6 +437,9 @@ struct mtr_t {
 	static inline bool is_block_dirtied(const buf_block_t* block)
 		MY_ATTRIBUTE((warn_unused_result));
 
+	/** Check if we are holding a block latch in exclusive mode
+	@param block  buffer pool block to search for */
+	bool have_x_latch(const buf_block_t& block) const;
 private:
 	/** Prepare to write the mini-transaction log to the redo log buffer.
 	@return number of bytes to write in finish_write() */

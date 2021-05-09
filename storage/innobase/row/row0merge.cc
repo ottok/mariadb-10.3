@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2005, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2014, 2020, MariaDB Corporation.
+Copyright (c) 2014, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -308,7 +308,7 @@ row_merge_buf_encode(
 	ulint	size;
 	ulint	extra_size;
 
-	size = rec_get_converted_size_temp(
+	size = rec_get_converted_size_temp<false>(
 		index, entry->fields, n_fields, &extra_size);
 	ut_ad(size >= extra_size);
 
@@ -321,7 +321,7 @@ row_merge_buf_encode(
 		*(*b)++ = (byte) (extra_size + 1);
 	}
 
-	rec_convert_dtuple_to_temp(*b + extra_size, index,
+	rec_convert_dtuple_to_temp<false>(*b + extra_size, index,
 				   entry->fields, n_fields);
 
 	*b += size;
@@ -520,8 +520,7 @@ row_merge_buf_add(
 	ulint			bucket = 0;
 	doc_id_t		write_doc_id;
 	ulint			n_row_added = 0;
-	VCOL_STORAGE*		vcol_storage= 0;
-	byte*			record;
+	VCOL_STORAGE		vcol_storage;
 	DBUG_ENTER("row_merge_buf_add");
 
 	if (buf->n_tuples >= buf->max_tuples) {
@@ -555,23 +554,16 @@ row_merge_buf_add(
 
 	for (i = 0; i < n_fields; i++, field++, ifield++) {
 		ulint			len;
-		const dict_col_t*	col;
-		ulint			col_no;
 		ulint			fixed_len;
 		const dfield_t*		row_field;
-
-		col = ifield->col;
-		const dict_v_col_t*	v_col = NULL;
-		if (col->is_virtual()) {
-			v_col = reinterpret_cast<const dict_v_col_t*>(col);
-		}
-
-		col_no = dict_col_get_no(col);
+		const dict_col_t* const col = ifield->col;
+		const dict_v_col_t* const v_col = col->is_virtual()
+			? reinterpret_cast<const dict_v_col_t*>(col)
+			: NULL;
 
 		/* Process the Doc ID column */
-		if (*doc_id > 0
-		    && col_no == index->table->fts->doc_col
-		    && !col->is_virtual()) {
+		if (!v_col && *doc_id
+		    && col->ind == index->table->fts->doc_col) {
 			fts_write_doc_id((byte*) &write_doc_id, *doc_id);
 
 			/* Note: field->data now points to a value on the
@@ -590,12 +582,15 @@ row_merge_buf_add(
 			field->type.len = ifield->col->len;
 		} else {
 			/* Use callback to get the virtual column value */
-			if (col->is_virtual()) {
+			if (v_col) {
 				dict_index_t*	clust_index
 					= dict_table_get_first_index(new_table);
 
-                                if (!vcol_storage &&
-                                    innobase_allocate_row_for_vcol(trx->mysql_thd, clust_index, v_heap, &my_table, &record, &vcol_storage)) {
+                                if (!vcol_storage.innobase_record &&
+                                    !innobase_allocate_row_for_vcol(
+						trx->mysql_thd, clust_index,
+						v_heap, &my_table,
+						&vcol_storage)) {
 					*err = DB_OUT_OF_MEMORY;
 					goto error;
 				}
@@ -603,8 +598,8 @@ row_merge_buf_add(
 				row_field = innobase_get_computed_value(
 					row, v_col, clust_index,
 					v_heap, NULL, ifield, trx->mysql_thd,
-					my_table, record, old_table, NULL,
-					NULL);
+					my_table, vcol_storage.innobase_record, 
+					old_table, NULL, NULL);
 
 				if (row_field == NULL) {
 					*err = DB_COMPUTE_VALUE_FAILED;
@@ -612,7 +607,8 @@ row_merge_buf_add(
 				}
 				dfield_copy(field, row_field);
 			} else {
-				row_field = dtuple_get_nth_field(row, col_no);
+				row_field = dtuple_get_nth_field(row,
+								 col->ind);
 				dfield_copy(field, row_field);
 			}
 
@@ -718,7 +714,7 @@ row_merge_buf_add(
 		} else if (!ext) {
 		} else if (dict_index_is_clust(index)) {
 			/* Flag externally stored fields. */
-			const byte*	buf = row_ext_lookup(ext, col_no,
+			const byte*	buf = row_ext_lookup(ext, col->ind,
 							     &len);
 			if (UNIV_LIKELY_NULL(buf)) {
 				ut_a(buf != field_ref_zero);
@@ -729,9 +725,9 @@ row_merge_buf_add(
 					len = dfield_get_len(field);
 				}
 			}
-		} else if (!col->is_virtual()) {
+		} else if (!v_col) {
 			/* Only non-virtual column are stored externally */
-			const byte*	buf = row_ext_lookup(ext, col_no,
+			const byte*	buf = row_ext_lookup(ext, col->ind,
 							     &len);
 			if (UNIV_LIKELY_NULL(buf)) {
 				ut_a(buf != field_ref_zero);
@@ -800,7 +796,7 @@ row_merge_buf_add(
 		ulint	size;
 		ulint	extra;
 
-		size = rec_get_converted_size_temp(
+		size = rec_get_converted_size_temp<false>(
 			index, entry->fields, n_fields, &extra);
 
 		ut_ad(data_size + extra_size == size);
@@ -846,13 +842,13 @@ row_merge_buf_add(
 	}
 
 end:
-        if (vcol_storage)
-		innobase_free_row_for_vcol(vcol_storage);
+        if (vcol_storage.innobase_record)
+		innobase_free_row_for_vcol(&vcol_storage);
 	DBUG_RETURN(n_row_added);
 
 error:
-        if (vcol_storage)
-		innobase_free_row_for_vcol(vcol_storage);
+        if (vcol_storage.innobase_record)
+		innobase_free_row_for_vcol(&vcol_storage);
         DBUG_RETURN(0);
 }
 
@@ -2042,7 +2038,8 @@ end_of_index:
 		rec = page_cur_get_rec(cur);
 
 		if (online) {
-			offsets = rec_get_offsets(rec, clust_index, NULL, true,
+			offsets = rec_get_offsets(rec, clust_index, NULL,
+						  clust_index->n_core_fields,
 						  ULINT_UNDEFINED, &row_heap);
 			rec_trx_id = row_get_rec_trx_id(rec, clust_index,
 							offsets);
@@ -2134,7 +2131,8 @@ end_of_index:
 			duplicate keys. */
 			continue;
 		} else {
-			offsets = rec_get_offsets(rec, clust_index, NULL, true,
+			offsets = rec_get_offsets(rec, clust_index, NULL,
+						  clust_index->n_core_fields,
 						  ULINT_UNDEFINED, &row_heap);
 			/* This is a locking ALTER TABLE.
 
@@ -3832,17 +3830,20 @@ row_merge_drop_indexes_dict(
 	trx->op_info = "";
 }
 
-/*********************************************************************//**
-Drop indexes that were created before an error occurred.
+/** Drop indexes that were created before an error occurred.
 The data dictionary must have been locked exclusively by the caller,
-because the transaction will not be committed. */
+because the transaction will not be committed.
+@param trx              dictionary transaction
+@param table            table containing the indexes
+@param locked           True if table is locked,
+                        false - may need to do lazy drop
+@param alter_trx        Alter table transaction */
 void
 row_merge_drop_indexes(
-/*===================*/
-	trx_t*		trx,	/*!< in/out: dictionary transaction */
-	dict_table_t*	table,	/*!< in/out: table containing the indexes */
-	ibool		locked)	/*!< in: TRUE=table locked,
-				FALSE=may need to do a lazy drop */
+        trx_t*          trx,
+        dict_table_t*   table,
+        bool            locked,
+        const trx_t*    alter_trx)
 {
 	dict_index_t*	index;
 	dict_index_t*	next_index;
@@ -3868,7 +3869,7 @@ row_merge_drop_indexes(
 	A concurrent purge will be prevented by dict_operation_lock. */
 
 	if (!locked && (table->get_ref_count() > 1
-			|| UT_LIST_GET_FIRST(table->locks))) {
+			|| table->has_lock_other_than(alter_trx))) {
 		/* We will have to drop the indexes later, when the
 		table is guaranteed to be no longer in use.  Mark the
 		indexes as incomplete and corrupted, so that other
@@ -3904,6 +3905,8 @@ row_merge_drop_indexes(
 					ut_ad(prev);
 					ut_a(table->fts);
 					fts_drop_index(table, index, trx);
+					row_merge_drop_index_dict(
+						trx, index->id);
 					/* We can remove a DICT_FTS
 					index from the cache, because
 					we do not allow ADD FULLTEXT INDEX
@@ -4071,7 +4074,7 @@ row_merge_drop_temp_indexes(void)
 
 	trx_commit_for_mysql(trx);
 	row_mysql_unlock_data_dictionary(trx);
-	trx_free(trx);
+	trx->free();
 }
 
 
@@ -4416,6 +4419,7 @@ row_merge_create_index(
 	dict_index_t*	index;
 	ulint		n_fields = index_def->n_fields;
 	ulint		i;
+	ulint		n_add_vcol = 0;
 
 	DBUG_ENTER("row_merge_create_index");
 
@@ -4440,7 +4444,7 @@ row_merge_create_index(
 				ut_ad(ifield->col_no >= table->n_v_def);
 				name = add_v->v_col_name[
 					ifield->col_no - table->n_v_def];
-				index->has_new_v_col = true;
+				n_add_vcol++;
 			} else {
 				name = dict_table_get_v_col_name(
 					table, ifield->col_no);
@@ -4450,6 +4454,10 @@ row_merge_create_index(
 		}
 
 		dict_mem_index_add_field(index, name, ifield->prefix_len);
+	}
+
+	if (n_add_vcol) {
+		index->assign_new_v_col(n_add_vcol);
 	}
 
 	DBUG_RETURN(index);
@@ -4470,7 +4478,7 @@ row_merge_is_index_usable(
 	}
 
 	return(!index->is_corrupted()
-	       && (index->table->is_temporary()
+	       && (index->table->is_temporary() || index->table->no_rollback()
 		   || index->trx_id == 0
 		   || !trx->read_view.is_open()
 		   || trx->read_view.changes_visible(
@@ -4865,10 +4873,6 @@ wait_again:
 						      " / " ULINTPF ")",
 						      buf, i + 1, n_indexes);
 			}
-
-			DBUG_EXECUTE_IF(
-				"ib_merge_wait_after_sort",
-				os_thread_sleep(20000000););  /* 20 sec */
 
 			if (error == DB_SUCCESS) {
 				BtrBulk	btr_bulk(sort_idx, trx,

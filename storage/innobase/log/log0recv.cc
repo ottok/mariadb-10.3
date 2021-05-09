@@ -320,8 +320,7 @@ public:
 				    &mtr, NULL)) {
 				mutex_exit(&recv_sys->mutex);
 				ibuf_merge_or_delete_for_page(
-					block, i->first,
-					&block->page.size, true);
+					block, i->first, block->page.size);
 				mtr.commit();
 				mtr.start();
 				mutex_enter(&recv_sys->mutex);
@@ -958,8 +957,11 @@ fail:
 					 }
 			 });
 
+			DBUG_EXECUTE_IF("log_checksum_mismatch", { cksum = crc + 1; });
+
 			if (crc != cksum) {
-				ib::error() << "Invalid log block checksum."
+				ib::error_or_warn(srv_operation != SRV_OPERATION_BACKUP)
+					    << "Invalid log block checksum."
 					    << " block: " << block_number
 					    << " checkpoint no: "
 					    << log_block_get_checkpoint_no(buf)
@@ -1199,7 +1201,10 @@ static dberr_t recv_log_recover_10_4()
 			% univ_page_size.physical()),
 	       OS_FILE_LOG_BLOCK_SIZE, buf, NULL);
 
-	if (log_block_calc_checksum(buf) != log_block_get_checksum(buf)) {
+	const ulint cksum = log_block_get_checksum(buf);
+
+	if (cksum != LOG_NO_CHECKSUM_MAGIC
+	    && cksum != log_block_calc_checksum_crc32(buf)) {
 		return DB_CORRUPTION;
 	}
 
@@ -2320,7 +2325,6 @@ init_fail:
   {
     i.created= true;
     buf_block_dbg_add_level(block, SYNC_NO_ORDER_CHECK);
-    mtr.x_latch_at_savepoint(0, block);
     recv_recover_page(block, mtr, recv_addr, i.lsn);
     ut_ad(mtr.has_committed());
   }
@@ -2373,8 +2377,6 @@ void recv_apply_hashed_log_recs(bool last_batch)
 
 	recv_no_ibuf_operations
 		= !last_batch || is_mariabackup_restore_or_export();
-
-	ut_d(recv_no_log_write = recv_no_ibuf_operations);
 
 	if (ulint n = recv_sys->n_addrs) {
 		const char* msg = last_batch
@@ -2459,7 +2461,7 @@ apply:
 
 	/* Wait until all the pages have been processed */
 
-	while (recv_sys->n_addrs != 0) {
+	while (recv_sys->n_addrs || buf_get_n_pending_read_ios()) {
 		const bool abort = recv_sys->found_corrupt_log
 			|| recv_sys->found_corrupt_fs;
 
@@ -3927,6 +3929,8 @@ recv_recovery_from_checkpoint_start(lsn_t flush_lsn)
 	mutex_enter(&recv_sys->mutex);
 
 	recv_sys->apply_log_recs = TRUE;
+	recv_no_ibuf_operations = is_mariabackup_restore_or_export();
+	ut_d(recv_no_log_write = recv_no_ibuf_operations);
 
 	mutex_exit(&recv_sys->mutex);
 

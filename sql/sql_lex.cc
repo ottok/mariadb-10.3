@@ -766,15 +766,15 @@ void lex_end(LEX *lex)
   DBUG_ENTER("lex_end");
   DBUG_PRINT("enter", ("lex: %p", lex));
 
-  lex_end_stage1(lex);
-  lex_end_stage2(lex);
+  lex_unlock_plugins(lex);
+  lex_end_nops(lex);
 
   DBUG_VOID_RETURN;
 }
 
-void lex_end_stage1(LEX *lex)
+void lex_unlock_plugins(LEX *lex)
 {
-  DBUG_ENTER("lex_end_stage1");
+  DBUG_ENTER("lex_unlock_plugins");
 
   /* release used plugins */
   if (lex->plugins.elements) /* No function call and no mutex if no plugins. */
@@ -783,33 +783,23 @@ void lex_end_stage1(LEX *lex)
                        lex->plugins.elements);
   }
   reset_dynamic(&lex->plugins);
-
-  if (lex->context_analysis_only & CONTEXT_ANALYSIS_ONLY_PREPARE)
-  {
-    /*
-      Don't delete lex->sphead, it'll be needed for EXECUTE.
-      Note that of all statements that populate lex->sphead
-      only SQLCOM_COMPOUND can be PREPAREd
-    */
-    DBUG_ASSERT(lex->sphead == 0 || lex->sql_command == SQLCOM_COMPOUND);
-  }
-  else
-  {
-    sp_head::destroy(lex->sphead);
-    lex->sphead= NULL;
-  }
-
   DBUG_VOID_RETURN;
 }
 
 /*
+  Don't delete lex->sphead, it'll be needed for EXECUTE.
+  Note that of all statements that populate lex->sphead
+  only SQLCOM_COMPOUND can be PREPAREd
+
   MASTER INFO parameters (or state) is normally cleared towards the end
   of a statement. But in case of PS, the state needs to be preserved during
   its lifetime and should only be cleared on PS close or deallocation.
 */
-void lex_end_stage2(LEX *lex)
+void lex_end_nops(LEX *lex)
 {
-  DBUG_ENTER("lex_end_stage2");
+  DBUG_ENTER("lex_end_nops");
+  sp_head::destroy(lex->sphead);
+  lex->sphead= NULL;
 
   /* Reset LEX_MASTER_INFO */
   lex->mi.reset(lex->sql_command == SQLCOM_CHANGE_MASTER);
@@ -2161,6 +2151,11 @@ int Lex_input_stream::scan_ident_middle(THD *thd, Lex_ident_cli_st *str,
     yySkip();                  // next state does a unget
   }
 
+  yyUnget();                       // ptr points now after last token char
+  str->set_ident(m_tok_start, length, is_8bit);
+  m_cpp_text_start= m_cpp_tok_start;
+  m_cpp_text_end= m_cpp_text_start + length;
+
   /*
      Note: "SELECT _bla AS 'alias'"
      _bla should be considered as a IDENT if charset haven't been found.
@@ -2170,28 +2165,17 @@ int Lex_input_stream::scan_ident_middle(THD *thd, Lex_ident_cli_st *str,
   DBUG_ASSERT(length > 0);
   if (resolve_introducer && m_tok_start[0] == '_')
   {
-
-    yyUnget();                       // ptr points now after last token char
-    str->set_ident(m_tok_start, length, false);
-
-    m_cpp_text_start= m_cpp_tok_start;
-    m_cpp_text_end= m_cpp_text_start + length;
-    body_utf8_append(m_cpp_text_start, m_cpp_tok_start + length);
     ErrConvString csname(str->str + 1, str->length - 1, &my_charset_bin);
     CHARSET_INFO *cs= get_charset_by_csname(csname.ptr(),
                                             MY_CS_PRIMARY, MYF(0));
     if (cs)
     {
+      body_utf8_append(m_cpp_text_start, m_cpp_tok_start + length);
       *introducer= cs;
       return UNDERSCORE_CHARSET;
     }
-    return IDENT;
   }
 
-  yyUnget();                       // ptr points now after last token char
-  str->set_ident(m_tok_start, length, is_8bit);
-  m_cpp_text_start= m_cpp_tok_start;
-  m_cpp_text_end= m_cpp_text_start + length;
   body_utf8_append(m_cpp_text_start);
   body_utf8_append_ident(thd, str, m_cpp_text_end);
   return is_8bit ? IDENT_QUOTED : IDENT;
@@ -2206,8 +2190,19 @@ int Lex_input_stream::scan_ident_delimited(THD *thd,
   uchar c, quote_char= m_tok_start[0];
   DBUG_ASSERT(m_ptr == m_tok_start + 1);
 
-  while ((c= yyGet()))
+  for ( ; ; )
   {
+    if (!(c= yyGet()))
+    {
+      /*
+        End-of-query or straight 0x00 inside a delimited identifier.
+        Return the quote character, to have the parser fail on syntax error.
+      */
+      m_ptr= (char *) m_tok_start + 1;
+      if (m_echo)
+        m_cpp_ptr= (char *) m_cpp_tok_start + 1;
+      return quote_char;
+    }
     int var_length= my_charlen(cs, get_ptr() - 1, get_end_of_query());
     if (var_length == 1)
     {
@@ -2410,6 +2405,8 @@ void st_select_lex::init_select()
   with_dep= 0;
   join= 0;
   lock_type= TL_READ_DEFAULT;
+  save_many_values.empty();
+  save_insert_list= 0;
   tvc= 0;
   in_funcs.empty();
   curr_tvc_name= 0;
@@ -2453,7 +2450,30 @@ void st_select_lex_node::add_slave(st_select_lex_node *slave_arg)
   {
     slave= slave_arg;
     slave_arg->master= this;
+    slave->prev= &master->slave;
+    slave->next= 0;
   }
+}
+
+/*
+  @brief
+    Substitute this node in select tree for a newly creates node
+
+  @param  subst the node to substitute for
+
+  @details
+    The function substitute this node in the select tree for a newly
+    created node subst. This node is just removed from the tree but all
+    its link fields and the attached sub-tree remain untouched.
+*/
+
+void st_select_lex_node::substitute_in_tree(st_select_lex_node *subst)
+{
+  if ((subst->next= next))
+    next->prev= &subst->next;
+  subst->prev= prev;
+  (*prev)= subst;
+  subst->master= master;
 }
 
 
@@ -2687,7 +2707,7 @@ void st_select_lex_unit::exclude_tree()
 */
 
 bool st_select_lex::mark_as_dependent(THD *thd, st_select_lex *last,
-                                      Item *dependency)
+                                      Item_ident *dependency)
 {
 
   DBUG_ASSERT(this != last);
@@ -2695,10 +2715,14 @@ bool st_select_lex::mark_as_dependent(THD *thd, st_select_lex *last,
   /*
     Mark all selects from resolved to 1 before select where was
     found table as depended (of select where was found table)
+
+    We move by name resolution context, bacause during merge can some select
+    be excleded from SELECT tree
   */
-  SELECT_LEX *s= this;
+  Name_resolution_context *c= &this->context;
   do
   {
+    SELECT_LEX *s= c->select_lex;
     if (!(s->uncacheable & UNCACHEABLE_DEPENDENT_GENERATED))
     {
       // Select is dependent of outer select
@@ -2720,7 +2744,7 @@ bool st_select_lex::mark_as_dependent(THD *thd, st_select_lex *last,
     if (subquery_expr && subquery_expr->mark_as_dependent(thd, last, 
                                                           dependency))
       return TRUE;
-  } while ((s= s->outer_select()) != last && s != 0);
+  } while ((c= c->outer_context) != NULL && (c->select_lex != last));
   is_correlated= TRUE;
   this->master_unit()->item->is_correlated= TRUE;
   return FALSE;
@@ -3303,21 +3327,21 @@ bool LEX::can_not_use_merged()
   }
 }
 
-/*
-  Detect that we need only table structure of derived table/view
+/**
+  Detect that we need only table structure of derived table/view.
 
-  SYNOPSIS
-    only_view_structure()
+  Also used by I_S tables (@see create_schema_table) to detect that
+  they need a full table structure and cannot optimize unused columns away
 
-  RETURN
-    TRUE yes, we need only structure
-    FALSE no, we need data
+  @retval TRUE yes, we need only structure
+  @retval FALSE no, we need data
 */
 
 bool LEX::only_view_structure()
 {
   switch (sql_command) {
   case SQLCOM_SHOW_CREATE:
+  case SQLCOM_CHECKSUM:
   case SQLCOM_SHOW_TABLES:
   case SQLCOM_SHOW_FIELDS:
   case SQLCOM_REVOKE_ALL:
@@ -3325,6 +3349,8 @@ bool LEX::only_view_structure()
   case SQLCOM_GRANT:
   case SQLCOM_CREATE_VIEW:
     return TRUE;
+  case SQLCOM_CREATE_TABLE:
+    return create_info.like();
   default:
     return FALSE;
   }
@@ -4701,9 +4727,11 @@ void st_select_lex::set_explain_type(bool on_the_fly)
               /*
                 pos_in_table_list=NULL for e.g. post-join aggregation JOIN_TABs.
               */
-              if (tab->table && tab->table->pos_in_table_list &&
-                  tab->table->pos_in_table_list->with &&
-                  tab->table->pos_in_table_list->with->is_recursive)
+              if (!(tab->table && tab->table->pos_in_table_list))
+	        continue;
+              TABLE_LIST *tbl= tab->table->pos_in_table_list;
+              if (tbl->with && tbl->with->is_recursive &&
+                  tbl->is_with_table_recursive_reference())
               {
                 uses_cte= true;
                 break;
@@ -4849,6 +4877,9 @@ bool LEX::save_prep_leaf_tables()
 
 bool st_select_lex::save_prep_leaf_tables(THD *thd)
 {
+  if (prep_leaf_list_state == SAVED)
+    return FALSE;
+
   List_iterator_fast<TABLE_LIST> li(leaf_tables);
   TABLE_LIST *table;
 
@@ -4877,6 +4908,27 @@ bool st_select_lex::save_prep_leaf_tables(THD *thd)
   }
 
   return FALSE;
+}
+
+
+/**
+  Set exclude_from_table_unique_test for selects of this select and all selects
+  belonging to the underlying units of derived tables or views
+*/
+
+void st_select_lex::set_unique_exclude()
+{
+  exclude_from_table_unique_test= TRUE;
+  for (SELECT_LEX_UNIT *unit= first_inner_unit();
+       unit;
+       unit= unit->next_unit())
+  {
+    if (unit->derived && unit->derived->is_view_or_derived())
+    {
+      for (SELECT_LEX *sl= unit->first_select(); sl; sl= sl->next_select())
+        sl->set_unique_exclude();
+    }
+  }
 }
 
 
@@ -5386,13 +5438,33 @@ void LEX::sp_variable_declarations_init(THD *thd, int nvars)
 bool LEX::sp_variable_declarations_set_default(THD *thd, int nvars,
                                                Item *dflt_value_item)
 {
-  if (!dflt_value_item &&
+  bool has_default_clause= dflt_value_item != NULL;
+  if (!has_default_clause &&
       unlikely(!(dflt_value_item= new (thd->mem_root) Item_null(thd))))
     return true;
+
+  sp_variable *first_spvar = NULL;
 
   for (uint i= 0 ; i < (uint) nvars ; i++)
   {
     sp_variable *spvar= spcont->get_last_context_variable((uint) nvars - 1 - i);
+
+    if (i == 0) {
+      first_spvar = spvar;
+    } else if (has_default_clause) {
+      Item_splocal *item =
+              new (thd->mem_root)
+                      Item_splocal(thd, &sp_rcontext_handler_local,
+                                   &first_spvar->name, first_spvar->offset,
+                                   first_spvar->type_handler(), 0, 0);
+      if (item == NULL)
+        return true; // OOM
+#ifndef DBUG_OFF
+      item->m_sp = sphead;
+#endif
+      dflt_value_item = item;
+    }
+
     bool last= i + 1 == (uint) nvars;
     spvar->default_value= dflt_value_item;
     /* The last instruction is responsible for freeing LEX. */
@@ -8261,16 +8333,52 @@ bool LEX::last_field_generated_always_as_row_end()
 }
 
 
+void LEX::save_values_list_state()
+{
+  current_select->save_many_values= many_values;
+  current_select->save_insert_list= insert_list;
+}
+
+
+void LEX::restore_values_list_state()
+{
+  many_values= current_select->save_many_values;
+  insert_list= current_select->save_insert_list;
+}
+
+
+void LEX::tvc_start()
+{
+  if (current_select == &select_lex)
+    mysql_init_select(this);
+  else
+    save_values_list_state();
+  many_values.empty();
+  insert_list= 0;
+}
+
+
+bool LEX::tvc_start_derived()
+{
+  if (current_select->linkage == GLOBAL_OPTIONS_TYPE ||
+      unlikely(mysql_new_select(this, 1, NULL)))
+    return true;
+  save_values_list_state();
+  many_values.empty();
+  insert_list= 0;
+  return false;
+}
+
+
 bool LEX::tvc_finalize()
 {
-  mysql_init_select(this);
   if (unlikely(!(current_select->tvc=
                new (thd->mem_root)
                table_value_constr(many_values,
                                   current_select,
                                   current_select->options))))
     return true;
-  many_values.empty();
+  restore_values_list_state();
   if (!current_select->master_unit()->fake_select_lex)
     current_select->master_unit()->add_fake_select_lex(thd);
   return false;
@@ -8285,9 +8393,6 @@ bool LEX::tvc_finalize_derived()
     thd->parse_error();
     return true;
   }
-  if (current_select->linkage == GLOBAL_OPTIONS_TYPE ||
-      unlikely(mysql_new_select(this, 1, NULL)))
-    return true;
   current_select->linkage= DERIVED_TABLE_TYPE;
   return tvc_finalize();
 }

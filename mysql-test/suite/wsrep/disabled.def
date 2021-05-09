@@ -10,4 +10,5 @@
 #
 ##############################################################################
 
-variables : MDEV-17585 wsrep.variables
+
+mdev_6832: wsrep_provider is read-only for security reasons

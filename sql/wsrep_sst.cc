@@ -1,4 +1,4 @@
-/* Copyright 2008-2015 Codership Oy <http://www.codership.com>
+/* Copyright 2008-2020 Codership Oy <http://www.codership.com>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -143,6 +143,12 @@ static bool sst_auth_real_set (const char* value)
       if (wsrep_sst_auth) { my_free((void*) wsrep_sst_auth); }
       wsrep_sst_auth= my_strdup(WSREP_SST_AUTH_MASK, MYF(0));
     }
+    else
+    {
+      if (wsrep_sst_auth) { my_free((void*) wsrep_sst_auth); }
+      wsrep_sst_auth= NULL;
+    }
+
     return 0;
   }
   return 1;
@@ -695,8 +701,20 @@ static size_t estimate_cmd_len (bool* extra_args)
       char c;
       while ((c = *arg++) != 0)
       {
-        /* A whitespace or a single quote requires double quotation marks: */
-        if (isspace(c) || c == '\'')
+        /*
+          Space, single quote, ampersand, and I/O redirection characters
+          require text to be enclosed in double quotes:
+        */
+        if (isspace(c) || c == '\'' || c == '&' || c == '|' ||
+#ifdef __WIN__
+                          c == '>'  || c == '<')
+#else
+        /*
+          The semicolon is used to separate shell commands, so it must be
+          enclosed in double quotes as well:
+        */
+                          c == '>'  || c == '<' || c == ';')
+#endif
         {
           quotation= true;
         }
@@ -719,10 +737,19 @@ static size_t estimate_cmd_len (bool* extra_args)
           while ((c = *arg++) != 0)
           {
             /*
-              A whitespace or a single quote requires double
-              quotation marks:
+              Space, single quote, ampersand, and I/O redirection characters
+              require text to be enclosed in double quotes:
             */
-            if (isspace(c) || c == '\'')
+            if (isspace(c) || c == '\'' || c == '&' || c == '|' ||
+#ifdef __WIN__
+                              c == '>'  || c == '<')
+#else
+            /*
+              The semicolon is used to separate shell commands, so it must be
+              enclosed in double quotes as well:
+            */
+                              c == '>'  || c == '<' || c == ';')
+#endif
             {
               quotation= true;
             }
@@ -803,8 +830,20 @@ static void copy_orig_argv (char* cmd_str)
       char c;
       while ((c = *arg_scan++) != 0)
       {
-        /* A whitespace or a single quote requires double quotation marks: */
-        if (isspace(c) || c == '\'')
+        /*
+          Space, single quote, ampersand, and I/O redirection characters
+          require text to be enclosed in double quotes:
+        */
+        if (isspace(c) || c == '\'' || c == '&' || c == '|' ||
+#ifdef __WIN__
+                          c == '>'  || c == '<')
+#else
+        /*
+          The semicolon is used to separate shell commands, so it must be
+          enclosed in double quotes as well:
+        */
+                          c == '>'  || c == '<' || c == ';')
+#endif
         {
           quotation= true;
         }
@@ -878,10 +917,19 @@ static void copy_orig_argv (char* cmd_str)
           while ((c = *arg_scan++) != 0)
           {
             /*
-              A whitespace or a single quote requires double
-              quotation marks:
+              Space, single quote, ampersand, and I/O redirection characters
+              require text to be enclosed in double quotes:
             */
-            if (isspace(c) || c == '\'')
+            if (isspace(c) || c == '\'' || c == '&' || c == '|' ||
+#ifdef __WIN__
+                              c == '>'  || c == '<')
+#else
+            /*
+              The semicolon is used to separate shell commands, so it must be
+              enclosed in double quotes as well:
+            */
+                              c == '>'  || c == '<' || c == ';')
+#endif
             {
               quotation= true;
             }
@@ -1545,10 +1593,13 @@ static void* sst_donor_thread (void* a)
   char         out_buf[out_len];
 
   wsrep_uuid_t  ret_uuid= WSREP_UUID_UNDEFINED;
-  wsrep_seqno_t ret_seqno= WSREP_SEQNO_UNDEFINED; // seqno of complete SST
+  // seqno of complete SST
+  wsrep_seqno_t ret_seqno= WSREP_SEQNO_UNDEFINED;
 
-  wsp::thd thd(FALSE); // we turn off wsrep_on for this THD so that it can
-                       // operate with wsrep_ready == OFF
+  // We turn off wsrep_on for this THD so that it can
+  // operate with wsrep_ready == OFF
+  // We also set this SST thread THD as system thread
+  wsp::thd thd(FALSE, true);
   wsp::process proc(arg->cmd, "r", arg->env);
 
   err= proc.error();

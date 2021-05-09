@@ -2,7 +2,7 @@
 
 Copyright (c) 1995, 2019, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2009, Percona Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted
 by Percona Inc.. Those modifications are
@@ -2356,8 +2356,8 @@ AIO::is_linux_native_aio_supported()
 		io_prep_pwrite(p_iocb, fd, ptr, srv_page_size, 0);
 
 	} else {
-		ut_a(srv_page_size >= 512);
-		io_prep_pread(p_iocb, fd, ptr, 512, 0);
+		ut_a(srv_page_size >= 4096);
+		io_prep_pread(p_iocb, fd, ptr, srv_page_size, 0);
 	}
 
 	ut_a(reinterpret_cast<size_t>(p_iocb->u.c.buf) % OS_FILE_LOG_BLOCK_SIZE
@@ -3003,7 +3003,7 @@ os_file_create_func(
 
 	ut_a(type == OS_LOG_FILE
 	     || type == OS_DATA_FILE
-	     || type == OS_DATA_TEMP_FILE);
+	     || type == OS_DATA_FILE_NO_O_DIRECT);
 
 	ut_a(purpose == OS_FILE_AIO || purpose == OS_FILE_NORMAL);
 
@@ -3050,7 +3050,8 @@ os_file_create_func(
 	/* We disable OS caching (O_DIRECT) only on data files */
 	if (!read_only
 	    && *success
-	    && (type != OS_LOG_FILE && type != OS_DATA_TEMP_FILE)
+	    && (type != OS_LOG_FILE
+		&& type != OS_DATA_FILE_NO_O_DIRECT)
 	    && (srv_file_flush_method == SRV_O_DIRECT
 		|| srv_file_flush_method == SRV_O_DIRECT_NO_FSYNC)) {
 
@@ -4250,7 +4251,9 @@ os_file_create_func(
 
 	case SRV_ALL_O_DIRECT_FSYNC:
 		/*Traditional Windows behavior, no buffering for any files.*/
-		attributes |= FILE_FLAG_NO_BUFFERING;
+		if (type != OS_DATA_FILE_NO_O_DIRECT) {
+			attributes |= FILE_FLAG_NO_BUFFERING;
+		}
 		break;
 
 	case SRV_FSYNC:
@@ -5395,6 +5398,7 @@ fallback:
 		errno = err;
 		return false;
 	case EINVAL:
+	case EOPNOTSUPP:
 		/* fall back to the code below */
 		break;
 	}

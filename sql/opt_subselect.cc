@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2010, 2019, MariaDB
+   Copyright (c) 2010, 2020, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -836,6 +836,7 @@ bool subquery_types_allow_materialization(Item_in_subselect *in_subs)
 
   bool all_are_fields= TRUE;
   uint32 total_key_length = 0;
+  bool converted_from_in_predicate= in_subs->converted_from_in_predicate;
   for (uint i= 0; i < elements; i++)
   {
     Item *outer= in_subs->left_expr->element_index(i);
@@ -843,8 +844,12 @@ bool subquery_types_allow_materialization(Item_in_subselect *in_subs)
     all_are_fields &= (outer->real_item()->type() == Item::FIELD_ITEM && 
                        inner->real_item()->type() == Item::FIELD_ITEM);
     total_key_length += inner->max_length;
-    if (!inner->type_handler()->subquery_type_allows_materialization(inner,
-                                                                     outer))
+
+    if (!inner->
+         type_handler()->
+         subquery_type_allows_materialization(inner,
+                                              outer,
+                                              converted_from_in_predicate))
       DBUG_RETURN(FALSE);
   }
 
@@ -2601,16 +2606,11 @@ bool find_eq_ref_candidate(TABLE *table, table_map sj_inner_tables)
     do
     {
       uint key= keyuse->key;
-      KEY *keyinfo;
       key_part_map bound_parts= 0;
-      bool is_excluded_key= keyuse->is_for_hash_join(); 
-      if (!is_excluded_key)
+      if (!keyuse->is_for_hash_join() &&
+          (table->key_info[key].flags & HA_NOSAME))
       {
-        keyinfo= table->key_info + key;
-        is_excluded_key= !MY_TEST(keyinfo->flags & HA_NOSAME);
-      }
-      if (!is_excluded_key)
-      {
+        KEY *keyinfo= table->key_info + key;
         do  /* For all equalities on all key parts */
         {
           /*

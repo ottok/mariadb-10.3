@@ -61,7 +61,7 @@ extern BCRYPT_ALG_HANDLE Sha512Prov;
 
 /* function prototypes */
 static int auth_ed25519_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql);
-static int auth_ed25519_deinit();
+static int auth_ed25519_deinit(void);
 static int auth_ed25519_init(char *unused1,
     size_t unused2,
     int unused3,
@@ -108,7 +108,7 @@ static int auth_ed25519_client(MYSQL_PLUGIN_VIO *vio, MYSQL *mysql)
     return CR_SERVER_HANDSHAKE_ERR;
 
   /* Sign nonce: the crypto_sign function is part of ref10 */
-  crypto_sign(signature, packet, NONCE_BYTES, (unsigned char*)mysql->passwd, strlen(mysql->passwd));
+  ma_crypto_sign(signature, packet, NONCE_BYTES, (unsigned char*)mysql->passwd, strlen(mysql->passwd));
 
   /* send signature to server */
   if (vio->write_packet(vio, signature, CRYPTO_BYTES))
@@ -132,7 +132,7 @@ static int auth_ed25519_init(char *unused1 __attribute__((unused)),
 /* }}} */
 
 /* {{{ auth_ed25519_deinit */
-static int auth_ed25519_deinit()
+static int auth_ed25519_deinit(void)
 {
 #if defined(HAVE_WINCRYPT)
   BCryptCloseAlgorithmProvider(Sha512Prov, 0);

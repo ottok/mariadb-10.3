@@ -1008,7 +1008,7 @@ fts_table_fetch_doc_ids(
 	}
 
 	if (alloc_bk_trx) {
-		trx_free(trx);
+		trx->free();
 	}
 
 	return(error);
@@ -1710,7 +1710,8 @@ fts_optimize_free(
 	mem_heap_t*	heap = static_cast<mem_heap_t*>(optim->self_heap->arg);
 
 	trx_commit_for_mysql(optim->trx);
-	trx_free(optim->trx);
+	optim->trx->free();
+	optim->trx = NULL;
 
 	fts_doc_ids_free(optim->to_delete);
 	fts_optimize_graph_free(&optim->graph);
@@ -2573,6 +2574,11 @@ fts_optimize_remove_table(
 	if (fts_opt_start_shutdown) {
 		ib::info() << "Try to remove table " << table->name
 			<< " after FTS optimize thread exiting.";
+		/* If the table can't be removed then wait till
+		fts optimize thread shuts down */
+		while (fts_optimize_wq) {
+			os_thread_sleep(10000);
+		}
 		return;
 	}
 
@@ -2603,9 +2609,13 @@ fts_optimize_remove_table(
 
 	os_event_destroy(event);
 
-	ut_d(mutex_enter(&fts_optimize_wq->mutex));
-	ut_ad(!table->fts->in_queue);
-	ut_d(mutex_exit(&fts_optimize_wq->mutex));
+#ifdef UNIV_DEBUG
+	if (!fts_opt_start_shutdown) {
+		mutex_enter(&fts_optimize_wq->mutex);
+		ut_ad(!table->fts->in_queue);
+		mutex_exit(&fts_optimize_wq->mutex);
+	}
+#endif /* UNIV_DEBUG */
 }
 
 /** Send sync fts cache for the table.

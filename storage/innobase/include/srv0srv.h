@@ -3,7 +3,7 @@
 Copyright (c) 1995, 2017, Oracle and/or its affiliates. All rights reserved.
 Copyright (c) 2008, 2009, Google Inc.
 Copyright (c) 2009, Percona Inc.
-Copyright (c) 2013, 2019, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -413,8 +413,6 @@ extern double	srv_defragment_fill_factor;
 extern uint	srv_defragment_frequency;
 extern ulonglong	srv_defragment_interval;
 
-extern ulong	srv_idle_flush_pct;
-
 extern uint	srv_change_buffer_max_size;
 
 /* Number of IO operations per second the server can do */
@@ -597,9 +595,6 @@ extern struct export_var_t export_vars;
 
 /** Global counters */
 extern srv_stats_t	srv_stats;
-
-/** Simulate compression failures. */
-extern uint srv_simulate_comp_failures;
 
 /** Fatal semaphore wait threshold = maximum number of seconds
 that semaphore times out in InnoDB */
@@ -788,6 +783,19 @@ srv_reset_io_thread_op_info();
 /** Wake up the purge threads if there is work to do. */
 void
 srv_wake_purge_thread_if_not_active();
+/** Wake up the InnoDB master thread if it was suspended (not sleeping). */
+void
+srv_active_wake_master_thread_low();
+
+#define srv_active_wake_master_thread()					\
+	do {								\
+		if (!srv_read_only_mode) {				\
+			srv_active_wake_master_thread_low();		\
+		}							\
+	} while (0)
+/** Wake up the master thread if it is suspended or being suspended. */
+void
+srv_wake_master_thread();
 
 /******************************************************************//**
 Outputs to a file the output of the InnoDB Monitor.
@@ -816,13 +824,13 @@ reading this value as it is only used in heuristics.
 ulint
 srv_get_activity_count(void);
 /*========================*/
-
-/** Check if there has been any activity.
-@param[in,out]  activity_count  recent activity count to be returned
-if there is a change
+/*******************************************************************//**
+Check if there has been any activity.
 @return FALSE if no change in activity counter. */
-bool srv_check_activity(ulint *activity_count);
-
+ibool
+srv_check_activity(
+/*===============*/
+	ulint		old_activity_count);	/*!< old activity count */
 /******************************************************************//**
 Increment the server activity counter. */
 void
@@ -1111,6 +1119,16 @@ struct srv_slot_t{
 						to do */
 	que_thr_t*	thr;			/*!< suspended query thread
 						(only used for user threads) */
+#ifdef UNIV_DEBUG
+	struct debug_sync_t {
+		UT_LIST_NODE_T(debug_sync_t)
+			debug_sync_list;
+		char str[1];
+	};
+	UT_LIST_BASE_NODE_T(debug_sync_t)
+		debug_sync;
+	rw_lock_t debug_sync_lock;
+#endif
 };
 
 #ifdef UNIV_DEBUG

@@ -44,6 +44,7 @@ Street, Fifth Floor, Boston, MA 02110-1335 USA
 #include <mysql.h>
 #include <mysqld.h>
 #include <my_sys.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits>
 #include "common.h"
@@ -107,6 +108,13 @@ xb_mysql_connect()
 			mysql_error(connection));
 		return(NULL);
 	}
+
+#if !defined(DONT_USE_MYSQL_PWD)
+	if (!opt_password)
+	{
+		opt_password=getenv("MYSQL_PWD");
+	}
+#endif
 
 	if (!opt_secure_auth) {
 		mysql_options(connection, MYSQL_SECURE_AUTH,
@@ -1200,6 +1208,7 @@ write_slave_info(MYSQL *connection)
 	char *master = NULL;
 	char *filename = NULL;
 	char *gtid_executed = NULL;
+	char *using_gtid = NULL;
 	char *position = NULL;
 	char *gtid_slave_pos = NULL;
 	char *ptr;
@@ -1210,6 +1219,7 @@ write_slave_info(MYSQL *connection)
 		{"Relay_Master_Log_File", &filename},
 		{"Exec_Master_Log_Pos", &position},
 		{"Executed_Gtid_Set", &gtid_executed},
+		{"Using_Gtid", &using_gtid},
 		{NULL, NULL}
 	};
 
@@ -1250,7 +1260,8 @@ write_slave_info(MYSQL *connection)
 		ut_a(asprintf(&mysql_slave_position,
 			"master host '%s', purge list '%s'",
 			master, gtid_executed) != -1);
-	} else if (gtid_slave_pos && *gtid_slave_pos) {
+	} else if (gtid_slave_pos && *gtid_slave_pos &&
+			!(using_gtid && !strncmp(using_gtid, "No", 2))) {
 		/* MariaDB >= 10.0 with GTID enabled */
 		result = backup_file_printf(XTRABACKUP_SLAVE_INFO,
 			"SET GLOBAL gtid_slave_pos = '%s';\n"

@@ -55,6 +55,39 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 # define TRUE 1
 #endif
 
+#define IS_SKYSQL(a) ((a) && strstr((a), "db.skysql.net"))
+#define SKIP_SKYSQL \
+if (IS_SKYSQL(hostname)) \
+{ \
+  diag("Not supported by SkySQL"); \
+  return SKIP; \
+}
+
+#ifndef HAVE_SSL
+#define SKIP_NOTLS \
+{ \
+  diag("TLS not supported"); \
+  return SKIP;\
+}
+#else
+#define SKIP_NOTLS
+#endif
+
+#define IS_MAXSCALE() (getenv("MAXSCALE_TEST_DISABLE")!=NULL)
+#define SKIP_MAXSCALE \
+if (IS_MAXSCALE()) \
+{ \
+  diag("test disabled with maxscale"); \
+  return SKIP; \
+}
+
+#define SKIP_LOAD_INFILE_DISABLE \
+if (!((mysql->server_capabilities & CLIENT_LOCAL_FILES) &&  \
+         (mysql->options.client_flag & CLIENT_LOCAL_FILES))) { \
+  diag("Load local infile not supported"); \
+  return SKIP; \
+}
+
 #define MAX_KEY MAX_INDEXES
 #define MAX_KEY_LENGTH_DECIMAL_WIDTH 4          /* strlen("4096") */
 
@@ -107,7 +140,7 @@ do {\
 do {\
   if (expr)\
   {\
-    diag("Error: %s (%s: %d)", (reason) ? reason : "", __FILE__, __LINE__);\
+    diag("Error: %s (%s: %d)", reason, __FILE__, __LINE__);\
     return FAIL;\
   }\
 } while(0)
@@ -165,6 +198,7 @@ static const char *schema = 0;
 static char *hostname = 0;
 static char *password = 0;
 static unsigned int port = 0;
+static unsigned int ssl_port = 0;
 static char *socketname = 0;
 static char *username = 0;
 static int force_tls= 0;
@@ -405,6 +439,7 @@ void get_options(int argc, char **argv)
       break;
     case 'P':
       port= atoi(optarg);
+      ssl_port=port;
       break;
     case 'S':
       socketname= optarg;
@@ -453,7 +488,7 @@ int check_variable(MYSQL *mysql, const char *variable, const char *value)
 MYSQL *test_connect(struct my_tests_st *test)
 {
   MYSQL *mysql;
-  int i= 0;
+  int i= 0, rc;
   int timeout= 10;
   my_bool truncation_report= 1;
   if (!(mysql = mysql_init(NULL))) {
@@ -484,13 +519,23 @@ MYSQL *test_connect(struct my_tests_st *test)
     mysql_close(mysql);
     return(NULL);
   }
+
+  /* Clear sql_mode when establishing a new connection. */
+  rc= mysql_query(mysql, "SET sql_mode=''");
+  if (rc)
+  {
+    diag("Error (%d): %s (%d) in %s line %d", rc, mysql_error(mysql),
+         mysql_errno(mysql), __FILE__, __LINE__);
+    return(NULL);
+  }
+
   return(mysql);
 }
 
 static int reset_connection(MYSQL *mysql) {
   int rc;
 
-  if (is_mariadb)
+  if (is_mariadb && !IS_MAXSCALE())
     rc= mysql_change_user(mysql, username, password, schema);
   else
     rc= mysql_reset_connection(mysql);
@@ -514,6 +559,8 @@ void get_envvars() {
 
   if (!hostname && (envvar= getenv("MYSQL_TEST_HOST")))
     hostname= envvar;
+
+
   if (!username)
   {
     if ((envvar= getenv("MYSQL_TEST_USER")))
@@ -535,6 +582,15 @@ void get_envvars() {
       port= atoi(envvar);
     diag("port: %d", port);
   }
+  if (!ssl_port)
+  {
+    if ((envvar= getenv("MYSQL_TEST_SSL_PORT")))
+      ssl_port= atoi(envvar);
+    else
+      ssl_port = port;
+    diag("ssl_port: %d", ssl_port);
+  }
+
   if (!force_tls && (envvar= getenv("MYSQL_TEST_TLS")))
     force_tls= atoi(envvar);
   if (!socketname)

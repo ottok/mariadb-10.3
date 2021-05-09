@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2020, MariaDB Corporation.
+Copyright (c) 2015, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -68,27 +68,18 @@ trx_get_error_info(
 /*===============*/
 	const trx_t*	trx);	/*!< in: trx object */
 
-/** @return a trx_t instance from trx_pools. */
+/** @return an allocated transaction */
 trx_t *trx_create();
 
-/**
-  Release a trx_t instance back to the pool.
-  @param trx the instance to release.
-*/
-void trx_free(trx_t*& trx);
-
 /** At shutdown, frees a transaction object. */
-void
-trx_free_at_shutdown(trx_t *trx);
+void trx_free_at_shutdown(trx_t *trx);
 
 /** Disconnect a prepared transaction from MySQL.
 @param[in,out]	trx	transaction */
-void
-trx_disconnect_prepared(trx_t*	trx);
+void trx_disconnect_prepared(trx_t *trx);
 
 /** Initialize (resurrect) transactions at startup. */
-void
-trx_lists_init_at_db_start();
+void trx_lists_init_at_db_start();
 
 /*************************************************************//**
 Starts the transaction if it is not yet started. */
@@ -464,14 +455,6 @@ Check transaction state */
 	ut_ad((t)->dict_operation == TRX_DICT_OP_NONE);			\
 } while(0)
 
-/** Check if transaction is in-active so that it can be freed and put back to
-transaction pool.
-@param t transaction handle */
-#define assert_trx_is_inactive(t) do {					\
-	assert_trx_is_free((t));					\
-	ut_ad((t)->dict_operation_lock_mode == 0);			\
-} while(0)
-
 #ifdef UNIV_DEBUG
 /*******************************************************************//**
 Assert that an autocommit non-locking select cannot be in the
@@ -836,6 +819,9 @@ public:
 	/** whether wsrep_on(mysql_thd) held at the start of transaction */
 	bool		wsrep;
 	bool is_wsrep() const { return UNIV_UNLIKELY(wsrep); }
+	/** true, if BF thread is performing unique secondary index scanning */
+	bool wsrep_UK_scan;
+	bool is_wsrep_UK_scan() const { return UNIV_UNLIKELY(wsrep_UK_scan); }
 #else /* WITH_WSREP */
 	bool is_wsrep() const { return false; }
 #endif /* WITH_WSREP */
@@ -875,7 +861,8 @@ public:
 					the coordinator using the XA API, and
 					is set to false  after commit or
 					rollback. */
-	unsigned	active_commit_ordered:1;/* 1 if owns prepare mutex */
+	/** whether this is holding the prepare mutex */
+	bool		active_commit_ordered;
 	/*------------------------------*/
 	bool		check_unique_secondary;
 					/*!< normally TRUE, but if the user
@@ -1048,20 +1035,6 @@ private:
 	during bulk create index */
 	FlushObserver*	flush_observer;
 public:
-	/* Lock wait statistics */
-	ulint		n_rec_lock_waits;
-					/*!< Number of record lock waits,
-					might not be exactly correct. */
-	ulint		n_table_lock_waits;
-					/*!< Number of table lock waits,
-					might not be exactly correct. */
-	ulint		total_rec_lock_wait_time;
-					/*!< Total rec lock wait time up
-					to this moment. */
-	ulint		total_table_lock_wait_time;
-					/*!< Total table lock wait time
-					up to this moment. */
-
 #ifdef WITH_WSREP
 	os_event_t	wsrep_event;	/* event waited for in srv_conc_slot */
 #endif /* WITH_WSREP */
@@ -1145,6 +1118,13 @@ public:
     my_atomic_add32_explicit(&n_ref, -1, MY_MEMORY_ORDER_RELAXED);
     ut_ad(old_n_ref > 0);
   }
+
+  /** @return whether the table has lock on
+  mysql.innodb_table_stats and mysql.innodb_index_stats */
+  bool has_stats_table_lock() const;
+
+  /** Free the memory to trx_pools */
+  void free();
 
 
 private:

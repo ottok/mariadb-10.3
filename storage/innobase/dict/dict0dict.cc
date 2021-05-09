@@ -2,7 +2,7 @@
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -60,7 +60,6 @@ extern uint	ibuf_debug;
 #include "lock0lock.h"
 #include "mach0data.h"
 #include "mem0mem.h"
-#include "os0once.h"
 #include "page0page.h"
 #include "page0zip.h"
 #include "pars0pars.h"
@@ -263,144 +262,6 @@ dict_mutex_exit_for_mysql(void)
 	mutex_exit(&dict_sys->mutex);
 }
 
-/** Allocate and init a dict_table_t's stats latch.
-This function must not be called concurrently on the same table object.
-@param[in,out]	table_void	table whose stats latch to create */
-static
-void
-dict_table_stats_latch_alloc(
-	void*	table_void)
-{
-	dict_table_t*	table = static_cast<dict_table_t*>(table_void);
-
-	/* Note: rw_lock_create() will call the constructor */
-
-	table->stats_latch = static_cast<rw_lock_t*>(
-		ut_malloc_nokey(sizeof(rw_lock_t)));
-
-	ut_a(table->stats_latch != NULL);
-
-	rw_lock_create(dict_table_stats_key, table->stats_latch,
-		       SYNC_INDEX_TREE);
-}
-
-/** Deinit and free a dict_table_t's stats latch.
-This function must not be called concurrently on the same table object.
-@param[in,out]	table	table whose stats latch to free */
-static
-void
-dict_table_stats_latch_free(
-	dict_table_t*	table)
-{
-	rw_lock_free(table->stats_latch);
-	ut_free(table->stats_latch);
-}
-
-/** Create a dict_table_t's stats latch or delay for lazy creation.
-This function is only called from either single threaded environment
-or from a thread that has not shared the table object with other threads.
-@param[in,out]	table	table whose stats latch to create
-@param[in]	enabled	if false then the latch is disabled
-and dict_table_stats_lock()/unlock() become noop on this table. */
-void
-dict_table_stats_latch_create(
-	dict_table_t*	table,
-	bool		enabled)
-{
-	if (!enabled) {
-		table->stats_latch = NULL;
-		table->stats_latch_created = os_once::DONE;
-		return;
-	}
-
-	/* We create this lazily the first time it is used. */
-	table->stats_latch = NULL;
-	table->stats_latch_created = os_once::NEVER_DONE;
-}
-
-/** Destroy a dict_table_t's stats latch.
-This function is only called from either single threaded environment
-or from a thread that has not shared the table object with other threads.
-@param[in,out]	table	table whose stats latch to destroy */
-void
-dict_table_stats_latch_destroy(
-	dict_table_t*	table)
-{
-	if (table->stats_latch_created == os_once::DONE
-	    && table->stats_latch != NULL) {
-
-		dict_table_stats_latch_free(table);
-	}
-}
-
-/** Lock the appropriate latch to protect a given table's statistics.
-@param[in]	table		table whose stats to lock
-@param[in]	latch_mode	RW_S_LATCH or RW_X_LATCH */
-void
-dict_table_stats_lock(
-	dict_table_t*	table,
-	ulint		latch_mode)
-{
-	ut_ad(table != NULL);
-	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
-
-	os_once::do_or_wait_for_done(
-		&table->stats_latch_created,
-		dict_table_stats_latch_alloc, table);
-
-	if (table->stats_latch == NULL) {
-		/* This is a dummy table object that is private in the current
-		thread and is not shared between multiple threads, thus we
-		skip any locking. */
-		return;
-	}
-
-	switch (latch_mode) {
-	case RW_S_LATCH:
-		rw_lock_s_lock(table->stats_latch);
-		break;
-	case RW_X_LATCH:
-		rw_lock_x_lock(table->stats_latch);
-		break;
-	case RW_NO_LATCH:
-		/* fall through */
-	default:
-		ut_error;
-	}
-}
-
-/** Unlock the latch that has been locked by dict_table_stats_lock().
-@param[in]	table		table whose stats to unlock
-@param[in]	latch_mode	RW_S_LATCH or RW_X_LATCH */
-void
-dict_table_stats_unlock(
-	dict_table_t*	table,
-	ulint		latch_mode)
-{
-	ut_ad(table != NULL);
-	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
-
-	if (table->stats_latch == NULL) {
-		/* This is a dummy table object that is private in the current
-		thread and is not shared between multiple threads, thus we
-		skip any locking. */
-		return;
-	}
-
-	switch (latch_mode) {
-	case RW_S_LATCH:
-		rw_lock_s_unlock(table->stats_latch);
-		break;
-	case RW_X_LATCH:
-		rw_lock_x_unlock(table->stats_latch);
-		break;
-	case RW_NO_LATCH:
-		/* fall through */
-	default:
-		ut_error;
-	}
-}
-
 /**********************************************************************//**
 Try to drop any indexes after an aborted index creation.
 This can also be after a server kill during DROP INDEX. */
@@ -431,14 +292,14 @@ dict_table_try_drop_aborted(
 	    && !UT_LIST_GET_FIRST(table->locks)) {
 		/* Silence a debug assertion in row_merge_drop_indexes(). */
 		ut_d(table->acquire());
-		row_merge_drop_indexes(trx, table, TRUE);
+		row_merge_drop_indexes(trx, table, true);
 		ut_d(table->release());
 		ut_ad(table->get_ref_count() == ref_count);
 		trx_commit_for_mysql(trx);
 	}
 
 	row_mysql_unlock_data_dictionary(trx);
-	trx_free(trx);
+	trx->free();
 }
 
 /**********************************************************************//**
@@ -734,34 +595,6 @@ dict_table_get_nth_v_col_mysql(
 	return(dict_table_get_nth_v_col(table, i));
 }
 
-/** Allocate and init the autoinc latch of a given table.
-This function must not be called concurrently on the same table object.
-@param[in,out]	table_void	table whose autoinc latch to create */
-static
-void
-dict_table_autoinc_alloc(
-	void*	table_void)
-{
-	dict_table_t*	table = static_cast<dict_table_t*>(table_void);
-	table->autoinc_mutex = UT_NEW_NOKEY(ib_mutex_t());
-	ut_a(table->autoinc_mutex != NULL);
-	mutex_create(LATCH_ID_AUTOINC, table->autoinc_mutex);
-}
-
-/** Allocate and init the zip_pad_mutex of a given index.
-This function must not be called concurrently on the same index object.
-@param[in,out]	index_void	index whose zip_pad_mutex to create */
-static
-void
-dict_index_zip_pad_alloc(
-	void*	index_void)
-{
-	dict_index_t*	index = static_cast<dict_index_t*>(index_void);
-	index->zip_pad.mutex = UT_NEW_NOKEY(SysMutex());
-	ut_a(index->zip_pad.mutex != NULL);
-	mutex_create(LATCH_ID_ZIP_PAD_MUTEX, index->zip_pad.mutex);
-}
-
 /********************************************************************//**
 Acquire the autoinc lock. */
 void
@@ -769,11 +602,7 @@ dict_table_autoinc_lock(
 /*====================*/
 	dict_table_t*	table)	/*!< in/out: table */
 {
-	os_once::do_or_wait_for_done(
-		&table->autoinc_mutex_created,
-		dict_table_autoinc_alloc, table);
-
-	mutex_enter(table->autoinc_mutex);
+	mysql_mutex_lock(&table->autoinc_mutex);
 }
 
 /** Acquire the zip_pad_mutex latch.
@@ -783,11 +612,7 @@ void
 dict_index_zip_pad_lock(
 	dict_index_t*	index)
 {
-	os_once::do_or_wait_for_done(
-		&index->zip_pad.mutex_created,
-		dict_index_zip_pad_alloc, index);
-
-	mutex_enter(index->zip_pad.mutex);
+	mysql_mutex_lock(&index->zip_pad.mutex);
 }
 
 /** Get all the FTS indexes on a table.
@@ -822,7 +647,7 @@ dict_table_autoinc_unlock(
 /*======================*/
 	dict_table_t*	table)	/*!< in/out: table */
 {
-	mutex_exit(table->autoinc_mutex);
+	mysql_mutex_unlock(&table->autoinc_mutex);
 }
 
 /** Looks for column n in an index.
@@ -1254,6 +1079,7 @@ dict_table_t::add_to_cache()
 	ut_ad(dict_lru_validate());
 	ut_ad(mutex_own(&dict_sys->mutex));
 
+	mysql_mutex_init(0, &autoinc_mutex, NULL);
 	cached = TRUE;
 
 	ulint fold = ut_fold_string(name.m_name);
@@ -1395,7 +1221,7 @@ dict_index_t *dict_index_t::clone() const
     (mem_heap_zalloc(heap, n_uniq * sizeof *stat_n_sample_sizes));
   index->stat_n_non_null_key_vals= static_cast<ib_uint64_t*>
     (mem_heap_zalloc(heap, n_uniq * sizeof *stat_n_non_null_key_vals));
-  memset(&index->zip_pad, 0, sizeof index->zip_pad);
+  mysql_mutex_init(0, &index->zip_pad.mutex, NULL);
   return index;
 }
 
@@ -2077,7 +1903,7 @@ dict_table_remove_from_cache_low(
 		row_merge_drop_indexes_dict(trx, table->id);
 		trx_commit_for_mysql(trx);
 		trx->dict_operation_lock_mode = 0;
-		trx_free(trx);
+		trx->free();
 	}
 
 	/* Free virtual column template if any */
@@ -2086,8 +1912,15 @@ dict_table_remove_from_cache_low(
 		UT_DELETE(table->vc_templ);
 	}
 
+	mysql_mutex_destroy(&table->autoinc_mutex);
 #ifdef BTR_CUR_HASH_ADAPT
 	if (UNIV_UNLIKELY(UT_LIST_GET_LEN(table->freed_indexes) != 0)) {
+		if (table->fts) {
+			fts_optimize_remove_table(table);
+			fts_free(table);
+			table->fts = NULL;
+		}
+
 		table->vc_templ = NULL;
 		table->id = 0;
 		return;
@@ -2329,6 +2162,7 @@ dict_index_remove_from_cache_low(
 	if (index->online_log) {
 		ut_ad(index->online_status == ONLINE_INDEX_CREATION);
 		row_log_free(index->online_log);
+		index->online_log = NULL;
 	}
 
 	/* Remove the index from the list of indexes of the table */
@@ -5201,53 +5035,15 @@ dict_index_build_node_ptr(
 
 	dtype_set(dfield_get_type(field), DATA_SYS_CHILD, DATA_NOT_NULL, 4);
 
-	rec_copy_prefix_to_dtuple(tuple, rec, index, !level, n_unique, heap);
+	rec_copy_prefix_to_dtuple(tuple, rec, index,
+				  level ? 0 : index->n_core_fields,
+				  n_unique, heap);
 	dtuple_set_info_bits(tuple, dtuple_get_info_bits(tuple)
 			     | REC_STATUS_NODE_PTR);
 
 	ut_ad(dtuple_check_typed(tuple));
 
 	return(tuple);
-}
-
-/**********************************************************************//**
-Copies an initial segment of a physical record, long enough to specify an
-index entry uniquely.
-@return pointer to the prefix record */
-rec_t*
-dict_index_copy_rec_order_prefix(
-/*=============================*/
-	const dict_index_t*	index,	/*!< in: index */
-	const rec_t*		rec,	/*!< in: record for which to
-					copy prefix */
-	ulint*			n_fields,/*!< out: number of fields copied */
-	byte**			buf,	/*!< in/out: memory buffer for the
-					copied prefix, or NULL */
-	ulint*			buf_size)/*!< in/out: buffer size */
-{
-	ulint		n;
-
-	UNIV_PREFETCH_R(rec);
-
-	if (dict_index_is_ibuf(index)) {
-		ut_ad(!dict_table_is_comp(index->table));
-		n = rec_get_n_fields_old(rec);
-	} else {
-		if (page_rec_is_leaf(rec)) {
-			n = dict_index_get_n_unique_in_tree(index);
-		} else if (dict_index_is_spatial(index)) {
-			ut_ad(dict_index_get_n_unique_in_tree_nonleaf(index)
-			      == DICT_INDEX_SPATIAL_NODEPTR_SIZE);
-			/* For R-tree, we have to compare
-			the child page numbers as well. */
-			n = DICT_INDEX_SPATIAL_NODEPTR_SIZE + 1;
-		} else {
-			n = dict_index_get_n_unique_in_tree(index);
-		}
-	}
-
-	*n_fields = n;
-	return(rec_copy_prefix_to_buf(rec, index, n, buf, buf_size));
 }
 
 /** Convert a physical record into a search tuple.
@@ -5265,11 +5061,14 @@ dict_index_build_data_tuple(
 	ulint			n_fields,
 	mem_heap_t*		heap)
 {
+	ut_ad(!index->is_clust());
+
 	dtuple_t* tuple = dtuple_create(heap, n_fields);
 
 	dict_index_copy_types(tuple, index, n_fields);
 
-	rec_copy_prefix_to_dtuple(tuple, rec, index, leaf, n_fields, heap);
+	rec_copy_prefix_to_dtuple(tuple, rec, index,
+				  leaf ? n_fields : 0, n_fields, heap);
 
 	ut_ad(dtuple_check_typed(tuple));
 
@@ -6514,7 +6313,11 @@ dict_foreign_qualify_index(
 		return(false);
 	}
 
-	if (index->type & (DICT_SPATIAL | DICT_FTS)) {
+	if (index->type & (DICT_SPATIAL | DICT_FTS | DICT_CORRUPT)) {
+		return false;
+	}
+
+	if (index->online_status >= ONLINE_INDEX_ABORTED) {
 		return false;
 	}
 
@@ -6774,144 +6577,6 @@ dict_sys_get_size()
 	return size;
 }
 
-/** Look for any dictionary objects that are found in the given tablespace.
-@param[in]	space_id	Tablespace ID to search for.
-@return true if tablespace is empty. */
-bool
-dict_space_is_empty(
-	ulint	space_id)
-{
-	btr_pcur_t	pcur;
-	const rec_t*	rec;
-	mtr_t		mtr;
-	bool		found = false;
-
-	rw_lock_x_lock(&dict_operation_lock);
-	mutex_enter(&dict_sys->mutex);
-	mtr_start(&mtr);
-
-	for (rec = dict_startscan_system(&pcur, &mtr, SYS_TABLES);
-	     rec != NULL;
-	     rec = dict_getnext_system(&pcur, &mtr)) {
-		const byte*	field;
-		ulint		len;
-		ulint		space_id_for_table;
-
-		field = rec_get_nth_field_old(
-			rec, DICT_FLD__SYS_TABLES__SPACE, &len);
-		ut_ad(len == 4);
-		space_id_for_table = mach_read_from_4(field);
-
-		if (space_id_for_table == space_id) {
-			found = true;
-		}
-	}
-
-	mtr_commit(&mtr);
-	mutex_exit(&dict_sys->mutex);
-	rw_lock_x_unlock(&dict_operation_lock);
-
-	return(!found);
-}
-
-/** Find the space_id for the given name in sys_tablespaces.
-@param[in]	name	Tablespace name to search for.
-@return the tablespace ID. */
-ulint
-dict_space_get_id(
-	const char*	name)
-{
-	btr_pcur_t	pcur;
-	const rec_t*	rec;
-	mtr_t		mtr;
-	ulint		name_len = strlen(name);
-	ulint		id = ULINT_UNDEFINED;
-
-	rw_lock_x_lock(&dict_operation_lock);
-	mutex_enter(&dict_sys->mutex);
-	mtr_start(&mtr);
-
-	for (rec = dict_startscan_system(&pcur, &mtr, SYS_TABLESPACES);
-	     rec != NULL;
-	     rec = dict_getnext_system(&pcur, &mtr)) {
-		const byte*	field;
-		ulint		len;
-
-		field = rec_get_nth_field_old(
-			rec, DICT_FLD__SYS_TABLESPACES__NAME, &len);
-		ut_ad(len > 0);
-		ut_ad(len < OS_FILE_MAX_PATH);
-
-		if (len == name_len && ut_memcmp(name, field, len) == 0) {
-
-			field = rec_get_nth_field_old(
-				rec, DICT_FLD__SYS_TABLESPACES__SPACE, &len);
-			ut_ad(len == 4);
-			id = mach_read_from_4(field);
-
-			/* This is normally called by dict_getnext_system()
-			at the end of the index. */
-			btr_pcur_close(&pcur);
-			break;
-		}
-	}
-
-	mtr_commit(&mtr);
-	mutex_exit(&dict_sys->mutex);
-	rw_lock_x_unlock(&dict_operation_lock);
-
-	return(id);
-}
-
-/** Determine the extent size (in pages) for the given table
-@param[in]	table	the table whose extent size is being
-			calculated.
-@return extent size in pages (256, 128 or 64) */
-ulint
-dict_table_extent_size(
-	const dict_table_t*	table)
-{
-	const ulint	mb_1 = 1024 * 1024;
-	const ulint	mb_2 = 2 * mb_1;
-	const ulint	mb_4 = 4 * mb_1;
-
-	page_size_t	page_size = dict_table_page_size(table);
-	ulint	pages_in_extent = FSP_EXTENT_SIZE;
-
-	if (page_size.is_compressed()) {
-
-		ulint	disk_page_size	= page_size.physical();
-
-		switch (disk_page_size) {
-		case 1024:
-			pages_in_extent = mb_1/1024;
-			break;
-		case 2048:
-			pages_in_extent = mb_1/2048;
-			break;
-		case 4096:
-			pages_in_extent = mb_1/4096;
-			break;
-		case 8192:
-			pages_in_extent = mb_1/8192;
-			break;
-		case 16384:
-			pages_in_extent = mb_1/16384;
-			break;
-		case 32768:
-			pages_in_extent = mb_2/32768;
-			break;
-		case 65536:
-			pages_in_extent = mb_4/65536;
-			break;
-		default:
-			ut_ad(0);
-		}
-	}
-
-	return(pages_in_extent);
-}
-
 size_t
 dict_table_t::get_overflow_field_local_len() const
 {
@@ -6921,4 +6586,10 @@ dict_table_t::get_overflow_field_local_len() const
 	}
 	/* up to MySQL 5.1: store a 768-byte prefix locally */
 	return BTR_EXTERN_FIELD_REF_SIZE + DICT_ANTELOPE_MAX_INDEX_COL_LEN;
+}
+
+bool dict_table_t::is_stats_table() const
+{
+  return !strcmp(name.m_name, TABLE_STATS_NAME) ||
+         !strcmp(name.m_name, INDEX_STATS_NAME);
 }

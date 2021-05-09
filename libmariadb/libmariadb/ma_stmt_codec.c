@@ -370,7 +370,7 @@ end:
 
   Year must be < 10000, month < 12, day < 32
 
-  Years with 2 digits, are coverted to values 1970-2069 according to 
+  Years with 2 digits, are converted to values 1970-2069 according to
   usual rules:
 
   00-69 is converted to 2000-2069.
@@ -642,7 +642,7 @@ static void convert_from_long(MYSQL_BIND *r_param, const MYSQL_FIELD *field, lon
     }
     case MYSQL_TYPE_FLOAT:
     {
-      float fval;
+      volatile float fval;
       fval= is_unsigned ? (float)(ulonglong)(val) : (float)val;
       floatstore((uchar *)r_param->buffer, fval);
       *r_param->error= (fval != ceilf(fval)) ||

@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2020, MariaDB Corporation.
+Copyright (c) 2017, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -34,9 +34,6 @@ Created 5/27/1996 Heikki Tuuri
 #include "que0types.h"
 #include "row0types.h"
 #include "pars0types.h"
-
-/** Mutex protecting the query threads. */
-extern ib_mutex_t	que_thr_mutex;
 
 /***********************************************************************//**
 Creates a query graph fork node.
@@ -306,7 +303,6 @@ que_fork_scheduler_round_robin(
 /** Query thread states */
 enum que_thr_state_t {
 	QUE_THR_RUNNING,
-	QUE_THR_PROCEDURE_WAIT,
 	/** in selects this means that the thread is at the end of its
 	result set (or start, in case of a scroll cursor); in other
 	statements, this means the thread has done its task */

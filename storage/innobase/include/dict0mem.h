@@ -2,7 +2,7 @@
 
 Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -44,7 +44,6 @@ Created 1/8/1996 Heikki Tuuri
 #include "fts0fts.h"
 #include "buf0buf.h"
 #include "gis0type.h"
-#include "os0once.h"
 #include "fil0fil.h"
 #include "fil0crypt.h"
 #include <set>
@@ -296,20 +295,23 @@ parent table will fail, and user has to drop excessive foreign constraint
 before proceeds. */
 #define FK_MAX_CASCADE_DEL		15
 
-/**********************************************************************//**
-Creates a table memory object.
+/** Create a table memory object.
+@param name     table name
+@param space    tablespace
+@param n_cols   total number of columns (both virtual and non-virtual)
+@param n_v_cols number of virtual columns
+@param flags    table flags
+@param flags2   table flags2
 @return own: table object */
 dict_table_t*
 dict_mem_table_create(
-/*==================*/
-	const char*	name,		/*!< in: table name */
-	fil_space_t*	space,		/*!< in: tablespace */
-	ulint		n_cols,		/*!< in: total number of columns
-					including virtual and non-virtual
-					columns */
-	ulint		n_v_cols,	/*!< in: number of virtual columns */
-	ulint		flags,		/*!< in: table flags */
-	ulint		flags2);	/*!< in: table flags2 */
+	const char*	name,
+	fil_space_t*	space,
+	ulint		n_cols,
+	ulint		n_v_cols,
+	ulint		flags,
+	ulint		flags2);
+
 /****************************************************************//**
 Free a table memory object. */
 void
@@ -679,6 +681,35 @@ struct dict_v_col_t{
 
 };
 
+/** Data structure for newly added virtual column in a index.
+It is used only during rollback_inplace_alter_table() of
+addition of index depending on newly added virtual columns
+and uses index heap. Should be freed when index is being
+removed from cache. */
+struct dict_add_v_col_info
+{
+  ulint n_v_col;
+  dict_v_col_t *v_col;
+
+  /** Add the newly added virtual column while rollbacking
+  the index which contains new virtual columns
+  @param col    virtual column to be duplicated
+  @param offset offset where to duplicate virtual column */
+  dict_v_col_t* add_drop_v_col(mem_heap_t *heap, dict_v_col_t *col,
+                               ulint offset)
+  {
+    ut_ad(n_v_col);
+    ut_ad(offset < n_v_col);
+    if (!v_col)
+      v_col= static_cast<dict_v_col_t*>
+        (mem_heap_alloc(heap, n_v_col * sizeof *v_col));
+    new (&v_col[offset]) dict_v_col_t();
+    v_col[offset].m_col= col->m_col;
+    v_col[offset].v_pos= col->v_pos;
+    return &v_col[offset];
+  }
+};
+
 /** Data structure for newly added virtual column in a table */
 struct dict_add_v_col_t{
 	/** number of new virtual column */
@@ -812,7 +843,7 @@ extern ulong	zip_pad_max;
 an uncompressed page should be left as padding to avoid compression
 failures. This estimate is based on a self-adapting heuristic. */
 struct zip_pad_info_t {
-	SysMutex*	mutex;	/*!< mutex protecting the info */
+	mysql_mutex_t	mutex;	/*!< mutex protecting the info */
 	ulint		pad;	/*!< number of bytes used as pad */
 	ulint		success;/*!< successful compression ops during
 				current round */
@@ -820,9 +851,6 @@ struct zip_pad_info_t {
 				current round */
 	ulint		n_rounds;/*!< number of currently successful
 				rounds */
-	volatile os_once::state_t
-			mutex_created;
-				/*!< Creation state of mutex member */
 };
 
 /** Number of samples of data size kept when page compression fails for
@@ -920,9 +948,13 @@ struct dict_index_t{
 	dict_field_t*	fields;	/*!< array of field descriptions */
 	st_mysql_ftparser*
 			parser;	/*!< fulltext parser plugin */
-	bool		has_new_v_col;
-				/*!< whether it has a newly added virtual
-				column in ALTER */
+
+	/** It just indicates whether newly added virtual column
+	during alter. It stores column in case of alter failure.
+	It should use heap from dict_index_t. It should be freed
+	while removing the index from table. */
+	dict_add_v_col_info* new_vcol_info;
+
 	bool            index_fts_syncing;/*!< Whether the fts index is
 					still syncing in the background;
 					FIXME: remove this and use MDL */
@@ -996,7 +1028,7 @@ struct dict_index_t{
 				when InnoDB was started up */
 	zip_pad_info_t	zip_pad;/*!< Information about state of
 				compression failures and successes */
-	rw_lock_t	lock;	/*!< read-write lock protecting the
+	mutable rw_lock_t	lock;	/*!< read-write lock protecting the
 				upper levels of the index tree */
 
 	/** Determine if the index has been committed to the
@@ -1038,18 +1070,48 @@ struct dict_index_t{
 		return DICT_CLUSTERED == (type & (DICT_CLUSTERED | DICT_IBUF));
 	}
 
+	/** @return whether this is a generated clustered index */
+	bool is_gen_clust() const { return type == DICT_CLUSTERED; }
+
+	/** @return whether this is a clustered index */
+	bool is_clust() const { return type & DICT_CLUSTERED; }
+
+	/** @return whether this is a unique index */
+	bool is_unique() const { return type & DICT_UNIQUE; }
+
 	/** @return whether this is a spatial index */
 	bool is_spatial() const { return UNIV_UNLIKELY(type & DICT_SPATIAL); }
+
+	/** @return whether this is the change buffer */
+	bool is_ibuf() const { return UNIV_UNLIKELY(type & DICT_IBUF); }
 
 	/** @return whether the index includes virtual columns */
 	bool has_virtual() const { return type & DICT_VIRTUAL; }
 
+	/** @return the position of DB_TRX_ID */
+	uint16_t db_trx_id() const {
+		DBUG_ASSERT(is_primary());
+		DBUG_ASSERT(n_uniq);
+		return n_uniq;
+	}
+	/** @return the position of DB_ROLL_PTR */
+	uint16_t db_roll_ptr() const
+	{
+		return static_cast<uint16_t>(db_trx_id() + 1);
+	}
+
+	/** @return the offset of the metadata BLOB field,
+	or the first user field after the PRIMARY KEY,DB_TRX_ID,DB_ROLL_PTR */
+	uint16_t first_user_field() const
+	{
+		return static_cast<uint16_t>(db_trx_id() + 2);
+	}
+
 	/** @return whether the index is corrupted */
 	inline bool is_corrupted() const;
 
-  /** Detach the virtual columns from the index that is to be removed.
-  @param   whether to reset fields[].col */
-  void detach_columns(bool clear= false)
+  /** Detach the virtual columns from the index that is to be removed. */
+  void detach_columns()
   {
     if (!has_virtual())
       return;
@@ -1059,8 +1121,6 @@ struct dict_index_t{
       if (!col || !col->is_virtual())
         continue;
       col->detach(*this);
-      if (clear)
-        fields[i].col= NULL;
     }
   }
 
@@ -1126,6 +1186,30 @@ struct dict_index_t{
 	@return true on error */
 	bool
 	vers_history_row(const rec_t* rec, bool &history_row);
+
+  /** Assign the number of new column to be added as a part
+  of the index
+  @param        n_vcol  number of virtual columns to be added */
+  void assign_new_v_col(ulint n_vcol)
+  {
+    new_vcol_info= static_cast<dict_add_v_col_info*>(
+      mem_heap_zalloc(heap, sizeof *new_vcol_info));
+    new_vcol_info->n_v_col= n_vcol;
+  }
+
+  /* @return whether index has new virtual column */
+  bool has_new_v_col() const
+  {
+    return new_vcol_info != NULL;
+  }
+
+  /* @return number of newly added virtual column */
+  ulint get_new_n_vcol() const
+  {
+    if (new_vcol_info)
+      return new_vcol_info->n_v_col;
+    return 0;
+  }
 
 #ifdef BTR_CUR_HASH_ADAPT
   /** @return a clone of this */
@@ -1285,6 +1369,10 @@ struct dict_foreign_t{
 
 	dict_vcol_set*	v_cols;		/*!< set of virtual columns affected
 					by foreign key constraint. */
+
+	/** Check whether the fulltext index gets affected by
+	foreign key constraint */
+	bool affects_fulltext() const;
 };
 
 std::ostream&
@@ -1835,23 +1923,8 @@ struct dict_table_t {
 	/*!< set of foreign key constraints which refer to this table */
 	dict_foreign_set			referenced_set;
 
-	/** Statistics for query optimization. @{ */
-
-	/** Creation state of 'stats_latch'. */
-	volatile os_once::state_t		stats_latch_created;
-
-	/** This latch protects:
-	dict_table_t::stat_initialized,
-	dict_table_t::stat_n_rows (*),
-	dict_table_t::stat_clustered_index_size,
-	dict_table_t::stat_sum_of_other_index_sizes,
-	dict_table_t::stat_modified_counter (*),
-	dict_table_t::indexes*::stat_n_diff_key_vals[],
-	dict_table_t::indexes*::stat_index_size,
-	dict_table_t::indexes*::stat_n_leaf_pages.
-	(*) Those are not always protected for
-	performance reasons. */
-	rw_lock_t*				stats_latch;
+	/** Statistics for query optimization. Mostly protected by
+	dict_sys->mutex. @{ */
 
 	/** TRUE if statistics have been calculated the first time after
 	database startup or table creation. */
@@ -1975,11 +2048,8 @@ struct dict_table_t {
 	from a select. */
 	lock_t*					autoinc_lock;
 
-	/** Creation state of autoinc_mutex member */
-	volatile os_once::state_t		autoinc_mutex_created;
-
 	/** Mutex protecting the autoincrement counter. */
-	ib_mutex_t*				autoinc_mutex;
+	mysql_mutex_t				autoinc_mutex;
 
 	/** Autoinc counter value to give to the next inserted row. */
 	ib_uint64_t				autoinc;
@@ -2034,6 +2104,22 @@ public:
 	/** mysql_row_templ_t for base columns used for compute the virtual
 	columns */
 	dict_vcol_templ_t*			vc_templ;
+
+  /* @return whether the table has any other transcation lock
+  other than the given transaction */
+  bool has_lock_other_than(const trx_t *trx) const
+  {
+    for (lock_t *lock= UT_LIST_GET_FIRST(locks); lock;
+         lock= UT_LIST_GET_NEXT(un_member.tab_lock.locks, lock))
+      if (lock->trx != trx)
+        return true;
+    return false;
+  }
+
+  /** Check whether the table name is same as mysql/innodb_stats_table
+  or mysql/innodb_index_stats.
+  @return true if the table name is same as stats table */
+  bool is_stats_table() const;
 };
 
 inline void dict_index_t::set_modified(mtr_t& mtr) const
@@ -2086,64 +2172,6 @@ struct dict_foreign_add_to_referenced_table {
 	}
 };
 
-/** Destroy the autoinc latch of the given table.
-This function is only called from either single threaded environment
-or from a thread that has not shared the table object with other threads.
-@param[in,out]	table	table whose stats latch to destroy */
-inline
-void
-dict_table_autoinc_destroy(
-	dict_table_t*	table)
-{
-	if (table->autoinc_mutex_created == os_once::DONE
-	    && table->autoinc_mutex != NULL) {
-		mutex_free(table->autoinc_mutex);
-		UT_DELETE(table->autoinc_mutex);
-	}
-}
-
-/** Request for lazy creation of the autoinc latch of a given table.
-This function is only called from either single threaded environment
-or from a thread that has not shared the table object with other threads.
-@param[in,out]	table	table whose autoinc latch is to be created. */
-inline
-void
-dict_table_autoinc_create_lazy(
-	dict_table_t*	table)
-{
-	table->autoinc_mutex = NULL;
-	table->autoinc_mutex_created = os_once::NEVER_DONE;
-}
-
-/** Request a lazy creation of dict_index_t::zip_pad::mutex.
-This function is only called from either single threaded environment
-or from a thread that has not shared the table object with other threads.
-@param[in,out]	index	index whose zip_pad mutex is to be created */
-inline
-void
-dict_index_zip_pad_mutex_create_lazy(
-	dict_index_t*	index)
-{
-	index->zip_pad.mutex = NULL;
-	index->zip_pad.mutex_created = os_once::NEVER_DONE;
-}
-
-/** Destroy the zip_pad_mutex of the given index.
-This function is only called from either single threaded environment
-or from a thread that has not shared the table object with other threads.
-@param[in,out]	table	table whose stats latch to destroy */
-inline
-void
-dict_index_zip_pad_mutex_destroy(
-	dict_index_t*	index)
-{
-	if (index->zip_pad.mutex_created == os_once::DONE
-	    && index->zip_pad.mutex != NULL) {
-		mutex_free(index->zip_pad.mutex);
-		UT_DELETE(index->zip_pad.mutex);
-	}
-}
-
 /** Release the zip_pad_mutex of a given index.
 @param[in,out]	index	index whose zip_pad_mutex is to be released */
 inline
@@ -2151,21 +2179,8 @@ void
 dict_index_zip_pad_unlock(
 	dict_index_t*	index)
 {
-	mutex_exit(index->zip_pad.mutex);
+	mysql_mutex_unlock(&index->zip_pad.mutex);
 }
-
-#ifdef UNIV_DEBUG
-/** Check if the current thread owns the autoinc_mutex of a given table.
-@param[in]	table	the autoinc_mutex belongs to this table
-@return true, if the current thread owns the autoinc_mutex, false otherwise.*/
-inline
-bool
-dict_table_autoinc_own(
-	const dict_table_t*	table)
-{
-	return(mutex_own(table->autoinc_mutex));
-}
-#endif /* UNIV_DEBUG */
 
 /** Check whether the col is used in spatial index or regular index.
 @param[in]	col	column to check

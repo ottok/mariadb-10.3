@@ -3,7 +3,7 @@
 /* -------------                                                       */
 /*  Version 3.0                                                        */
 /*                                                                     */
-/*  Author Olivier BERTRAND          2007 - 2017                       */
+/*  Author Olivier BERTRAND          2007 - 2020                       */
 /*                                                                     */
 /*  This program are the XML tables classes using MS-DOM or libxml2.   */
 /***********************************************************************/
@@ -61,6 +61,8 @@ extern "C" char version[];
 
 #define TYPE_UNKNOWN     12        /* Must be greater than other types */
 #define XLEN(M)  sizeof(M) - strlen(M) - 1	       /* To avoid overflow*/
+
+int GetDefaultDepth(void);
 
 /***********************************************************************/
 /* Class and structure used by XMLColumns.                             */
@@ -146,12 +148,20 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
   /*  Open the input file.                                             */
   /*********************************************************************/
   if (!(fn = GetStringTableOption(g, topt, "Filename", NULL))) {
-    strcpy(g->Message, MSG(MISSING_FNAME));
-    return NULL;
-  } else {
-    lvl = GetIntegerTableOption(g, topt, "Level", 0);
-    lvl = (lvl < 0) ? 0 : (lvl > 16) ? 16 : lvl;
+    if (topt->http) // REST table can have default filename
+      fn = GetStringTableOption(g, topt, "Subtype", NULL);
+    
+    if (!fn) {
+      strcpy(g->Message, MSG(MISSING_FNAME));
+      return NULL;
+    } else
+      topt->subtype = NULL;
+
   } // endif fn
+
+  lvl = GetIntegerTableOption(g, topt, "Level", GetDefaultDepth());
+  lvl = GetIntegerTableOption(g, topt, "Depth", lvl);
+  lvl = (lvl < 0) ? 0 : (lvl > 16) ? 16 : lvl;
 
   if (trace(1))
     htrc("File %s lvl=%d\n", topt->filename, lvl);

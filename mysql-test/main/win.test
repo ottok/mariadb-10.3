@@ -2507,6 +2507,42 @@ SELECT cast((rank() over w1) as decimal (53,56));
 SELECT cast((rank() over w1) as decimal (53,30));
 
 --echo #
+--echo # MDEV-15180: server crashed with NTH_VALUE()
+--echo #
+
+CREATE TABLE t1 (i1 int, a int);
+INSERT INTO t1 VALUES (1, 1), (2, 2),(3, 3);
+
+CREATE TABLE t2 (i2 int);
+INSERT INTO t2 VALUES (1),(2),(5),(1),(7),(4),(3);
+
+CREATE VIEW v1 AS (SELECT * FROM t1,t2 WHERE t1.i1=t2.i2) ;
+SELECT NTH_VALUE(i1, i1) OVER (PARTITION BY i1) FROM v1;
+
+DROP VIEW v1;
+DROP TABLE t1,t2;
+
+--echo #
+--echo # MDEV-25032 Window functions without column references get removed from ORDER BY
+--echo #
+
+create table t1 (id int, score double);
+insert into t1 values
+(1, 5),
+(1, 6),
+(1, 6),
+(1, 6),
+(1, 7),
+(1, 8.1),
+(1, 9),
+(1, 10);
+select id, row_number() over () rn
+from t1
+order by rn desc;
+
+drop table t1;
+
+--echo #
 --echo # End of 10.2 tests
 --echo #
 

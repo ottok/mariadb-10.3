@@ -1724,7 +1724,14 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
     }
 
     if (is_locked_view(thd, table_list))
+    {
+      if (table_list->sequence)
+      {
+        my_error(ER_NOT_SEQUENCE, MYF(0), table_list->db.str, table_list->alias.str);
+        DBUG_RETURN(true);
+      }
       DBUG_RETURN(FALSE); // VIEW
+    }
 
     /*
       No table in the locked tables list. In case of explicit LOCK TABLES
@@ -1907,7 +1914,12 @@ retry_share:
     DBUG_RETURN(FALSE);
   }
 
+#ifdef WITH_WSREP
+  if (!((flags & MYSQL_OPEN_IGNORE_FLUSH) ||
+        (thd->wsrep_applier)))
+#else
   if (!(flags & MYSQL_OPEN_IGNORE_FLUSH))
+#endif
   {
     if (share->tdc->flushed)
     {
@@ -4496,7 +4508,72 @@ add_internal_tables(THD *thd, Query_tables_list *prelocking_ctx,
   DBUG_RETURN(FALSE);
 }
 
+/**
+  Extend the table_list to include foreign tables for prelocking.
 
+  @param[in]  thd              Thread context.
+  @param[in]  prelocking_ctx   Prelocking context of the statement.
+  @param[in]  table_list       Table list element for table.
+  @param[in]  sp               Routine body.
+  @param[out] need_prelocking  Set to TRUE if method detects that prelocking
+                               required, not changed otherwise.
+
+  @retval FALSE  Success.
+  @retval TRUE   Failure (OOM).
+*/
+inline bool
+prepare_fk_prelocking_list(THD *thd, Query_tables_list *prelocking_ctx,
+                           TABLE_LIST *table_list, bool *need_prelocking,
+                           uint8 op)
+{
+  DBUG_ENTER("prepare_fk_prelocking_list");
+  List <FOREIGN_KEY_INFO> fk_list;
+  List_iterator<FOREIGN_KEY_INFO> fk_list_it(fk_list);
+  FOREIGN_KEY_INFO *fk;
+  Query_arena *arena, backup;
+  TABLE *table= table_list->table;
+
+  arena= thd->activate_stmt_arena_if_needed(&backup);
+
+  table->file->get_parent_foreign_key_list(thd, &fk_list);
+  if (unlikely(thd->is_error()))
+  {
+    if (arena)
+      thd->restore_active_arena(arena, &backup);
+    return TRUE;
+  }
+
+  *need_prelocking= TRUE;
+
+  while ((fk= fk_list_it++))
+  {
+    // FK_OPTION_RESTRICT and FK_OPTION_NO_ACTION only need read access
+    thr_lock_type lock_type;
+
+    if ((op & (1 << TRG_EVENT_DELETE) && fk_modifies_child(fk->delete_method))
+        || (op & (1 << TRG_EVENT_UPDATE) && fk_modifies_child(fk->update_method)))
+      lock_type= TL_WRITE_ALLOW_WRITE;
+    else
+      lock_type= TL_READ;
+
+    if (table_already_fk_prelocked(prelocking_ctx->query_tables,
+          fk->foreign_db, fk->foreign_table,
+          lock_type))
+      continue;
+
+    TABLE_LIST *tl= (TABLE_LIST *) thd->alloc(sizeof(TABLE_LIST));
+    tl->init_one_table_for_prelocking(fk->foreign_db,
+        fk->foreign_table,
+        NULL, lock_type,
+        TABLE_LIST::PRELOCK_FK,
+        table_list->belong_to_view, op,
+        &prelocking_ctx->query_tables_last,
+        table_list->for_insert_data);
+  }
+  if (arena)
+    thd->restore_active_arena(arena, &backup);
+  DBUG_RETURN(FALSE);
+}
 
 /**
   Defines how prelocking algorithm for DML statements should handle table list
@@ -4543,52 +4620,19 @@ handle_table(THD *thd, Query_tables_list *prelocking_ctx,
 
     if (table->file->referenced_by_foreign_key())
     {
-      List <FOREIGN_KEY_INFO> fk_list;
-      List_iterator<FOREIGN_KEY_INFO> fk_list_it(fk_list);
-      FOREIGN_KEY_INFO *fk;
-      Query_arena *arena, backup;
-
-      arena= thd->activate_stmt_arena_if_needed(&backup);
-
-      table->file->get_parent_foreign_key_list(thd, &fk_list);
-      if (unlikely(thd->is_error()))
-      {
-        if (arena)
-          thd->restore_active_arena(arena, &backup);
-        DBUG_RETURN(TRUE);
-      }
-
-      *need_prelocking= TRUE;
-
-      while ((fk= fk_list_it++))
-      {
-        // FK_OPTION_RESTRICT and FK_OPTION_NO_ACTION only need read access
-        uint8 op= table_list->trg_event_map;
-        thr_lock_type lock_type;
-
-        if ((op & (1 << TRG_EVENT_DELETE) && fk_modifies_child(fk->delete_method))
-         || (op & (1 << TRG_EVENT_UPDATE) && fk_modifies_child(fk->update_method)))
-          lock_type= TL_WRITE_ALLOW_WRITE;
-        else
-          lock_type= TL_READ;
-
-        if (table_already_fk_prelocked(prelocking_ctx->query_tables,
-                                       fk->foreign_db, fk->foreign_table,
-                                       lock_type))
-          continue;
-
-        TABLE_LIST *tl= (TABLE_LIST *) thd->alloc(sizeof(TABLE_LIST));
-        tl->init_one_table_for_prelocking(fk->foreign_db,
-                                          fk->foreign_table,
-                                          NULL, lock_type,
-                                          TABLE_LIST::PRELOCK_FK,
-                                          table_list->belong_to_view, op,
-                                          &prelocking_ctx->query_tables_last,
-                                          table_list->for_insert_data);
-      }
-      if (arena)
-        thd->restore_active_arena(arena, &backup);
+      if (prepare_fk_prelocking_list(thd, prelocking_ctx, table_list,
+                                     need_prelocking,
+                                     table_list->trg_event_map))
+        return TRUE;
     }
+  }
+  else if (table_list->slave_fk_event_map &&
+           table->file->referenced_by_foreign_key())
+  {
+    if (prepare_fk_prelocking_list(thd, prelocking_ctx, table_list,
+                                   need_prelocking,
+                                   table_list->slave_fk_event_map))
+      return TRUE;
   }
 
   /* Open any tables used by DEFAULT (like sequence tables) */
@@ -5143,7 +5187,6 @@ bool open_normal_and_derived_tables(THD *thd, TABLE_LIST *tables, uint flags,
   uint counter;
   MDL_savepoint mdl_savepoint= thd->mdl_context.mdl_savepoint();
   DBUG_ENTER("open_normal_and_derived_tables");
-  DBUG_ASSERT(!thd->fill_derived_tables());
   if (open_tables(thd, &tables, &counter, flags, &prelocking_strategy) ||
       mysql_handle_derived(thd->lex, dt_phases))
     goto end;
@@ -5201,7 +5244,7 @@ bool open_tables_only_view_structure(THD *thd, TABLE_LIST *table_list,
                                            MYSQL_OPEN_GET_NEW_TABLE |
                                            (can_deadlock ?
                                             MYSQL_OPEN_FAIL_ON_MDL_CONFLICT : 0)),
-                                          DT_INIT | DT_PREPARE | DT_CREATE));
+                                          DT_INIT | DT_PREPARE));
   /*
     Restore old value of sql_command back as it is being looked at in
     process_table() function.
@@ -6051,6 +6094,7 @@ find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     /* Check if there are sufficient access rights to the found field. */
     if (check_privileges &&
+        !table_list->is_derived() &&
         check_column_grant_in_table_ref(thd, *actual_table, name, length, fld))
       fld= WRONG_GRANT;
     else
@@ -6273,7 +6317,7 @@ find_field_in_tables(THD *thd, Item_ident *item,
         if (!all_merged && current_sel != last_select)
         {
           mark_select_range_as_dependent(thd, last_select, current_sel,
-                                         found, *ref, item);
+                                         found, *ref, item, true);
         }
       }
       return found;
@@ -7735,7 +7779,8 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
     if (table_list->jtbm_subselect)
     {
       Item *item= table_list->jtbm_subselect->optimizer;
-      if (table_list->jtbm_subselect->optimizer->fix_fields(thd, &item))
+      if (!table_list->jtbm_subselect->optimizer->fixed &&
+          table_list->jtbm_subselect->optimizer->fix_fields(thd, &item))
       {
         my_error(ER_TOO_MANY_TABLES,MYF(0), static_cast<int>(MAX_TABLES)); /* psergey-todo: WHY ER_TOO_MANY_TABLES ???*/
         DBUG_RETURN(1);
@@ -7912,36 +7957,23 @@ insert_fields(THD *thd, Name_resolution_context *context, const char *db_name,
 
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     /* 
-       Ensure that we have access rights to all fields to be inserted. Under
-       some circumstances, this check may be skipped.
+       Ensure that we have access rights to all fields to be inserted
+       the table 'tables'. Under some circumstances, this check may be skipped.
 
-       - If any_privileges is true, skip the check.
+       The check is skipped in the following cases:
 
-       - If the SELECT privilege has been found as fulfilled already for both
-         the TABLE and TABLE_LIST objects (and both of these exist, of
-         course), the check is skipped.
+       - any_privileges is true
 
-       - If the SELECT privilege has been found fulfilled for the TABLE object
-         and the TABLE_LIST represents a derived table other than a view (see
-         below), the check is skipped.
+       - the table is a derived table
 
-       - If the TABLE_LIST object represents a view, we may skip checking if
-         the SELECT privilege has been found fulfilled for it, regardless of
-         the TABLE object.
+       - the table is a view with SELECT privilege
 
-       - If there is no TABLE object, the test is skipped if either 
-         * the TABLE_LIST does not represent a view, or
-         * the SELECT privilege has been found fulfilled.         
-
-       A TABLE_LIST that is not a view may be a subquery, an
-       information_schema table, or a nested table reference. See the comment
-       for TABLE_LIST.
+       - the table is a base table with SELECT privilege
     */
-    if (!((table && tables->is_non_derived() &&
-          (table->grant.privilege & SELECT_ACL)) ||
-	  ((!tables->is_non_derived() && 
-	    (tables->grant.privilege & SELECT_ACL)))) &&
-        !any_privileges)
+    if (!any_privileges &&
+        !tables->is_derived() &&
+        !(tables->is_view() && (tables->grant.privilege & SELECT_ACL)) &&
+        !(table && (table->grant.privilege & SELECT_ACL)))
     {
       field_iterator.set(tables);
       if (check_grant_all_columns(thd, SELECT_ACL, &field_iterator))
@@ -8963,7 +8995,7 @@ close_mysql_tables(THD *thd)
   if (! thd->in_sub_stmt)
     trans_commit_stmt(thd);
   close_thread_tables(thd);
-  thd->mdl_context.release_transactional_locks();
+  thd->release_transactional_locks();
 }
 
 /*

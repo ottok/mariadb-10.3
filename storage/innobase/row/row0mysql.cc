@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2000, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2020, MariaDB Corporation.
+Copyright (c) 2015, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -689,6 +689,7 @@ row_mysql_handle_errors(
 	dberr_t	err;
 
 	DBUG_ENTER("row_mysql_handle_errors");
+	DEBUG_SYNC_C("row_mysql_handle_errors");
 
 handle_new_error:
 	err = trx->error_state;
@@ -962,9 +963,6 @@ row_create_prebuilt(
 
 	prebuilt->fts_doc_id_in_read_set = 0;
 	prebuilt->blob_heap = NULL;
-
-	prebuilt->m_no_prefetch = false;
-	prebuilt->m_read_virtual_key = false;
 
 	DBUG_RETURN(prebuilt);
 }
@@ -1522,7 +1520,7 @@ error_exit:
 		srv_stats.n_rows_inserted.inc(size_t(trx->id));
 	}
 
-	/* Not protected by dict_table_stats_lock() for performance
+	/* Not protected by dict_sys->mutex for performance
 	reasons, we would rather get garbage in stat_n_rows (which is
 	just an estimate anyway) than protecting the following code
 	with a latch. */
@@ -1803,12 +1801,11 @@ row_update_for_mysql(row_prebuilt_t* prebuilt)
 
 	clust_index = dict_table_get_first_index(table);
 
-	if (prebuilt->pcur->btr_cur.index == clust_index) {
-		btr_pcur_copy_stored_position(node->pcur, prebuilt->pcur);
-	} else {
-		btr_pcur_copy_stored_position(node->pcur,
-					      prebuilt->clust_pcur);
-	}
+	btr_pcur_copy_stored_position(node->pcur,
+				      prebuilt->pcur->btr_cur.index
+				      == clust_index
+				      ? prebuilt->pcur
+				      : prebuilt->clust_pcur);
 
 	ut_a(node->pcur->rel_pos == BTR_PCUR_ON);
 
@@ -1892,7 +1889,7 @@ row_update_for_mysql(row_prebuilt_t* prebuilt)
 	ut_ad(is_delete == (node->is_delete == PLAIN_DELETE));
 
 	if (is_delete) {
-		/* Not protected by dict_table_stats_lock() for performance
+		/* Not protected by dict_sys->mutex for performance
 		reasons, we would rather get garbage in stat_n_rows (which is
 		just an estimate anyway) than protecting the following code
 		with a latch. */
@@ -2026,7 +2023,8 @@ row_unlock_for_mysql(
 			rec_offs* offsets				= offsets_;
 
 			rec_offs_init(offsets_);
-			offsets = rec_get_offsets(rec, index, offsets, true,
+			offsets = rec_get_offsets(rec, index, offsets,
+						  index->n_core_fields,
 						  ULINT_UNDEFINED, &heap);
 
 			rec_trx_id = row_get_rec_trx_id(rec, index, offsets);
@@ -2104,10 +2102,18 @@ row_mysql_unfreeze_data_dictionary(
 @param	buf	Buffer to hold start time data */
 void thd_get_query_start_data(THD *thd, char *buf);
 
-/** Function restores btr_pcur_t, creates dtuple_t from rec_t,
-sets row_end = CURRENT_TIMESTAMP/trx->id, inserts it to a table and updates
-table statistics.
-This is used in UPDATE CASCADE/SET NULL of a system versioning table.
+/** Insert history row when evaluating foreign key referential action.
+
+1. Create new dtuple_t 'row' from node->historical_row;
+2. Update its row_end to current timestamp;
+3. Insert it to a table;
+4. Update table statistics.
+
+This is used in UPDATE CASCADE/SET NULL of a system versioned referenced table.
+
+node->historical_row: dtuple_t containing pointers of row changed by refertial
+action.
+
 @param[in]	thr	current query thread
 @param[in]	node	a node which just updated a row in a foreign table
 @return DB_SUCCESS or some error */
@@ -2117,11 +2123,19 @@ static dberr_t row_update_vers_insert(que_thr_t* thr, upd_node_t* node)
 	dfield_t* row_end;
 	char row_end_data[8];
 	dict_table_t* table = node->table;
+	page_size_t page_size= dict_table_page_size(table);
 	ut_ad(table->versioned());
 
-	dtuple_t* row = node->historical_row;
-	ut_ad(row);
-	node->historical_row = NULL;
+	dtuple_t*       row;
+	const ulint     n_cols        = dict_table_get_n_cols(table);
+	const ulint     n_v_cols      = dict_table_get_n_v_cols(table);
+
+	ut_ad(n_cols == dtuple_get_n_fields(node->historical_row));
+	ut_ad(n_v_cols == dtuple_get_n_v_fields(node->historical_row));
+
+	row = dtuple_create_with_vcol(node->historical_heap, n_cols, n_v_cols);
+
+	dict_table_copy_types(row, table);
 
 	ins_node_t* insert_node =
 		ins_node_create(INS_DIRECT, table, node->historical_heap);
@@ -2133,6 +2147,40 @@ static dberr_t row_update_vers_insert(que_thr_t* thr, upd_node_t* node)
 
 	insert_node->common.parent = thr;
 	ins_node_set_new_row(insert_node, row);
+
+	ut_ad(n_cols > DATA_N_SYS_COLS);
+	// Exclude DB_ROW_ID, DB_TRX_ID, DB_ROLL_PTR
+	for (ulint i = 0; i < n_cols - DATA_N_SYS_COLS; i++) {
+		dfield_t *src= dtuple_get_nth_field(node->historical_row, i);
+		dfield_t *dst= dtuple_get_nth_field(row, i);
+		dfield_copy(dst, src);
+		if (dfield_is_ext(src)) {
+			byte *field_data
+				= static_cast<byte*>(dfield_get_data(src));
+			ulint ext_len;
+			ulint field_len = dfield_get_len(src);
+
+			ut_a(field_len >= BTR_EXTERN_FIELD_REF_SIZE);
+
+			ut_a(memcmp(field_data + field_len
+				     - BTR_EXTERN_FIELD_REF_SIZE,
+				     field_ref_zero,
+				     BTR_EXTERN_FIELD_REF_SIZE));
+
+			byte *data = btr_copy_externally_stored_field(
+				&ext_len, field_data, page_size, field_len,
+				node->historical_heap);
+			dfield_set_data(dst, data, ext_len);
+		}
+	}
+
+	for (ulint i = 0; i < n_v_cols; i++) {
+		dfield_t *dst= dtuple_get_nth_v_field(row, i);
+		dfield_t *src= dtuple_get_nth_v_field(node->historical_row, i);
+		dfield_copy(dst, src);
+	}
+
+	node->historical_row = NULL;
 
 	row_end = dtuple_get_nth_field(row, table->vers_end);
 	if (dict_table_get_nth_col(table, table->vers_end)->vers_native()) {
@@ -2244,7 +2292,7 @@ row_update_cascade_for_mysql(
 
 			if (node->is_delete == PLAIN_DELETE) {
 				/* Not protected by
-				dict_table_stats_lock() for
+				dict_sys->mutex for
 				performance reasons, we would rather
 				get garbage in stat_n_rows (which is
 				just an estimate anyway) than
@@ -2592,7 +2640,7 @@ row_drop_table_for_mysql_in_background(
 
 	trx_commit_for_mysql(trx);
 
-	trx_free(trx);
+	trx->free();
 
 	return(error);
 }
@@ -2773,7 +2821,7 @@ row_mysql_drop_garbage_tables()
 	btr_pcur_close(&pcur);
 	mtr.commit();
 	row_mysql_unlock_data_dictionary(trx);
-	trx_free(trx);
+	trx->free();
 	mem_heap_free(heap);
 }
 
@@ -3817,7 +3865,7 @@ funct_exit_all_freed:
 
 	trx->op_info = "";
 
-	srv_inc_activity_count();
+	srv_wake_master_thread();
 
 	DBUG_RETURN(err);
 }
@@ -3937,9 +3985,21 @@ loop:
 		avoid accessing dropped fts aux tables in information
 		scheam when parent table still exists.
 		Note: Drop parent table will drop fts aux tables. */
-		char*	parent_table_name;
-		parent_table_name = fts_get_parent_table_name(
-				table_name, strlen(table_name));
+		char*		parent_table_name = NULL;
+		table_id_t	table_id;
+		index_id_t	index_id;
+
+		if (fts_check_aux_table(
+				table_name, &table_id, &index_id)) {
+			dict_table_t* parent_table = dict_table_open_on_id(
+					table_id, TRUE, DICT_TABLE_OP_NORMAL);
+			if (parent_table != NULL) {
+				parent_table_name = mem_strdupl(
+					parent_table->name.m_name,
+					strlen(parent_table->name.m_name));
+				dict_table_close(parent_table, TRUE, FALSE);
+			}
+		}
 
 		if (parent_table_name != NULL) {
 			ut_free(table_name);
@@ -4287,6 +4347,8 @@ row_rename_table_for_mysql(
 			   "END;\n"
 			   , FALSE, trx);
 
+	ut_ad(err != DB_DUPLICATE_KEY);
+
 	/* SYS_TABLESPACES and SYS_DATAFILES need to be updated if
 	the table is in a single-table tablespace. */
 	if (err != DB_SUCCESS || !dict_table_is_file_per_table(table)) {
@@ -4528,12 +4590,20 @@ end:
 		if (err != DB_SUCCESS) {
 
 			if (old_is_tmp) {
-				ib::error() << "In ALTER TABLE "
+				/* In case of copy alter, ignore the
+				loading of foreign key constraint
+				when foreign_key_check is disabled */
+				ib::error_or_warn(trx->check_foreigns)
+					<< "In ALTER TABLE "
 					<< ut_get_name(trx, new_name)
 					<< " has or is referenced in foreign"
 					" key constraints which are not"
 					" compatible with the new table"
 					" definition.";
+				if (!trx->check_foreigns) {
+					err = DB_SUCCESS;
+					goto funct_exit;
+				}
 			} else {
 				ib::error() << "In RENAME TABLE table "
 					<< ut_get_name(trx, new_name)
@@ -4605,7 +4675,7 @@ funct_exit:
 
 		trx_bg->dict_operation_lock_mode = 0;
 		trx_commit_for_mysql(trx_bg);
-		trx_free(trx_bg);
+		trx_bg->free();
 	}
 
 	if (table != NULL) {
@@ -4726,7 +4796,7 @@ func_exit:
 
 	rec = buf + mach_read_from_4(buf);
 
-	offsets = rec_get_offsets(rec, index, offsets_, true,
+	offsets = rec_get_offsets(rec, index, offsets_, index->n_core_fields,
 				  ULINT_UNDEFINED, &heap);
 
 	if (prev_entry != NULL) {

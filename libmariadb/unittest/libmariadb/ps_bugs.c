@@ -522,6 +522,8 @@ static int test_bug12744(MYSQL *mysql)
   MYSQL_STMT *stmt = NULL;
   int rc;
 
+  SKIP_MAXSCALE;
+
   stmt = mysql_stmt_init(mysql);
   FAIL_IF(!stmt, mysql_error(mysql));
   rc= mysql_stmt_prepare(stmt, "SET @a:=1", 9);
@@ -918,7 +920,7 @@ static int test_bug1664(MYSQL *mysql)
 
     /*
       Now we are sending other long data. It should not be
-      concatened to previous.
+      concatenated to previous.
     */
 
     data= (char *)"SomeOtherData";
@@ -2067,6 +2069,7 @@ static int test_bug36004(MYSQL *mysql)
 {
   int rc, warning_count= 0;
   MYSQL_STMT *stmt;
+  SKIP_MAXSCALE;
 
 
   if (mysql_get_server_version(mysql) < 60000) {
@@ -2603,6 +2606,7 @@ static int test_bug5194(MYSQL *mysql)
   const int uint16_max= 65535;
   int nrows, i;
 
+  SKIP_MAXSCALE;
 
   stmt_text= "drop table if exists t1";
   rc= mysql_real_query(mysql, SL(stmt_text));
@@ -2729,6 +2733,7 @@ static int test_bug5315(MYSQL *mysql)
   MYSQL_STMT *stmt;
   const char *stmt_text;
   int rc;
+  SKIP_MAXSCALE;
 
   if (!is_mariadb)
     return SKIP;
@@ -2928,6 +2933,8 @@ static int test_bug6059(MYSQL *mysql)
   const char *stmt_text;
   int rc;
 
+  SKIP_SKYSQL;
+
   stmt_text= "SELECT 'foo' INTO OUTFILE 'x.3'";
 
   stmt= mysql_stmt_init(mysql);
@@ -3035,7 +3042,6 @@ static int test_bug7990(MYSQL *mysql)
   */
   FAIL_UNLESS(rc && mysql_stmt_errno(stmt) && mysql_errno(mysql), "Error expected");
   mysql_stmt_close(stmt);
-  FAIL_UNLESS(!mysql_errno(mysql), "errno != 0");
   return OK;
 }
 
@@ -3051,7 +3057,7 @@ static int test_bug8330(MYSQL *mysql)
   long lval[2]= {1,2};
 
   stmt_text= "drop table if exists t1";
-  /* in case some previos test failed */
+  /* in case some previous test failed */
   rc= mysql_real_query(mysql, SL(stmt_text));
   check_mysql_rc(rc, mysql);
   stmt_text= "create table t1 (a int, b int)";
@@ -3783,6 +3789,7 @@ static int test_bug53311(MYSQL *mysql)
   MYSQL_STMT *stmt;
   int i;
   const char *query= "INSERT INTO bug53311 VALUES (1)";
+  SKIP_MAXSCALE;
 
   rc= mysql_options(mysql, MYSQL_OPT_RECONNECT, "1");
   check_mysql_rc(rc, mysql);
@@ -4541,11 +4548,12 @@ static int test_conc217(MYSQL *mysql)
   MYSQL_STMT *stmt= mysql_stmt_init(mysql);
   int rc;
 
+  SKIP_MAXSCALE;
   rc= mariadb_stmt_execute_direct(stmt, "SELECT 1 FROM nonexisting_table", -1);
   FAIL_IF(rc==0, "Expected error\n");
   rc= mysql_query(mysql, "drop table if exists t_count");
   check_mysql_rc(rc, mysql);
-  rc= mysql_stmt_close(stmt);
+  mysql_stmt_close(stmt);
   check_mysql_rc(rc, mysql);
   return OK;
 }
@@ -4906,7 +4914,7 @@ static int test_conc334(MYSQL *mysql)
   result= mysql_stmt_result_metadata(stmt);
   if (!result)
   {
-    diag("Coudn't retrieve result set");
+    diag("Couldn't retrieve result set");
     mysql_stmt_close(stmt);
     return FAIL;
   }
@@ -5197,7 +5205,123 @@ static int test_mdev_21920(MYSQL *mysql)
   return OK; 
 }
 
+static int test_returning(MYSQL *mysql)
+{
+  MYSQL_STMT *stmt= mysql_stmt_init(mysql);
+  MYSQL_RES *result;
+  int rc;
+
+  diag("MDEV-23768 not fixed yet");
+  mysql_stmt_close(stmt);
+  return SKIP;
+
+  rc= mysql_query(mysql, "CREATE TEMPORARY TABLE t1 (a int not null auto_increment primary key, b json)");
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_query(mysql, "INSERT INTO t1 (a,b) VALUES (NULL, '[incorrect json]') RETURNING a");
+  check_mysql_rc(rc, mysql);
+
+  if (!rc) diag("should have fail");
+
+  result= mysql_store_result(mysql);
+  mysql_free_result(result);
+
+  diag("Error: %s", mysql_error(mysql));
+
+  rc= mysql_stmt_prepare(stmt, SL("INSERT INTO t1 (a,b) VALUES (NULL, '[incorrect json]') RETURNING a"));
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_execute(stmt);
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_close(stmt);
+
+  return OK;
+}
+
+static int test_conc504(MYSQL *mysql)
+{
+  int rc;
+  MYSQL_STMT *stmt= mysql_stmt_init(mysql);
+  const char *sp= "CREATE PROCEDURE p1()\n" \
+                  "BEGIN\n"\
+                  "  SELECT 1;\n"\
+                  "  SELECT 2;\n"\
+                  "  SELECT 3;\n"\
+                  "END";
+
+  rc= mysql_query(mysql, "DROP PROCEDURE IF EXISTS p1");
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_query(mysql, sp);
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_stmt_prepare(stmt, SL("CALL p1()"));
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_execute(stmt);
+  check_stmt_rc(rc, stmt);
+
+  mysql_stmt_store_result(stmt);
+  FAIL_IF(mysql_stmt_num_rows(stmt) != 1, "Expected 1 row");
+
+  mysql_stmt_next_result(stmt);
+  mysql_stmt_store_result(stmt);
+  FAIL_IF(mysql_stmt_num_rows(stmt) != 1, "Expected 1 row");
+
+  mysql_stmt_next_result(stmt);
+  mysql_stmt_store_result(stmt);
+  FAIL_IF(mysql_stmt_num_rows(stmt) != 1, "Expected 1 row");
+
+  mysql_stmt_close(stmt);
+
+  rc= mysql_query(mysql, "DROP PROCEDURE p1");
+  check_mysql_rc(rc, mysql);
+
+  return OK;
+}
+
+static int test_conc512(MYSQL *mysql)
+{
+  int rc;
+  MYSQL_STMT *stmt;
+  MYSQL_BIND bind;
+  float f;
+
+  rc= mysql_query(mysql, "drop table if exists t1");
+
+  rc= mysql_real_query(mysql, SL("CREATE TABLE t1 (a int)"));
+
+  rc= mysql_real_query(mysql, SL("INSERT INTO t1 VALUES (1073741825)"));
+
+  stmt=  mysql_stmt_init(mysql);
+  rc= mysql_stmt_prepare(stmt, SL("SELECT a FROM t1"));
+  check_stmt_rc(rc, stmt);
+
+  memset(&bind, 0, sizeof(MYSQL_BIND));
+  bind.buffer= &f;
+  bind.buffer_type= MYSQL_TYPE_FLOAT;
+
+  rc= mysql_stmt_execute(stmt);
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_bind_result(stmt, &bind);
+  check_stmt_rc(rc, stmt);
+
+  rc= mysql_stmt_fetch(stmt);
+  FAIL_IF(rc != 101, "Truncation expected");
+
+  mysql_stmt_close(stmt);
+
+  rc= mysql_query(mysql, "DROP TABLE t1");
+  check_mysql_rc(rc, mysql);
+  return OK;
+}
+
 struct my_tests_st my_tests[] = {
+  {"test_conc512", test_conc512, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
+  {"test_conc504", test_conc504, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
+  {"test_returning", test_returning, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_mdev_21920", test_mdev_21920, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_maxparam", test_maxparam, TEST_CONNECTION_NEW, 0, NULL, NULL},
   {"test_conc424", test_conc424, TEST_CONNECTION_NEW, 0, NULL, NULL},

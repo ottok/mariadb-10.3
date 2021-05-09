@@ -164,6 +164,9 @@ trx_rollback_to_savepoint_low(
 
 	mem_heap_free(heap);
 
+	/* There might be work for utility threads.*/
+	srv_active_wake_master_thread();
+
 	MONITOR_DEC(MONITOR_TRX_ACTIVE);
 }
 
@@ -802,7 +805,8 @@ void trx_rollback_recovered(bool all)
         srv_fast_shutdown)
       goto discard;
 
-    if (all || trx_get_dict_operation(trx) != TRX_DICT_OP_NONE)
+    if (all || trx_get_dict_operation(trx) != TRX_DICT_OP_NONE
+        || trx->has_stats_table_lock())
     {
       trx_rollback_active(trx);
       if (trx->error_state != DB_SUCCESS)
@@ -832,7 +836,7 @@ discard:
         trx_free_at_shutdown(trx);
       }
       else
-        trx_free(trx);
+        trx->free();
     }
   }
 }

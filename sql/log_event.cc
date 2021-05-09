@@ -2056,7 +2056,7 @@ Log_event* Log_event::read_log_event(const char* buf, uint event_len,
     else
       DBUG_RETURN(NULL);
 #else
-    *error= ER(ER_BINLOG_READ_EVENT_CHECKSUM_FAILURE);
+    *error= ER_THD_OR_DEFAULT(current_thd, ER_BINLOG_READ_EVENT_CHECKSUM_FAILURE);
     sql_print_error("%s", *error);
     DBUG_RETURN(NULL);
 #endif
@@ -3045,6 +3045,16 @@ log_event_print_value(IO_CACHE *file, PRINT_EVENT_INFO *print_event_info,
     fprintf(stderr, "\nError: Found Old DECIMAL (mysql-4.1 or earlier). "
             "Not enough metadata to display the value.\n");
     break;
+
+  case MYSQL_TYPE_GEOMETRY:
+    strmake(typestr, "GEOMETRY", typestr_length);
+    if (!ptr)
+      goto return_null;
+
+    length= uint4korr(ptr);
+    my_b_write_quoted(file, ptr + meta, length);
+    return length + meta;
+
   default:
     print_event_info->flush_for_error();
     fprintf(stderr,
@@ -3875,7 +3885,7 @@ bool Log_event::print_base64(IO_CACHE* file,
       ev->need_flashback_review= need_flashback_review;
       if (print_event_info->verbose)
       {
-        if (ev->print_verbose(file, print_event_info))
+        if (ev->print_verbose(&print_event_info->tail_cache, print_event_info))
           goto err;
       }
       else
@@ -3899,22 +3909,9 @@ bool Log_event::print_base64(IO_CACHE* file,
       }
 #else
       if (print_event_info->verbose)
-      {
-        /*
-          Verbose event printout can't start before encoded data
-          got enquoted. This is done at this point though multi-row
-          statement remain vulnerable.
-          TODO: fix MDEV-10362 to remove this workaround.
-        */
-        if (print_event_info->base64_output_mode !=
-            BASE64_OUTPUT_DECODE_ROWS)
-          my_b_printf(file, "'%s\n", print_event_info->delimiter);
-        error= ev->print_verbose(file, print_event_info);
-      }
+        error= ev->print_verbose(&print_event_info->tail_cache, print_event_info);
       else
-      {
         ev->count_row_events(print_event_info);
-      }
 #endif
       delete ev;
       if (unlikely(error))
@@ -7531,10 +7528,10 @@ error:
   if (thd->transaction_rollback_request)
   {
     trans_rollback_implicit(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
   else if (! thd->in_multi_stmt_transaction_mode())
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   else
     thd->mdl_context.release_statement_locks();
 
@@ -9011,7 +9008,7 @@ int Xid_log_event::do_apply_event(rpl_group_info *rgi)
                     "COMMIT /* implicit, from Xid_log_event */");
   thd->variables.option_bits&= ~OPTION_GTID_BEGIN;
   res= trans_commit(thd); /* Automatically rolls back on error. */
-  thd->mdl_context.release_transactional_locks();
+  thd->release_transactional_locks();
 
 #ifdef WITH_WSREP
   if (WSREP(thd)) mysql_mutex_lock(&thd->LOCK_thd_data);
@@ -11235,7 +11232,7 @@ int Rows_log_event::do_add_row_data(uchar *row_data, size_t length)
   There was the same problem with MERGE MYISAM tables and so here we try to
   go the same way.
 */
-static void restore_empty_query_table_list(LEX *lex)
+inline void restore_empty_query_table_list(LEX *lex)
 {
   if (lex->first_not_own_table())
       (*lex->first_not_own_table()->prev_global)= NULL;
@@ -11250,6 +11247,8 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
   TABLE* table;
   DBUG_ENTER("Rows_log_event::do_apply_event(Relay_log_info*)");
   int error= 0;
+  LEX *lex= thd->lex;
+  uint8 new_trg_event_map= get_trg_event_map();
   /*
     If m_table_id == ~0ULL, then we have a dummy event that does not
     contain any data.  In that case, we just remove all tables in the
@@ -11340,25 +11339,27 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
                       DBUG_ASSERT(!debug_sync_set_action(thd, STRING_WITH_LEN(action)));
                     };);
 
-    if (slave_run_triggers_for_rbr)
+    /*
+       Trigger's procedures work with global table list. So we have to add
+       rgi->tables_to_lock content there to get trigger's in the list.
+
+       Then restore_empty_query_table_list() restore the list as it was
+    */
+    DBUG_ASSERT(lex->query_tables == NULL);
+    if ((lex->query_tables= rgi->tables_to_lock))
+      rgi->tables_to_lock->prev_global= &lex->query_tables;
+
+    for (TABLE_LIST *tables= rgi->tables_to_lock; tables;
+        tables= tables->next_global)
     {
-      LEX *lex= thd->lex;
-      uint8 new_trg_event_map= get_trg_event_map();
-
-      /*
-        Trigger's procedures work with global table list. So we have to add
-        rgi->tables_to_lock content there to get trigger's in the list.
-
-        Then restore_empty_query_table_list() restore the list as it was
-      */
-      DBUG_ASSERT(lex->query_tables == NULL);
-      if ((lex->query_tables= rgi->tables_to_lock))
-        rgi->tables_to_lock->prev_global= &lex->query_tables;
-
-      for (TABLE_LIST *tables= rgi->tables_to_lock; tables;
-           tables= tables->next_global)
+      if (slave_run_triggers_for_rbr)
       {
         tables->trg_event_map= new_trg_event_map;
+        lex->query_tables_last= &tables->next_global;
+      }
+      else
+      {
+        tables->slave_fk_event_map= new_trg_event_map;
         lex->query_tables_last= &tables->next_global;
       }
     }
@@ -11710,8 +11711,7 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
   }
 
   /* remove trigger's tables */
-  if (slave_run_triggers_for_rbr)
-    restore_empty_query_table_list(thd->lex);
+  restore_empty_query_table_list(thd->lex);
 
 #if defined(WITH_WSREP) && defined(HAVE_QUERY_CACHE)
     if (WSREP(thd) && thd->wsrep_exec_mode == REPL_RECV)
@@ -11730,8 +11730,7 @@ int Rows_log_event::do_apply_event(rpl_group_info *rgi)
   DBUG_RETURN(error);
 
 err:
-  if (slave_run_triggers_for_rbr)
-    restore_empty_query_table_list(thd->lex);
+  restore_empty_query_table_list(thd->lex);
   rgi->slave_close_thread_tables(thd);
   DBUG_RETURN(error);
 }
@@ -11992,7 +11991,7 @@ bool copy_cache_to_file_wrapped(IO_CACHE *body,
                                 FILE *file,
                                 bool do_wrap,
                                 const char *delimiter,
-                                bool is_verbose)
+                                bool is_verbose /*TODO: remove */)
 {
   const my_off_t cache_size= my_b_tell(body);
 
@@ -12025,8 +12024,7 @@ bool copy_cache_to_file_wrapped(IO_CACHE *body,
     my_fprintf(file, fmt_frag, 1);
     if (my_b_copy_to_file(body, file, SIZE_T_MAX))
       goto err;
-    if (!is_verbose)
-      my_fprintf(file, fmt_delim, delimiter);
+    my_fprintf(file, fmt_delim, delimiter);
 
     my_fprintf(file, fmt_binlog2, delimiter);
   }
@@ -12035,8 +12033,7 @@ bool copy_cache_to_file_wrapped(IO_CACHE *body,
     my_fprintf(file, str_binlog);
     if (my_b_copy_to_file(body, file, SIZE_T_MAX))
       goto err;
-    if (!is_verbose)
-      my_fprintf(file, fmt_delim, delimiter);
+    my_fprintf(file, fmt_delim, delimiter);
   }
   reinit_io_cache(body, WRITE_CACHE, 0, FALSE, TRUE);
 
@@ -12122,7 +12119,6 @@ bool copy_cache_to_string_wrapped(IO_CACHE *cache,
       goto err;
     str += (add_to_len= uint32(cache->end_of_file - (cache_size/2 + 1)));
     to->length += add_to_len;
-    if (!is_verbose)
     {
       str += (add_to_len= sprintf(str , fmt_delim, delimiter));
       to->length += add_to_len;
@@ -12138,7 +12134,6 @@ bool copy_cache_to_string_wrapped(IO_CACHE *cache,
       goto err;
     str += cache->end_of_file;
     to->length += (size_t)cache->end_of_file;
-    if (!is_verbose)
       to->length += sprintf(str , fmt_delim, delimiter);
   }
 
@@ -12186,6 +12181,7 @@ bool Rows_log_event::print_helper(FILE *file,
 {
   IO_CACHE *const head= &print_event_info->head_cache;
   IO_CACHE *const body= &print_event_info->body_cache;
+  IO_CACHE *const tail= &print_event_info->tail_cache;
 #ifdef WHEN_FLASHBACK_REVIEW_READY
   IO_CACHE *const sql= &print_event_info->review_sql_cache;
 #endif
@@ -12216,7 +12212,8 @@ bool Rows_log_event::print_helper(FILE *file,
       if (copy_event_cache_to_file_and_reinit(head, file) ||
           copy_cache_to_file_wrapped(body, file, do_print_encoded,
                                      print_event_info->delimiter,
-                                     print_event_info->verbose))
+                                     print_event_info->verbose) ||
+          copy_event_cache_to_file_and_reinit(tail, file))
         goto err;
     }
     else
@@ -12234,6 +12231,11 @@ bool Rows_log_event::print_helper(FILE *file,
       return 1;
     output_buf.append(tmp_str.str, tmp_str.length);
     my_free(tmp_str.str);
+    if (copy_event_cache_to_string_and_reinit(tail, &tmp_str))
+      return 1;
+    output_buf.append(tmp_str.str, tmp_str.length);
+    my_free(tmp_str.str);
+
 #ifdef WHEN_FLASHBACK_REVIEW_READY
     if (copy_event_cache_to_string_and_reinit(sql, &tmp_str))
       return 1;
@@ -13697,11 +13699,11 @@ int Rows_log_event::update_sequence()
     /* This event come from a setval function executed on the master.
        Update the sequence next_number and round, like we do with setval()
     */
-    my_bitmap_map *old_map= dbug_tmp_use_all_columns(table,
-                                                     table->read_set);
+    MY_BITMAP *old_map= dbug_tmp_use_all_columns(table,
+                                                 &table->read_set);
     longlong nextval= table->field[NEXT_FIELD_NO]->val_int();
     longlong round= table->field[ROUND_FIELD_NO]->val_int();
-    dbug_tmp_restore_column_map(table->read_set, old_map);
+    dbug_tmp_restore_column_map(&table->read_set, old_map);
 
     return table->s->sequence->set_value(table, nextval, round, 0) > 0;
   }
@@ -15056,6 +15058,7 @@ st_print_event_info::st_print_event_info()
   base64_output_mode=BASE64_OUTPUT_UNSPEC;
   open_cached_file(&head_cache, NULL, NULL, 0, flags);
   open_cached_file(&body_cache, NULL, NULL, 0, flags);
+  open_cached_file(&tail_cache, NULL, NULL, 0, flags);
 #ifdef WHEN_FLASHBACK_REVIEW_READY
   open_cached_file(&review_sql_cache, NULL, NULL, 0, flags);
 #endif
@@ -15094,14 +15097,23 @@ bool copy_event_cache_to_file_and_reinit(IO_CACHE *cache, FILE *file)
 }
 
 #if defined(HAVE_REPLICATION) && !defined(MYSQL_CLIENT)
-Heartbeat_log_event::Heartbeat_log_event(const char* buf, uint event_len,
+Heartbeat_log_event::Heartbeat_log_event(const char* buf, ulong event_len,
                     const Format_description_log_event* description_event)
   :Log_event(buf, description_event)
 {
   uint8 header_size= description_event->common_header_len;
-  ident_len = event_len - header_size;
-  set_if_smaller(ident_len,FN_REFLEN-1);
-  log_ident= buf + header_size;
+  if (log_pos == 0)
+  {
+    log_pos= uint8korr(buf + header_size);
+    log_ident= buf + header_size + HB_SUB_HEADER_LEN;
+    ident_len= event_len - (header_size + HB_SUB_HEADER_LEN);
+  }
+  else
+  {
+    log_ident= buf + header_size;
+    ident_len = event_len - header_size;
+  }
+
 }
 #endif
 

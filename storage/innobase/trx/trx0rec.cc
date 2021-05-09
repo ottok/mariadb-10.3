@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2019, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2020, MariaDB Corporation.
+Copyright (c) 2017, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -141,15 +141,18 @@ trx_undo_parse_add_undo_rec(
 }
 
 /** Calculate the free space left for extending an undo log record.
-@param[in]	undo_block	undo log page
-@param[in]	ptr		current end of the undo page
+@param block   undo log page
+@param ptr     current end of the undo page
 @return bytes left */
-static ulint trx_undo_left(const buf_block_t* undo_block, const byte* ptr)
+static ulint trx_undo_left(const buf_block_t *undo_block, const byte *ptr)
 {
-	/* The 10 is a safety margin, in case we have some small
-	calculation error below */
-	return srv_page_size - ulint(ptr - undo_block->frame)
-		- (10 + FIL_PAGE_DATA_END);
+  ut_ad(ptr >= &undo_block->frame[TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_HDR_SIZE]);
+  /* The 10 is supposed to be an extra safety margin (and needed for
+  compatibility with older versions) */
+  lint left= srv_page_size - (ptr - undo_block->frame) -
+    (10 + FIL_PAGE_DATA_END);
+  ut_ad(left >= 0);
+  return left < 0 ? 0 : static_cast<ulint>(left);
 }
 
 /**********************************************************************//**
@@ -1915,7 +1918,6 @@ dberr_t trx_undo_report_rename(trx_t* trx, const dict_table_t* table)
 
 			if (ulint offset = trx_undo_page_report_rename(
 				    trx, table, block, &mtr)) {
-				undo->withdraw_clock = buf_withdraw_clock;
 				undo->top_page_no = undo->last_page_no;
 				undo->top_offset  = offset;
 				undo->top_undo_no = trx->undo_no++;
@@ -2055,7 +2057,6 @@ trx_undo_report_row_operation(
 			mtr_commit(&mtr);
 		} else {
 			/* Success */
-			undo->withdraw_clock = buf_withdraw_clock;
 			mtr_commit(&mtr);
 
 			undo->top_page_no = undo_block->page.id.page_no();
@@ -2377,7 +2378,11 @@ trx_undo_prev_version_build(
 		/* The page containing the clustered index record
 		corresponding to entry is latched in mtr.  Thus the
 		following call is safe. */
-		row_upd_index_replace_new_col_vals(entry, index, update, heap);
+		if (!row_upd_index_replace_new_col_vals(entry, *index, update,
+							heap)) {
+			ut_a(v_status & TRX_UNDO_PREV_IN_PURGE);
+			return false;
+		}
 
 		/* Get number of externally stored columns in updated record */
 		const ulint n_ext = dtuple_get_n_ext(entry);
@@ -2407,7 +2412,8 @@ trx_undo_prev_version_build(
 	rec_offs offsets_dbg[REC_OFFS_NORMAL_SIZE];
 	rec_offs_init(offsets_dbg);
 	ut_a(!rec_offs_any_null_extern(
-		*old_vers, rec_get_offsets(*old_vers, index, offsets_dbg, true,
+		*old_vers, rec_get_offsets(*old_vers, index, offsets_dbg,
+					   index->n_core_fields,
 					   ULINT_UNDEFINED, &heap)));
 #endif // defined UNIV_DEBUG || defined UNIV_BLOB_LIGHT_DEBUG
 

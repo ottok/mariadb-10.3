@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2020, MariaDB
+   Copyright (c) 2008, 2021, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -102,6 +102,8 @@
 #include "sql_sequence.h"
 
 #include "my_json_writer.h" 
+
+#define PRIV_LOCK_TABLES (SELECT_ACL | LOCK_TABLES_ACL)
 
 #define FLAGSTR(V,F) ((V)&(F)?#F" ":"")
 
@@ -583,19 +585,21 @@ void init_update_queries(void)
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_UPDATES_DATA | CF_SP_BULK_SAFE;
+                                            CF_UPDATES_DATA |
+                                            CF_PS_ARRAY_BINDING_SAFE;
   sql_command_flags[SQLCOM_UPDATE_MULTI]=   CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_UPDATES_DATA | CF_SP_BULK_SAFE;
+                                            CF_UPDATES_DATA |
+                                            CF_PS_ARRAY_BINDING_SAFE;
   sql_command_flags[SQLCOM_INSERT]=	    CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
                                             CF_INSERTS_DATA |
-                                            CF_SP_BULK_SAFE |
-                                            CF_SP_BULK_OPTIMIZED;
+                                            CF_PS_ARRAY_BINDING_SAFE |
+                                            CF_PS_ARRAY_BINDING_OPTIMIZED;
   sql_command_flags[SQLCOM_INSERT_SELECT]=  CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
@@ -605,7 +609,8 @@ void init_update_queries(void)
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_SP_BULK_SAFE | CF_DELETES_DATA;
+                                            CF_DELETES_DATA |
+                                            CF_PS_ARRAY_BINDING_SAFE;
   sql_command_flags[SQLCOM_DELETE_MULTI]=   CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
@@ -615,8 +620,9 @@ void init_update_queries(void)
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
                                             CF_CAN_BE_EXPLAINED |
-                                            CF_INSERTS_DATA | CF_SP_BULK_SAFE |
-                                            CF_SP_BULK_OPTIMIZED;
+                                            CF_INSERTS_DATA |
+                                            CF_PS_ARRAY_BINDING_SAFE |
+                                            CF_PS_ARRAY_BINDING_OPTIMIZED;
   sql_command_flags[SQLCOM_REPLACE_SELECT]= CF_CHANGES_DATA | CF_REEXECUTION_FRAGILE |
                                             CF_CAN_GENERATE_ROW_EVENTS |
                                             CF_OPTIMIZER_TRACE |
@@ -1074,7 +1080,6 @@ static void handle_bootstrap_impl(THD *thd)
 
     thd->reset_kill_query();  /* Ensure that killed_errmsg is released */
     free_root(thd->mem_root,MYF(MY_KEEP_PREALLOC));
-    free_root(&thd->transaction.mem_root,MYF(MY_KEEP_PREALLOC));
     thd->lex->restore_set_statement_var();
   }
 
@@ -2053,7 +2058,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
         locks.
       */
       trans_rollback_implicit(thd);
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
     }
 
     thd->cleanup_after_query();
@@ -2118,7 +2123,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     ulonglong options= (ulonglong) (uchar) packet[0];
     if (trans_commit_implicit(thd))
       break;
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     if (check_global_access(thd,RELOAD_ACL))
       break;
     general_log_print(thd, command, NullS);
@@ -2151,7 +2156,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     if (trans_commit_implicit(thd))
       break;
     close_thread_tables(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     my_ok(thd);
     break;
   }
@@ -2197,6 +2202,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
       break;
     general_log_print(thd, command, NullS);
     status_var_increment(thd->status_var.com_stat[SQLCOM_SHOW_STATUS]);
+    *current_global_status_var= global_status_var;
     calc_sum_of_all_status(current_global_status_var);
     if (!(uptime= (ulong) (thd->start_time - server_start_time)))
       queries_per_second1000= 0;
@@ -2913,6 +2919,36 @@ retry:
           goto err;
       }
     }
+    /*
+       Check privileges of view tables here, after views were opened.
+       Either definer or invoker has to have PRIV_LOCK_TABLES to be able
+       to lock view and its tables. For mysqldump (that locks views
+       before dumping their structures) compatibility we allow locking
+       views that select from I_S or P_S tables, but downrade the lock
+       to TL_READ
+     */
+    if (table->belong_to_view &&
+        check_single_table_access(thd, PRIV_LOCK_TABLES, table, 1))
+    {
+      if (table->grant.m_internal.m_schema_access)
+        table->lock_type= TL_READ;
+      else
+      {
+        bool error= true;
+        if (Security_context *sctx= table->security_ctx)
+        {
+          table->security_ctx= 0;
+          error= check_single_table_access(thd, PRIV_LOCK_TABLES, table, 1);
+          table->security_ctx= sctx;
+        }
+        if (error)
+        {
+          my_error(ER_VIEW_INVALID, MYF(0), table->belong_to_view->view_db.str,
+                   table->belong_to_view->view_name.str);
+          goto err;
+        }
+      }
+    }
   }
 
   if (lock_tables(thd, tables, counter, 0) ||
@@ -2936,7 +2972,7 @@ err:
   /* Close tables and release metadata locks. */
   close_thread_tables(thd);
   DBUG_ASSERT(!thd->locked_tables_mode);
-  thd->mdl_context.release_transactional_locks();
+  thd->release_transactional_locks();
   return TRUE;
 }
 
@@ -3235,6 +3271,146 @@ bool Sql_cmd_call::execute(THD *thd)
 
 
 /**
+  Check whether the SQL statement being processed is prepended by
+  SET STATEMENT clause and handle variables assignment if it is.
+
+  @param thd  thread handle
+  @param lex  current lex
+
+  @return false in case of success, true in case of error.
+*/
+
+bool run_set_statement_if_requested(THD *thd, LEX *lex)
+{
+  if (!lex->stmt_var_list.is_empty() && !thd->slave_thread)
+  {
+    Query_arena backup;
+    DBUG_PRINT("info", ("SET STATEMENT %d vars", lex->stmt_var_list.elements));
+
+    lex->old_var_list.empty();
+    List_iterator_fast<set_var_base> it(lex->stmt_var_list);
+    set_var_base *var;
+
+    if (lex->set_arena_for_set_stmt(&backup))
+      return true;
+
+    MEM_ROOT *mem_root= thd->mem_root;
+    while ((var= it++))
+    {
+      DBUG_ASSERT(var->is_system());
+      set_var *o= NULL, *v= (set_var*)var;
+      if (!v->var->is_set_stmt_ok())
+      {
+        my_error(ER_SET_STATEMENT_NOT_SUPPORTED, MYF(0), v->var->name.str);
+        lex->reset_arena_for_set_stmt(&backup);
+        lex->old_var_list.empty();
+        lex->free_arena_for_set_stmt();
+        return true;
+      }
+      if (v->var->session_is_default(thd))
+        o= new set_var(thd,v->type, v->var, &v->base, NULL);
+      else
+      {
+        switch (v->var->option.var_type & GET_TYPE_MASK)
+        {
+          case GET_BOOL:
+          case GET_INT:
+          case GET_LONG:
+          case GET_LL:
+          {
+            bool null_value;
+            longlong val= v->var->val_int(&null_value, thd, v->type, &v->base);
+            o= new set_var(thd, v->type, v->var, &v->base,
+                           (null_value ?
+                            (Item *) new (mem_root) Item_null(thd) :
+                            (Item *) new (mem_root) Item_int(thd, val)));
+          }
+          break;
+          case GET_UINT:
+          case GET_ULONG:
+          case GET_ULL:
+          {
+            bool null_value;
+            ulonglong val= v->var->val_int(&null_value, thd, v->type, &v->base);
+            o= new set_var(thd, v->type, v->var, &v->base,
+                           (null_value ?
+                            (Item *) new (mem_root) Item_null(thd) :
+                            (Item *) new (mem_root) Item_uint(thd, val)));
+          }
+          break;
+          case GET_DOUBLE:
+          {
+            bool null_value;
+            double val= v->var->val_real(&null_value, thd, v->type, &v->base);
+            o= new set_var(thd, v->type, v->var, &v->base,
+                           (null_value ?
+                            (Item *) new (mem_root) Item_null(thd) :
+                            (Item *) new (mem_root) Item_float(thd, val, 1)));
+          }
+          break;
+          default:
+          case GET_NO_ARG:
+          case GET_DISABLED:
+            DBUG_ASSERT(0);
+            /* fall through */
+          case 0:
+          case GET_FLAGSET:
+          case GET_ENUM:
+          case GET_SET:
+          case GET_STR:
+          case GET_STR_ALLOC:
+          {
+            char buff[STRING_BUFFER_USUAL_SIZE];
+            String tmp(buff, sizeof(buff), v->var->charset(thd)),*val;
+            val= v->var->val_str(&tmp, thd, v->type, &v->base);
+            if (val)
+            {
+              Item_string *str=
+		new (mem_root) Item_string(thd, v->var->charset(thd),
+                                           val->ptr(), val->length());
+              o= new set_var(thd, v->type, v->var, &v->base, str);
+            }
+            else
+              o= new set_var(thd, v->type, v->var, &v->base,
+                             new (mem_root) Item_null(thd));
+          }
+          break;
+        }
+      }
+      DBUG_ASSERT(o);
+      lex->old_var_list.push_back(o, thd->mem_root);
+    }
+    lex->reset_arena_for_set_stmt(&backup);
+
+    if (lex->old_var_list.is_empty())
+      lex->free_arena_for_set_stmt();
+
+    if (thd->is_error() ||
+        sql_set_variables(thd, &lex->stmt_var_list, false))
+    {
+      if (!thd->is_error())
+        my_error(ER_WRONG_ARGUMENTS, MYF(0), "SET");
+      lex->restore_set_statement_var();
+      return true;
+    }
+    /*
+      The value of last_insert_id is remembered in THD to be written to binlog
+      when it's used *the first time* in the statement. But SET STATEMENT
+      must read the old value of last_insert_id to be able to restore it at
+      the end. This should not count at "reading of last_insert_id" and
+      should not remember last_insert_id for binlog. That is, it should clear
+      stmt_depends_on_first_successful_insert_id_in_prev_stmt flag.
+    */
+    if (!thd->in_sub_stmt)
+    {
+      thd->stmt_depends_on_first_successful_insert_id_in_prev_stmt= 0;
+    }
+  }
+  return false;
+}
+
+
+/**
   Execute command saved in thd and lex->sql_command.
 
   @param thd                       Thread handle
@@ -3447,6 +3623,11 @@ mysql_execute_command(THD *thd)
 #ifdef HAVE_REPLICATION
   } /* endif unlikely slave */
 #endif
+  /* store old value of binlog format */
+  enum_binlog_format orig_binlog_format,orig_current_stmt_binlog_format;
+
+  thd->get_binlog_format(&orig_binlog_format,
+                         &orig_current_stmt_binlog_format);
 #ifdef WITH_WSREP
   if  (wsrep && WSREP(thd))
   {
@@ -3498,133 +3679,13 @@ mysql_execute_command(THD *thd)
 
   DBUG_ASSERT(thd->transaction.stmt.modified_non_trans_table == FALSE);
 
-  /* store old value of binlog format */
-  enum_binlog_format orig_binlog_format,orig_current_stmt_binlog_format;
-
-  thd->get_binlog_format(&orig_binlog_format,
-                         &orig_current_stmt_binlog_format);
-
-  if (!lex->stmt_var_list.is_empty() && !thd->slave_thread)
-  {
-    Query_arena backup;
-    DBUG_PRINT("info", ("SET STATEMENT %d vars", lex->stmt_var_list.elements));
-
-    lex->old_var_list.empty();
-    List_iterator_fast<set_var_base> it(lex->stmt_var_list);
-    set_var_base *var;
-
-    if (lex->set_arena_for_set_stmt(&backup))
-      goto error;
-
-    MEM_ROOT *mem_root= thd->mem_root;
-    while ((var= it++))
-    {
-      DBUG_ASSERT(var->is_system());
-      set_var *o= NULL, *v= (set_var*)var;
-      if (!v->var->is_set_stmt_ok())
-      {
-        my_error(ER_SET_STATEMENT_NOT_SUPPORTED, MYF(0), v->var->name.str);
-        lex->reset_arena_for_set_stmt(&backup);
-        lex->old_var_list.empty();
-        lex->free_arena_for_set_stmt();
-        goto error;
-      }
-      if (v->var->session_is_default(thd))
-          o= new set_var(thd,v->type, v->var, &v->base, NULL);
-      else
-      {
-        switch (v->var->option.var_type & GET_TYPE_MASK)
-        {
-        case GET_BOOL:
-        case GET_INT:
-        case GET_LONG:
-        case GET_LL:
-          {
-            bool null_value;
-            longlong val= v->var->val_int(&null_value, thd, v->type, &v->base);
-            o= new set_var(thd, v->type, v->var, &v->base,
-                           (null_value ?
-                            (Item *) new (mem_root) Item_null(thd) :
-                            (Item *) new (mem_root) Item_int(thd, val)));
-          }
-          break;
-        case GET_UINT:
-        case GET_ULONG:
-        case GET_ULL:
-          {
-            bool null_value;
-            ulonglong val= v->var->val_int(&null_value, thd, v->type, &v->base);
-            o= new set_var(thd, v->type, v->var, &v->base,
-                           (null_value ?
-                            (Item *) new (mem_root) Item_null(thd) :
-                            (Item *) new (mem_root) Item_uint(thd, val)));
-          }
-          break;
-        case GET_DOUBLE:
-          {
-            bool null_value;
-            double val= v->var->val_real(&null_value, thd, v->type, &v->base);
-            o= new set_var(thd, v->type, v->var, &v->base,
-                           (null_value ?
-                            (Item *) new (mem_root) Item_null(thd) :
-                            (Item *) new (mem_root) Item_float(thd, val, 1)));
-          }
-          break;
-        default:
-        case GET_NO_ARG:
-        case GET_DISABLED:
-          DBUG_ASSERT(0);
-          /* fall through */
-        case 0:
-        case GET_FLAGSET:
-        case GET_ENUM:
-        case GET_SET:
-        case GET_STR:
-        case GET_STR_ALLOC:
-          {
-            char buff[STRING_BUFFER_USUAL_SIZE];
-            String tmp(buff, sizeof(buff), v->var->charset(thd)),*val;
-            val= v->var->val_str(&tmp, thd, v->type, &v->base);
-            if (val)
-            {
-              Item_string *str= new (mem_root) Item_string(thd, v->var->charset(thd),
-                                                val->ptr(), val->length());
-              o= new set_var(thd, v->type, v->var, &v->base, str);
-            }
-            else
-              o= new set_var(thd, v->type, v->var, &v->base,
-                             new (mem_root) Item_null(thd));
-          }
-          break;
-        }
-      }
-      DBUG_ASSERT(o);
-      lex->old_var_list.push_back(o, thd->mem_root);
-    }
-    lex->reset_arena_for_set_stmt(&backup);
-    if (lex->old_var_list.is_empty())
-      lex->free_arena_for_set_stmt();
-    if (thd->is_error() ||
-        (res= sql_set_variables(thd, &lex->stmt_var_list, false)))
-    {
-      if (!thd->is_error())
-        my_error(ER_WRONG_ARGUMENTS, MYF(0), "SET");
-      lex->restore_set_statement_var();
-      goto error;
-    }
-    /*
-      The value of last_insert_id is remembered in THD to be written to binlog
-      when it's used *the first time* in the statement. But SET STATEMENT
-      must read the old value of last_insert_id to be able to restore it at
-      the end. This should not count at "reading of last_insert_id" and
-      should not remember last_insert_id for binlog. That is, it should clear
-      stmt_depends_on_first_successful_insert_id_in_prev_stmt flag.
-    */
-    if (!thd->in_sub_stmt)
-    {
-      thd->stmt_depends_on_first_successful_insert_id_in_prev_stmt= 0;
-    }
-  }
+  /*
+    Assign system variables with values specified by the clause
+    SET STATEMENT var1=value1 [, var2=value2, ...] FOR <statement>
+    if they are any.
+  */
+  if (run_set_statement_if_requested(thd, lex))
+    goto error;
 
   if (thd->lex->mi.connection_name.str == NULL)
       thd->lex->mi.connection_name= thd->variables.default_master_connection;
@@ -3659,7 +3720,7 @@ mysql_execute_command(THD *thd)
       /* Commit the normal transaction if one is active. */
       bool commit_failed= trans_commit_implicit(thd);
       /* Release metadata locks acquired in this transaction. */
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       if (commit_failed)
       {
         WSREP_DEBUG("implicit commit failed, MDL released: %lld",
@@ -4903,7 +4964,7 @@ mysql_execute_command(THD *thd)
     {
       res= trans_commit_implicit(thd);
       thd->locked_tables_list.unlock_locked_tables(thd);
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       thd->variables.option_bits&= ~(OPTION_TABLE_LOCK);
     }
     if (thd->global_read_lock.is_acquired())
@@ -4917,7 +4978,7 @@ mysql_execute_command(THD *thd)
     res= trans_commit_implicit(thd);
     thd->locked_tables_list.unlock_locked_tables(thd);
     /* Release transactional metadata locks. */
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     if (res)
       goto error;
 
@@ -5300,7 +5361,7 @@ mysql_execute_command(THD *thd)
     if (first_table && lex->type & (REFRESH_READ_LOCK|REFRESH_FOR_EXPORT))
     {
       /* Check table-level privileges. */
-      if (check_table_access(thd, LOCK_TABLES_ACL | SELECT_ACL, all_tables,
+      if (check_table_access(thd, PRIV_LOCK_TABLES, all_tables,
                              FALSE, UINT_MAX, FALSE))
         goto error;
 
@@ -5498,7 +5559,7 @@ mysql_execute_command(THD *thd)
     DBUG_PRINT("info", ("Executing SQLCOM_BEGIN  thd: %p", thd));
     if (trans_begin(thd, lex->start_transaction_opt))
     {
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
       WSREP_DEBUG("BEGIN failed, MDL released: %lld",
                   (longlong) thd->thread_id);
       goto error;
@@ -5516,7 +5577,7 @@ mysql_execute_command(THD *thd)
                       (thd->variables.completion_type == 2 &&
                        lex->tx_release != TVL_NO));
     bool commit_failed= trans_commit(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
     if (commit_failed)
     {
       WSREP_DEBUG("COMMIT failed, MDL released: %lld",
@@ -5567,7 +5628,7 @@ mysql_execute_command(THD *thd)
                       (thd->variables.completion_type == 2 &&
                        lex->tx_release != TVL_NO));
     bool rollback_failed= trans_rollback(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
 
     if (rollback_failed)
     {
@@ -5678,23 +5739,20 @@ mysql_execute_command(THD *thd)
           ! lex->spname->m_explicit_name)
       {
         /* DROP FUNCTION <non qualified name> */
-        udf_func *udf = find_udf(lex->spname->m_name.str,
-                                 lex->spname->m_name.length);
-        if (udf)
+        enum drop_udf_result rc= mysql_drop_function(thd,
+                                                     &lex->spname->m_name);
+        if (rc == UDF_DEL_RESULT_DELETED)
         {
-          if (check_access(thd, DELETE_ACL, "mysql", NULL, NULL, 1, 0))
-            goto error;
-
-          if (!(res = mysql_drop_function(thd, &lex->spname->m_name)))
-          {
-            my_ok(thd);
-            break;
-          }
-          my_error(ER_SP_DROP_FAILED, MYF(0),
-                   "FUNCTION (UDF)", lex->spname->m_name.str);
-          goto error;
+          my_ok(thd);
+          break;
         }
 
+        if (rc == UDF_DEL_RESULT_ERROR)
+          goto error;
+
+        DBUG_ASSERT(rc == UDF_DEL_RESULT_ABSENT);
+
+        // If there was no current database, so it can not be SP
         if (lex->spname->m_db.str == NULL)
         {
           if (lex->if_exists())
@@ -5883,7 +5941,6 @@ mysql_execute_command(THD *thd)
   case SQLCOM_XA_COMMIT:
   {
     bool commit_failed= trans_xa_commit(thd);
-    thd->mdl_context.release_transactional_locks();
     if (commit_failed)
     {
       WSREP_DEBUG("XA commit failed, MDL released: %lld",
@@ -5901,7 +5958,6 @@ mysql_execute_command(THD *thd)
   case SQLCOM_XA_ROLLBACK:
   {
     bool rollback_failed= trans_xa_rollback(thd);
-    thd->mdl_context.release_transactional_locks();
     if (rollback_failed)
     {
       WSREP_DEBUG("XA rollback failed, MDL released: %lld",
@@ -6129,7 +6185,7 @@ finish:
     */
     THD_STAGE_INFO(thd, stage_rollback_implicit);
     trans_rollback_implicit(thd);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
   else if (stmt_causes_implicit_commit(thd, CF_IMPLICIT_COMMIT_END))
   {
@@ -6143,7 +6199,7 @@ finish:
       /* Commit the normal transaction if one is active. */
       trans_commit_implicit(thd);
       thd->get_stmt_da()->set_overwrite_status(false);
-      thd->mdl_context.release_transactional_locks();
+      thd->release_transactional_locks();
     }
   }
   else if (! thd->in_sub_stmt && ! thd->in_multi_stmt_transaction_mode())
@@ -6158,7 +6214,7 @@ finish:
       - If in autocommit mode, or outside a transactional context,
       automatically release metadata locks of the current statement.
     */
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
   else if (! thd->in_sub_stmt)
   {
@@ -6182,7 +6238,7 @@ finish:
   {
     WSREP_DEBUG("Forcing release of transactional locks for thd: %lld",
                 (longlong) thd->thread_id);
-    thd->mdl_context.release_transactional_locks();
+    thd->release_transactional_locks();
   }
 #endif /* WITH_WSREP */
 
@@ -6667,7 +6723,7 @@ check_access(THD *thd, ulong want_access, const char *db, ulong *save_priv,
 
   @param thd                    Thread handler
   @param privilege              requested privilege
-  @param all_tables             global table list of query
+  @param tables                 global table list of query
   @param no_errors              FALSE/TRUE - report/don't report error to
                             the client (using my_error() call).
 
@@ -6677,28 +6733,28 @@ check_access(THD *thd, ulong want_access, const char *db, ulong *save_priv,
     1   access denied, error is sent to client
 */
 
-bool check_single_table_access(THD *thd, ulong privilege, 
-                               TABLE_LIST *all_tables, bool no_errors)
+bool check_single_table_access(THD *thd, ulong privilege, TABLE_LIST *tables,
+                               bool no_errors)
 {
-  Switch_to_definer_security_ctx backup_sctx(thd, all_tables);
+  if (tables->derived)
+    return 0;
+
+  Switch_to_definer_security_ctx backup_sctx(thd, tables);
 
   const char *db_name;
-  if ((all_tables->view || all_tables->field_translation) &&
-      !all_tables->schema_table)
-    db_name= all_tables->view_db.str;
+  if ((tables->view || tables->field_translation) && !tables->schema_table)
+    db_name= tables->view_db.str;
   else
-    db_name= all_tables->db.str;
+    db_name= tables->db.str;
 
-  if (check_access(thd, privilege, db_name,
-                   &all_tables->grant.privilege,
-                   &all_tables->grant.m_internal,
-                   0, no_errors))
+  if (check_access(thd, privilege, db_name, &tables->grant.privilege,
+                   &tables->grant.m_internal, 0, no_errors))
     return 1;
 
   /* Show only 1 table for check_grant */
-  if (!(all_tables->belong_to_view &&
-        (thd->lex->sql_command == SQLCOM_SHOW_FIELDS)) &&
-      check_grant(thd, privilege, all_tables, FALSE, 1, no_errors))
+  if (!(tables->belong_to_view &&
+       (thd->lex->sql_command == SQLCOM_SHOW_FIELDS)) &&
+      check_grant(thd, privilege, tables, FALSE, 1, no_errors))
     return 1;
 
   return 0;
@@ -7384,9 +7440,14 @@ void THD::reset_for_next_command(bool do_clear_error)
 
   save_prep_leaf_list= false;
 
-  DBUG_PRINT("debug",
-             ("is_current_stmt_binlog_format_row(): %d",
-              is_current_stmt_binlog_format_row()));
+#ifdef WITH_WSREP
+#if !defined(DBUG_OFF)
+  if (mysql_bin_log.is_open())
+#endif
+#endif
+    DBUG_PRINT("debug",
+               ("is_current_stmt_binlog_format_row(): %d",
+                is_current_stmt_binlog_format_row()));
 
   DBUG_VOID_RETURN;
 }
@@ -7431,6 +7492,7 @@ mysql_new_select(LEX *lex, bool move_down, SELECT_LEX *select_lex)
 {
   THD *thd= lex->thd;
   bool new_select= select_lex == NULL;
+  Name_resolution_context *curr_context= lex->context_stack.head();
   DBUG_ENTER("mysql_new_select");
 
   if (new_select)
@@ -7468,7 +7530,8 @@ mysql_new_select(LEX *lex, bool move_down, SELECT_LEX *select_lex)
       By default we assume that it is usual subselect and we have outer name
       resolution context, if no we will assign it to 0 later
     */
-    select_lex->context.outer_context= &select_lex->outer_select()->context;
+
+    select_lex->context.outer_context= curr_context;
   }
   else
   {
@@ -7727,7 +7790,6 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
                  bool is_com_multi,
                  bool is_next_command)
 {
-  int error __attribute__((unused));
   DBUG_ENTER("mysql_parse");
   DBUG_EXECUTE_IF("parser_debug", turn_parser_debug_on(););
 
@@ -7807,6 +7869,7 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
                                  (char *) thd->security_ctx->host_or_ip,
                                  0);
 
+          int error __attribute__((unused));
           error= mysql_execute_command(thd);
           MYSQL_QUERY_EXEC_DONE(error);
 	}
@@ -8806,6 +8869,8 @@ push_new_name_resolution_context(THD *thd,
     left_op->first_leaf_for_name_resolution();
   on_context->last_name_resolution_table=
     right_op->last_leaf_for_name_resolution();
+  on_context->select_lex = thd->lex->current_select;
+  on_context->outer_context = thd->lex->current_context()->outer_context;
   return thd->lex->push_context(on_context, thd->mem_root);
 }
 
@@ -8904,8 +8969,6 @@ void add_join_natural(TABLE_LIST *a, TABLE_LIST *b, List<String> *using_fields,
                       SELECT_LEX *lex)
 {
   b->natural_join= a;
-  a->part_of_natural_join= TRUE;
-  b->part_of_natural_join= TRUE;
   lex->prev_join_using= using_fields;
 }
 
@@ -9702,7 +9765,7 @@ static bool lock_tables_precheck(THD *thd, TABLE_LIST *tables)
     if (is_temporary_table(table))
       continue;
 
-    if (check_table_access(thd, LOCK_TABLES_ACL | SELECT_ACL, table,
+    if (check_table_access(thd, PRIV_LOCK_TABLES, table,
                            FALSE, 1, FALSE))
       return TRUE;
   }

@@ -586,9 +586,11 @@ bool LOGGER::is_log_table_enabled(uint log_table_type)
 {
   switch (log_table_type) {
   case QUERY_LOG_SLOW:
-    return (table_log_handler != NULL) && global_system_variables.sql_log_slow;
+    return (table_log_handler != NULL) && global_system_variables.sql_log_slow
+            && (log_output_options & LOG_TABLE);
   case QUERY_LOG_GENERAL:
-    return (table_log_handler != NULL) && opt_log ;
+    return (table_log_handler != NULL) && opt_log
+            && (log_output_options & LOG_TABLE);
   default:
     DBUG_ASSERT(0);
     return FALSE;                             /* make compiler happy */
@@ -4446,7 +4448,9 @@ int MYSQL_BIN_LOG::purge_first_log(Relay_log_info* rli, bool included)
                             0, 0, &log_space_reclaimed);
 
   mysql_mutex_lock(&rli->log_space_lock);
-  rli->log_space_total-= log_space_reclaimed;
+  my_atomic_add64_explicit((volatile int64*)(&rli->log_space_total),
+                           (-(int64)log_space_reclaimed),
+                           MY_MEMORY_ORDER_RELAXED);
   mysql_cond_broadcast(&rli->log_space_cond);
   mysql_mutex_unlock(&rli->log_space_lock);
 
@@ -6904,6 +6908,9 @@ int MYSQL_BIN_LOG::rotate_and_purge(bool force_rotate,
   bool check_purge= false;
 
   mysql_mutex_lock(&LOCK_log);
+
+  DEBUG_SYNC(current_thd, "rotate_after_acquire_LOCK_log");
+
   prev_binlog_id= current_binlog_id;
 
   if ((err_gtid= do_delete_gtid_domain(domain_drop_lex)))
@@ -6914,11 +6921,22 @@ int MYSQL_BIN_LOG::rotate_and_purge(bool force_rotate,
   }
   else if (unlikely((error= rotate(force_rotate, &check_purge))))
     check_purge= false;
+
+  DEBUG_SYNC(current_thd, "rotate_after_rotate");
+
   /*
     NOTE: Run purge_logs wo/ holding LOCK_log because it does not need
           the mutex. Otherwise causes various deadlocks.
+          Explicit binlog rotation must be synchronized with a concurrent
+          binlog ordered commit, in particular not let binlog
+          checkpoint notification request until early binlogged
+          concurrent commits have has been completed.
   */
+  mysql_mutex_lock(&LOCK_after_binlog_sync);
   mysql_mutex_unlock(&LOCK_log);
+  mysql_mutex_lock(&LOCK_commit_ordered);
+  mysql_mutex_unlock(&LOCK_after_binlog_sync);
+  mysql_mutex_unlock(&LOCK_commit_ordered);
 
   if (check_purge)
     checkpoint_and_purge(prev_binlog_id);
@@ -8075,7 +8093,12 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
   }
 
   DEBUG_SYNC(leader->thd, "commit_before_get_LOCK_commit_ordered");
+
   mysql_mutex_lock(&LOCK_commit_ordered);
+  DBUG_EXECUTE_IF("crash_before_engine_commit",
+      {
+        DBUG_SUICIDE();
+      });
   last_commit_pos_offset= commit_offset;
 
   /*
@@ -10446,7 +10469,8 @@ binlog_checksum_update(MYSQL_THD thd, struct st_mysql_sys_var *var,
 }
 
 
-static int show_binlog_vars(THD *thd, SHOW_VAR *var, char *buff)
+static int show_binlog_vars(THD *thd, SHOW_VAR *var, void *,
+                            system_status_var *status_var, enum_var_type)
 {
   mysql_bin_log.set_status_variables(thd);
   var->type= SHOW_ARRAY;

@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2020, MariaDB Corporation.
+Copyright (c) 2017, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -554,7 +554,7 @@ rec_get_n_extern_new(
 @param[in]	index		the index that the record belongs to
 @param[in,out]	offsets		array comprising offsets[0] allocated elements,
 				or an array from rec_get_offsets(), or NULL
-@param[in]	leaf		whether this is a leaf-page record
+@param[in]	n_core		0, or index->n_core_fields for leaf page
 @param[in]	n_fields	maximum number of offsets to compute
 				(ULINT_UNDEFINED to compute all offsets)
 @param[in,out]	heap		memory heap
@@ -564,7 +564,7 @@ rec_get_offsets_func(
 	const rec_t*		rec,
 	const dict_index_t*	index,
 	rec_offs*		offsets,
-	bool			leaf,
+	ulint			n_core,
 	ulint			n_fields,
 #ifdef UNIV_DEBUG
 	const char*		file,	/*!< in: file name where called */
@@ -982,6 +982,7 @@ rec_copy(
 @param[out]	extra		record header size
 @param[in]	status		REC_STATUS_ORDINARY or REC_STATUS_COLUMNS_ADDED
 @return	total size, in bytes */
+template<bool redundant_temp>
 ulint
 rec_get_converted_size_temp(
 	const dict_index_t*	index,
@@ -1026,6 +1027,7 @@ rec_init_offsets_temp(
 @param[in]	n_fields	number of data fields
 @param[in]	status		REC_STATUS_ORDINARY or REC_STATUS_COLUMNS_ADDED
 */
+template<bool redundant_temp>
 void
 rec_convert_dtuple_to_temp(
 	rec_t*			rec,
@@ -1119,7 +1121,9 @@ rec_get_converted_size(
 The fields are copied into the memory heap.
 @param[out]	tuple		data tuple
 @param[in]	rec		index record, or a copy thereof
-@param[in]	is_leaf		whether rec is a leaf page record
+@param[in]	index		index of rec
+@param[in]	n_core		index->n_core_fields at the time rec was
+				copied, or 0 if non-leaf page record
 @param[in]	n_fields	number of fields to copy
 @param[in,out]	heap		memory heap */
 void
@@ -1127,7 +1131,7 @@ rec_copy_prefix_to_dtuple(
 	dtuple_t*		tuple,
 	const rec_t*		rec,
 	const dict_index_t*	index,
-	bool			is_leaf,
+	ulint			n_core,
 	ulint			n_fields,
 	mem_heap_t*		heap)
 	MY_ATTRIBUTE((nonnull));
@@ -1227,16 +1231,17 @@ struct rec_offsets_print
 @param[in,out]	o	output stream
 @param[in]	r	record to display
 @return	the output stream */
+ATTRIBUTE_COLD
 std::ostream&
 operator<<(std::ostream& o, const rec_offsets_print& r);
 
-# ifndef DBUG_OFF
 /** Pretty-printer of records and tuples */
 class rec_printer : public std::ostringstream {
 public:
 	/** Construct a pretty-printed record.
 	@param rec	record with header
 	@param offsets	rec_get_offsets(rec, ...) */
+	ATTRIBUTE_COLD
 	rec_printer(const rec_t* rec, const rec_offs* offsets)
 		:
 		std::ostringstream ()
@@ -1250,6 +1255,7 @@ public:
 	@param rec record, possibly lacking header
 	@param info rec_get_info_bits(rec)
 	@param offsets rec_get_offsets(rec, ...) */
+	ATTRIBUTE_COLD
 	rec_printer(const rec_t* rec, ulint info, const rec_offs* offsets)
 		:
 		std::ostringstream ()
@@ -1259,6 +1265,7 @@ public:
 
 	/** Construct a pretty-printed tuple.
 	@param tuple	data tuple */
+	ATTRIBUTE_COLD
 	rec_printer(const dtuple_t* tuple)
 		:
 		std::ostringstream ()
@@ -1269,6 +1276,7 @@ public:
 	/** Construct a pretty-printed tuple.
 	@param field	array of data tuple fields
 	@param n	number of fields */
+	ATTRIBUTE_COLD
 	rec_printer(const dfield_t* field, ulint n)
 		:
 		std::ostringstream ()
@@ -1285,7 +1293,7 @@ private:
 	/** Assignment operator */
 	rec_printer& operator=(const rec_printer& other);
 };
-# endif /* !DBUG_OFF */
+
 
 # ifdef UNIV_DEBUG
 /** Read the DB_TRX_ID of a clustered index record.

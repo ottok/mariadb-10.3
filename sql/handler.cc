@@ -835,9 +835,11 @@ static my_bool kill_handlerton(THD *thd, plugin_ref plugin,
 {
   handlerton *hton= plugin_hton(plugin);
 
+  mysql_mutex_lock(&thd->LOCK_thd_data);
   if (hton->state == SHOW_OPTION_YES && hton->kill_query &&
       thd_get_ha_data(thd, hton))
     hton->kill_query(hton, thd, *(enum thd_kill_levels *) level);
+  mysql_mutex_unlock(&thd->LOCK_thd_data);
   return FALSE;
 }
 
@@ -3292,7 +3294,6 @@ int handler::update_auto_increment()
   THD *thd= table->in_use;
   struct system_variables *variables= &thd->variables;
   int result=0, tmp;
-  enum enum_check_fields save_count_cuted_fields;
   DBUG_ENTER("handler::update_auto_increment");
 
   /*
@@ -3305,6 +3306,13 @@ int handler::update_auto_increment()
       (table->auto_increment_field_not_null &&
        thd->variables.sql_mode & MODE_NO_AUTO_VALUE_ON_ZERO))
   {
+
+    /*
+      There could be an error reported because value was truncated
+      when strict mode is enabled.
+    */
+    if (thd->is_error())
+      DBUG_RETURN(HA_ERR_AUTOINC_ERANGE);
     /*
       Update next_insert_id if we had already generated a value in this
       statement (case of INSERT VALUES(null),(3763),(null):
@@ -3318,24 +3326,26 @@ int handler::update_auto_increment()
     DBUG_RETURN(0);
   }
 
-  // ALTER TABLE ... ADD COLUMN ... AUTO_INCREMENT
-  if (thd->lex->sql_command == SQLCOM_ALTER_TABLE)
+  if (table->versioned())
   {
-    if (table->versioned())
+    Field *end= table->vers_end_field();
+    DBUG_ASSERT(end);
+    bitmap_set_bit(table->read_set, end->field_index);
+    if (!end->is_max())
     {
-      Field *end= table->vers_end_field();
-      DBUG_ASSERT(end);
-      bitmap_set_bit(table->read_set, end->field_index);
-      if (!end->is_max())
+      if (thd->lex->sql_command == SQLCOM_ALTER_TABLE)
       {
         if (!table->next_number_field->real_maybe_null())
           DBUG_RETURN(HA_ERR_UNSUPPORTED);
         table->next_number_field->set_null();
-        DBUG_RETURN(0);
       }
+      DBUG_RETURN(0);
     }
-    table->next_number_field->set_notnull();
   }
+
+  // ALTER TABLE ... ADD COLUMN ... AUTO_INCREMENT
+  if (thd->lex->sql_command == SQLCOM_ALTER_TABLE)
+    table->next_number_field->set_notnull();
 
   if ((nr= next_insert_id) >= auto_inc_interval_for_cur_row.maximum())
   {
@@ -3434,10 +3444,10 @@ int handler::update_auto_increment()
                      nr, append ? nb_reserved_values : 0));
 
   /* Store field without warning (Warning will be printed by insert) */
-  save_count_cuted_fields= thd->count_cuted_fields;
-  thd->count_cuted_fields= CHECK_FIELD_IGNORE;
-  tmp= table->next_number_field->store((longlong)nr, TRUE);
-  thd->count_cuted_fields= save_count_cuted_fields;
+  {
+    Check_level_instant_set check_level_save(thd, CHECK_FIELD_IGNORE);
+    tmp= table->next_number_field->store((longlong)nr, TRUE);
+  }
 
   if (unlikely(tmp))                            // Out of range value in store
   {
@@ -5157,6 +5167,7 @@ int ha_create_table(THD *thd, const char *path,
   char name_buff[FN_REFLEN];
   const char *name;
   TABLE_SHARE share;
+  Abort_on_warning_instant_set old_abort_on_warning(thd, 0);
   bool temp_table __attribute__((unused)) =
     create_info->options & (HA_LEX_CREATE_TMP_TABLE | HA_CREATE_TMP_ALTER);
   DBUG_ENTER("ha_create_table");
@@ -5967,6 +5978,7 @@ extern "C" enum icp_result handler_index_cond_check(void* h_arg)
   THD *thd= h->table->in_use;
   enum icp_result res;
 
+  DEBUG_SYNC(thd, "handler_index_cond_check");
   enum thd_kill_levels abort_at= h->has_transactions() ?
     THD_ABORT_SOFTLY : THD_ABORT_ASAP;
   if (thd_kill_level(thd) > abort_at)
@@ -7328,6 +7340,11 @@ bool Vers_parse_info::fix_alter_info(THD *thd, Alter_info *alter_info,
     {
       if (f->flags & VERS_SYSTEM_FIELD)
       {
+        if (!table->versioned())
+        {
+          my_error(ER_VERS_NOT_VERSIONED, MYF(0), table->s->table_name.str);
+          return true;
+        }
         my_error(ER_VERS_DUPLICATE_ROW_START_END, MYF(0),
                  f->flags & VERS_SYS_START_FLAG ? "START" : "END", f->field_name.str);
         return true;
@@ -7390,6 +7407,8 @@ Vers_parse_info::fix_create_like(Alter_info &alter_info, HA_CREATE_INFO &create_
                                  TABLE_LIST &src_table, TABLE_LIST &table)
 {
   List_iterator<Create_field> it(alter_info.create_list);
+  List_iterator<Key> key_it(alter_info.key_list);
+  List_iterator<Key_part_spec> kp_it;
   Create_field *f, *f_start=NULL, *f_end= NULL;
 
   DBUG_ASSERT(alter_info.create_list.elements > 2);
@@ -7403,6 +7422,23 @@ Vers_parse_info::fix_create_like(Alter_info &alter_info, HA_CREATE_INFO &create_
       {
         it.remove();
         remove--;
+      }
+      key_it.rewind();
+      while (Key *key= key_it++)
+      {
+        kp_it.init(key->columns);
+        while (Key_part_spec *kp= kp_it++)
+        {
+          if (0 == lex_string_cmp(system_charset_info, &kp->field_name,
+                                  &f->field_name))
+          {
+            kp_it.remove();
+          }
+        }
+        if (0 == key->columns.elements)
+        {
+          key_it.remove();
+        }
       }
     }
     DBUG_ASSERT(remove == 0);

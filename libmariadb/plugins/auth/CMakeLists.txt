@@ -66,6 +66,12 @@ IF(CRYPTO_PLUGIN)
      SET_SOURCE_FILES_PROPERTIES(${REF10_SOURCES} PROPERTY COMPILE_FLAGS "-DMYSQL_CLIENT=1 /wd4244 /wd4146")
   ENDIF()
 
+  IF(CMAKE_C_COMPILER_ID MATCHES "GNU" AND CMAKE_C_COMPILER_VERSION LESS 11
+     AND CMAKE_C_COMPILER_VERSION GREATER 6)
+    SET_SOURCE_FILES_PROPERTIES(${REF10_SOURCES} PROPERTY COMPILE_FLAGS
+                                -fno-sanitize=shift)
+  ENDIF()
+
   # SHA256 caching plugin for MySQL 8.0 connection
   REGISTER_PLUGIN(TARGET caching_sha2_password
                 TYPE MARIADB_CLIENT_PLUGIN_AUTH
@@ -90,11 +96,6 @@ ENDIF()
 #GSSAPI client authentication plugin
 IF(NOT WIN32)
   INCLUDE(${CC_SOURCE_DIR}/cmake/FindGSSAPI.cmake)
-ENDIF()
-
-#GSSAPI client authentication plugin
-IF(NOT WIN32)
-  INCLUDE(${CC_SOURCE_DIR}/cmake/FindGSSAPI.cmake)
   IF(GSSAPI_FOUND)
     SET(GSSAPI_SOURCES ${AUTH_DIR}/auth_gssapi_client.c ${AUTH_DIR}/gssapi_client.c ${AUTH_DIR}/gssapi_errmsg.c)
   ENDIF()
@@ -110,6 +111,9 @@ IF(GSSAPI_SOURCES)
                   SOURCES ${GSSAPI_SOURCES}
                   INCLUDES ${CC_SOURCE_DIR}/plugins/auth ${GSSAPI_INCS}
                   LIBRARIES ${GSSAPI_LIBS})
+  IF(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    SET_SOURCE_FILES_PROPERTIES(${GSSAPI_SOURCES} PROPERTY COMPILE_FLAGS "-Wno-deprecated-declarations")
+  ENDIF()
 ENDIF()
 
 # old_password plugin

@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2012, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2012, Monty Program Ab
+   Copyright (c) 2008, 2020, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -58,7 +58,8 @@ bool Protocol_binary::net_store_data(const uchar *from, size_t length)
       packet->realloc(packet_length+9+length))
     return 1;
   uchar *to= net_store_length((uchar*) packet->ptr()+packet_length, length);
-  memcpy(to,from,length);
+  if (length)
+    memcpy(to,from,length);
   packet->length((uint) (to+length-(uchar*) packet->ptr()));
   return 0;
 }
@@ -716,7 +717,8 @@ void net_send_progress_packet(THD *thd)
 uchar *net_store_data(uchar *to, const uchar *from, size_t length)
 {
   to=net_store_length_fast(to,length);
-  memcpy(to,from,length);
+  if (length)
+    memcpy(to,from,length);
   return to+length;
 }
 
@@ -1249,15 +1251,15 @@ bool Protocol_text::store(Field *field)
   CHARSET_INFO *tocs= this->thd->variables.character_set_results;
 #ifdef DBUG_ASSERT_EXISTS
   TABLE *table= field->table;
-  my_bitmap_map *old_map= 0;
+  MY_BITMAP *old_map= 0;
   if (table->file)
-    old_map= dbug_tmp_use_all_columns(table, table->read_set);
+    old_map= dbug_tmp_use_all_columns(table, &table->read_set);
 #endif
 
   field->val_str(&str);
 #ifdef DBUG_ASSERT_EXISTS
   if (old_map)
-    dbug_tmp_restore_column_map(table->read_set, old_map);
+    dbug_tmp_restore_column_map(&table->read_set, old_map);
 #endif
 
   return store_string_aux(str.ptr(), str.length(), str.charset(), tocs);

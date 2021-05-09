@@ -29,6 +29,7 @@ SET(MARIADB_LIB_SYMBOLS
  mariadb_rpl_fetch
  mariadb_rpl_optionsv
  mariadb_rpl_get_optionsv
+ mariadb_rpl_init_ex
  mariadb_free_rpl_event
  mariadb_field_attr
 )
@@ -259,7 +260,7 @@ SET(MARIADB_NONBLOCK_SYMBOLS
 
 # handle static plugins
 SET(LIBMARIADB_SOURCES ${LIBMARIADB_PLUGIN_SOURCES})
-SET(SYSTEM_LIBS ${SYSTEM_LIBS} ${LIBMARIADB_PLUGIN_LIBS})
+SET(SYSTEM_LIBS ${SYSTEM_LIBS} ${LIBMARIADB_PLUGIN_LIBS} ${INTERNAL_ZLIB_LIBRARY})
 ADD_DEFINITIONS(${LIBMARIADB_PLUGIN_DEFS})
 FOREACH(plugin ${PLUGINS_STATIC})
   SET(EXTERNAL_PLUGINS "${EXTERNAL_PLUGINS} extern struct st_mysql_client_plugin ${plugin}_client_plugin;\n")
@@ -272,7 +273,7 @@ SET(LIBMARIADB_SOURCES ${LIBMARIADB_SOURCES}
 ${CC_SOURCE_DIR}/plugins/auth/my_auth.c
 ma_array.c
 ma_charset.c
-ma_hash.c
+ma_hashtbl.c
 ma_net.c
 mariadb_charset.c
 ma_time.c
@@ -311,7 +312,9 @@ ELSE()
   IF(ICONV_INCLUDE_DIR)
      INCLUDE_DIRECTORIES(BEFORE ${ICONV_INCLUDE_DIR}) 
   ENDIF()
-  ADD_DEFINITIONS(-DLIBICONV_PLUG)
+  IF(NOT CMAKE_SYSTEM_NAME MATCHES AIX)
+    ADD_DEFINITIONS(-DLIBICONV_PLUG)
+  ENDIF()
 ENDIF()
 
 IF(ZLIB_FOUND AND WITH_EXTERNAL_ZLIB)
@@ -365,7 +368,7 @@ ELSE()
 ENDIF()
 
 
-IF((NOT WIN32) AND (CMAKE_VERSION VERSION_GREATER 2.8.7))
+IF(CMAKE_VERSION VERSION_GREATER 2.8.7)
   # CREATE OBJECT LIBRARY 
   ADD_LIBRARY(mariadb_obj OBJECT ${LIBMARIADB_SOURCES})
   IF(UNIX)
@@ -391,6 +394,7 @@ IF(WIN32)
                    "FILE_DESCRIPTION:Dynamic lib for client/server communication")
 ENDIF()
 
+
 ADD_LIBRARY(mariadbclient STATIC  ${MARIADB_OBJECTS} ${EMPTY_FILE})
 TARGET_LINK_LIBRARIES(mariadbclient ${SYSTEM_LIBS})
 
@@ -398,8 +402,7 @@ IF(UNIX)
   ADD_LIBRARY(libmariadb SHARED ${libmariadb_RC} ${MARIADB_OBJECTS} ${EMPTY_FILE})
   SET_TARGET_PROPERTIES(libmariadb PROPERTIES COMPILE_FLAGS "${CMAKE_SHARED_LIBRARY_C_FLAGS}")
 ELSE()
-  ADD_LIBRARY(libmariadb SHARED ${libmariadb_RC} mariadbclient.def)
-  TARGET_LINK_LIBRARIES(libmariadb LINK_PRIVATE mariadbclient)
+  ADD_LIBRARY(libmariadb SHARED ${libmariadb_RC} ${MARIADB_OBJECTS} mariadbclient.def)
   SET_TARGET_PROPERTIES(libmariadb PROPERTIES LINKER_LANGUAGE C)
 ENDIF()
 
@@ -437,8 +440,10 @@ INCLUDE(${CC_SOURCE_DIR}/cmake/symlink.cmake)
 IF(WITH_MYSQLCOMPAT)
   create_symlink(libmysqlclient${CMAKE_SHARED_LIBRARY_SUFFIX} libmariadb ${INSTALL_LIBDIR})
   create_symlink(libmysqlclient_r${CMAKE_SHARED_LIBRARY_SUFFIX} libmariadb ${INSTALL_LIBDIR})
-  create_symlink(libmysqlclient${CMAKE_STATIC_LIBRARY_SUFFIX} mariadbclient ${INSTALL_LIBDIR})
-  create_symlink(libmysqlclient_r${CMAKE_STATIC_LIBRARY_SUFFIX} mariadbclient ${INSTALL_LIBDIR})
+  IF(NOT CMAKE_SYSTEM_NAME MATCHES AIX)
+    create_symlink(libmysqlclient${CMAKE_STATIC_LIBRARY_SUFFIX} mariadbclient ${INSTALL_LIBDIR})
+    create_symlink(libmysqlclient_r${CMAKE_STATIC_LIBRARY_SUFFIX} mariadbclient ${INSTALL_LIBDIR})
+  ENDIF()
 ENDIF()
 
 

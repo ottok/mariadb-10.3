@@ -497,23 +497,25 @@ sub mtr_report_stats ($$$$) {
       $test_time = sprintf("%.3f", $test->{timer} / 1000);
       $test->{'name'} =~ s/$current_suite\.//;
 
-      my $test_result;
-
-      # if a test case has to be retried it should have the result MTR_RES_FAILED in jUnit XML
-      if ($test->{'retries'} > 0) {
-        $test_result = "MTR_RES_FAILED";
+      my $combinations;
+      if (defined($test->{combinations})){
+        $combinations = join ',', sort @{$test->{combinations}};
       } else {
-        $test_result = $test->{'result'};
+        $combinations = "";
       }
 
-      $xml_report .= qq(\t\t<testcase assertions="" classname="$current_suite" name="$test->{'name'}" status="$test_result" time="$test_time");
+      $xml_report .= qq(\t\t<testcase assertions="" classname="$current_suite" name="$test->{'name'}" ).
+                     qq(status="$test->{'result'}" time="$test_time" combinations="$combinations");
 
-      my $comment = $test->{'comment'};
-      $comment =~ s/[\"]//g;
+      my $comment= replace_special_symbols($test->{'comment'});
 
-      # if a test case has to be retried it should have the result MTR_RES_FAILED in jUnit XML
-      if ($test->{'result'} eq "MTR_RES_FAILED" || $test->{'retries'} > 0) {
+      if ($test->{'result'} eq "MTR_RES_FAILED") {
         my $logcontents = $test->{'logfile-failed'} || $test->{'logfile'};
+        $logcontents= $logcontents.$test->{'warnings'}."\n";
+        # remove any double ] that would end the cdata
+        $logcontents =~ s/]]/\x{fffd}/g;
+        # replace wide characters that aren't allowed in XML 1.0
+        $logcontents =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F]/\x{fffd}/g;
 
         $xml_report .= qq(>\n\t\t\t<failure message="" type="MTR_RES_FAILED">\n<![CDATA[$logcontents]]>\n\t\t\t</failure>\n\t\t</testcase>\n);
       } elsif ($test->{'result'} eq "MTR_RES_SKIPPED" && $test->{'disable'}) {
@@ -530,9 +532,9 @@ sub mtr_report_stats ($$$$) {
     # save to file
     my $xml_file = $::opt_xml_report;
 
-    open XML_FILE, ">", $xml_file or die "Cannot create file $xml_file: $!";
-    print XML_FILE $xml_report;
-    close XML_FILE;
+    open (my $XML_UFILE, '>:encoding(UTF-8)', $xml_file) or die 'Cannot create file $xml_file: $!';
+    print $XML_UFILE $xml_report;
+    close $XML_UFILE or warn "File close failed!";
   }
 
   if (@$extra_warnings)
@@ -570,6 +572,16 @@ MSG
 
 sub mtr_print_line () {
   print '-' x 74 . "\n";
+}
+
+sub replace_special_symbols($) {
+  my $text= shift;
+  $text =~ s/&/&#38;/g;
+  $text =~ s/'/&#39;/g;
+  $text =~ s/"/&#34;/g;
+  $text =~ s/</&lt;/g;
+  $text =~ s/>/&gt;/g;
+  return $text;
 }
 
 

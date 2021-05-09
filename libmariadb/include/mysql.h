@@ -148,7 +148,8 @@ extern const char *SQLSTATE_UNKNOWN;
     (a)->net.last_errno= 0;\
     strcpy((a)->net.sqlstate, "00000");\
     (a)->net.last_error[0]= '\0';\
-    (a)->net.extension->extended_errno= 0;\
+    if ((a)->net.extension)\
+      (a)->net.extension->extended_errno= 0;\
   } while (0)
 
 #define MYSQL_COUNT_ERROR (~(unsigned long long) 0)
@@ -425,7 +426,7 @@ typedef struct st_mysql_time
 #define SEC_PART_DIGITS 6
 #define MARIADB_INVALID_SOCKET -1
 
-/* Ansynchronous API constants */
+/* Asynchronous API constants */
 #define MYSQL_WAIT_READ      1
 #define MYSQL_WAIT_WRITE     2
 #define MYSQL_WAIT_EXCEPT    4
@@ -457,9 +458,9 @@ typedef struct character_set
   const char *desc;                                     \
   unsigned int version[3];                              \
   const char *license;                                  \
-  void *mariadb_api;                                    \
+  void *mysql_api;                                      \
   int (*init)(char *, size_t, int, va_list);            \
-  int (*deinit)();                                      \
+  int (*deinit)(void);                                  \
   int (*options)(const char *option, const void *);
 struct st_mysql_client_plugin
 {
@@ -728,7 +729,7 @@ int STDCALL mysql_stmt_send_long_data_cont(my_bool *ret, MYSQL_STMT *stmt,
                                            int status);
 int STDCALL mysql_reset_connection(MYSQL *mysql);
 
-/* API function calls (used by dynmic plugins) */
+/* API function calls (used by dynamic plugins) */
 struct st_mariadb_api {
   unsigned long long (STDCALL *mysql_num_rows)(MYSQL_RES *res);
   unsigned int (STDCALL *mysql_num_fields)(MYSQL_RES *res);

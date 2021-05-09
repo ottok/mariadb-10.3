@@ -151,10 +151,11 @@ fi
 
 WSREP_LOG_DIR=${WSREP_LOG_DIR:-""}
 # Try to set WSREP_LOG_DIR from the command line:
-if [ -z "$WSREP_LOG_DIR" ]; then
+if [ ! -z "$INNODB_LOG_GROUP_HOME_ARG" ]; then
     WSREP_LOG_DIR=$INNODB_LOG_GROUP_HOME_ARG
 fi
-# if WSREP_LOG_DIR env. variable is not set, try to get it from my.cnf
+# if no command line arg and WSREP_LOG_DIR is not set,
+# try to get it from my.cnf:
 if [ -z "$WSREP_LOG_DIR" ]; then
     WSREP_LOG_DIR=$(parse_cnf mysqld$WSREP_SST_OPT_SUFFIX_VALUE innodb-log-group-home-dir '')
 fi
@@ -175,7 +176,8 @@ INNODB_DATA_HOME_DIR=${INNODB_DATA_HOME_DIR:-""}
 if [ ! -z "$INNODB_DATA_HOME_DIR_ARG" ]; then
     INNODB_DATA_HOME_DIR=$INNODB_DATA_HOME_DIR_ARG
 fi
-# if INNODB_DATA_HOME_DIR env. variable is not set, try to get it from my.cnf
+# if no command line arg and INNODB_DATA_HOME_DIR environment variable
+# is not set, try to get it from my.cnf:
 if [ -z "$INNODB_DATA_HOME_DIR" ]; then
     INNODB_DATA_HOME_DIR=$(parse_cnf mysqld$WSREP_SST_OPT_SUFFIX_VALUE innodb-data-home-dir '')
 fi
@@ -397,6 +399,14 @@ then
     MODULE="rsync_sst"
 
     RSYNC_PID="$WSREP_SST_OPT_DATA/$MODULE.pid"
+    # give some time for lingering rsync from previous SST to complete
+    check_round=0
+    while check_pid $RSYNC_PID && [ $check_round -lt 10 ]
+    do
+        wsrep_log_info "lingering rsync daemon found at startup, waiting for it to exit"
+        check_round=$(( check_round + 1 ))
+        sleep 1
+    done
 
     if check_pid $RSYNC_PID
     then
