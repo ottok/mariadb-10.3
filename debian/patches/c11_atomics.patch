@@ -9,7 +9,7 @@ Date:   Fri Dec 21 19:14:04 2018 +0200
 
 --- a/configure.cmake
 +++ b/configure.cmake
-@@ -893,7 +893,25 @@ int main()
+@@ -894,7 +894,25 @@ int main()
    long long int *ptr= &var;
    return (int)__atomic_load_n(ptr, __ATOMIC_SEQ_CST);
  }"
@@ -39,7 +39,7 @@ Date:   Fri Dec 21 19:14:04 2018 +0200
 --- a/mysys/CMakeLists.txt
 +++ b/mysys/CMakeLists.txt
 @@ -78,6 +78,10 @@ TARGET_LINK_LIBRARIES(mysys dbug strings
-  ${LIBNSL} ${LIBM} ${LIBRT} ${LIBDL} ${LIBSOCKET} ${LIBEXECINFO} ${CRC32_LIBRARY})
+  ${LIBNSL} ${LIBM} ${LIBRT} ${CMAKE_DL_LIBS} ${LIBSOCKET} ${LIBEXECINFO} ${CRC32_LIBRARY})
  DTRACE_INSTRUMENT(mysys)
  
 +IF (HAVE_GCC_C11_ATOMICS_WITH_LIBATOMIC)

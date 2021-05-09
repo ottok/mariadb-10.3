@@ -1,3 +1,26 @@
+mariadb-10.3 (1:10.3.29-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.29 includes fixes for the
+    following security vulnerabilities (LP: #1926926):
+    - CVE-2021-2154
+    - CVE-2021-2166
+  * Previous release 10.3.28 included fixes for:
+    - CVE-2021-27928
+  * Previous release 10.3.26 included fixes for:
+    - CVE-2020-14765
+    - CVE-2020-14776
+    - CVE-2020-14789
+    - CVE-2020-14812
+    - CVE-2020-28912
+    - CVE-2021-2194
+  * Previous release 10.3.24 included fixes for:
+    - CVE-2021-2022
+  * Drop patch obsoleted by test file removal in upstream (MDEV-22653)
+  * Drop file removed upstream (MDEV-24586)
+  * Update symbols to include new one from MariaDB Client 3.1.13
+
+ -- Otto Kekäläinen <otto@debian.org>  Sun, 09 May 2021 11:20:31 -0700
+
 mariadb-10.3 (1:10.3.25-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * SECURITY UPDATE: New upstream version 10.3.25 includes fixes for the

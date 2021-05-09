@@ -33,7 +33,6 @@ usr/share/mysql/mysql_system_tables.sql
 usr/share/mysql/mysql_system_tables_data.sql
 usr/share/mysql/mysql_test_data_timezone.sql
 usr/share/mysql/mysql_test_db.sql
-usr/share/mysql/mysql_to_mariadb.sql
 usr/share/mysql/norwegian
 usr/share/mysql/norwegian-ny
 usr/share/mysql/polish

@@ -5,7 +5,7 @@ Last-Update: 2019-04-18
 
 --- a/scripts/mysql_system_tables_fix.sql
 +++ b/scripts/mysql_system_tables_fix.sql
-@@ -179,6 +179,13 @@ ALTER TABLE user
+@@ -180,6 +180,13 @@ ALTER TABLE user
  ALTER TABLE user
    ADD Password char(41) character set latin1 collate latin1_bin NOT NULL default '' AFTER User;
  
