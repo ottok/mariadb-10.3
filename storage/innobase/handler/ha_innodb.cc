@@ -6367,7 +6367,9 @@ no_such_table:
 	/* Index block size in InnoDB: used by MySQL in query optimization */
 	stats.block_size = srv_page_size;
 
-	if (m_prebuilt->table == NULL
+	const my_bool for_vc_purge = THDVAR(thd, background_thread);
+
+	if (for_vc_purge || !m_prebuilt->table
 	    || m_prebuilt->table->is_temporary()
 	    || m_prebuilt->table->persistent_autoinc
 	    || !m_prebuilt->table->is_readable()) {
@@ -6394,7 +6396,7 @@ no_such_table:
 	ut_ad(!m_prebuilt->table
 	      || table->versioned() == m_prebuilt->table->versioned());
 
-	if (!THDVAR(thd, background_thread)) {
+	if (!for_vc_purge) {
 		info(HA_STATUS_NO_LOCK | HA_STATUS_VARIABLE | HA_STATUS_CONST
 		     | HA_STATUS_OPEN);
 	}
@@ -9312,8 +9314,12 @@ ha_innobase::index_read(
 
 	/* For R-Tree index, we will always place the page lock to
 	pages being searched */
-	if (dict_index_is_spatial(index)) {
-		++m_prebuilt->trx->will_lock;
+	if (index->is_spatial() && !m_prebuilt->trx->will_lock) {
+		if (trx_is_started(m_prebuilt->trx)) {
+			DBUG_RETURN(HA_ERR_READ_ONLY_TRANSACTION);
+		} else {
+			m_prebuilt->trx->will_lock = true;
+		}
 	}
 
 	/* Note that if the index for which the search template is built is not
@@ -12830,7 +12836,6 @@ create_table_info_t::create_table_update_dict()
 		if (!innobase_fts_load_stopword(innobase_table, NULL, m_thd)) {
 			dict_table_close(innobase_table, FALSE, FALSE);
 			srv_active_wake_master_thread();
-			m_trx->free();
 			DBUG_RETURN(-1);
 		}
 
@@ -12957,18 +12962,11 @@ ha_innobase::create(
 		}
 		trx_rollback_for_mysql(trx);
 		row_mysql_unlock_data_dictionary(trx);
-		if (own_trx) {
-			trx->free();
-		}
-		DBUG_RETURN(error);
+		goto func_exit;
 	}
 
 	innobase_commit_low(trx);
 	row_mysql_unlock_data_dictionary(trx);
-
-	if (own_trx) {
-		trx->free();
-	}
 
 	/* Flush the log to reduce probability that the .frm files and
 	the InnoDB data dictionary get out-of-sync if the user runs
@@ -12978,6 +12976,11 @@ ha_innobase::create(
 	ut_ad(!srv_read_only_mode);
 
 	error = info.create_table_update_dict();
+
+func_exit:
+	if (own_trx) {
+		trx->free();
+	}
 
 	/* Tell the InnoDB server that there might be work for
 	utility threads: */
@@ -14793,10 +14796,9 @@ ha_innobase::check(
 
 	/* We must run the index record counts at an isolation level
 	>= READ COMMITTED, because a dirty read can see a wrong number
-	of records in some index; to play safe, we use always
-	REPEATABLE READ here (except when undo logs are unavailable) */
-	m_prebuilt->trx->isolation_level = srv_force_recovery
-		>= SRV_FORCE_NO_UNDO_LOG_SCAN
+	of records in some index; to play safe, we normally use
+	REPEATABLE READ here */
+	m_prebuilt->trx->isolation_level = high_level_read_only
 		? TRX_ISO_READ_UNCOMMITTED
 		: TRX_ISO_REPEATABLE_READ;
 
@@ -14969,70 +14971,6 @@ ha_innobase::check(
 	m_prebuilt->trx->op_info = "";
 
 	DBUG_RETURN(is_ok ? HA_ADMIN_OK : HA_ADMIN_CORRUPT);
-}
-
-/*************************************************************//**
-Adds information about free space in the InnoDB tablespace to a table comment
-which is printed out when a user calls SHOW TABLE STATUS. Adds also info on
-foreign keys.
-@return	table comment + InnoDB free space + info on foreign keys */
-UNIV_INTERN
-char*
-ha_innobase::update_table_comment(
-/*==============================*/
-	const char*	comment)/*!< in: table comment defined by user */
-{
-	uint	length = (uint) strlen(comment);
-	char*	str=0;
-	size_t	flen;
-	std::string fk_str;
-
-	/* We do not know if MySQL can call this function before calling
-	external_lock(). To be safe, update the thd of the current table
-	handle. */
-
-	if (length > 64000 - 3) {
-		return((char*) comment); /* string too long */
-	}
-
-	update_thd(ha_thd());
-
-	m_prebuilt->trx->op_info = "returning table comment";
-
-#define SSTR( x ) reinterpret_cast< std::ostringstream & >(		\
-        ( std::ostringstream() << std::dec << x ) ).str()
-
-	if (m_prebuilt->table->space) {
-		fk_str.append("InnoDB free: ");
-		fk_str.append(SSTR(fsp_get_available_space_in_free_extents(
-					   *m_prebuilt->table->space)));
-	}
-
-	fk_str.append(dict_print_info_on_foreign_keys(
-			FALSE, m_prebuilt->trx,
-			m_prebuilt->table));
-
-	flen = fk_str.length();
-
-	if (length + flen + 3 > 64000) {
-		flen = 64000 - 3 - length;
-	}
-	/* allocate buffer for the full string */
-	str = (char*) my_malloc(length + flen + 3, MYF(0));
-	if (str) {
-		char* pos	= str + length;
-		if (length) {
-			memcpy(str, comment, length);
-			*pos++ = ';';
-			*pos++ = ' ';
-		}
-		memcpy(pos, fk_str.c_str(), flen);
-		pos[flen] = 0;
-	}
-
-	m_prebuilt->trx->op_info = (char*)"";
-
-	return(str ? str : (char*) comment);
 }
 
 /*******************************************************************//**
