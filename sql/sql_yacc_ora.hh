@@ -863,6 +863,7 @@ union YYSTYPE
   class sp_head *sphead;
   class sp_name *spname;
   class sp_variable *spvar;
+  class With_element_head *with_element_head;
   class With_clause *with_clause;
   class Virtual_column_info *virtual_column;
 
@@ -908,7 +909,7 @@ union YYSTYPE
   enum Column_definition::enum_column_versioning vers_column_versioning;
   enum plsql_cursor_attr_t plsql_cursor_attr;
 
-#line 912 "/home/buildbot/git/mkdist/sql/sql_yacc_ora.hh" /* yacc.c:1909  */
+#line 913 "/home/buildbot/git/mkdist/sql/sql_yacc_ora.hh" /* yacc.c:1909  */
 };
 # define YYSTYPE_IS_TRIVIAL 1
 # define YYSTYPE_IS_DECLARED 1

@@ -1733,9 +1733,19 @@ struct THD_TRANS
     CREATED_TEMP_TABLE= 2,
     DROPPED_TEMP_TABLE= 4,
     DID_WAIT= 8,
-    DID_DDL= 0x10
+    DID_DDL= 0x10,
+    EXECUTED_TABLE_ADMIN_CMD= 0x20
   };
 
+  void mark_executed_table_admin_cmd()
+  {
+    DBUG_PRINT("debug", ("mark_executed_table_admin_cmd"));
+    m_unsafe_rollback_flags|= EXECUTED_TABLE_ADMIN_CMD;
+  }
+  bool trans_executed_admin_cmd()
+  {
+    return (m_unsafe_rollback_flags & EXECUTED_TABLE_ADMIN_CMD) != 0;
+  }
   void mark_created_temp_table()
   {
     DBUG_PRINT("debug", ("mark_created_temp_table"));
@@ -3719,8 +3729,6 @@ public:
   /* end of the list of admin commands */
 
   virtual int indexes_are_disabled(void) {return 0;}
-  virtual char *update_table_comment(const char * comment)
-  { return (char*) comment;}
   virtual void append_create_info(String *packet) {}
   /**
     If index == MAX_KEY then a check for table is made and if index <

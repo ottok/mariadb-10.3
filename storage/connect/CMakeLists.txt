@@ -13,6 +13,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335 USA
 
+IF(WITHOUT_DYNAMIC_PLUGINS OR WITH_NONE OR ("${PLUGIN_CONNECT}" STREQUAL "NO"))
+  RETURN()
+ENDIF()
+
 SET(CONNECT_PLUGIN_STATIC  "connect")
 SET(CONNECT_PLUGIN_DYNAMIC "connect")
 
@@ -272,8 +276,14 @@ IF(CONNECT_WITH_JDBC)
     JdbcInterface.java ApacheInterface.java MariadbInterface.java
     MysqlInterface.java OracleInterface.java PostgresqlInterface.java
     Mongo2Interface.java Mongo3Interface.java
-    JavaWrappers.jar)
+    mysql-test/connect/std_data/JavaWrappers.jar)
     add_definitions(-DJAVA_SUPPORT)
+    IF(CONNECT_WITH_MONGO)
+      SET(CONNECT_SOURCES ${CONNECT_SOURCES}
+        mysql-test/connect/std_data/Mongo2.jar
+        mysql-test/connect/std_data/Mongo3.jar)
+      add_definitions(-DMONGO_SUPPORT)
+    ENDIF()
   ELSE()
     SET(JDBC_LIBRARY "")
   ENDIF()
@@ -405,8 +415,13 @@ IF(CONNECT_WITH_JDBC AND JAVA_FOUND AND JNI_FOUND)
   SET (JAVA_SOURCES JdbcInterface.java)
   add_jar(JdbcInterface ${JAVA_SOURCES})
   INSTALL(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/JavaWrappers.jar
+    ${CMAKE_CURRENT_SOURCE_DIR}/mysql-test/connect/std_data/JavaWrappers.jar
     ${CMAKE_CURRENT_BINARY_DIR}/JdbcInterface.jar
-    DESTINATION ${INSTALL_PLUGINDIR} COMPONENT connect-engine)
+    DESTINATION ${INSTALL_MYSQLSHAREDIR} COMPONENT connect-engine)
+  IF(CONNECT_WITH_MONGO)
+    INSTALL(FILES
+      ${CMAKE_CURRENT_SOURCE_DIR}/mysql-test/connect/std_data/Mongo2.jar
+      ${CMAKE_CURRENT_SOURCE_DIR}/mysql-test/connect/std_data/Mongo3.jar
+      DESTINATION ${INSTALL_MYSQLSHAREDIR} COMPONENT connect-engine)
+  ENDIF()
 ENDIF()
-
