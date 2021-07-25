@@ -14,3 +14,4 @@ tokudb-libjemalloc.patch
 MDEV-18768-automate-auth_socket-to_unix_socket-upgrade.patch
 930314-cross-build.patch
 mroonga-path-reproducible-build.patch
+env-perl-usr-bin-perl.patch
