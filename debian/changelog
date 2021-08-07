@@ -1,3 +1,12 @@
+mariadb-10.3 (1:10.3.31-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.31 includes fixes for the
+    following security vulnerabilities (LP: #1939188):
+    - CVE-2021-2389
+    - CVE-2021-2372
+
+ -- Otto Kekäläinen <otto@debian.org>  Fri, 06 Aug 2021 22:19:19 -0700
+
 mariadb-10.3 (1:10.3.30-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * New upstream version 10.3.30 includes fixes for a critical bug that
