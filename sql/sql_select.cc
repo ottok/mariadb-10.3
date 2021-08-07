@@ -696,8 +696,12 @@ bool vers_select_conds_t::init_from_sysvar(THD *thd)
   if (type != SYSTEM_TIME_UNSPECIFIED && type != SYSTEM_TIME_ALL)
   {
     DBUG_ASSERT(type == SYSTEM_TIME_AS_OF);
+    MYSQL_TIME ltime;
+    thd->variables.time_zone->gmt_sec_to_TIME(&ltime, in.unix_time);
+    ltime.second_part = in.second_part;
+
     start.item= new (thd->mem_root)
-        Item_datetime_literal(thd, &in.ltime, TIME_SECOND_PART_DIGITS);
+        Item_datetime_literal(thd, &ltime, TIME_SECOND_PART_DIGITS);
     if (!start.item)
       return true;
   }
@@ -1537,7 +1541,7 @@ int JOIN::init_join_caches()
     if (table->file->keyread_enabled())
     {
       if (!(table->file->index_flags(table->file->keyread, 0, 1) & HA_CLUSTERED_INDEX))
-        table->mark_columns_used_by_index(table->file->keyread, table->read_set);
+        table->mark_index_columns(table->file->keyread, table->read_set);
     }
     else if ((tab->read_first_record == join_read_first ||
               tab->read_first_record == join_read_last) &&
@@ -4500,7 +4504,7 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
   int error= 0;
   TABLE *UNINIT_VAR(table); /* inited in all loops */
   uint i,table_count,const_count,key;
-  table_map found_const_table_map, all_table_map, found_ref, refs;
+  table_map found_const_table_map, all_table_map;
   key_map const_ref, eq_part;
   bool has_expensive_keyparts;
   TABLE **table_vector;
@@ -4763,7 +4767,6 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
   {
     ref_changed = 0;
   more_const_tables_found:
-    found_ref=0;
 
     /*
       We only have to loop from stat_vector + const_count as
@@ -4853,7 +4856,6 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
 	  key=keyuse->key;
 	  s->keys.set_bit(key);               // TODO: remove this ?
 
-	  refs=0;
           const_ref.clear_all();
 	  eq_part.clear_all();
           has_expensive_keyparts= false;
@@ -4869,8 +4871,6 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
                 if (keyuse->val->is_expensive())
                   has_expensive_keyparts= true;
               }
-	      else
-		refs|=keyuse->used_tables;
 	      eq_part.set_bit(keyuse->keypart);
 	    }
 	    keyuse++;
@@ -4922,8 +4922,6 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
 		  found_const_table_map|= table->map;
 	        break;
 	      }
-	      else
-	        found_ref|= refs;      // Table is const if all refs are const
 	    }
             else if (base_const_ref == base_eq_part)
               s->const_keys.set_bit(key);
@@ -8545,7 +8543,9 @@ static
 double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
                               table_map rem_tables)
 {
-  uint16 ref_keyuse_steps[MAX_REF_PARTS - 1];
+  uint16 ref_keyuse_steps_buf[MAX_REF_PARTS];
+  uint   ref_keyuse_size= MAX_REF_PARTS;
+  uint16 *ref_keyuse_steps= ref_keyuse_steps_buf;
   Field *field;
   TABLE *table= s->table;
   MY_BITMAP *read_set= table->read_set;
@@ -8692,6 +8692,29 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
             }
             if (keyparts > 1)
 	    {
+              /*
+                Prepare to set ref_keyuse_steps[keyparts-2]: resize the array
+                if it is not large enough
+              */
+              if (keyparts - 2 >= ref_keyuse_size)
+              {
+                uint new_size= MY_MAX(ref_keyuse_size*2, keyparts);
+                void *new_buf;
+                if (!(new_buf= my_malloc(sizeof(*ref_keyuse_steps)*new_size,
+                                         MYF(0))))
+                {
+                  sel= 1.0; // As if no selectivity was computed
+                  goto exit;
+                }
+                memcpy(new_buf, ref_keyuse_steps,
+                       sizeof(*ref_keyuse_steps)*ref_keyuse_size);
+                if (ref_keyuse_steps != ref_keyuse_steps_buf)
+                  my_free(ref_keyuse_steps);
+
+                ref_keyuse_steps= (uint16*)new_buf;
+                ref_keyuse_size= new_size;
+              }
+
               ref_keyuse_steps[keyparts-2]= (uint16)(keyuse - prev_ref_keyuse);
               prev_ref_keyuse= keyuse;
             }
@@ -8746,7 +8769,9 @@ double table_cond_selectivity(JOIN *join, uint idx, JOIN_TAB *s,
 
   sel*= table_multi_eq_cond_selectivity(join, idx, s, rem_tables,
                                         keyparts, ref_keyuse_steps);
-
+exit:
+  if (ref_keyuse_steps != ref_keyuse_steps_buf)
+    my_free(ref_keyuse_steps);
   return sel;
 }
 
@@ -22887,6 +22912,12 @@ check_reverse_order:
         if (select->quick == save_quick)
           save_quick= 0;                // make_reverse() consumed it
         select->set_quick(tmp);
+        /* Cancel "Range checked for each record" */
+        if (tab->use_quick == 2)
+        {
+          tab->use_quick= 1;
+          tab->read_first_record= join_init_read_record;
+        }
       }
       else if (tab->type != JT_NEXT && tab->type != JT_REF_OR_NULL &&
                tab->ref.key >= 0 && tab->ref.key_parts <= used_key_parts)
@@ -22899,6 +22930,12 @@ check_reverse_order:
         */
         tab->read_first_record= join_read_last_key;
         tab->read_record.read_record_func= join_read_prev_same;
+        /* Cancel "Range checked for each record" */
+        if (tab->use_quick == 2)
+        {
+          tab->use_quick= 1;
+          tab->read_first_record= join_init_read_record;
+        }
         /*
           Cancel Pushed Index Condition, as it doesn't work for reverse scans.
         */
@@ -26281,8 +26318,10 @@ int JOIN::save_explain_data_intern(Explain_query *output,
     if (!(tmp_unit->item && tmp_unit->item->eliminated) &&    // (1)
         (!tmp_unit->derived ||
          tmp_unit->derived->is_materialized_derived()) &&     // (2)
-        !(tmp_unit->with_element &&
-          (!tmp_unit->derived || !tmp_unit->derived->derived_result))) // (3)
+        (!tmp_unit->with_element  ||
+         (tmp_unit->derived &&
+          tmp_unit->derived->derived_result &&
+          !tmp_unit->with_element->is_hanging_recursive())))  // (3)
    {
       explain->add_child(tmp_unit->first_select()->select_number);
     }
@@ -26347,8 +26386,10 @@ static void select_describe(JOIN *join, bool need_tmp_table, bool need_order,
     */
     if (!(unit->item && unit->item->eliminated) &&                     // (1)
         !(unit->derived && unit->derived->merged_for_insert) &&        // (2)
-        !(unit->with_element &&
-          (!unit->derived || !unit->derived->derived_result)))         // (3)
+        (!unit->with_element ||
+          (unit->derived &&
+           unit->derived->derived_result &&
+           !unit->with_element->is_hanging_recursive())))              // (3)
     {
       if (mysql_explain_union(thd, unit, result))
         DBUG_VOID_RETURN;
@@ -27248,7 +27289,6 @@ static bool get_range_limit_read_cost(const JOIN_TAB *tab,
     */
     if (tab)
     {
-      key_part_map const_parts= 0;
       key_part_map map= 1;
       uint kp;
       /* Find how many key parts would be used by ref(const) */
@@ -27256,7 +27296,6 @@ static bool get_range_limit_read_cost(const JOIN_TAB *tab,
       {
         if (!(table->const_key_parts[keynr] & map))
           break;
-        const_parts |= map;
       }
       
       if (kp > 0)
