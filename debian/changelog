@@ -1,4 +1,4 @@
-mariadb-10.3 (1:10.3.30-0ubuntu0.20.04.1) focal-updates; urgency=medium
+mariadb-10.3 (1:10.3.30-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * New upstream version 10.3.30 includes fixes for a critical bug that
     was compromising the results of some type of queries (subqueries with
