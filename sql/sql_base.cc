@@ -4450,13 +4450,13 @@ bool table_already_fk_prelocked(TABLE_LIST *tl, LEX_CSTRING *db,
 }
 
 
-static bool internal_table_exists(TABLE_LIST *global_list,
-                                  const char *table_name)
+static TABLE_LIST *internal_table_exists(TABLE_LIST *global_list,
+                                         const char *table_name)
 {
   do
   {
     if (global_list->table_name.str == table_name)
-      return 1;
+      return global_list;
   } while ((global_list= global_list->next_global));
   return 0;
 }
@@ -4471,13 +4471,23 @@ add_internal_tables(THD *thd, Query_tables_list *prelocking_ctx,
 
   do
   {
+    TABLE_LIST *tmp __attribute__((unused));
     DBUG_PRINT("info", ("table name: %s", tables->table_name.str));
     /*
       Skip table if already in the list. Can happen with prepared statements
     */
-    if (tables->next_local &&
-        internal_table_exists(global_table_list, tables->table_name.str))
+    if ((tmp= internal_table_exists(global_table_list,
+                                    tables->table_name.str)))
+    {
+      /*
+        Use the original value for the next local, used by the
+        original prepared statement. We cannot trust the original
+        next_local value as it may have been changed by a previous
+        statement using the same table.
+      */
+      tables->next_local= tmp;
       continue;
+    }
 
     TABLE_LIST *tl= (TABLE_LIST *) thd->alloc(sizeof(TABLE_LIST));
     if (!tl)
@@ -6726,6 +6736,7 @@ set_new_item_local_context(THD *thd, Item_ident *item, TABLE_LIST *table_ref)
   if (!(context= new (thd->mem_root) Name_resolution_context))
     return TRUE;
   context->init();
+  context->select_lex= table_ref->select_lex;
   context->first_name_resolution_table=
     context->last_name_resolution_table= table_ref;
   item->context= context;
@@ -7503,6 +7514,17 @@ bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
 
   thd->column_usage= column_usage;
   DBUG_PRINT("info", ("thd->column_usage: %d", thd->column_usage));
+  /*
+    Followimg 2 condition always should be true (but they was added
+    due to an error present only in 10.3):
+    1) nest_level shoud be 0 or positive;
+    2) nest level of all SELECTs on the same level shoud be equal first
+       SELECT on this level (and each other).
+  */
+  DBUG_ASSERT(thd->lex->current_select->nest_level >= 0);
+  DBUG_ASSERT(thd->lex->current_select->master_unit()->first_select()
+                ->nest_level ==
+              thd->lex->current_select->nest_level);
   if (allow_sum_func)
     thd->lex->allow_sum_func.set_bit(thd->lex->current_select->nest_level);
   thd->where= THD::DEFAULT_WHERE;
@@ -8677,8 +8699,11 @@ fill_record(THD *thd, TABLE *table, Field **ptr, List<Item> &values,
         goto err;
     field->set_has_explicit_value();
   }
-  /* Update virtual fields */
   thd->abort_on_warning= FALSE;
+  if (table->default_field &&
+      table->update_default_fields(ignore_errors))
+    goto err;
+  /* Update virtual fields */
   if (table->vfield &&
       table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_WRITE))
     goto err;

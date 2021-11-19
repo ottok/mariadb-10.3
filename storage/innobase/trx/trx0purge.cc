@@ -977,7 +977,8 @@ not_found:
 	for (ulint i = 0; i < undo_trunc->rsegs_size(); ++i) {
 		trx_rseg_t*	rseg = undo_trunc->get_ith_rseg(i);
 		buf_block_t* rblock = trx_rseg_header_create(
-			space, rseg->id, sys_header, &mtr);
+			space, rseg->id, trx_sys.get_max_trx_id(),
+			sys_header, &mtr);
 		ut_ad(rblock);
 		rseg->page_no = rblock ? rblock->page.id.page_no() : FIL_NULL;
 
@@ -1014,28 +1015,12 @@ not_found:
 		rseg->needs_purge = false;
 	}
 
-	mtr.commit();
-	/* Write-ahead the redo log record. */
-	log_write_up_to(mtr.commit_lsn(), true);
+	mtr.commit_shrink(*space);
 
-	/* Trim the file size. */
-	os_file_truncate(file->name, file->handle,
-			 os_offset_t(size) << srv_page_size_shift, true);
-
-	/* This is only executed by the srv_purge_coordinator_thread. */
+	/* No mutex; this is only updated by the purge coordinator. */
 	export_vars.innodb_undo_truncations++;
 
-	/* In MDEV-8319 (10.5) we will PUNCH_HOLE the garbage
-	(with write-ahead logging). */
-
-	mutex_enter(&fil_system.mutex);
-	ut_ad(space->is_being_truncated);
-	space->is_being_truncated = false;
-	space->set_stopping(false);
-	mutex_exit(&fil_system.mutex);
-
-	if (purge_sys.rseg != NULL
-	    && purge_sys.rseg->last_page_no == FIL_NULL) {
+	if (purge_sys.rseg && purge_sys.rseg->last_page_no == FIL_NULL) {
 		/* If purge_sys.rseg is pointing to rseg that was recently
 		truncated then move to next rseg element.
 		Note: Ideally purge_sys.rseg should be NULL because purge
@@ -1155,15 +1140,16 @@ static void trx_purge_rseg_get_next_history_log(
 
 	trx_no = mach_read_from_8(log_hdr + TRX_UNDO_TRX_NO);
 	ut_ad(mach_read_from_2(log_hdr + TRX_UNDO_NEEDS_PURGE) <= 1);
+	const byte needs_purge = log_hdr[TRX_UNDO_NEEDS_PURGE + 1];
 
-	mtr_commit(&mtr);
+	mtr.commit();
 
 	mutex_enter(&purge_sys.rseg->mutex);
 
 	purge_sys.rseg->last_page_no = static_cast<uint32_t>(
 		prev_log_addr.page);
 	purge_sys.rseg->set_last_commit(prev_log_addr.boffset, trx_no);
-	purge_sys.rseg->needs_purge = log_hdr[TRX_UNDO_NEEDS_PURGE + 1] != 0;
+	purge_sys.rseg->needs_purge = needs_purge != 0;
 
 	/* Purge can also produce events, however these are already ordered
 	in the rollback segment and any user generated event will be greater

@@ -1,8 +1,8 @@
-commit: 7f264997dd21c5126350a9a5f0cc0960afdd1229
-date: 2021-08-02 11:41:00 +0200
-build-date: 2021-08-02 10:59:00 +0000 
-short: 7f26499
+commit: a2f147af35480e27bd599462db59b9b95f71acd9
+date: 2021-11-05 19:58:32 +0100
+build-date: 2021-11-05 19:01:43 +0000 
+short: a2f147a
 branch: HEAD
 
 
-MariaDB source 10.3.31
+MariaDB source 10.3.32
