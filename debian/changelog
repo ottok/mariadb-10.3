@@ -1,3 +1,14 @@
+mariadb-10.3 (1:10.3.32-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.32 includes fixes for the
+    following security vulnerabilities (LP: #1951709):
+    - CVE-2021-35604
+  * Drop MIPS and libatomic patches applied now upstream
+  * Upstream issue MDEV-25114 about Galera WSREP invalid state
+    fixed (Closes: #989898)
+
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 20 Nov 2021 16:08:18 -0800
+
 mariadb-10.3 (1:10.3.31-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * SECURITY UPDATE: New upstream version 10.3.31 includes fixes for the

@@ -20,7 +20,7 @@ and will correctly detect if __bss_start will be available or not.
 
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -346,6 +346,8 @@ ELSE()
+@@ -347,6 +347,8 @@ ELSE()
    SET(DEFAULT_TMPDIR "\"${TMPDIR}\"")
  ENDIF()
  
@@ -29,7 +29,7 @@ and will correctly detect if __bss_start will be available or not.
  # Run platform tests
  INCLUDE(configure.cmake)
  
-@@ -377,8 +379,6 @@ SET(MALLOC_LIBRARY "system")
+@@ -378,8 +380,6 @@ SET(MALLOC_LIBRARY "system")
  
  CHECK_PCRE()
  
