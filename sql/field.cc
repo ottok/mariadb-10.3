@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2020, MariaDB
+   Copyright (c) 2008, 2021, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2360,7 +2360,7 @@ Field *Field::make_new_field(MEM_ROOT *root, TABLE *new_table,
   tmp->unireg_check= Field::NONE;
   tmp->flags&= (NOT_NULL_FLAG | BLOB_FLAG | UNSIGNED_FLAG |
                 ZEROFILL_FLAG | BINARY_FLAG | ENUM_FLAG | SET_FLAG |
-                VERS_SYS_START_FLAG | VERS_SYS_END_FLAG |
+                VERS_ROW_START | VERS_ROW_END |
                 VERS_UPDATE_UNVERSIONED_FLAG);
   tmp->reset_fields();
   tmp->invisible= VISIBLE;
@@ -7692,7 +7692,7 @@ my_decimal *Field_varstring::val_decimal(my_decimal *decimal_value)
 #ifdef HAVE_valgrind
 void Field_varstring::mark_unused_memory_as_defined()
 {
-  uint used_length= get_length();
+  uint used_length __attribute__((unused)) = get_length();
   MEM_MAKE_DEFINED(get_data() + used_length, field_length - used_length);
 }
 #endif
@@ -8441,6 +8441,7 @@ int Field_blob::store(const char *from,size_t length,CHARSET_INFO *cs)
   rc= well_formed_copy_with_check((char*) value.ptr(), (uint) new_length,
                                   cs, from, length,
                                   length, true, &copy_len);
+  value.length(copy_len);
   Field_blob::store_length(copy_len);
   bmove(ptr+packlength,(uchar*) &tmp,sizeof(char*));
 
@@ -10966,7 +10967,7 @@ Field *make_field(TABLE_SHARE *share,
                  f_is_zerofill(pack_flag) != 0,
                  f_is_dec(pack_flag) == 0);
   case MYSQL_TYPE_LONGLONG:
-    if (flags & (VERS_SYS_START_FLAG|VERS_SYS_END_FLAG))
+    if (flags & (VERS_ROW_START|VERS_ROW_END))
     {
       return new (mem_root)
         Field_vers_trx_id(ptr, field_length, null_pos, null_bit,

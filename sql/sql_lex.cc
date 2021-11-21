@@ -2913,7 +2913,7 @@ bool st_select_lex::setup_ref_array(THD *thd, uint order_group_num)
     prepared statement
   */
   Query_arena *arena= thd->stmt_arena;
-  const uint n_elems= (n_sum_items +
+  const size_t n_elems= (n_sum_items +
                        n_child_sum_items +
                        item_list.elements +
                        select_n_reserved +
@@ -2921,7 +2921,8 @@ bool st_select_lex::setup_ref_array(THD *thd, uint order_group_num)
                        select_n_where_fields +
                        order_group_num +
                        hidden_bit_fields +
-                       fields_in_window_functions) * 5;
+                       fields_in_window_functions) * (size_t) 5;
+  DBUG_ASSERT(n_elems % 5 == 0);
   if (!ref_pointer_array.is_null())
   {
     /*
@@ -5287,7 +5288,6 @@ bool LEX::add_unit_in_brackets(SELECT_LEX *nselect)
   DBUG_ASSERT(nselect->outer_select() == dummy_select);
 
   current_select= dummy_select;
-  current_select->nest_level--;
 
   SELECT_LEX_UNIT *unit= nselect->master_unit();
   Table_ident *ti= new (thd->mem_root) Table_ident(unit);
@@ -5313,7 +5313,6 @@ bool LEX::add_unit_in_brackets(SELECT_LEX *nselect)
   derived_tables|= DERIVED_SUBQUERY;
 
   current_select= nselect;
-  current_select->nest_level++;
   DBUG_RETURN(rc);
 }
 
@@ -8323,7 +8322,7 @@ bool LEX::last_field_generated_always_as_row_start()
   Vers_parse_info &info= vers_get_info();
   Lex_ident *p= &info.as_row.start;
   return last_field_generated_always_as_row_start_or_end(p, "START",
-                                                         VERS_SYS_START_FLAG);
+                                                         VERS_ROW_START);
 }
 
 
@@ -8332,7 +8331,7 @@ bool LEX::last_field_generated_always_as_row_end()
   Vers_parse_info &info= vers_get_info();
   Lex_ident *p= &info.as_row.end;
   return last_field_generated_always_as_row_start_or_end(p, "END",
-                                                         VERS_SYS_END_FLAG);
+                                                         VERS_ROW_END);
 }
 
 
