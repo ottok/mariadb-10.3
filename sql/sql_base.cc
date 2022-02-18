@@ -4355,6 +4355,7 @@ restart:
       wsrep_thd_exec_mode(thd) == LOCAL_STATE          &&
       !is_stat_table(&(*start)->db, &(*start)->alias)    &&
       thd->get_command() != COM_STMT_PREPARE           &&
+      !thd->stmt_arena->is_stmt_prepare()              &&
       ((thd->lex->sql_command == SQLCOM_INSERT         ||
         thd->lex->sql_command == SQLCOM_INSERT_SELECT  ||
         thd->lex->sql_command == SQLCOM_REPLACE        ||
@@ -6272,8 +6273,9 @@ find_field_in_tables(THD *thd, Item_ident *item,
                                  TRUE, &(item->cached_field_index));
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
       /* Check if there are sufficient access rights to the found field. */
-      if (found && check_privileges &&
-          check_column_grant_in_table_ref(thd, table_ref, name, length, found))
+      if (found && check_privileges && !is_temporary_table(table_ref) &&
+          check_column_grant_in_table_ref(thd, table_ref, name, length,
+                                          found))
         found= WRONG_GRANT;
 #endif
     }
@@ -6302,9 +6304,10 @@ find_field_in_tables(THD *thd, Item_ident *item,
              sl=sl->outer_select())
         {
           Item *subs= sl->master_unit()->item;
-          if (subs->type() == Item::SUBSELECT_ITEM && 
-              ((Item_subselect*)subs)->substype() == Item_subselect::IN_SUBS &&
-              ((Item_in_subselect*)subs)->test_strategy(SUBS_SEMI_JOIN))
+          if (!subs ||
+              (subs->type() == Item::SUBSELECT_ITEM &&
+               ((Item_subselect*)subs)->substype() == Item_subselect::IN_SUBS &&
+               ((Item_in_subselect*)subs)->test_strategy(SUBS_SEMI_JOIN)))
           {
             continue;
           }
@@ -6736,7 +6739,6 @@ set_new_item_local_context(THD *thd, Item_ident *item, TABLE_LIST *table_ref)
   if (!(context= new (thd->mem_root) Name_resolution_context))
     return TRUE;
   context->init();
-  context->select_lex= table_ref->select_lex;
   context->first_name_resolution_table=
     context->last_name_resolution_table= table_ref;
   item->context= context;

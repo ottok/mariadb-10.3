@@ -3977,6 +3977,9 @@ void handler::print_error(int error, myf errflag)
   case HA_ERR_TABLE_IN_FK_CHECK:
     textno= ER_TABLE_IN_FK_CHECK;
     break;
+  case HA_ERR_PARTITION_LIST:
+    my_error(ER_VERS_NOT_ALLOWED, errflag, table->s->db.str, table->s->table_name.str);
+    DBUG_VOID_RETURN;
   default:
     {
       /* The error was "unknown" to this function.
@@ -7205,15 +7208,16 @@ bool Table_scope_and_contents_source_st::vers_fix_system_fields(
   if (!vers_info.need_check(alter_info))
     return false;
 
-  if (!vers_info.versioned_fields && vers_info.unversioned_fields &&
-      !(alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING))
+  const bool add_versioning= alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING;
+
+  if (!vers_info.versioned_fields && vers_info.unversioned_fields && !add_versioning)
   {
     // All is correct but this table is not versioned.
     options&= ~HA_VERSIONED_TABLE;
     return false;
   }
 
-  if (!(alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING) && vers_info)
+  if (!add_versioning && vers_info && !vers_info.versioned_fields)
   {
     my_error(ER_MISSING, MYF(0), create_table.table_name.str,
              "WITH SYSTEM VERSIONING");
@@ -7223,8 +7227,9 @@ bool Table_scope_and_contents_source_st::vers_fix_system_fields(
   List_iterator<Create_field> it(alter_info->create_list);
   while (Create_field *f= it++)
   {
-    if ((f->versioning == Column_definition::VERSIONING_NOT_SET &&
-         !(alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING)) ||
+    if (f->vers_sys_field())
+      continue;
+    if ((f->versioning == Column_definition::VERSIONING_NOT_SET && !add_versioning) ||
         f->versioning == Column_definition::WITHOUT_VERSIONING)
     {
       f->flags|= VERS_UPDATE_UNVERSIONED_FLAG;
@@ -7245,9 +7250,10 @@ bool Table_scope_and_contents_source_st::vers_check_system_fields(
   if (!(options & HA_VERSIONED_TABLE))
     return false;
 
+  uint versioned_fields= 0;
+
   if (!(alter_info->flags & ALTER_DROP_SYSTEM_VERSIONING))
   {
-    uint versioned_fields= 0;
     uint fieldnr= 0;
     List_iterator<Create_field> field_it(alter_info->create_list);
     while (Create_field *f= field_it++)
@@ -7264,8 +7270,7 @@ bool Table_scope_and_contents_source_st::vers_check_system_fields(
       {
         List_iterator<Create_field> dup_it(alter_info->create_list);
         for (Create_field *dup= dup_it++; !is_dup && dup != f; dup= dup_it++)
-          is_dup= my_strcasecmp(default_charset_info,
-                                dup->field_name.str, f->field_name.str) == 0;
+          is_dup= Lex_ident(dup->field_name).streq(f->field_name);
       }
 
       if (!(f->flags & VERS_UPDATE_UNVERSIONED_FLAG) && !is_dup)
@@ -7279,7 +7284,7 @@ bool Table_scope_and_contents_source_st::vers_check_system_fields(
     }
   }
 
-  if (!(alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING))
+  if (!(alter_info->flags & ALTER_ADD_SYSTEM_VERSIONING) && !versioned_fields)
     return false;
 
   bool can_native= ha_check_storage_engine_flag(db_type,
