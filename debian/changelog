@@ -1,3 +1,28 @@
+mariadb-10.3 (1:10.3.34-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.34 includes fixes for the
+    following security vulnerabilities (LP: #1961350):
+    - CVE-2021-46661
+    - CVE-2021-46663
+    - CVE-2021-46664
+    - CVE-2021-46665
+    - CVE-2021-46668
+  * Previous upstream version 10.3.33 included security fixes for:
+    - CVE-2021-46659
+    - CVE-2022-24048
+    - CVE-2022-24050
+    - CVE-2022-24051
+    - CVE-2022-24052
+  * Previous upstream version 10.3.32 included security fixes for:
+    - CVE-2021-46662
+    - CVE-2021-46667
+  * Upstream version 10.3.33 was skipped as upstream pulled the release within a
+    couple of days of release due to severe regression
+  * Notable upstream functional changes in 10.3.33:
+    - New default minimum value for innodb_buffer_pool_size is 20 MB (from 2 MB)
+
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 17 Feb 2022 18:15:59 -0800
+
 mariadb-10.3 (1:10.3.32-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * SECURITY UPDATE: New upstream version 10.3.32 includes fixes for the
