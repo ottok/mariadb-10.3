@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2005, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2014, 2021, MariaDB Corporation.
+Copyright (c) 2014, 2022, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -126,7 +126,6 @@ public:
 		rec_offs*	ins_offsets = NULL;
 		dberr_t		error = DB_SUCCESS;
 		dtuple_t*	dtuple;
-		ulint		count = 0;
 		const ulint	flag = BTR_NO_UNDO_LOG_FLAG
 				       | BTR_NO_LOCKING_FLAG
 				       | BTR_KEEP_SYS_FLAG | BTR_CREATE_FLAG;
@@ -234,7 +233,6 @@ public:
 			mtr_commit(&mtr);
 
 			rtr_clean_rtr_info(&rtr_info, true);
-			count++;
 		}
 
 		m_dtuple_vec->clear();
@@ -1094,7 +1092,7 @@ row_merge_read(
 	if (success && log_tmp_is_encrypted()) {
 		if (!log_tmp_block_decrypt(buf, srv_sort_buf_size,
 					   crypt_buf, ofs)) {
-			return (FALSE);
+			DBUG_RETURN(false);
 		}
 
 		srv_stats.n_merge_blocks_decrypted.inc();
@@ -1143,7 +1141,7 @@ row_merge_write(
 					   buf_len,
 					   static_cast<byte*>(crypt_buf),
 					   ofs)) {
-			return false;
+			DBUG_RETURN(false);
 		}
 
 		srv_stats.n_merge_blocks_encrypted.inc();
@@ -2862,7 +2860,21 @@ wait_again:
 		err = fts_sync_table(const_cast<dict_table_t*>(new_table));
 
 		if (err == DB_SUCCESS) {
-			fts_update_next_doc_id(NULL, new_table, max_doc_id);
+			new_table->fts->cache->synced_doc_id = max_doc_id;
+
+		        /* Update the max value as next FTS_DOC_ID */
+			if (max_doc_id >= new_table->fts->cache->next_doc_id) {
+				new_table->fts->cache->next_doc_id =
+					max_doc_id + 1;
+			}
+
+			new_table->fts->cache->first_doc_id =
+				new_table->fts->cache->next_doc_id;
+
+			err= fts_update_sync_doc_id(
+				new_table,
+				new_table->fts->cache->synced_doc_id,
+				NULL);
 		}
 	}
 

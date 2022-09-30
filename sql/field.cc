@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2017, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2021, MariaDB
+   Copyright (c) 2008, 2022, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2416,6 +2416,11 @@ int Field::set_default()
   if (default_value)
   {
     Query_arena backup_arena;
+    /*
+      TODO: this may impose memory leak until table flush.
+          See comment in
+          TABLE::update_virtual_fields(handler *, enum_vcol_update_mode).
+    */
     table->in_use->set_n_backup_active_arena(table->expr_arena, &backup_arena);
     int rc= default_value->expr->save_in_field(this, 0);
     table->in_use->restore_active_arena(table->expr_arena, &backup_arena);
@@ -3111,6 +3116,15 @@ Field *Field_decimal::make_new_field(MEM_ROOT *root, TABLE *new_table,
 }
 
 
+void Field_new_decimal::set_and_validate_prec(uint32 len_arg,
+  uint8 dec_arg, bool unsigned_arg)
+{
+  precision= my_decimal_length_to_precision(len_arg, dec_arg, unsigned_arg);
+  set_if_smaller(precision, DECIMAL_MAX_PRECISION);
+  bin_size= my_decimal_get_binary_size(precision, dec);
+}
+
+
 /****************************************************************************
 ** Field_new_decimal
 ****************************************************************************/
@@ -3129,12 +3143,10 @@ Field_new_decimal::Field_new_decimal(uchar *ptr_arg,
                                      uint8 dec_arg,bool zero_arg,
                                      bool unsigned_arg)
   :Field_num(ptr_arg, len_arg, null_ptr_arg, null_bit_arg,
-             unireg_check_arg, field_name_arg, dec_arg, zero_arg, unsigned_arg)
+             unireg_check_arg, field_name_arg,
+             MY_MIN(dec_arg, DECIMAL_MAX_SCALE), zero_arg, unsigned_arg)
 {
-  precision= get_decimal_precision(len_arg, dec_arg, unsigned_arg);
-  DBUG_ASSERT((precision <= DECIMAL_MAX_PRECISION) &&
-              (dec <= DECIMAL_MAX_SCALE));
-  bin_size= my_decimal_get_binary_size(precision, dec);
+  set_and_validate_prec(len_arg, dec_arg, unsigned_arg);
 }
 
 
@@ -7268,7 +7280,7 @@ my_decimal *Field_string::val_decimal(my_decimal *decimal_value)
   THD *thd= get_thd();
   Converter_str2my_decimal_with_warn(thd,
                                      Warn_filter_string(thd, this),
-                                     E_DEC_FATAL_ERROR,
+                                     E_DEC_FATAL_ERROR & ~E_DEC_BAD_NUM,
                                      Field_string::charset(),
                                      (const char *) ptr,
                                      field_length, decimal_value);
@@ -7680,7 +7692,7 @@ my_decimal *Field_varstring::val_decimal(my_decimal *decimal_value)
   ASSERT_COLUMN_MARKED_FOR_READ;
   THD *thd= get_thd();
   Converter_str2my_decimal_with_warn(thd, Warn_filter(thd),
-                                     E_DEC_FATAL_ERROR,
+                                     E_DEC_FATAL_ERROR & ~E_DEC_BAD_NUM,
                                      Field_varstring::charset(),
                                      (const char *) get_data(),
                                      get_length(), decimal_value);
@@ -8512,7 +8524,7 @@ my_decimal *Field_blob::val_decimal(my_decimal *decimal_value)
 
   THD *thd= get_thd();
   Converter_str2my_decimal_with_warn(thd, Warn_filter(thd),
-                                     E_DEC_FATAL_ERROR,
+                                     E_DEC_FATAL_ERROR & ~E_DEC_BAD_NUM,
                                      Field_blob::charset(),
                                      blob, length, decimal_value);
   return decimal_value;
@@ -9978,7 +9990,7 @@ int Field_bit::cmp_prefix(const uchar *a, const uchar *b, size_t prefix_len)
 }
 
 
-int Field_bit::key_cmp(const uchar *str, uint length)
+int Field_bit::key_cmp(const uchar *str, uint)
 {
   if (bit_len)
   {
@@ -9987,7 +9999,6 @@ int Field_bit::key_cmp(const uchar *str, uint length)
     if ((flag= (int) (bits - *str)))
       return flag;
     str++;
-    length--;
   }
   return memcmp(ptr, str, bytes_in_rec);
 }

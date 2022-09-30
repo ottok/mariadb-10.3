@@ -429,7 +429,7 @@ DROP TABLE t1;
 --echo # MDEV-16054 simple json functions flatline cpu on garbage input.
 --echo #
 
-select json_array(1,uuid(),compress(5.140264e+307));
+select json_array(1,user(),compress(5.140264e+307));
 
 --echo #
 --echo # MDEV-16869 String functions don't respect character set of JSON_VALUE.
@@ -612,6 +612,20 @@ SELECT JSON_VALID('{"admin\\"": null}'), '{"admin\\"": null}'
     SELECT JSON_VALID('{"\\"admin": null}'), '{"\\"admin": null}'
       UNION
       SELECT JSON_VALID('{"\\"": null}'), '{"\\"": null}';
+
+--echo #
+--echo # MDEV-29188: Crash in JSON_EXTRACT
+--echo #
+
+CREATE TABLE t1 (j JSON);
+
+INSERT INTO t1 VALUES
+  ('{"ID": "4", "Name": "Betty", "Age": 19}'),
+  ('[10, 20, [30, 40]]');
+
+SELECT * FROM t1 WHERE JSON_EXTRACT(j, '$.Age')=19;
+
+drop table t1;
 
 --echo #
 --echo # End of 10.3 tests

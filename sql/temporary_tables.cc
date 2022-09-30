@@ -698,19 +698,20 @@ bool THD::rm_temporary_table(handlerton *base, const char *path)
   char frm_path[FN_REFLEN + 1];
 
   strxnmov(frm_path, sizeof(frm_path) - 1, path, reg_ext, NullS);
-  if (mysql_file_delete(key_file_frm, frm_path, MYF(0)))
-  {
-    error= true;
-  }
-  file= get_new_handler((TABLE_SHARE*) 0, current_thd->mem_root, base);
+
+  file= get_new_handler((TABLE_SHARE*) 0, mem_root, base);
   if (file && file->ha_delete_table(path))
   {
     error= true;
     sql_print_warning("Could not remove temporary table: '%s', error: %d",
                       path, my_errno);
   }
-
   delete file;
+
+  if (mysql_file_delete(key_file_frm, frm_path, MYF(0)))
+  {
+    error= true;
+  }
   DBUG_RETURN(error);
 }
 
@@ -875,7 +876,7 @@ void THD::restore_tmp_table_share(TMP_TABLE_SHARE *share)
   @return false                       Temporary tables exist
           true                        No temporary table exist
 */
-inline bool THD::has_temporary_tables()
+bool THD::has_temporary_tables()
 {
   DBUG_ENTER("THD::has_temporary_tables");
   bool result= (rgi_slave

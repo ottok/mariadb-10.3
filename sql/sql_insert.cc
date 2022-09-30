@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2019, MariaDB Corporation
+   Copyright (c) 2010, 2022, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -945,6 +945,12 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   }
 
   THD_STAGE_INFO(thd, stage_update);
+
+  if  (duplic == DUP_UPDATE)
+  {
+    restore_record(table,s->default_values);	// Get empty record
+    thd->reconsider_logging_format_for_iodup(table);
+  }
   do
   {
     DBUG_PRINT("info", ("iteration %llu", iteration));
@@ -1057,7 +1063,6 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
         break;
       }
 
-      thd->decide_logging_format_low(table);
 #ifndef EMBEDDED_LIBRARY
       if (lock_type == TL_WRITE_DELAYED)
       {
@@ -1424,8 +1429,7 @@ static bool mysql_prepare_insert_check_table(THD *thd, TABLE_LIST *table_list,
   if (insert_into_view && !fields.elements)
   {
     thd->lex->empty_field_list_on_rset= 1;
-    if (!thd->lex->select_lex.leaf_tables.head()->table ||
-        table_list->is_multitable())
+    if (!table_list->table || table_list->is_multitable())
     {
       my_error(ER_VIEW_NO_INSERT_FIELD_LIST, MYF(0),
                table_list->view_db.str, table_list->view_name.str);
@@ -3636,7 +3640,6 @@ bool mysql_insert_select_prepare(THD *thd)
                            &select_lex->where, TRUE))
     DBUG_RETURN(TRUE);
 
-  DBUG_ASSERT(select_lex->leaf_tables.elements != 0);
   List_iterator<TABLE_LIST> ti(select_lex->leaf_tables);
   TABLE_LIST *table;
   uint insert_tables;

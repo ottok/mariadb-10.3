@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2021, MariaDB Corporation.
+   Copyright (c) 2009, 2022, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1005,7 +1005,7 @@ public:
   /* We build without RTTI, so dynamic_cast can't be used. */
   enum Type
   {
-    STATEMENT, PREPARED_STATEMENT, STORED_PROCEDURE, TABLE_ARENA
+    STATEMENT, PREPARED_STATEMENT, STORED_PROCEDURE
   };
 
   Query_arena(MEM_ROOT *mem_root_arg, enum enum_state state_arg) :
@@ -2167,6 +2167,39 @@ struct wait_for_commit
   void reinit();
 };
 
+
+class Sp_caches
+{
+public:
+  sp_cache *sp_proc_cache;
+  sp_cache *sp_func_cache;
+  sp_cache *sp_package_spec_cache;
+  sp_cache *sp_package_body_cache;
+  Sp_caches()
+   :sp_proc_cache(NULL),
+    sp_func_cache(NULL),
+    sp_package_spec_cache(NULL),
+    sp_package_body_cache(NULL)
+  { }
+  ~Sp_caches()
+  {
+    // All caches must be freed by the caller explicitly
+    DBUG_ASSERT(sp_proc_cache == NULL);
+    DBUG_ASSERT(sp_func_cache == NULL);
+    DBUG_ASSERT(sp_package_spec_cache == NULL);
+    DBUG_ASSERT(sp_package_body_cache == NULL);
+  }
+  void sp_caches_swap(Sp_caches &rhs)
+  {
+    swap_variables(sp_cache*, sp_proc_cache, rhs.sp_proc_cache);
+    swap_variables(sp_cache*, sp_func_cache, rhs.sp_func_cache);
+    swap_variables(sp_cache*, sp_package_spec_cache, rhs.sp_package_spec_cache);
+    swap_variables(sp_cache*, sp_package_body_cache, rhs.sp_package_body_cache);
+  }
+  void sp_caches_clear();
+};
+
+
 extern "C" void my_message_sql(uint error, const char *str, myf MyFlags);
 
 /**
@@ -2185,7 +2218,8 @@ class THD :public Statement,
            */
            public Item_change_list,
            public MDL_context_owner,
-           public Open_tables_state
+           public Open_tables_state,
+           public Sp_caches
 {
 private:
   inline bool is_stmt_prepare() const
@@ -3180,10 +3214,6 @@ public:
   enum_sql_command last_sql_command;  // Last sql_command exceuted in mysql_execute_command()
 
   sp_rcontext *spcont;		// SP runtime context
-  sp_cache   *sp_proc_cache;
-  sp_cache   *sp_func_cache;
-  sp_cache   *sp_package_spec_cache;
-  sp_cache   *sp_package_body_cache;
 
   /** number of name_const() substitutions, see sp_head.cc:subst_spvars() */
   uint       query_name_consts;
@@ -3717,6 +3747,8 @@ public:
   bool convert_string(LEX_STRING *to, CHARSET_INFO *to_cs,
 		      const char *from, size_t from_length,
 		      CHARSET_INFO *from_cs);
+  bool reinterpret_string_from_binary(LEX_CSTRING *to, CHARSET_INFO *to_cs,
+                                      const char *from, size_t from_length);
   bool convert_string(LEX_CSTRING *to, CHARSET_INFO *to_cs,
                       const char *from, size_t from_length,
                       CHARSET_INFO *from_cs)
@@ -3733,6 +3765,8 @@ public:
   {
     if (!simple_copy_is_possible)
       return unlikely(convert_string(to, tocs, from->str, from->length, fromcs));
+    if (fromcs == &my_charset_bin)
+      return reinterpret_string_from_binary(to, tocs, from->str, from->length);
     *to= *from;
     return false;
   }
@@ -3942,8 +3976,7 @@ public:
 
   bool is_item_tree_change_register_required()
   {
-    return !stmt_arena->is_conventional()
-           || stmt_arena->type() == Query_arena::TABLE_ARENA;
+    return !stmt_arena->is_conventional();
   }
 
   void change_item_tree(Item **place, Item *new_value)
@@ -4169,13 +4202,13 @@ public:
     */
     DBUG_PRINT("debug",
                ("temporary_tables: %s, in_sub_stmt: %s, system_thread: %s",
-                YESNO(has_thd_temporary_tables()), YESNO(in_sub_stmt),
+                YESNO(has_temporary_tables()), YESNO(in_sub_stmt),
                 show_system_thread(system_thread)));
     if (in_sub_stmt == 0)
     {
       if (wsrep_binlog_format() == BINLOG_FORMAT_ROW)
         set_current_stmt_binlog_format_row();
-      else if (!has_thd_temporary_tables())
+      else if (!has_temporary_tables())
         set_current_stmt_binlog_format_stmt();
     }
     DBUG_VOID_RETURN;
@@ -4481,18 +4514,18 @@ public:
       mdl_context.release_transactional_locks();
   }
   int decide_logging_format(TABLE_LIST *tables);
-  /*
-   In Some cases when decide_logging_format is called it does not have all
-   information to decide the logging format. So that cases we call decide_logging_format_2
-   at later stages in execution.
-   One example would be binlog format for IODKU but column with unique key is not inserted.
-   We dont have inserted columns info when we call decide_logging_format so on later stage we call
-   decide_logging_format_low
 
-   @returns 0 if no format is changed
-            1 if there is change in binlog format
+  /*
+   In Some cases when decide_logging_format is called it does not have
+   all information to decide the logging format. So that cases we call
+   decide_logging_format_2 at later stages in execution.
+
+   One example would be binlog format for insert on duplicate key
+   (IODKU) but column with unique key is not inserted.  We do not have
+   inserted columns info when we call decide_logging_format so on
+   later stage we call reconsider_logging_format_for_iodup()
   */
-  int decide_logging_format_low(TABLE *table);
+  void reconsider_logging_format_for_iodup(TABLE *table);
 
   enum need_invoker { INVOKER_NONE=0, INVOKER_USER, INVOKER_ROLE};
   void binlog_invoker(bool role) { m_binlog_invoker= role ? INVOKER_ROLE : INVOKER_USER; }
@@ -5658,10 +5691,12 @@ class select_union_recursive :public select_unit
     or for the unit specifying a CTE that mutually recursive with this CTE.
   */
   uint cleanup_count;
+  long row_counter;
 
   select_union_recursive(THD *thd_arg):
     select_unit(thd_arg),
-    incr_table(0), first_rec_table_to_update(0), cleanup_count(0)
+      incr_table(0), first_rec_table_to_update(0), cleanup_count(0),
+      row_counter(0)
   { incr_table_param.init(); };
 
   int send_data(List<Item> &items);
@@ -6676,6 +6711,19 @@ public:
   }
   void copy(MEM_ROOT *mem_root, const LEX_CSTRING &db,
                                 const LEX_CSTRING &name);
+
+  static Database_qualified_name split(const LEX_CSTRING &txt)
+  {
+    DBUG_ASSERT(txt.str[txt.length] == '\0'); // Expect 0-terminated input
+    const char *dot= strchr(txt.str, '.');
+    if (!dot)
+      return Database_qualified_name(NULL, 0, txt.str, txt.length);
+    size_t dblen= dot - txt.str;
+    Lex_cstring db(txt.str, dblen);
+    Lex_cstring name(txt.str + dblen + 1, txt.length - dblen - 1);
+    return Database_qualified_name(db, name);
+  }
+
   // Export db and name as a qualified name string: 'db.name'
   size_t make_qname(char *dst, size_t dstlen) const
   {

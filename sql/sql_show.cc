@@ -2660,7 +2660,8 @@ static int show_create_view(THD *thd, TABLE_LIST *table, String *buff)
          tbl;
          tbl= tbl->next_global)
     {
-      if (cmp(&table->view_db, tbl->view ? &tbl->view_db : &tbl->db))
+      if (!tbl->is_derived() &&
+          cmp(&table->view_db, tbl->view ? &tbl->view_db : &tbl->db))
       {
         table->compact_view_format= FALSE;
         break;
@@ -5142,6 +5143,7 @@ public:
 
 int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
 {
+  DBUG_ENTER("get_all_tables");
   LEX *lex= thd->lex;
   TABLE *table= tables->table;
   TABLE_LIST table_acl_check;
@@ -5159,7 +5161,29 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
   uint table_open_method= tables->table_open_method;
   bool can_deadlock;
   MEM_ROOT tmp_mem_root;
-  DBUG_ENTER("get_all_tables");
+  /*
+    We're going to open FRM files for tables.
+    In case of VIEWs that contain stored function calls,
+    these stored functions will be parsed and put to the SP cache.
+
+    Suppose we have a view containing a stored function call:
+      CREATE VIEW v1 AS SELECT f1() AS c1;
+    and now we're running:
+      SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME=f1();
+    If a parallel thread invalidates the cache,
+    e.g. by creating or dropping some stored routine,
+    the SELECT query will re-parse f1() when processing "v1"
+    and replace the outdated cached version of f1() to a new one.
+    But the old version of f1() is referenced from the m_sp member
+    of the Item_func_sp instances used in the WHERE condition.
+    We cannot destroy it. To avoid such clashes, let's remember
+    all old routines into a temporary SP cache collection
+    and process tables with a new empty temporary SP cache collection.
+    Then restore to the old SP cache collection at the end.
+  */
+  Sp_caches old_sp_caches;
+
+  old_sp_caches.sp_caches_swap(*thd);
 
   bzero(&tmp_mem_root, sizeof(tmp_mem_root));
 
@@ -5332,6 +5356,13 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
 err:
   thd->restore_backup_open_tables_state(&open_tables_state_backup);
   free_root(&tmp_mem_root, 0);
+
+  /*
+    Now restore to the saved SP cache collection
+    and clear the temporary SP cache collection.
+  */
+  old_sp_caches.sp_caches_swap(*thd);
+  old_sp_caches.sp_caches_clear();
 
   DBUG_RETURN(error);
 }
@@ -6959,19 +6990,18 @@ static int get_check_constraints_record(THD *thd, TABLE_LIST *tables,
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     TABLE_LIST table_acl_check;
     bzero((char*) &table_acl_check, sizeof(table_acl_check));
+
+    if (!(thd->col_access & TABLE_ACLS))
+    {
+      table_acl_check.db= *db_name;
+      table_acl_check.table_name= *table_name;
+      table_acl_check.grant.privilege= thd->col_access;
+      if (check_grant(thd, TABLE_ACLS, &table_acl_check, FALSE, 1, TRUE))
+        DBUG_RETURN(res);
+    }
 #endif
     for (uint i= 0; i < tables->table->s->table_check_constraints; i++)
     {
-#ifndef NO_EMBEDDED_ACCESS_CHECKS
-      if (!(thd->col_access & TABLE_ACLS))
-      {
-        table_acl_check.db= *db_name;
-        table_acl_check.table_name= *table_name;
-        table_acl_check.grant.privilege= thd->col_access;
-        if (check_grant(thd, TABLE_ACLS, &table_acl_check, FALSE, 1, TRUE))
-          continue;
-      }
-#endif
       Virtual_column_info *check= tables->table->check_constraints[i];
       table->field[0]->store(STRING_WITH_LEN("def"), system_charset_info);
       table->field[3]->store(check->name.str, check->name.length,
@@ -8803,6 +8833,7 @@ bool optimize_schema_tables_memory_usage(List<TABLE_LIST> &tables)
         if (bitmap_is_set(table->read_set, i))
         {
           field->move_field(cur);
+          field->reset();
           *to_recinfo++= *from_recinfo;
           cur+= from_recinfo->length;
         }
@@ -8823,6 +8854,7 @@ bool optimize_schema_tables_memory_usage(List<TABLE_LIST> &tables)
         table->s->reclength= to_recinfo->length= 1;
         to_recinfo++;
       }
+      store_record(table, s->default_values);
       p->recinfo= to_recinfo;
 
       // TODO switch from Aria to Memory if all blobs were optimized away?
@@ -9236,7 +9268,7 @@ ST_FIELD_INFO columns_fields_info[]=
    OPEN_FRM_ONLY},
   {"COLUMN_TYPE", 65535, MYSQL_TYPE_STRING, 0, 0, "Type", OPEN_FRM_ONLY},
   {"COLUMN_KEY", 3, MYSQL_TYPE_STRING, 0, 0, "Key", OPEN_FRM_ONLY},
-  {"EXTRA", 30, MYSQL_TYPE_STRING, 0, 0, "Extra", OPEN_FRM_ONLY},
+  {"EXTRA", 80, MYSQL_TYPE_STRING, 0, 0, "Extra", OPEN_FRM_ONLY},
   {"PRIVILEGES", 80, MYSQL_TYPE_STRING, 0, 0, "Privileges", OPEN_FRM_ONLY},
   {"COLUMN_COMMENT", COLUMN_COMMENT_MAXLEN, MYSQL_TYPE_STRING, 0, 0, 
    "Comment", OPEN_FRM_ONLY},

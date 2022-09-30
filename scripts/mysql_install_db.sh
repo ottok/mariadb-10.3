@@ -483,10 +483,11 @@ then
   args="$args --user=$user"
 fi
 
-if test -n "$group"
-then
-  args="$args --group=$group"
-fi
+#To be enabled if/when we enable --group as an option to mysqld
+#if test -n "$group"
+#then
+#  args="$args --group=$group"
+#fi
 
 # When doing a "cross bootstrap" install, no reference to the current
 # host should be added to the system tables.  So we filter out any
@@ -504,7 +505,7 @@ mysqld_install_cmd_line()
 {
   "$mysqld_bootstrap" $defaults $defaults_group_suffix "$mysqld_opt" --bootstrap $silent_startup\
   "--basedir=$basedir" "--datadir=$ldata" --log-warnings=0 --enforce-storage-engine="" \
-  "--plugin-dir=${plugindir}" --loose-disable-plugin-file-key-management \
+  "--plugin-dir=${plugindir}" \
   $args --max_allowed_packet=8M \
   --net_buffer_length=16K
 }

@@ -899,7 +899,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 /*
   We should not introduce any further shift/reduce conflicts.
 */
-%expect 81
+%expect 85
 
 /*
    Comments for TOKENS.
@@ -1012,6 +1012,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 %token  FIRST_VALUE_SYM               /* SQL-2011 */
 %token  FLOAT_NUM
 %token  FLOAT_SYM                     /* SQL-2003-R */
+%token  FORCE_LOOKAHEAD               /* INTERNAL never returned by the lexer */
 %token  FOREIGN                       /* SQL-2003-R */
 %token  FOR_SYM                       /* SQL-2003-R */
 %token  FOR_SYSTEM_TIME_SYM           /* INTERNAL */
@@ -2035,6 +2036,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 
 %type <charset>
         opt_collate
+        collate
         charset_name
         charset_or_alias
         charset_name_or_default
@@ -3037,7 +3039,7 @@ sequence_def:
             if (unlikely(Lex->sql_command != SQLCOM_ALTER_SEQUENCE))
             {
               thd->parse_error(ER_SYNTAX_ERROR, "RESTART");
-              YYABORT;
+              MYSQL_YYABORT;
             }
             if (unlikely(Lex->create_info.seq_create_info->used_fields &
                          seq_field_used_restart))
@@ -3049,7 +3051,7 @@ sequence_def:
             if (unlikely(Lex->sql_command != SQLCOM_ALTER_SEQUENCE))
             {
               thd->parse_error(ER_SYNTAX_ERROR, "RESTART");
-              YYABORT;
+              MYSQL_YYABORT;
             }
             if (unlikely(Lex->create_info.seq_create_info->used_fields &
                          seq_field_used_restart))
@@ -3058,6 +3060,9 @@ sequence_def:
             Lex->create_info.seq_create_info->used_fields|= seq_field_used_restart | seq_field_used_restart_value;
           }
         ;
+
+/* this rule is used to force look-ahead in the parser */
+force_lookahead: {} | FORCE_LOOKAHEAD {} ;
 
 server_def:
           SERVER_SYM opt_if_not_exists ident_or_text
@@ -3259,7 +3264,7 @@ ev_sql_stmt:
 
             lex->sphead->set_body_start(thd, lip->get_cpp_ptr());
           }
-          sp_proc_stmt
+          sp_proc_stmt force_lookahead
           {
             LEX *lex= thd->lex;
 
@@ -3345,9 +3350,29 @@ sp_suid:
         ;
 
 call:
-          CALL_SYM sp_name
+          CALL_SYM ident
           {
-            if (unlikely(Lex->call_statement_start(thd, $2)))
+            if (unlikely(Lex->call_statement_start(thd, &$2)))
+              MYSQL_YYABORT;
+          }
+          opt_sp_cparam_list
+          {
+            if (Lex->check_cte_dependencies_and_resolve_references())
+              MYSQL_YYABORT;
+          }
+        | CALL_SYM ident '.' ident
+          {
+            if (unlikely(Lex->call_statement_start(thd, &$2, &$4)))
+              MYSQL_YYABORT;
+          }
+          opt_sp_cparam_list
+          {
+            if (Lex->check_cte_dependencies_and_resolve_references())
+              MYSQL_YYABORT;
+          }
+        | CALL_SYM ident '.' ident '.' ident
+          {
+            if (unlikely(Lex->call_statement_start(thd, $2, $4, $6)))
               MYSQL_YYABORT;
           }
           opt_sp_cparam_list
@@ -7498,10 +7523,7 @@ charset_or_alias:
           }
         ;
 
-collate: COLLATE_SYM collation_name_or_default
-         {
-           Lex->charset= $2;
-         }
+collate: COLLATE_SYM collation_name_or_default { $$= $2; }
        ;
 
 opt_binary:
@@ -7516,11 +7538,17 @@ binary:
         | BINARY charset_or_alias { bincmp_collation($2, true); }
         | charset_or_alias collate
           {
-            if (!my_charset_same(Lex->charset, $1))
-              my_yyabort_error((ER_COLLATION_CHARSET_MISMATCH, MYF(0),
-                                Lex->charset->name, $1->csname));
+            if (!$2)
+              Lex->charset= $1; // CHARACTER SET cs COLLATE DEFAULT
+            else
+            {
+              if (!my_charset_same($2, $1))
+                my_yyabort_error((ER_COLLATION_CHARSET_MISMATCH, MYF(0),
+                                  $2->name, $1->csname));
+              Lex->charset= $2;
+            }
           }
-        | collate { }
+        | collate { Lex->charset= $1; }
         ;
 
 opt_bin_mod:
@@ -11208,6 +11236,11 @@ function_call_generic:
         | ident_cli '.' ident_cli '(' opt_expr_list ')'
           {
             if (unlikely(!($$= Lex->make_item_func_call_generic(thd, &$1, &$3, $5))))
+              MYSQL_YYABORT;
+          }
+        | ident_cli '.' ident_cli '.' ident_cli '(' opt_expr_list ')'
+          {
+            if (unlikely(!($$= Lex->make_item_func_call_generic(thd, &$1, &$3, &$5, $7))))
               MYSQL_YYABORT;
           }
         ;
@@ -15340,7 +15373,6 @@ with_clause:
                MYSQL_YYABORT;
              Lex->derived_tables|= DERIVED_WITH;
              Lex->with_cte_resolution= true;
-             Lex->with_cte_resolution= true;
              Lex->curr_with_clause= with_clause;
              with_clause->add_to_list(Lex->with_clauses_list_last_next);
           }
@@ -17989,8 +18021,8 @@ trigger_tail:
 
             lex->sphead->set_body_start(thd, lip->get_cpp_tok_start());
           }
-          sp_proc_stmt /* $19 */
-          { /* $20 */
+          sp_proc_stmt /* $19 */ force_lookahead /* $20 */
+          { /* $21 */
             LEX *lex= Lex;
             sp_head *sp= lex->sphead;
 
@@ -18073,7 +18105,7 @@ sf_tail:
             lex->sphead->set_chistics(lex->sp_chistics);
             lex->sphead->set_body_start(thd, lip->get_cpp_tok_start());
           }
-          sp_proc_stmt_in_returns_clause
+          sp_proc_stmt_in_returns_clause force_lookahead
           {
             if (unlikely(Lex->sp_body_finalize_function(thd)))
               MYSQL_YYABORT;
@@ -18094,7 +18126,7 @@ sp_tail:
             Lex->sphead->set_chistics(Lex->sp_chistics);
             Lex->sphead->set_body_start(thd, YYLIP->get_cpp_tok_start());
           }
-          sp_proc_stmt
+          sp_proc_stmt force_lookahead
           {
             if (unlikely(Lex->sp_body_finalize_procedure(thd)))
               MYSQL_YYABORT;

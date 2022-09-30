@@ -3,7 +3,7 @@
 Copyright (c) 1994, 2019, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, Google Inc.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2015, 2021, MariaDB Corporation.
+Copyright (c) 2015, 2022, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -3428,6 +3428,7 @@ fail_err:
 		 << ib::hex(thr ? thr->graph->trx->id : 0)
 		 << ' ' << rec_printer(entry).str());
 	DBUG_EXECUTE_IF("do_page_reorganize",
+			if (n_recs)
 			btr_page_reorganize(page_cursor, index, mtr););
 
 	/* Now, try the insert */
@@ -7213,11 +7214,9 @@ struct btr_blob_log_check_t {
 			buf_block_buf_fix_dec(m_pcur->btr_cur.page_cur.block);
 		} else {
 			ut_ad(m_pcur->rel_pos == BTR_PCUR_ON);
-			bool ret = btr_pcur_restore_position(
-				BTR_MODIFY_LEAF | BTR_MODIFY_EXTERNAL,
-				m_pcur, m_mtr);
-
-			ut_a(ret);
+			ut_a(btr_pcur_restore_position(
+			      BTR_MODIFY_LEAF | BTR_MODIFY_EXTERNAL, m_pcur,
+			      m_mtr) == btr_pcur_t::SAME_ALL);
 		}
 
 		*m_block	= btr_pcur_get_block(m_pcur);

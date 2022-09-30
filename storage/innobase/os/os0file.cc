@@ -2,7 +2,7 @@
 
 Copyright (c) 1995, 2019, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2009, Percona Inc.
-Copyright (c) 2013, 2021, MariaDB Corporation.
+Copyright (c) 2013, 2022, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted
 by Percona Inc.. Those modifications are
@@ -113,12 +113,6 @@ static const ulint	OS_AIO_MERGE_N_CONSECUTIVE = 64;
 
 /** Flag indicating if the page_cleaner is in active state. */
 extern bool buf_page_cleaner_is_active;
-
-#ifdef WITH_INNODB_DISALLOW_WRITES
-#define WAIT_ALLOW_WRITES() os_event_wait(srv_allow_writes_event)
-#else
-#define WAIT_ALLOW_WRITES() do { } while (0)
-#endif /* WITH_INNODB_DISALLOW_WRITES */
 
 /**********************************************************************
 
@@ -1096,26 +1090,13 @@ os_aio_validate_skip()
 }
 #endif /* UNIV_DEBUG */
 
-#undef USE_FILE_LOCK
-#ifndef _WIN32
-/* On Windows, mandatory locking is used */
-# define USE_FILE_LOCK
-#endif
-#ifdef USE_FILE_LOCK
+#ifndef _WIN32 /* On Microsoft Windows, mandatory locking is used */
 /** Obtain an exclusive lock on a file.
-@param[in]	fd		file descriptor
-@param[in]	name		file name
+@param fd      file descriptor
+@param name    file name
 @return 0 on success */
-static
-int
-os_file_lock(
-	int		fd,
-	const char*	name)
+int os_file_lock(int fd, const char *name)
 {
-	if (my_disable_locking) {
-		return 0;
-	}
-
 	struct flock lk;
 
 	lk.l_type = F_WRLCK;
@@ -1141,7 +1122,7 @@ os_file_lock(
 
 	return(0);
 }
-#endif /* USE_FILE_LOCK */
+#endif /* !_WIN32 */
 
 /** Calculates local segment number and aio array from global segment number.
 @param[out]	array		aio wait array
@@ -1247,7 +1228,6 @@ FILE*
 os_file_create_tmpfile()
 {
 	FILE*	file	= NULL;
-	WAIT_ALLOW_WRITES();
 	os_file_t	fd	= innobase_mysql_tmpfile(NULL);
 
 	if (fd != OS_FILE_CLOSED) {
@@ -2486,6 +2466,7 @@ os_file_get_last_error_low(
 	case EXDEV:
 	case ENOTDIR:
 	case EISDIR:
+	case EPERM:
 		return(OS_FILE_PATH_ERROR);
 	case EAGAIN:
 		if (srv_use_native_aio) {
@@ -2611,7 +2592,6 @@ os_file_flush_func(
 {
 	int	ret;
 
-	WAIT_ALLOW_WRITES();
 	ret = os_file_fsync_posix(file);
 
 	if (ret == 0) {
@@ -2662,10 +2642,6 @@ os_file_create_simple_func(
 
 	int		create_flag;
 	const char*	mode_str	= NULL;
-
-	if (create_mode != OS_FILE_OPEN && create_mode != OS_FILE_OPEN_RAW) {
-		WAIT_ALLOW_WRITES();
-	}
 
 	ut_a(!(create_mode & OS_FILE_ON_ERROR_SILENT));
 	ut_a(!(create_mode & OS_FILE_ON_ERROR_NO_EXIT));
@@ -2752,17 +2728,18 @@ os_file_create_simple_func(
 	       os_file_set_nocache(file, name, mode_str);
 	}
 
-#ifdef USE_FILE_LOCK
+#ifndef _WIN32
 	if (!read_only
 	    && *success
-	    && (access_type == OS_FILE_READ_WRITE)
+	    && access_type == OS_FILE_READ_WRITE
+	    && !my_disable_locking
 	    && os_file_lock(file, name)) {
 
 		*success = false;
 		close(file);
 		file = -1;
 	}
-#endif /* USE_FILE_LOCK */
+#endif /* !_WIN32 */
 
 	return(file);
 }
@@ -2784,7 +2761,6 @@ os_file_create_directory(
 {
 	int	rcode;
 
-	WAIT_ALLOW_WRITES();
 	rcode = mkdir(pathname, 0770);
 
 	if (!(rcode == 0 || (errno == EEXIST && !fail_if_exists))) {
@@ -3062,10 +3038,11 @@ os_file_create_func(
 	       os_file_set_nocache(file, name, mode_str);
 	}
 
-#ifdef USE_FILE_LOCK
+#ifndef _WIN32
 	if (!read_only
 	    && *success
 	    && create_mode != OS_FILE_OPEN_RAW
+	    && !my_disable_locking
 	    && os_file_lock(file, name)) {
 
 		if (create_mode == OS_FILE_OPEN_RETRY) {
@@ -3090,7 +3067,7 @@ os_file_create_func(
 		close(file);
 		file = -1;
 	}
-#endif /* USE_FILE_LOCK */
+#endif /* !_WIN32 */
 
 	return(file);
 }
@@ -3118,10 +3095,6 @@ os_file_create_simple_no_error_handling_func(
 {
 	os_file_t	file;
 	int		create_flag;
-
-	if (create_mode != OS_FILE_OPEN && create_mode != OS_FILE_OPEN_RAW) {
-		WAIT_ALLOW_WRITES();
-	}
 
 	ut_a(!(create_mode & OS_FILE_ON_ERROR_SILENT));
 	ut_a(!(create_mode & OS_FILE_ON_ERROR_NO_EXIT));
@@ -3167,10 +3140,11 @@ os_file_create_simple_no_error_handling_func(
 
 	*success = (file != -1);
 
-#ifdef USE_FILE_LOCK
+#ifndef _WIN32
 	if (!read_only
 	    && *success
 	    && access_type == OS_FILE_READ_WRITE
+	    && !my_disable_locking
 	    && os_file_lock(file, name)) {
 
 		*success = false;
@@ -3178,7 +3152,7 @@ os_file_create_simple_no_error_handling_func(
 		file = -1;
 
 	}
-#endif /* USE_FILE_LOCK */
+#endif /* !_WIN32 */
 
 	return(file);
 }
@@ -3197,7 +3171,6 @@ os_file_delete_if_exists_func(
 	}
 
 	int	ret;
-	WAIT_ALLOW_WRITES();
 
 	ret = unlink(name);
 
@@ -3222,7 +3195,6 @@ os_file_delete_func(
 	const char*	name)
 {
 	int	ret;
-	WAIT_ALLOW_WRITES();
 
 	ret = unlink(name);
 
@@ -3261,7 +3233,6 @@ os_file_rename_func(
 #endif /* UNIV_DEBUG */
 
 	int	ret;
-	WAIT_ALLOW_WRITES();
 
 	ret = rename(oldpath, newpath);
 
@@ -3435,7 +3406,6 @@ bool
 os_file_set_eof(
 	FILE*		file)	/*!< in: file to be truncated */
 {
-	WAIT_ALLOW_WRITES();
 	return(!ftruncate(fileno(file), ftell(file)));
 }
 
@@ -4157,10 +4127,6 @@ os_file_create_func(
 		? FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
 		: FILE_SHARE_READ | FILE_SHARE_DELETE;
 
-	if (create_mode != OS_FILE_OPEN && create_mode != OS_FILE_OPEN_RAW) {
-		WAIT_ALLOW_WRITES();
-	}
-
 	on_error_no_exit = create_mode & OS_FILE_ON_ERROR_NO_EXIT
 		? true : false;
 
@@ -4741,48 +4707,6 @@ os_file_get_status_win32(
 				CloseHandle(fh);
 			}
 		}
-		stat_info->block_size = 0;
-
-		/* What follows, is calculation of FS block size, which is not important
-		(it is just shown in I_S innodb tables). The error to calculate it will be ignored.*/
-		char	volname[MAX_PATH];
-		BOOL	result = GetVolumePathName(path, volname, MAX_PATH);
-		static	bool warned_once = false;
-		if (!result) {
-			if (!warned_once) {
-				ib::warn()
-					<< "os_file_get_status_win32: "
-					<< "Failed to get the volume path name for: "
-					<< path
-					<< "- OS error number " << GetLastError();
-				warned_once = true;
-			}
-			return(DB_SUCCESS);
-		}
-
-		DWORD	sectorsPerCluster;
-		DWORD	bytesPerSector;
-		DWORD	numberOfFreeClusters;
-		DWORD	totalNumberOfClusters;
-
-		result = GetDiskFreeSpace(
-			(LPCSTR) volname,
-			&sectorsPerCluster,
-			&bytesPerSector,
-			&numberOfFreeClusters,
-			&totalNumberOfClusters);
-
-		if (!result) {
-			if (!warned_once) {
-				ib::warn()
-					<< "GetDiskFreeSpace(" << volname << ",...) "
-					<< "failed "
-					<< "- OS error number " << GetLastError();
-				warned_once = true;
-			}
-			return(DB_SUCCESS);
-		}
-		stat_info->block_size = bytesPerSector * sectorsPerCluster;
 	} else {
 		stat_info->type = OS_FILE_TYPE_UNKNOWN;
 	}
@@ -5049,8 +4973,6 @@ os_file_write_func(
 
 	ut_ad(type.validate());
 	ut_ad(n > 0);
-
-	WAIT_ALLOW_WRITES();
 
 	ssize_t	n_bytes = os_file_pwrite(type, file, (byte*)buf, n, offset, &err);
 
@@ -5679,6 +5601,36 @@ os_is_sparse_file_supported(os_file_t fh)
 	return(err == DB_SUCCESS);
 #endif /* _WIN32 */
 }
+
+/*
+  Get file system block size, by path.
+
+  This is expensive on Windows, and not very useful in general,
+  (only shown in some I_S table), so we keep that out of usual
+  stat.
+*/
+size_t os_file_get_fs_block_size(const char *path)
+{
+#ifdef _WIN32
+  char volname[MAX_PATH];
+  if (!GetVolumePathName(path, volname, MAX_PATH))
+    return 0;
+  DWORD sectorsPerCluster;
+  DWORD bytesPerSector;
+  DWORD numberOfFreeClusters;
+  DWORD totalNumberOfClusters;
+
+  if (GetDiskFreeSpace(volname, &sectorsPerCluster, &bytesPerSector,
+                       &numberOfFreeClusters, &totalNumberOfClusters))
+    return ((size_t) bytesPerSector) * sectorsPerCluster;
+#else
+  os_file_stat_t info;
+  if (os_file_get_status(path, &info, false, false) == DB_SUCCESS)
+    return info.block_size;
+#endif
+  return 0;
+}
+
 
 /** This function returns information about the specified file
 @param[in]	path		pathname of the file

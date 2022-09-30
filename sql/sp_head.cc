@@ -791,7 +791,7 @@ void
 sp_head::set_stmt_end(THD *thd)
 {
   Lex_input_stream *lip= & thd->m_parser_state->m_lip; /* shortcut */
-  const char *end_ptr= lip->get_cpp_ptr(); /* shortcut */
+  const char *end_ptr= lip->get_cpp_tok_start(); /* shortcut */
 
   /* Make the string of parameters. */
 
@@ -3486,6 +3486,7 @@ sp_lex_keeper::reset_lex_and_exec_core(THD *thd, uint *nextp,
     lex_query_tables_own_last= m_lex->query_tables_own_last;
     prelocking_tables= *lex_query_tables_own_last;
     *lex_query_tables_own_last= NULL;
+    m_lex->query_tables_last= m_lex->query_tables_own_last;
     m_lex->mark_as_requiring_prelocking(NULL);
   }
   thd->rollback_item_tree_changes();

@@ -2,7 +2,7 @@
 
 Copyright (c) 1995, 2021, Oracle and/or its affiliates.
 Copyright (c) 2008, Google Inc.
-Copyright (c) 2013, 2021, MariaDB Corporation.
+Copyright (c) 2013, 2022, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -68,6 +68,7 @@ Created 11/5/1995 Heikki Tuuri
 #include <new>
 #include <map>
 #include <sstream>
+#include "log.h"
 #ifndef UNIV_INNOCHECKSUM
 #include "fil0pagecompress.h"
 #include "fsp0pagecompress.h"
@@ -975,8 +976,6 @@ buf_page_is_corrupted(
 #endif
 	size_t		checksum_field1 = 0;
 	size_t		checksum_field2 = 0;
-	uint32_t	crc32 = 0;
-	bool		crc32_inited = false;
 
 	ulint page_type = mach_read_from_2(read_buf + FIL_PAGE_TYPE);
 
@@ -1100,8 +1099,13 @@ buf_page_is_corrupted(
 	case SRV_CHECKSUM_ALGORITHM_STRICT_NONE:
 		return !buf_page_is_checksum_valid_none(
 			read_buf, checksum_field1, checksum_field2);
+	case SRV_CHECKSUM_ALGORITHM_NONE:
+		/* should have returned false earlier */
+		break;
 	case SRV_CHECKSUM_ALGORITHM_CRC32:
 	case SRV_CHECKSUM_ALGORITHM_INNODB:
+		const uint32_t crc32 = buf_calc_page_crc32(read_buf);
+
 		if (buf_page_is_checksum_valid_none(read_buf,
 			checksum_field1, checksum_field2)) {
 #ifdef UNIV_INNOCHECKSUM
@@ -1117,7 +1121,7 @@ buf_page_is_corrupted(
 					" crc32 = " UINT32PF "; recorded = " ULINTPF ";\n",
 					cur_page_num,
 					buf_calc_page_new_checksum(read_buf),
-					buf_calc_page_crc32(read_buf),
+					crc32,
 					checksum_field1);
 			}
 #endif /* UNIV_INNOCHECKSUM */
@@ -1134,84 +1138,33 @@ buf_page_is_corrupted(
 		    != mach_read_from_4(read_buf + FIL_PAGE_LSN)
 		    && checksum_field2 != BUF_NO_CHECKSUM_MAGIC) {
 
-			if (curr_algo == SRV_CHECKSUM_ALGORITHM_CRC32) {
-				DBUG_EXECUTE_IF(
-					"page_intermittent_checksum_mismatch", {
-					static int page_counter;
-					if (page_counter++ == 2) {
-						checksum_field2++;
-					}
-				});
+			DBUG_EXECUTE_IF(
+				"page_intermittent_checksum_mismatch", {
+				static int page_counter;
+				if (page_counter++ == 2) return true;
+			});
 
-				crc32 = buf_page_check_crc32(read_buf,
-							     checksum_field2);
-				crc32_inited = true;
-
-				if (checksum_field2 != crc32
-				    && checksum_field2
-				       != buf_calc_page_old_checksum(read_buf)) {
-					return true;
-				}
-			} else {
-				ut_ad(curr_algo
-				      == SRV_CHECKSUM_ALGORITHM_INNODB);
-
-				if (checksum_field2
-				    != buf_calc_page_old_checksum(read_buf)) {
-					crc32 = buf_page_check_crc32(
-						read_buf, checksum_field2);
-					crc32_inited = true;
-
-					if (checksum_field2 != crc32) {
-						return true;
-					}
-				}
+			if ((checksum_field1 != crc32
+			     || checksum_field2 != crc32)
+			    && checksum_field2
+			    != buf_calc_page_old_checksum(read_buf)) {
+				return true;
 			}
 		}
 
-		if (checksum_field1 == 0
-		    || checksum_field1 == BUF_NO_CHECKSUM_MAGIC) {
-		} else if (curr_algo == SRV_CHECKSUM_ALGORITHM_CRC32) {
-			if (!crc32_inited) {
-				crc32 = buf_page_check_crc32(
-					read_buf, checksum_field2);
-				crc32_inited = true;
-			}
-
-			if (checksum_field1 != crc32
+		switch (checksum_field1) {
+		case 0:
+		case BUF_NO_CHECKSUM_MAGIC:
+			break;
+		default:
+			if ((checksum_field1 != crc32
+			     || checksum_field2 != crc32)
 			    && checksum_field1
 			    != buf_calc_page_new_checksum(read_buf)) {
 				return true;
 			}
-		} else {
-			ut_ad(curr_algo == SRV_CHECKSUM_ALGORITHM_INNODB);
-
-			if (checksum_field1
-			    != buf_calc_page_new_checksum(read_buf)) {
-
-				if (!crc32_inited) {
-					crc32 = buf_page_check_crc32(
-						read_buf, checksum_field2);
-					crc32_inited = true;
-				}
-
-				if (checksum_field1 != crc32) {
-					return true;
-				}
-			}
 		}
 
-		if (crc32_inited
-		    && ((checksum_field1 == crc32
-			 && checksum_field2 != crc32)
-			|| (checksum_field1 != crc32
-			    && checksum_field2 == crc32))) {
-			return true;
-		}
-
-		break;
-	case SRV_CHECKSUM_ALGORITHM_NONE:
-		/* should have returned false earlier */
 		break;
 	}
 
@@ -1229,6 +1182,7 @@ in the event that you want all of the memory to be dumped
 to a core file.
 
 Returns number of errors found in madvise calls. */
+MY_ATTRIBUTE((used))
 int
 buf_madvise_do_dump()
 {
@@ -1270,188 +1224,41 @@ buf_madvise_do_dump()
 }
 #endif
 
+#ifndef UNIV_DEBUG
+static inline byte hex_to_ascii(byte hex_digit)
+{
+  const int offset= hex_digit <= 9 ? '0' : 'a' - 10;
+  return byte(hex_digit + offset);
+}
+#endif
+
 /** Dump a page to stderr.
 @param[in]	read_buf	database page
 @param[in]	page_size	page size */
-UNIV_INTERN
-void
-buf_page_print(const byte* read_buf, const page_size_t& page_size)
+ATTRIBUTE_COLD
+void buf_page_print(const byte *read_buf, const page_size_t &page_size)
 {
-	dict_index_t*	index;
-
 #ifndef UNIV_DEBUG
-	ib::info() << "Page dump in ascii and hex ("
-		<< page_size.physical() << " bytes):";
+  const size_t size= page_size.physical();
+  const byte * const end= read_buf + size;
+  sql_print_information("InnoDB: Page dump (%zu bytes):", size);
 
-	ut_print_buf(stderr, read_buf, page_size.physical());
-	fputs("\nInnoDB: End of page dump\n", stderr);
+  do
+  {
+    byte row[64];
+
+    for (byte *r= row; r != &row[64]; r+= 2, read_buf++)
+    {
+      r[0]= hex_to_ascii(byte(*read_buf >> 4));
+      r[1]= hex_to_ascii(*read_buf & 15);
+    }
+
+    sql_print_information("InnoDB: %.*s", 64, row);
+  }
+  while (read_buf != end);
+
+  sql_print_information("InnoDB: End of page dump");
 #endif
-
-	if (page_size.is_compressed()) {
-		/* Print compressed page. */
-		ib::info() << "Compressed page type ("
-			<< fil_page_get_type(read_buf)
-			<< "); stored checksum in field1 "
-			<< mach_read_from_4(
-				read_buf + FIL_PAGE_SPACE_OR_CHKSUM)
-			<< "; calculated checksums for field1: "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_CRC32)
-			<< " "
-			<< page_zip_calc_checksum(
-				read_buf, page_size.physical(),
-				SRV_CHECKSUM_ALGORITHM_CRC32)
-#ifdef INNODB_BUG_ENDIAN_CRC32
-			<< "/"
-			<< page_zip_calc_checksum(
-				read_buf, page_size.physical(),
-				SRV_CHECKSUM_ALGORITHM_CRC32, true)
-#endif
-			<< ", "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_INNODB)
-			<< " "
-			<< page_zip_calc_checksum(
-				read_buf, page_size.physical(),
-				SRV_CHECKSUM_ALGORITHM_INNODB)
-			<< ", "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_NONE)
-			<< " "
-			<< page_zip_calc_checksum(
-				read_buf, page_size.physical(),
-				SRV_CHECKSUM_ALGORITHM_NONE)
-			<< "; page LSN "
-			<< mach_read_from_8(read_buf + FIL_PAGE_LSN)
-			<< "; page number (if stored to page"
-			<< " already) "
-			<< mach_read_from_4(read_buf + FIL_PAGE_OFFSET)
-			<< "; space id (if stored to page already) "
-			<< mach_read_from_4(
-				read_buf + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
-
-	} else {
-		const uint32_t	crc32 = buf_calc_page_crc32(read_buf);
-#ifdef INNODB_BUG_ENDIAN_CRC32
-		const uint32_t	crc32_legacy = buf_calc_page_crc32(read_buf,
-								   true);
-#endif /* INNODB_BUG_ENDIAN_CRC32 */
-		ulint page_type = fil_page_get_type(read_buf);
-
-		ib::info() << "Uncompressed page, stored checksum in field1 "
-			<< mach_read_from_4(
-				read_buf + FIL_PAGE_SPACE_OR_CHKSUM)
-			<< ", calculated checksums for field1: "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_CRC32) << " "
-			<< crc32
-#ifdef INNODB_BUG_ENDIAN_CRC32
-			<< "/" << crc32_legacy
-#endif
-			<< ", "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_INNODB) << " "
-			<< buf_calc_page_new_checksum(read_buf)
-			<< ", "
-			<< " page type " << page_type << " == "
-			<< fil_get_page_type_name(page_type) << "."
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_NONE) << " "
-			<< BUF_NO_CHECKSUM_MAGIC
-			<< ", stored checksum in field2 "
-			<< mach_read_from_4(read_buf + page_size.logical()
-					    - FIL_PAGE_END_LSN_OLD_CHKSUM)
-			<< ", calculated checksums for field2: "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_CRC32) << " "
-			<< crc32
-#ifdef INNODB_BUG_ENDIAN_CRC32
-			<< "/" << crc32_legacy
-#endif
-			<< ", "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_INNODB) << " "
-			<< buf_calc_page_old_checksum(read_buf)
-			<< ", "
-			<< buf_checksum_algorithm_name(
-				SRV_CHECKSUM_ALGORITHM_NONE) << " "
-			<< BUF_NO_CHECKSUM_MAGIC
-			<< ",  page LSN "
-			<< mach_read_from_4(read_buf + FIL_PAGE_LSN)
-			<< " "
-			<< mach_read_from_4(read_buf + FIL_PAGE_LSN + 4)
-			<< ", low 4 bytes of LSN at page end "
-			<< mach_read_from_4(read_buf + page_size.logical()
-					    - FIL_PAGE_END_LSN_OLD_CHKSUM + 4)
-			<< ", page number (if stored to page already) "
-			<< mach_read_from_4(read_buf + FIL_PAGE_OFFSET)
-			<< ", space id (if created with >= MySQL-4.1.1"
-			   " and stored already) "
-			<< mach_read_from_4(
-				read_buf + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
-	}
-
-	switch (fil_page_get_type(read_buf)) {
-		index_id_t	index_id;
-	case FIL_PAGE_INDEX:
-	case FIL_PAGE_TYPE_INSTANT:
-	case FIL_PAGE_RTREE:
-		index_id = btr_page_get_index_id(read_buf);
-		ib::info() << "Page may be an index page where"
-			" index id is " << index_id;
-
-		index = dict_index_find_on_id_low(index_id);
-		if (index) {
-			ib::info()
-				<< "Index " << index_id
-				<< " is " << index->name
-				<< " in table " << index->table->name;
-		}
-		break;
-	case FIL_PAGE_UNDO_LOG:
-		fputs("InnoDB: Page may be an undo log page\n", stderr);
-		break;
-	case FIL_PAGE_INODE:
-		fputs("InnoDB: Page may be an 'inode' page\n", stderr);
-		break;
-	case FIL_PAGE_IBUF_FREE_LIST:
-		fputs("InnoDB: Page may be an insert buffer free list page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_ALLOCATED:
-		fputs("InnoDB: Page may be a freshly allocated page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_IBUF_BITMAP:
-		fputs("InnoDB: Page may be an insert buffer bitmap page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_SYS:
-		fputs("InnoDB: Page may be a system page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_TRX_SYS:
-		fputs("InnoDB: Page may be a transaction system page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_FSP_HDR:
-		fputs("InnoDB: Page may be a file space header page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_XDES:
-		fputs("InnoDB: Page may be an extent descriptor page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_BLOB:
-		fputs("InnoDB: Page may be a BLOB page\n",
-		      stderr);
-		break;
-	case FIL_PAGE_TYPE_ZBLOB:
-	case FIL_PAGE_TYPE_ZBLOB2:
-		fputs("InnoDB: Page may be a compressed BLOB page\n",
-		      stderr);
-		break;
-	}
 }
 
 # ifdef PFS_GROUP_BUFFER_SYNC

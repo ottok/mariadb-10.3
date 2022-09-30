@@ -2802,15 +2802,13 @@ bool quick_rm_table(THD *thd, handlerton *base, const LEX_CSTRING *db,
                     const LEX_CSTRING *table_name, uint flags, const char *table_path)
 {
   char path[FN_REFLEN + 1];
+  const size_t pathmax = sizeof(path) - 1 - reg_ext_length;
   int error= 0;
   DBUG_ENTER("quick_rm_table");
 
   size_t path_length= table_path ?
-    (strxnmov(path, sizeof(path) - 1, table_path, reg_ext, NullS) - path) :
-    build_table_filename(path, sizeof(path)-1, db->str, table_name->str, reg_ext, flags);
-  if (mysql_file_delete(key_file_frm, path, MYF(0)))
-    error= 1; /* purecov: inspected */
-  path[path_length - reg_ext_length]= '\0'; // Remove reg_ext
+    (strxnmov(path, pathmax, table_path, NullS) - path) :
+    build_table_filename(path, pathmax, db->str, table_name->str, "", flags);
   if (flags & NO_HA_TABLE)
   {
     handler *file= get_new_handler((TABLE_SHARE*) 0, thd->mem_root, base);
@@ -2821,6 +2819,10 @@ bool quick_rm_table(THD *thd, handlerton *base, const LEX_CSTRING *db,
   }
   if (!(flags & (FRM_ONLY|NO_HA_TABLE)))
     error|= ha_delete_table(current_thd, base, path, db, table_name, 0);
+
+  memcpy(path + path_length, reg_ext, reg_ext_length + 1);
+  if (mysql_file_delete(key_file_frm, path, MYF(0)))
+    error= 1;
 
   if (likely(error == 0))
   {
@@ -3631,7 +3633,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 
   List_iterator<Key> key_iterator(alter_info->key_list);
   List_iterator<Key> key_iterator2(alter_info->key_list);
-  uint key_parts=0, fk_key_count=0;
+  uint key_parts=0;
   bool primary_key=0,unique_key=0;
   Key *key, *key2;
   uint tmp, key_number;
@@ -3647,7 +3649,6 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
                         "(none)" , key->type));
     if (key->type == Key::FOREIGN_KEY)
     {
-      fk_key_count++;
       Foreign_key *fk_key= (Foreign_key*) key;
       if (fk_key->validate(alter_info->create_list))
         DBUG_RETURN(TRUE);
@@ -8025,6 +8026,8 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
 {
   /* New column definitions are added here */
   List<Create_field> new_create_list;
+  /* System-invisible fields must be added last */
+  List<Create_field> new_create_tail;
   /* New key definitions are added here */
   List<Key> new_key_list;
   List_iterator<Alter_drop> drop_it(alter_info->drop_list);
@@ -8249,7 +8252,7 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
       dropped_sys_vers_fields|= field->flags;
       drop_it.remove();
     }
-    else
+    else if (field->invisible < INVISIBLE_SYSTEM)
     {
       /*
         This field was not dropped and not changed, add it to the list
@@ -8273,6 +8276,12 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
           def->flags|= NO_DEFAULT_VALUE_FLAG;
 	alter_it.remove();
       }
+    }
+    else
+    {
+      DBUG_ASSERT(field->invisible == INVISIBLE_SYSTEM);
+      def= new (thd->mem_root) Create_field(thd, field, field);
+      new_create_tail.push_back(def, thd->mem_root);
     }
   }
   dropped_sys_vers_fields &= VERS_SYSTEM_FIELD;
@@ -8406,6 +8415,9 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
       alter_it.remove();
     }
   }
+
+  new_create_list.append(&new_create_tail);
+
   if (unlikely(alter_info->alter_list.elements))
   {
     my_error(ER_BAD_FIELD_ERROR, MYF(0),
@@ -9612,22 +9624,24 @@ bool mysql_alter_table(THD *thd, const LEX_CSTRING *new_db,
     create_info->used_fields |= HA_CREATE_USED_ROW_FORMAT;
   }
 
+  handlerton * const old_db_type= table->s->db_type();
+  handlerton *new_db_type= create_info->db_type;
+
   DBUG_PRINT("info", ("old type: %s  new type: %s",
-             ha_resolve_storage_engine_name(table->s->db_type()),
-             ha_resolve_storage_engine_name(create_info->db_type)));
-  if (ha_check_storage_engine_flag(table->s->db_type(), HTON_ALTER_NOT_SUPPORTED))
+             ha_resolve_storage_engine_name(old_db_type),
+             ha_resolve_storage_engine_name(new_db_type)));
+  if (ha_check_storage_engine_flag(old_db_type, HTON_ALTER_NOT_SUPPORTED))
   {
     DBUG_PRINT("info", ("doesn't support alter"));
-    my_error(ER_ILLEGAL_HA, MYF(0), hton_name(table->s->db_type())->str,
+    my_error(ER_ILLEGAL_HA, MYF(0), hton_name(old_db_type)->str,
              alter_ctx.db.str, alter_ctx.table_name.str);
     DBUG_RETURN(true);
   }
 
-  if (ha_check_storage_engine_flag(create_info->db_type,
-                                   HTON_ALTER_NOT_SUPPORTED))
+  if (ha_check_storage_engine_flag(new_db_type, HTON_ALTER_NOT_SUPPORTED))
   {
     DBUG_PRINT("info", ("doesn't support alter"));
-    my_error(ER_ILLEGAL_HA, MYF(0), hton_name(create_info->db_type)->str,
+    my_error(ER_ILLEGAL_HA, MYF(0), hton_name(new_db_type)->str,
              alter_ctx.new_db.str, alter_ctx.new_name.str);
     DBUG_RETURN(true);
   }
@@ -9770,6 +9784,17 @@ do_continue:;
       DBUG_RETURN(true);
     }
   }
+  /*
+    If the old table had partitions and we are doing ALTER TABLE ...
+    engine= <new_engine>, the new table must preserve the original
+    partitioning. This means that the new engine is still the
+    partitioning engine, not the engine specified in the parser.
+    This is discovered in prep_alter_part_table, which in such case
+    updates create_info->db_type.
+    It's therefore important that the assignment below is done
+    after prep_alter_part_table.
+  */
+  new_db_type= create_info->db_type;
 #endif
 
   if (mysql_prepare_alter_table(thd, table, create_info, alter_info,
@@ -9851,7 +9876,7 @@ do_continue:;
        Alter_info::ALTER_TABLE_ALGORITHM_INPLACE)
       || is_inplace_alter_impossible(table, create_info, alter_info)
       || IF_PARTITIONING((partition_changed &&
-          !(table->s->db_type()->partition_flags() & HA_USE_AUTO_PARTITION)), 0))
+          !(old_db_type->partition_flags() & HA_USE_AUTO_PARTITION)), 0))
   {
     if (alter_info->algorithm(thd) ==
         Alter_info::ALTER_TABLE_ALGORITHM_INPLACE)
@@ -9869,22 +9894,10 @@ do_continue:;
     request table rebuild. Set ALTER_RECREATE flag to force table
     rebuild.
   */
-  if (create_info->db_type == table->s->db_type() &&
+  if (new_db_type == old_db_type &&
       create_info->used_fields & HA_CREATE_USED_ENGINE)
     alter_info->flags|= ALTER_RECREATE;
 
-  /*
-    If the old table had partitions and we are doing ALTER TABLE ...
-    engine= <new_engine>, the new table must preserve the original
-    partitioning. This means that the new engine is still the
-    partitioning engine, not the engine specified in the parser.
-    This is discovered in prep_alter_part_table, which in such case
-    updates create_info->db_type.
-    It's therefore important that the assignment below is done
-    after prep_alter_part_table.
-  */
-  handlerton *new_db_type= create_info->db_type;
-  handlerton *old_db_type= table->s->db_type();
   TABLE *new_table= NULL;
   ha_rows copied=0,deleted=0;
 

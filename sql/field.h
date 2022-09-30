@@ -616,6 +616,14 @@ public:
   {
     in_partitioning_expr= TRUE;
   }
+  bool need_refix() const
+  {
+    return flags & VCOL_SESSION_FUNC;
+  }
+  bool fix_expr(THD *thd);
+  bool fix_session_expr(THD *thd);
+  bool cleanup_session_expr();
+  bool fix_and_check_expr(THD *thd, TABLE *table);
   inline bool is_equal(const Virtual_column_info* vcol) const;
   inline void print(String*);
 };
@@ -1976,6 +1984,8 @@ public:
 class Field_new_decimal :public Field_num {
 private:
   int save_field_metadata(uchar *first_byte);
+  void set_and_validate_prec(uint32 len_arg,
+                             uint8 dec_arg, bool unsigned_arg);
 public:
   /* The maximum number of decimal digits can be stored */
   uint precision;
