@@ -1,8 +1,8 @@
-commit: faddcf3c395da640b760c3f701f5bc1f3baae6c4
-date: 2022-08-10 11:20:58 +0200
-build-date: 2022-08-10 09:34:58 +0000 
-short: faddcf3
+commit: 3303748fd13399ba39ce4d646153d086c5a09445
+date: 2022-11-02 12:49:24 +0100
+build-date: 2022-11-02 11:52:44 +0000 
+short: 3303748
 branch: HEAD
 
 
-MariaDB source 10.3.36
+MariaDB source 10.3.37

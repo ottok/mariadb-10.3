@@ -76,7 +76,7 @@ Created 11/5/1995 Heikki Tuuri
 #include "ut0byte.h"
 #include <new>
 
-#ifdef UNIV_LINUX
+#ifdef __linux__
 #include <stdlib.h>
 #endif
 
@@ -3917,46 +3917,6 @@ buf_wait_for_read(
 	}
 }
 
-#ifdef BTR_CUR_HASH_ADAPT
-/** If a stale adaptive hash index exists on the block, drop it.
-Multiple executions of btr_search_drop_page_hash_index() on the
-same block must be prevented by exclusive page latch. */
-ATTRIBUTE_COLD
-static void buf_defer_drop_ahi(buf_block_t *block, mtr_memo_type_t fix_type)
-{
-  switch (fix_type) {
-  case MTR_MEMO_BUF_FIX:
-    /* We do not drop the adaptive hash index, because safely doing
-    so would require acquiring block->lock, and that is not safe
-    to acquire in some RW_NO_LATCH access paths. Those code paths
-    should have no business accessing the adaptive hash index anyway. */
-    break;
-  case MTR_MEMO_PAGE_S_FIX:
-    /* Temporarily release our S-latch. */
-    rw_lock_s_unlock(&block->lock);
-    rw_lock_x_lock(&block->lock);
-    if (dict_index_t *index= block->index)
-      if (index->freed())
-        btr_search_drop_page_hash_index(block);
-    rw_lock_x_unlock(&block->lock);
-    rw_lock_s_lock(&block->lock);
-    break;
-  case MTR_MEMO_PAGE_SX_FIX:
-    rw_lock_sx_unlock(&block->lock);
-    rw_lock_x_lock(&block->lock);
-    if (dict_index_t *index= block->index)
-      if (index->freed())
-        btr_search_drop_page_hash_index(block);
-    rw_lock_x_unlock(&block->lock);
-    rw_lock_sx_lock(&block->lock);
-    break;
-  default:
-    ut_ad(fix_type == MTR_MEMO_PAGE_X_FIX);
-    btr_search_drop_page_hash_index(block);
-  }
-}
-#endif /* BTR_CUR_HASH_ADAPT */
-
 /** Lock the page with the given latch type.
 @param[in,out]	block		block to be locked
 @param[in]	rw_latch	RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
@@ -3992,11 +3952,7 @@ static buf_block_t* buf_page_mtr_lock(buf_block_t *block,
   }
 
 #ifdef BTR_CUR_HASH_ADAPT
-  {
-    dict_index_t *index= block->index;
-    if (index && index->freed())
-      buf_defer_drop_ahi(block, fix_type);
-  }
+  btr_search_drop_page_hash_index(block, true);
 #endif /* BTR_CUR_HASH_ADAPT */
 
 done:
@@ -4859,6 +4815,10 @@ buf_page_get_known_nowait(
 
 	ut_a(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
 
+	/* The check for the page was not freed would already have been
+	performed when the block descriptor was acquired by the thread for the
+	first time.*/
+
 	buf_block_buf_fix_inc(block, file, line);
 
 	buf_page_set_accessed(&block->page);
@@ -4904,24 +4864,6 @@ buf_page_get_known_nowait(
 	ut_a(block->page.buf_fix_count > 0);
 	ut_a(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
 #endif /* UNIV_DEBUG || UNIV_BUF_DEBUG */
-
-#ifdef UNIV_DEBUG
-	if (mode != BUF_KEEP_OLD) {
-		/* If mode == BUF_KEEP_OLD, we are executing an I/O
-		completion routine.  Avoid a bogus assertion failure
-		when ibuf_merge_or_delete_for_page() is processing a
-		page that was just freed due to DROP INDEX, or
-		deleting a record from SYS_INDEXES. This check will be
-		skipped in recv_recover_page() as well. */
-
-# ifdef BTR_CUR_HASH_ADAPT
-		ut_ad(!block->page.file_page_was_freed
-		      || (block->index && block->index->freed()));
-# else /* BTR_CUR_HASH_ADAPT */
-		ut_ad(!block->page.file_page_was_freed);
-# endif /* BTR_CUR_HASH_ADAPT */
-	}
-#endif /* UNIV_DEBUG */
 
 	buf_pool->stat.n_page_gets++;
 
