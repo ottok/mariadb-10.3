@@ -52,7 +52,7 @@ and will correctly detect if __bss_start will be available or not.
        IF(PKG_CONFIG_FOUND)
 --- a/configure.cmake
 +++ b/configure.cmake
-@@ -139,6 +139,9 @@ IF(UNIX)
+@@ -141,6 +141,9 @@ IF(UNIX)
  
    SET(CMAKE_REQUIRED_LIBRARIES 
      ${LIBM} ${LIBNSL} ${LIBBIND} ${LIBCRYPT} ${LIBSOCKET} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${LIBRT} ${LIBEXECINFO})

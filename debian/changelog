@@ -1,3 +1,40 @@
+mariadb-10.3 (1:10.3.37-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * SECURITY UPDATE: New upstream version 10.3.37 includes fixes for security
+    vulnerabilities from previous releases as listed below (LP: #1996452)
+  * Previous upstream version 10.3.36 included security fixes for:
+    - CVE-2018-25032
+    - CVE-2022-32084
+    - CVE-2022-32091
+  * Previous upstream version 10.3.35 included security fixes for:
+    - CVE-2021-46669
+    - CVE-2022-21427
+    - CVE-2022-27376
+    - CVE-2022-27377
+    - CVE-2022-27378
+    - CVE-2022-27379
+    - CVE-2022-27380
+    - CVE-2022-27381
+    - CVE-2022-27383
+    - CVE-2022-27384
+    - CVE-2022-27386
+    - CVE-2022-27387
+    - CVE-2022-27445
+    - CVE-2022-27447
+    - CVE-2022-27448
+    - CVE-2022-27449
+    - CVE-2022-27452
+    - CVE-2022-27456
+    - CVE-2022-27458
+    - CVE-2022-32083
+    - CVE-2022-32085
+    - CVE-2022-32087
+    - CVE-2022-32088
+  * Previous upstream release 10.3.35 included fix for MDEV-27937
+    (LP: #1964622)
+
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 12 Nov 2022 22:11:54 -0800
+
 mariadb-10.3 (1:10.3.34-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * SECURITY UPDATE: New upstream version 10.3.34 includes fixes for the
