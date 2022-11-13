@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2007, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2021, MariaDB Corporation.
+Copyright (c) 2016, 2022, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -37,6 +37,15 @@ Completed 2011/7/10 Sunny and Jimmy Yang
 #include "zlib.h"
 #include "fts0opt.h"
 #include "fts0vlc.h"
+#include "wsrep.h"
+
+#ifdef WITH_WSREP
+extern uint32 wsrep_sst_disable_writes;
+# define wsrep_sst_disable_writes \
+  my_atomic_load32_explicit(&wsrep_sst_disable_writes, MY_MEMORY_ORDER_RELAXED)
+#else
+# define wsrep_sst_disable_writes false
+#endif
 
 /** The FTS optimize thread's work queue. */
 ib_wqueue_t* fts_optimize_wq;
@@ -2734,6 +2743,19 @@ static ulint fts_optimize_how_many()
 	return(n_tables);
 }
 
+/** @return innodb_ft_total_cache_size */
+static size_t fts_get_max_total_cache_size()
+{
+#if UNIV_WORD_SIZE == 4
+  return my_atomic_load32_explicit(
+    &fts_max_total_cache_size, MY_MEMORY_ORDER_RELAXED);
+#else
+  return my_atomic_load64_explicit((volatile int64 *)
+	reinterpret_cast<int64*>(&fts_max_total_cache_size),
+	MY_MEMORY_ORDER_RELAXED);
+#endif
+}
+
 /**********************************************************************//**
 Check if the total memory used by all FTS table exceeds the maximum limit.
 @return true if a sync is needed, false otherwise */
@@ -2761,7 +2783,7 @@ static bool fts_is_sync_needed()
 			total_memory += slot->table->fts->cache->total_size;
 		}
 
-		if (total_memory > fts_max_total_cache_size) {
+		if (total_memory > fts_get_max_total_cache_size()) {
 			return(true);
 		}
 	}
@@ -2811,6 +2833,16 @@ DECLARE_THREAD(fts_optimize_thread)(
 		    && ib_wqueue_is_empty(wq)
 		    && n_tables > 0
 		    && n_optimize > 0) {
+
+			/* The queue is empty but we have tables
+			to optimize. */
+			while (UNIV_UNLIKELY(wsrep_sst_disable_writes)
+			       && srv_shutdown_state
+			       <= SRV_SHUTDOWN_INITIATED) {
+				os_thread_sleep(1000000);
+				continue;
+			}
+
 			fts_slot_t* slot = static_cast<fts_slot_t*>(
 				ib_vector_get(fts_slots, current));
 
@@ -2869,6 +2901,13 @@ DECLARE_THREAD(fts_optimize_thread)(
 				break;
 
 			case FTS_MSG_SYNC_TABLE:
+				if (UNIV_UNLIKELY(wsrep_sst_disable_writes)) {
+					ib_wqueue_add(wq, msg, msg->heap,
+						      false);
+					os_thread_sleep(1000000);
+					goto next;
+				}
+
 				DBUG_EXECUTE_IF(
 					"fts_instrument_msg_sync_sleep",
 					os_thread_sleep(300000););
@@ -2882,6 +2921,7 @@ DECLARE_THREAD(fts_optimize_thread)(
 			}
 
 			mem_heap_free(msg->heap);
+next:
 			n_optimize = done ? 0 : fts_optimize_how_many();
 		}
 	}
@@ -2930,7 +2970,6 @@ fts_optimize_init(void)
 
 	/* Create FTS optimize work queue */
 	fts_optimize_wq = ib_wqueue_create();
-	ut_a(fts_optimize_wq != NULL);
 
 	/* Create FTS vector to store fts_slot_t */
 	heap = mem_heap_create(sizeof(dict_table_t*) * 64);

@@ -749,6 +749,15 @@ void close_thread_tables(THD *thd)
     /* Table might be in use by some outer statement. */
     DBUG_PRINT("tcache", ("table: '%s'  query_id: %lu",
                           table->s->table_name.str, (ulong) table->query_id));
+    if (thd->locked_tables_mode)
+    {
+#ifdef WITH_PARTITION_STORAGE_ENGINE
+      if (table->part_info && table->part_info->vers_require_hist_part(thd) &&
+          !thd->stmt_arena->is_stmt_prepare())
+        table->part_info->vers_check_limit(thd);
+#endif
+      table->vcol_cleanup_expr(thd);
+    }
     if (thd->locked_tables_mode <= LTM_LOCK_TABLES ||
         table->query_id == thd->query_id)
     {
@@ -884,6 +893,8 @@ void close_thread_table(THD *thd, TABLE **table_ptr)
                                              table->s->db.str,
                                              table->s->table_name.str,
                                              MDL_SHARED));
+
+  table->vcol_cleanup_expr(thd);
   table->mdl_ticket= NULL;
 
   if (table->file)
@@ -1610,6 +1621,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
   MDL_ticket *mdl_ticket;
   TABLE_SHARE *share;
   uint gts_flags;
+  bool from_share= false;
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   int part_names_error=0;
 #endif
@@ -1894,15 +1906,16 @@ retry_share:
                table_list->alias.str);
       goto err_lock;
     }
+
+    /* Open view */
+    if (mysql_make_view(thd, share, table_list, false))
+      goto err_lock;
+
     /*
       This table is a view. Validate its metadata version: in particular,
       that it was a view when the statement was prepared.
     */
     if (check_and_update_table_version(thd, table_list, share))
-      goto err_lock;
-
-    /* Open view */
-    if (mysql_make_view(thd, share, table_list, false))
       goto err_lock;
 
 
@@ -2021,6 +2034,7 @@ retry_share:
 
     /* Add table to the share's used tables list. */
     tc_add_table(thd, table);
+    from_share= true;
   }
 
   table->mdl_ticket= mdl_ticket;
@@ -2039,6 +2053,9 @@ retry_share:
   DBUG_ASSERT(table->file->pushed_cond == NULL);
   table_list->updatable= 1; // It is not derived table nor non-updatable VIEW
   table_list->table= table;
+
+  if (!from_share && table->vcol_fix_expr(thd))
+    DBUG_RETURN(true);
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   if (unlikely(table->part_info))
@@ -2705,7 +2722,7 @@ static bool inject_reprepare(THD *thd)
 
   @sa Execute_observer
   @sa check_prepared_statement() to see cases when an observer is installed
-  @sa TABLE_LIST::is_table_ref_id_equal()
+  @sa TABLE_LIST::is_the_same_definition()
   @sa TABLE_SHARE::get_table_ref_id()
 
   @param[in]      thd         used to report errors
@@ -2722,7 +2739,7 @@ static bool
 check_and_update_table_version(THD *thd,
                                TABLE_LIST *tables, TABLE_SHARE *table_share)
 {
-  if (! tables->is_table_ref_id_equal(table_share))
+  if (! tables->is_the_same_definition(thd, table_share))
   {
     if (thd->m_reprepare_observer &&
         thd->m_reprepare_observer->report_error(thd))
@@ -2828,7 +2845,9 @@ bool tdc_open_view(THD *thd, TABLE_LIST *table_list, uint flags)
 
   DBUG_ASSERT(share->is_view);
 
-  if (flags & CHECK_METADATA_VERSION)
+  err= mysql_make_view(thd, share, table_list, (flags & OPEN_VIEW_NO_PARSE));
+
+  if (!err && (flags & CHECK_METADATA_VERSION))
   {
     /*
       Check TABLE_SHARE-version of view only if we have been instructed to do
@@ -2843,7 +2862,6 @@ bool tdc_open_view(THD *thd, TABLE_LIST *table_list, uint flags)
       goto ret;
   }
 
-  err= mysql_make_view(thd, share, table_list, (flags & OPEN_VIEW_NO_PARSE));
 ret:
   tdc_release_share(share);
 
@@ -5290,54 +5308,6 @@ static void mark_real_tables_as_free_for_reuse(TABLE_LIST *table_list)
     }
 }
 
-int TABLE::fix_vcol_exprs(THD *thd)
-{
-  for (Field **vf= vfield; vf && *vf; vf++)
-    if (fix_session_vcol_expr(thd, (*vf)->vcol_info))
-      return 1;
-
-  for (Field **df= default_field; df && *df; df++)
-    if ((*df)->default_value &&
-        fix_session_vcol_expr(thd, (*df)->default_value))
-      return 1;
-
-  for (Virtual_column_info **cc= check_constraints; cc && *cc; cc++)
-    if (fix_session_vcol_expr(thd, (*cc)))
-      return 1;
-
-  return 0;
-}
-
-
-static bool fix_all_session_vcol_exprs(THD *thd, TABLE_LIST *tables)
-{
-  Security_context *save_security_ctx= thd->security_ctx;
-  TABLE_LIST *first_not_own= thd->lex->first_not_own_table();
-  DBUG_ENTER("fix_session_vcol_expr");
-
-  int error= 0;
-  for (TABLE_LIST *table= tables; table && table != first_not_own && !error;
-       table= table->next_global)
-  {
-    TABLE *t= table->table;
-    if (!table->placeholder() && t->s->vcols_need_refixing &&
-         table->lock_type >= TL_WRITE_ALLOW_WRITE)
-    {
-      Query_arena *stmt_backup= thd->stmt_arena;
-      if (thd->stmt_arena->is_conventional())
-        thd->stmt_arena= t->expr_arena;
-      if (table->security_ctx)
-        thd->security_ctx= table->security_ctx;
-
-      error= t->fix_vcol_exprs(thd);
-
-      thd->security_ctx= save_security_ctx;
-      thd->stmt_arena= stmt_backup;
-    }
-  }
-  DBUG_RETURN(error);
-}
-
 
 /**
   Lock all tables in a list.
@@ -5500,9 +5470,7 @@ bool lock_tables(THD *thd, TABLE_LIST *tables, uint count,
     }
   }
 
-  bool res= fix_all_session_vcol_exprs(thd, tables);
-  if (!res)
-    res= thd->decide_logging_format(tables);
+  const bool res= thd->decide_logging_format(tables);
 
   DBUG_RETURN(res);
 }
@@ -7611,45 +7579,117 @@ bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
   DBUG_RETURN(MY_TEST(thd->is_error()));
 }
 
+/*
+  make list of leaves for a single TABLE_LIST
+
+  SYNOPSIS
+    make_leaves_for_single_table()
+    thd             Thread handler
+    leaves          List of leaf tables to be filled
+    table           TABLE_LIST object to process
+    full_table_list Whether to include tables from mergeable derived table/view
+*/
+void make_leaves_for_single_table(THD *thd, List<TABLE_LIST> &leaves,
+                              TABLE_LIST *table, bool& full_table_list,
+                              TABLE_LIST *boundary)
+{
+  if (table == boundary)
+    full_table_list= !full_table_list;
+  if (full_table_list && table->is_merged_derived())
+  {
+    SELECT_LEX *select_lex= table->get_single_select();
+    /*
+      It's safe to use select_lex->leaf_tables because all derived
+      tables/views were already prepared and has their leaf_tables
+      set properly.
+    */
+    make_leaves_list(thd, leaves, select_lex->get_table_list(),
+                     full_table_list, boundary);
+  }
+  else
+  {
+    leaves.push_back(table, thd->mem_root);
+  }
+}
+
 
 /*
   make list of leaves of join table tree
 
   SYNOPSIS
     make_leaves_list()
-    list    pointer to pointer on list first element
-    tables  table list
-    full_table_list whether to include tables from mergeable derived table/view.
-                    we need them for checks for INSERT/UPDATE statements only.
-
-  RETURN pointer on pointer to next_leaf of last element
+    leaves          List of leaf tables to be filled
+    tables          Table list
+    full_table_list Whether to include tables from mergeable derived table/view.
+                    We need them for checks for INSERT/UPDATE statements only.
 */
 
-void make_leaves_list(THD *thd, List<TABLE_LIST> &list, TABLE_LIST *tables,
+void make_leaves_list(THD *thd, List<TABLE_LIST> &leaves, TABLE_LIST *tables,
                       bool full_table_list, TABLE_LIST *boundary)
  
 {
   for (TABLE_LIST *table= tables; table; table= table->next_local)
   {
-    if (table == boundary)
-      full_table_list= !full_table_list;
-    if (full_table_list && table->is_merged_derived())
-    {
-      SELECT_LEX *select_lex= table->get_single_select();
-      /*
-        It's safe to use select_lex->leaf_tables because all derived
-        tables/views were already prepared and has their leaf_tables
-        set properly.
-      */
-      make_leaves_list(thd, list, select_lex->get_table_list(),
-      full_table_list, boundary);
-    }
-    else
-    {
-      list.push_back(table, thd->mem_root);
-    }
+    make_leaves_for_single_table(thd, leaves, table, full_table_list,
+                                 boundary);
   }
 }
+
+
+/*
+  Setup the map and other attributes for a single TABLE_LIST object
+
+  SYNOPSIS
+    setup_table_attributes()
+    thd                 Thread handler
+    table_list          TABLE_LIST object to process
+    first_select_table  First table participating in SELECT for INSERT..SELECT
+                        statements, NULL for other cases
+    tablenr             Serial number of the table in the SQL statement
+
+  RETURN
+    false               Success
+    true                Failure
+*/
+bool setup_table_attributes(THD *thd, TABLE_LIST *table_list,
+                            TABLE_LIST *first_select_table,
+                            uint &tablenr)
+{
+  TABLE *table= table_list->table;
+  if (table)
+    table->pos_in_table_list= table_list;
+  if (first_select_table && table_list->top_table() == first_select_table)
+  {
+    /* new counting for SELECT of INSERT ... SELECT command */
+    first_select_table= 0;
+    thd->lex->select_lex.insert_tables= tablenr;
+    tablenr= 0;
+  }
+  if (table_list->jtbm_subselect)
+  {
+    table_list->jtbm_table_no= tablenr;
+  }
+  else if (table)
+  {
+    table->pos_in_table_list= table_list;
+    setup_table_map(table, table_list, tablenr);
+
+    if (table_list->process_index_hints(table))
+      return true;
+  }
+  tablenr++;
+  /*
+    We test the max tables here as we setup_table_map() should not be called
+    with tablenr >= 64
+  */
+  if (tablenr > MAX_TABLES)
+  {
+    my_error(ER_TOO_MANY_TABLES, MYF(0), static_cast<int>(MAX_TABLES));
+    return true;
+  }
+  return false;
+}
+
 
 /*
   prepare tables
@@ -7707,7 +7747,14 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
     leaves.empty();
     if (select_lex->prep_leaf_list_state != SELECT_LEX::SAVED)
     {
-      make_leaves_list(thd, leaves, tables, full_table_list, first_select_table);
+      /*
+        For INSERT ... SELECT statements we must not include the first table
+        (where the data is being inserted into) in the list of leaves
+      */
+      TABLE_LIST *tables_for_leaves=
+          select_insert ? first_select_table : tables;
+      make_leaves_list(thd, leaves, tables_for_leaves, full_table_list,
+                       first_select_table);
       select_lex->prep_leaf_list_state= SELECT_LEX::READY;
       select_lex->leaf_tables_exec.empty();
     }
@@ -7718,37 +7765,34 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
         leaves.push_back(table_list, thd->mem_root);
     }
       
+    List_iterator<TABLE_LIST> ti(leaves);
     while ((table_list= ti++))
     {
-      TABLE *table= table_list->table;
-      if (table)
-        table->pos_in_table_list= table_list;
-      if (first_select_table &&
-          table_list->top_table() == first_select_table)
-      {
-        /* new counting for SELECT of INSERT ... SELECT command */
-        first_select_table= 0;
-        thd->lex->select_lex.insert_tables= tablenr;
-        tablenr= 0;
-      }
-      if(table_list->jtbm_subselect)
-      {
-        table_list->jtbm_table_no= tablenr;
-      }
-      else if (table)
-      {
-        table->pos_in_table_list= table_list;
-        setup_table_map(table, table_list, tablenr);
+      if (setup_table_attributes(thd, table_list, first_select_table, tablenr))
+        DBUG_RETURN(1);
+    }
 
-        if (table_list->process_index_hints(table))
+    if (select_insert)
+    {
+      /*
+        The table/view in which the data is inserted must not be included into
+        the leaf_tables list. But we need this table/view to setup attributes
+        for it. So build a temporary list of leaves and setup attributes for
+        the tables included
+      */
+      List<TABLE_LIST> leaves;
+      TABLE_LIST *table= tables;
+
+      make_leaves_for_single_table(thd, leaves, table, full_table_list,
+                                   first_select_table);
+
+      List_iterator<TABLE_LIST> ti(leaves);
+      while ((table_list= ti++))
+      {
+        if (setup_table_attributes(thd, table_list, first_select_table,
+                                   tablenr))
           DBUG_RETURN(1);
       }
-      tablenr++;
-    }
-    if (tablenr > MAX_TABLES)
-    {
-      my_error(ER_TOO_MANY_TABLES,MYF(0), static_cast<int>(MAX_TABLES));
-      DBUG_RETURN(1);
     }
   }
   else
@@ -8059,19 +8103,20 @@ insert_fields(THD *thd, Name_resolution_context *context, const char *db_name,
                     tables->is_natural_join);
         DBUG_ASSERT(item->type() == Item::FIELD_ITEM);
         Item_field *fld= (Item_field*) item;
+        const char *field_db_name= field_iterator.get_db_name();
         const char *field_table_name= field_iterator.get_table_name();
 
         if (!tables->schema_table && 
             !(fld->have_privileges=
               (get_column_grant(thd, field_iterator.grant(),
-                                field_iterator.get_db_name(),
+                                field_db_name,
                                 field_table_name, fld->field_name.str) &
                VIEW_ANY_ACL)))
         {
           my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0), "ANY",
                    thd->security_ctx->priv_user,
                    thd->security_ctx->host_or_ip,
-                   field_table_name);
+                   field_db_name, field_table_name);
           DBUG_RETURN(TRUE);
         }
       }

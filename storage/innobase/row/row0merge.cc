@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2005, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2014, 2021, MariaDB Corporation.
+Copyright (c) 2014, 2022, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -126,7 +126,6 @@ public:
 		rec_offs*	ins_offsets = NULL;
 		dberr_t		error = DB_SUCCESS;
 		dtuple_t*	dtuple;
-		ulint		count = 0;
 		const ulint	flag = BTR_NO_UNDO_LOG_FLAG
 				       | BTR_NO_LOCKING_FLAG
 				       | BTR_KEEP_SYS_FLAG | BTR_CREATE_FLAG;
@@ -164,7 +163,7 @@ public:
 			btr_cur_search_to_nth_level(m_index, 0, dtuple,
 						    PAGE_CUR_RTREE_INSERT,
 						    BTR_MODIFY_LEAF, &ins_cur,
-						    0, __FILE__, __LINE__,
+						     __FILE__, __LINE__,
 						    &mtr);
 
 			/* It need to update MBR in parent entry,
@@ -180,7 +179,7 @@ public:
 				btr_cur_search_to_nth_level(
 					m_index, 0, dtuple,
 					PAGE_CUR_RTREE_INSERT,
-					BTR_MODIFY_TREE, &ins_cur, 0,
+					BTR_MODIFY_TREE, &ins_cur,
 					__FILE__, __LINE__, &mtr);
 			}
 
@@ -203,8 +202,7 @@ public:
 					m_index, 0, dtuple,
 					PAGE_CUR_RTREE_INSERT,
 					BTR_MODIFY_TREE,
-					&ins_cur, 0,
-					__FILE__, __LINE__, &mtr);
+					&ins_cur, __FILE__, __LINE__, &mtr);
 
 				error = btr_cur_pessimistic_insert(
 						flag, &ins_cur, &ins_offsets,
@@ -234,7 +232,6 @@ public:
 			mtr_commit(&mtr);
 
 			rtr_clean_rtr_info(&rtr_info, true);
-			count++;
 		}
 
 		m_dtuple_vec->clear();
@@ -1094,7 +1091,7 @@ row_merge_read(
 	if (success && log_tmp_is_encrypted()) {
 		if (!log_tmp_block_decrypt(buf, srv_sort_buf_size,
 					   crypt_buf, ofs)) {
-			return (FALSE);
+			DBUG_RETURN(false);
 		}
 
 		srv_stats.n_merge_blocks_decrypted.inc();
@@ -1143,7 +1140,7 @@ row_merge_write(
 					   buf_len,
 					   static_cast<byte*>(crypt_buf),
 					   ofs)) {
-			return false;
+			DBUG_RETURN(false);
 		}
 
 		srv_stats.n_merge_blocks_encrypted.inc();
@@ -1926,8 +1923,6 @@ row_merge_read_clustered_index(
 		row_ext_t*	ext;
 		page_cur_t*	cur	= btr_pcur_get_page_cur(&pcur);
 
-		mem_heap_empty(row_heap);
-
 		page_cur_move_to_next(cur);
 
 		stage->n_pk_recs_inc();
@@ -1958,6 +1953,8 @@ row_merge_read_clustered_index(
 			if (err != DB_SUCCESS) {
 				goto func_exit;
 			}
+
+			mem_heap_empty(row_heap);
 
 			if (!mtr.is_active()) {
 				goto scan_next;
@@ -2033,6 +2030,8 @@ end_of_index:
 
 				ut_ad(!page_cur_is_after_last(cur));
 			}
+		} else {
+			mem_heap_empty(row_heap);
 		}
 
 		rec = page_cur_get_rec(cur);
@@ -2862,7 +2861,21 @@ wait_again:
 		err = fts_sync_table(const_cast<dict_table_t*>(new_table));
 
 		if (err == DB_SUCCESS) {
-			fts_update_next_doc_id(NULL, new_table, max_doc_id);
+			new_table->fts->cache->synced_doc_id = max_doc_id;
+
+		        /* Update the max value as next FTS_DOC_ID */
+			if (max_doc_id >= new_table->fts->cache->next_doc_id) {
+				new_table->fts->cache->next_doc_id =
+					max_doc_id + 1;
+			}
+
+			new_table->fts->cache->first_doc_id =
+				new_table->fts->cache->next_doc_id;
+
+			err= fts_update_sync_doc_id(
+				new_table,
+				new_table->fts->cache->synced_doc_id,
+				NULL);
 		}
 	}
 
@@ -3350,12 +3363,12 @@ row_merge_sort(
 	is used. MDEV-9356: innodb.innodb_bug53290 fails (crashes) on
 	sol10-64 in buildbot.
 	*/
-#ifndef UNIV_SOLARIS
+#ifndef __sun__
 	/* Progress report only for "normal" indexes. */
 	if (!(dup->index->type & DICT_FTS)) {
 		thd_progress_init(trx->mysql_thd, 1);
 	}
-#endif /* UNIV_SOLARIS */
+#endif /* __sun__ */
 
 	if (global_system_variables.log_warnings > 2) {
 		sql_print_information("InnoDB: Online DDL : merge-sorting"
@@ -3368,11 +3381,11 @@ row_merge_sort(
 		/* Report progress of merge sort to MySQL for
 		show processlist progress field */
 		/* Progress report only for "normal" indexes. */
-#ifndef UNIV_SOLARIS
+#ifndef __sun__
 		if (!(dup->index->type & DICT_FTS)) {
 			thd_progress_report(trx->mysql_thd, file->offset - num_runs, file->offset);
 		}
-#endif /* UNIV_SOLARIS */
+#endif /* __sun__ */
 
 		error = row_merge(trx, dup, file, block, tmpfd,
 				  &num_runs, run_offset, stage,
@@ -3397,11 +3410,11 @@ row_merge_sort(
 	ut_free(run_offset);
 
 	/* Progress report only for "normal" indexes. */
-#ifndef UNIV_SOLARIS
+#ifndef __sun__
 	if (!(dup->index->type & DICT_FTS)) {
 		thd_progress_end(trx->mysql_thd);
 	}
-#endif /* UNIV_SOLARIS */
+#endif /* __sun__ */
 
 	DBUG_RETURN(error);
 }

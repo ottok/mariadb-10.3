@@ -705,7 +705,7 @@ public:
 
   inline st_select_lex_node* get_master() { return master; }
   void include_down(st_select_lex_node *upper);
-  void add_slave(st_select_lex_node *slave_arg);
+  void attach_single(st_select_lex_node *slave_arg);
   void include_neighbour(st_select_lex_node *before);
   void include_standalone(st_select_lex_node *sel, st_select_lex_node **ref);
   void include_global(st_select_lex_node **plink);
@@ -1537,15 +1537,6 @@ public:
   Sroutine_hash_entry **sroutines_list_own_last;
   uint sroutines_list_own_elements;
 
-  /**
-    Number of tables which were open by open_tables() and to be locked
-    by lock_tables().
-    Note that we set this member only in some cases, when this value
-    needs to be passed from open_tables() to lock_tables() which are
-    separated by some amount of code.
-  */
-  uint table_count;
-
    /*
     These constructor and destructor serve for creation/destruction
     of Query_tables_list instances which are used as backup storage.
@@ -1739,6 +1730,11 @@ public:
        primary key.
     */
     BINLOG_STMT_UNSAFE_AUTOINC_NOT_FIRST,
+
+    /**
+       Autoincrement lock mode is incompatible with STATEMENT binlog format.
+    */
+    BINLOG_STMT_UNSAFE_AUTOINC_LOCK_MODE,
 
     /* The last element of this enumeration type. */
     BINLOG_STMT_UNSAFE_COUNT
@@ -3055,7 +3051,7 @@ public:
     stores total number of tables. For LEX representing multi-delete
     holds number of tables from which we will delete records.
   */
-  uint table_count;
+  uint table_count_update;
   uint8 describe;
   bool  analyze_stmt; /* TRUE<=> this is "ANALYZE $stmt" */
   bool  explain_json;
@@ -3473,6 +3469,9 @@ public:
   bool call_statement_start(THD *thd, const LEX_CSTRING *name);
   bool call_statement_start(THD *thd, const LEX_CSTRING *name1,
                                       const LEX_CSTRING *name2);
+  bool call_statement_start(THD *thd, const LEX_CSTRING &name1,
+                                      const LEX_CSTRING &name2,
+                                      const LEX_CSTRING &name3);
   sp_variable *find_variable(const LEX_CSTRING *name,
                              sp_pcontext **ctx,
                              const Sp_rcontext_handler **rh) const;
@@ -3692,6 +3691,11 @@ public:
   Item *make_item_func_substr(THD *thd, Item *a, Item *b);
   Item *make_item_func_call_generic(THD *thd, Lex_ident_cli_st *db,
                                     Lex_ident_cli_st *name, List<Item> *args);
+  Item *make_item_func_call_generic(THD *thd,
+                                    Lex_ident_cli_st *db,
+                                    Lex_ident_cli_st *pkg,
+                                    Lex_ident_cli_st *name,
+                                    List<Item> *args);
   my_var *create_outvar(THD *thd, const LEX_CSTRING *name);
 
   /*
@@ -4070,6 +4074,28 @@ public:
   Vers_parse_info &vers_get_info()
   {
     return create_info.vers_info;
+  }
+  /* The list of history-generating DML commands */
+  bool vers_history_generating() const
+  {
+    switch (sql_command)
+    {
+      case SQLCOM_DELETE:
+        return !vers_conditions.delete_history;
+      case SQLCOM_UPDATE:
+      case SQLCOM_UPDATE_MULTI:
+      case SQLCOM_DELETE_MULTI:
+      case SQLCOM_REPLACE:
+      case SQLCOM_REPLACE_SELECT:
+        return true;
+      case SQLCOM_INSERT:
+      case SQLCOM_INSERT_SELECT:
+        return duplicates == DUP_UPDATE;
+      case SQLCOM_LOAD:
+        return duplicates == DUP_REPLACE;
+      default:
+        return false;
+    }
   }
   sp_package *get_sp_package() const;
 

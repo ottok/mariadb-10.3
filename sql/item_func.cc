@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2020, MariaDB
+   Copyright (c) 2009, 2022, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2463,7 +2463,7 @@ void Item_func_round::fix_arg_decimal()
     set_handler(&type_handler_newdecimal);
     unsigned_flag= args[0]->unsigned_flag;
     decimals= args[0]->decimals;
-    max_length= float_length(args[0]->decimals) + 1;
+    max_length= args[0]->max_length;
   }
 }
 
@@ -3290,6 +3290,7 @@ udf_handler::fix_fields(THD *thd, Item_func_or_sum *func,
 	  thd->alloc(f_args.arg_count*sizeof(Item_result))))
 
     {
+    err_exit:
       free_udf(u_d);
       DBUG_RETURN(TRUE);
     }
@@ -3327,7 +3328,8 @@ udf_handler::fix_fields(THD *thd, Item_func_or_sum *func,
       func->used_tables_and_const_cache_join(item);
       f_args.arg_type[i]=item->result_type();
     }
-    if (!(buffers=new (thd->mem_root) String[arg_count]) ||
+    buffers=new (thd->mem_root) String[arg_count];
+    if (!buffers ||
         !multi_alloc_root(thd->mem_root,
                           &f_args.args,              arg_count * sizeof(char *),
                           &f_args.lengths,           arg_count * sizeof(long),
@@ -3336,10 +3338,7 @@ udf_handler::fix_fields(THD *thd, Item_func_or_sum *func,
                           &f_args.attributes,        arg_count * sizeof(char *),
                           &f_args.attribute_lengths, arg_count * sizeof(long),
                           NullS))
-    {
-      free_udf(u_d);
-      DBUG_RETURN(TRUE);
-    }
+      goto err_exit;
   }
   if (func->fix_length_and_dec())
     DBUG_RETURN(TRUE);
@@ -3407,8 +3406,7 @@ udf_handler::fix_fields(THD *thd, Item_func_or_sum *func,
     {
       my_error(ER_CANT_INITIALIZE_UDF, MYF(0),
                u_d->name.str, init_msg_buff);
-      free_udf(u_d);
-      DBUG_RETURN(TRUE);
+      goto err_exit;
     }
     func->max_length=MY_MIN(initid.max_length,MAX_BLOB_WIDTH);
     func->maybe_null=initid.maybe_null;
@@ -6014,6 +6012,8 @@ bool Item_func_match::init_search(THD *thd, bool no_order)
 
   ft_handler= table->file->ft_init_ext(flags, key, ft_tmp);
 
+  if (!ft_handler)
+    DBUG_RETURN(1);
   if (join_key)
     table->file->ft_handler=ft_handler;
 
@@ -6364,7 +6364,7 @@ const char *
 Item_func_sp::func_name() const
 {
   THD *thd= current_thd;
-  return Item_sp::func_name(thd);
+  return Item_sp::func_name(thd, m_handler == &sp_handler_package_function);
 }
 
 

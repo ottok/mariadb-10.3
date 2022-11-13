@@ -237,6 +237,8 @@ struct Name_resolution_context: Sql_alloc
     security_ctx(0)
     {}
 
+  Name_resolution_context(TABLE_LIST *table);
+
   void init()
   {
     resolve_in_select_list= FALSE;
@@ -1758,7 +1760,6 @@ public:
   virtual bool enumerate_field_refs_processor(void *arg) { return 0; }
   virtual bool mark_as_eliminated_processor(void *arg) { return 0; }
   virtual bool eliminate_subselect_processor(void *arg) { return 0; }
-  virtual bool set_fake_select_as_master_processor(void *arg) { return 0; }
   virtual bool view_used_tables_processor(void *arg) { return 0; }
   virtual bool eval_not_null_tables(void *arg) { return 0; }
   virtual bool is_subquery_processor(void *arg) { return 0; }
@@ -2924,6 +2925,10 @@ public:
   const char *db_name;
   const char *table_name;
   LEX_CSTRING field_name;
+  /*
+     NOTE: came from TABLE::alias_name_used and this is only a hint!
+     See comment for TABLE::alias_name_used.
+  */
   bool alias_name_used; /* true if item was resolved against alias */
   /* 
     Cached value of index for this field in table->field array, used by prep. 
@@ -4871,7 +4876,7 @@ public:
   Field *sp_result_field;
   Item_sp(THD *thd, Name_resolution_context *context_arg, sp_name *name_arg);
   Item_sp(THD *thd, Item_sp *item);
-  const char *func_name(THD *thd) const;
+  const char *func_name(THD *thd, bool is_package_function) const;
   void cleanup();
   bool sp_check_access(THD *thd);
   bool execute(THD *thd, bool *null_value, Item **args, uint arg_count);
@@ -5885,12 +5890,11 @@ class Item_default_value : public Item_field
   void calculate();
 public:
   Item *arg;
-  Field *cached_field;
   Item_default_value(THD *thd, Name_resolution_context *context_arg, Item *a,
                      bool vcol_assignment_arg)
     :Item_field(thd, context_arg, (const char *)NULL, (const char *)NULL,
                 &null_clex_str), vcol_assignment_ok(vcol_assignment_arg),
-     arg(a), cached_field(NULL) {}
+     arg(a) {}
   enum Type type() const { return DEFAULT_VALUE_ITEM; }
   bool eq(const Item *item, bool binary_cmp) const;
   bool fix_fields(THD *, Item **);
@@ -5921,16 +5925,16 @@ public:
     return false;
   }
   table_map used_tables() const;
-  virtual void update_used_tables()
+  void update_used_tables()
   {
     if (field && field->default_value)
       field->default_value->expr->update_used_tables();
   }
   bool vcol_assignment_allowed_value() const { return vcol_assignment_ok; }
-  Field *get_tmp_table_field() { return 0; }
   Item *get_tmp_table_item(THD *thd) { return this; }
   Item_field *field_for_view_update() { return 0; }
   bool update_vcol_processor(void *arg) { return 0; }
+  bool check_field_expression_processor(void *arg);
   bool check_func_default_processor(void *arg) { return true; }
 
   bool walk(Item_processor processor, bool walk_subquery, void *args)
@@ -6297,10 +6301,18 @@ public:
     }
     return mark_unsupported_function("cache", arg, VCOL_IMPOSSIBLE);
   }
+  bool fix_fields(THD *thd, Item **ref)
+  {
+    fixed= 1;
+    if (example && !example->fixed)
+      return example->fix_fields(thd, ref);
+    return 0;
+  }
   void cleanup()
   {
     clear();
     Item_basic_constant::cleanup();
+    fixed= 0;
   }
   /**
      Check if saved item has a non-NULL value.

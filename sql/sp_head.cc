@@ -791,7 +791,7 @@ void
 sp_head::set_stmt_end(THD *thd)
 {
   Lex_input_stream *lip= & thd->m_parser_state->m_lip; /* shortcut */
-  const char *end_ptr= lip->get_cpp_ptr(); /* shortcut */
+  const char *end_ptr= lip->get_cpp_tok_start(); /* shortcut */
 
   /* Make the string of parameters. */
 
@@ -1837,7 +1837,7 @@ sp_head::execute_trigger(THD *thd,
 
     my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0), priv_desc,
              thd->security_ctx->priv_user, thd->security_ctx->host_or_ip,
-             table_name->str);
+             db_name->str, table_name->str);
 
     m_security_ctx.restore_security_context(thd, save_ctx);
     DBUG_RETURN(TRUE);
@@ -3486,6 +3486,7 @@ sp_lex_keeper::reset_lex_and_exec_core(THD *thd, uint *nextp,
     lex_query_tables_own_last= m_lex->query_tables_own_last;
     prelocking_tables= *lex_query_tables_own_last;
     *lex_query_tables_own_last= NULL;
+    m_lex->query_tables_last= m_lex->query_tables_own_last;
     m_lex->mark_as_requiring_prelocking(NULL);
   }
   thd->rollback_item_tree_changes();

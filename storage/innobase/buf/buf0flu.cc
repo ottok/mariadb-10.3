@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1995, 2017, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2022, MariaDB Corporation.
 Copyright (c) 2013, 2014, Fusion-io
 
 This program is free software; you can redistribute it and/or modify it under
@@ -47,14 +47,14 @@ Created 11/11/1995 Heikki Tuuri
 #include "srv0mon.h"
 #include "ut0stage.h"
 #include "fil0pagecompress.h"
-#ifdef UNIV_LINUX
+#ifdef __linux__
 /* include defs for CPU time priority settings */
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 static const int buf_flush_page_cleaner_priority = -20;
-#endif /* UNIV_LINUX */
+#endif /* __linux__ */
 
 /** Sleep time in microseconds for loop waiting for the oldest
 modification lsn */
@@ -1162,15 +1162,10 @@ buf_flush_page(
 		/* For table residing in temporary tablespace sync is done
 		using IO_FIX and so before scheduling for flush ensure that
 		page is not fixed. */
-		flush = FALSE;
+		return FALSE;
 	} else {
 		rw_lock = &reinterpret_cast<buf_block_t*>(bpage)->lock;
-		if (flush_type != BUF_FLUSH_LIST) {
-			flush = rw_lock_sx_lock_nowait(rw_lock, BUF_IO_WRITE);
-		} else {
-			/* Will SX lock later */
-			flush = TRUE;
-		}
+		flush = rw_lock_sx_lock_nowait(rw_lock, BUF_IO_WRITE);
 	}
 
 	if (flush) {
@@ -1191,22 +1186,6 @@ buf_flush_page(
 		mutex_exit(block_mutex);
 
 		buf_pool_mutex_exit(buf_pool);
-
-		if (flush_type == BUF_FLUSH_LIST
-		    && is_uncompressed
-		    && !rw_lock_sx_lock_nowait(rw_lock, BUF_IO_WRITE)) {
-
-			if (!fsp_is_system_temporary(bpage->id.space())) {
-				/* avoiding deadlock possibility involves
-				doublewrite buffer, should flush it, because
-				it might hold the another block->lock. */
-				buf_dblwr_flush_buffered_writes();
-			} else {
-				buf_dblwr_sync_datafiles();
-			}
-
-			rw_lock_sx_lock_gen(rw_lock, BUF_IO_WRITE);
-		}
 
 		/* If there is an observer that want to know if the asynchronous
 		flushing was sent then notify it.
@@ -2896,7 +2875,7 @@ pc_wait_finished(
 	return(all_succeeded);
 }
 
-#ifdef UNIV_LINUX
+#ifdef __linux__
 /**
 Set priority for page_cleaner threads.
 @param[in]	priority	priority intended to set
@@ -2911,7 +2890,7 @@ buf_flush_page_cleaner_set_priority(
 	return(getpriority(PRIO_PROCESS, (pid_t)syscall(SYS_gettid))
 	       == priority);
 }
-#endif /* UNIV_LINUX */
+#endif /* __linux__ */
 
 #ifdef UNIV_DEBUG
 /** Loop used to disable page cleaner threads. */
@@ -3038,7 +3017,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_coordinator)(void*)
 	ib::info() << "page_cleaner thread running, id "
 		<< os_thread_pf(os_thread_get_curr_id());
 #endif /* UNIV_DEBUG_THREAD_CREATION */
-#ifdef UNIV_LINUX
+#ifdef __linux__
 	/* linux might be able to set different setting for each thread.
 	worth to try to set high priority for page cleaner threads */
 	if (buf_flush_page_cleaner_set_priority(
@@ -3053,7 +3032,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_coordinator)(void*)
 	}
 	/* Signal that setpriority() has been attempted. */
 	os_event_set(recv_sys->flush_end);
-#endif /* UNIV_LINUX */
+#endif /* __linux__ */
 
 	do {
 		/* treat flushing requests during recovery. */
@@ -3454,7 +3433,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_worker)(
 	os_event_set(page_cleaner.is_started);
 	mutex_exit(&page_cleaner.mutex);
 
-#ifdef UNIV_LINUX
+#ifdef __linux__
 	/* linux might be able to set different setting for each thread
 	worth to try to set high priority for page cleaner threads */
 	if (buf_flush_page_cleaner_set_priority(
@@ -3463,7 +3442,7 @@ DECLARE_THREAD(buf_flush_page_cleaner_worker)(
 		ib::info() << "page_cleaner worker priority: "
 			<< buf_flush_page_cleaner_priority;
 	}
-#endif /* UNIV_LINUX */
+#endif /* __linux__ */
 
 	while (true) {
 		os_event_wait(page_cleaner.is_requested);

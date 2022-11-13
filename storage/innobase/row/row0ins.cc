@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2021, MariaDB Corporation.
+Copyright (c) 2016, 2022, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -307,7 +307,7 @@ row_ins_clust_index_entry_by_modify(
 	}
 
 	update = row_upd_build_difference_binary(
-		cursor->index, entry, rec, NULL, true,
+		cursor->index, entry, rec, NULL, true, true,
 		thr_get_trx(thr), heap, mysql_table, &err);
 	if (err != DB_SUCCESS) {
 		return(err);
@@ -1137,7 +1137,7 @@ row_ins_foreign_check_on_constraint(
 					tmp_heap);
 		btr_pcur_open_with_no_init(clust_index, ref,
 					   PAGE_CUR_LE, BTR_SEARCH_LEAF,
-					   cascade->pcur, 0, mtr);
+					   cascade->pcur, mtr);
 
 		clust_rec = btr_pcur_get_rec(cascade->pcur);
 		clust_block = btr_pcur_get_block(cascade->pcur);
@@ -2958,7 +2958,7 @@ row_ins_sec_index_entry_low(
 		err = btr_cur_search_to_nth_level(
 			index, 0, entry, PAGE_CUR_RTREE_INSERT,
 			search_mode,
-			&cursor, 0, __FILE__, __LINE__, &mtr);
+			&cursor, __FILE__, __LINE__, &mtr);
 
 		if (mode == BTR_MODIFY_LEAF && rtr_info.mbr_adj) {
 			mtr_commit(&mtr);
@@ -2966,14 +2966,18 @@ row_ins_sec_index_entry_low(
 			rtr_init_rtr_info(&rtr_info, false, &cursor,
 					  index, false);
 			rtr_info_update_btr(&cursor, &rtr_info);
-			mtr_start(&mtr);
-			index->set_modified(mtr);
+			mtr.start();
+			if (index->table->is_temporary()) {
+				mtr.set_log_mode(MTR_LOG_NO_REDO);
+			} else {
+				index->set_modified(mtr);
+			}
 			search_mode &= ulint(~BTR_MODIFY_LEAF);
 			search_mode |= BTR_MODIFY_TREE;
 			err = btr_cur_search_to_nth_level(
 				index, 0, entry, PAGE_CUR_RTREE_INSERT,
 				search_mode,
-				&cursor, 0, __FILE__, __LINE__, &mtr);
+				&cursor, __FILE__, __LINE__, &mtr);
 			mode = BTR_MODIFY_TREE;
 		}
 
@@ -2985,7 +2989,7 @@ row_ins_sec_index_entry_low(
 		err = btr_cur_search_to_nth_level(
 			index, 0, entry, PAGE_CUR_LE,
 			search_mode,
-			&cursor, 0, __FILE__, __LINE__, &mtr);
+			&cursor, __FILE__, __LINE__, &mtr);
 	}
 
 	if (err != DB_SUCCESS) {
@@ -3079,7 +3083,7 @@ row_ins_sec_index_entry_low(
 			index, 0, entry, PAGE_CUR_LE,
 			(search_mode
 			 & ~(BTR_INSERT | BTR_IGNORE_SEC_UNIQUE)),
-			&cursor, 0, __FILE__, __LINE__, &mtr);
+			&cursor, __FILE__, __LINE__, &mtr);
 	}
 
 	if (row_ins_must_modify_rec(&cursor)) {
@@ -3193,9 +3197,6 @@ row_ins_clust_index_entry(
 		: index->table->is_temporary()
 		? BTR_NO_LOCKING_FLAG : 0;
 	const ulint	orig_n_fields = entry->n_fields;
-
-	/* Try first optimistic descent to the B-tree */
-	log_free_check();
 
 	/* For intermediate table during copy alter table,
 	   skip the undo log and record lock checking for

@@ -835,7 +835,6 @@ bool Item_ident::remove_dependence_processor(void * arg)
   DBUG_RETURN(0);
 }
 
-
 bool Item_ident::collect_outer_ref_processor(void *param)
 {
   Collect_deps_prm *prm= (Collect_deps_prm *)param;
@@ -1046,8 +1045,7 @@ bool Item_field::check_field_expression_processor(void *arg)
           (!field->vcol_info && !org_field->vcol_info)) &&
          field->field_index >= org_field->field_index))
     {
-      my_error(ER_EXPRESSION_REFERS_TO_UNINIT_FIELD,
-               MYF(0),
+      my_error(ER_EXPRESSION_REFERS_TO_UNINIT_FIELD, MYF(0),
                org_field->field_name.str, field->field_name.str);
       return 1;
     }
@@ -2893,14 +2891,16 @@ Item_sp::Item_sp(THD *thd, Item_sp *item):
 }
 
 const char *
-Item_sp::func_name(THD *thd) const
+Item_sp::func_name(THD *thd, bool is_package_function) const
 {
   /* Calculate length to avoid reallocation of string for sure */
   size_t len= (((m_name->m_explicit_name ? m_name->m_db.length : 0) +
               m_name->m_name.length)*2 + //characters*quoting
-             2 +                         // ` and `
+             2 +                         // quotes for the function name
+             2 +                         // quotes for the package name
              (m_name->m_explicit_name ?
               3 : 0) +                   // '`', '`' and '.' for the db
+             1 +                         // '.' between package and function
              1 +                         // end of string
              ALIGN_SIZE(1));             // to avoid String reallocation
   String qname((char *)alloc_root(thd->mem_root, len), len,
@@ -2912,7 +2912,21 @@ Item_sp::func_name(THD *thd) const
     append_identifier(thd, &qname, &m_name->m_db);
     qname.append('.');
   }
-  append_identifier(thd, &qname, &m_name->m_name);
+  if (is_package_function)
+  {
+    /*
+      In case of a package function split `pkg.func` and print
+      quoted `pkg` and `func` separately, so the entire result looks like:
+         `db`.`pkg`.`func`
+    */
+    Database_qualified_name tmp= Database_qualified_name::split(m_name->m_name);
+    DBUG_ASSERT(tmp.m_db.length);
+    append_identifier(thd, &qname, &tmp.m_db);
+    qname.append('.');
+    append_identifier(thd, &qname, &tmp.m_name);
+  }
+  else
+    append_identifier(thd, &qname, &m_name->m_name);
   return qname.c_ptr_safe();
 }
 
@@ -6360,8 +6374,6 @@ bool Item_field::fix_fields(THD *thd, Item **reference)
   }
 #endif
   fixed= 1;
-  if (field->vcol_info)
-    fix_session_vcol_expr_for_read(thd, field, field->vcol_info);
   if (thd->variables.sql_mode & MODE_ONLY_FULL_GROUP_BY &&
       !outer_fixed && !thd->lex->in_sum_func &&
       select &&
@@ -9431,6 +9443,12 @@ bool Item_default_value::eq(const Item *item, bool binary_cmp) const
 }
 
 
+bool Item_default_value::check_field_expression_processor(void *)
+{
+  field->default_value= ((Item_field *)(arg->real_item()))->field->default_value;
+  return 0;
+}
+
 bool Item_default_value::fix_fields(THD *thd, Item **items)
 {
   Item *real_arg;
@@ -9472,7 +9490,6 @@ bool Item_default_value::fix_fields(THD *thd, Item **items)
   }
   if (!(def_field= (Field*) thd->alloc(field_arg->field->size_of())))
     goto error;
-  cached_field= def_field;
   memcpy((void *)def_field, (void *)field_arg->field,
          field_arg->field->size_of());
   def_field->reset_fields();
@@ -9483,11 +9500,6 @@ bool Item_default_value::fix_fields(THD *thd, Item **items)
     uchar *newptr= (uchar*) thd->alloc(1+def_field->pack_length());
     if (!newptr)
       goto error;
-    /*
-      Even if DEFAULT() do not read tables fields, the default value
-      expression can do it.
-    */
-    fix_session_vcol_expr_for_read(thd, def_field, def_field->default_value);
     if (should_mark_column(thd->column_usage))
       def_field->default_value->expr->update_used_tables();
     def_field->move_field(newptr+1, def_field->maybe_null() ? newptr : 0, 1);
@@ -9506,8 +9518,7 @@ error:
 
 void Item_default_value::cleanup()
 {
-  delete cached_field;                        // Free cached blob data
-  cached_field= 0;
+  delete field;                        // Free cached blob data
   Item_field::cleanup();
 }
 
@@ -9793,6 +9804,8 @@ bool Item_trigger_field::set_value(THD *thd, sp_rcontext * /*ctx*/, Item **it)
 
   if (!item || fix_fields_if_needed(thd, NULL))
     return true;
+  if (field->vers_sys_field())
+    return false;
 
   // NOTE: field->table->copy_blobs should be false here, but let's
   // remember the value at runtime to avoid subtle bugs.
@@ -10740,6 +10753,20 @@ void view_error_processor(THD *thd, void *data)
   ((TABLE_LIST *)data)->hide_view_error(thd);
 }
 
+/**
+  Name resolution context with resolution in only one table
+*/
+
+Name_resolution_context::Name_resolution_context(TABLE_LIST *table):
+  outer_context(0), table_list(0), select_lex(0),
+  error_processor_data(0),
+  security_ctx(0)
+{
+  resolve_in_select_list= FALSE;
+  error_processor= &dummy_error_processor;
+  // resolve only in this table
+  first_name_resolution_table= last_name_resolution_table= table;
+}
 
 st_select_lex *Item_ident::get_depended_from() const
 {

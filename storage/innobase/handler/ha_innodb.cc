@@ -104,9 +104,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "srv0srv.h"
 #include "srv0start.h"
 #include "rem0rec.h"
-#ifdef UNIV_DEBUG
 #include "trx0purge.h"
-#endif /* UNIV_DEBUG */
 #include "trx0roll.h"
 #include "trx0rseg.h"
 #include "trx0trx.h"
@@ -631,7 +629,6 @@ static PSI_mutex_info all_innodb_mutexes[] = {
 	PSI_KEY(fts_doc_id_mutex),
 	PSI_KEY(log_flush_order_mutex),
 	PSI_KEY(hash_table_mutex),
-	PSI_KEY(ibuf_bitmap_mutex),
 	PSI_KEY(ibuf_mutex),
 	PSI_KEY(ibuf_pessimistic_insert_mutex),
 	PSI_KEY(index_online_log),
@@ -799,6 +796,36 @@ innodb_stopword_table_validate(
 	void*				save,	/*!< out: immediate result
 						for update function */
 	struct st_mysql_value*		value);	/*!< in: incoming string */
+
+static
+void innodb_ft_cache_size_update(THD*, st_mysql_sys_var*, void*, const void* save)
+{
+#if UNIV_WORD_SIZE == 4
+  my_atomic_store32_explicit(
+    &fts_max_cache_size, *static_cast<const size_t*>(save),
+    MY_MEMORY_ORDER_RELAXED);
+#else
+  my_atomic_store64_explicit(
+    reinterpret_cast<int64*>(&fts_max_cache_size),
+    *static_cast<const size_t*>(save),
+    MY_MEMORY_ORDER_RELAXED);
+#endif
+}
+
+static
+void innodb_ft_total_cache_size_update(THD*, st_mysql_sys_var*, void*, const void* save)
+{
+#if UNIV_WORD_SIZE == 4
+  my_atomic_store32_explicit(
+    &fts_max_total_cache_size, *static_cast<const size_t*>(save),
+    MY_MEMORY_ORDER_RELAXED);
+#else
+  my_atomic_store64_explicit(
+    reinterpret_cast<int64*>(&fts_max_total_cache_size),
+    *static_cast<const size_t*>(save),
+    MY_MEMORY_ORDER_RELAXED);
+#endif
+}
 
 static bool is_mysql_datadir_path(const char *path);
 
@@ -1115,10 +1142,6 @@ static SHOW_VAR innodb_status_variables[]= {
   /* Status variables for page compression */
   {"page_compression_saved",
    (char*) &export_vars.innodb_page_compression_saved,    SHOW_LONGLONG},
-  {"num_index_pages_written",
-   (char*) &export_vars.innodb_index_pages_written,       SHOW_LONGLONG},
-  {"num_non_index_pages_written",
-   (char*) &export_vars.innodb_non_index_pages_written,       SHOW_LONGLONG},
   {"num_pages_page_compressed",
    (char*) &export_vars.innodb_pages_page_compressed,     SHOW_LONGLONG},
   {"num_page_compressed_trim_op",
@@ -1186,9 +1209,6 @@ static SHOW_VAR innodb_status_variables[]= {
   {"encryption_rotation_estimated_iops",
   (char*) &export_vars.innodb_encryption_rotation_estimated_iops,
    SHOW_LONG},
-  {"encryption_key_rotation_list_length",
-  (char*)&export_vars.innodb_key_rotation_list_length,
-   SHOW_LONGLONG},
   {"encryption_n_merge_blocks_encrypted",
   (char*)&export_vars.innodb_n_merge_blocks_encrypted,
    SHOW_LONGLONG},
@@ -1864,6 +1884,59 @@ thd_to_trx_id(
 {
 	return(thd_to_trx(thd)->id);
 }
+
+uint32 wsrep_sst_disable_writes;
+
+static void sst_disable_innodb_writes()
+{
+  const uint old_count= srv_n_fil_crypt_threads;
+  fil_crypt_set_thread_cnt(0);
+  srv_n_fil_crypt_threads= old_count;
+
+  my_atomic_store32_explicit(&wsrep_sst_disable_writes, true,
+                             MY_MEMORY_ORDER_RELAXED);
+  purge_sys.stop();
+  /* We are holding a global MDL thanks to FLUSH TABLES WITH READ LOCK.
+
+  That will prevent any writes from arriving into InnoDB, but it will
+  not prevent writes of modified pages from the buffer pool, or log
+  checkpoints.
+
+  Let us perform a log checkpoint to ensure that the entire buffer
+  pool is clean, so that no writes to persistent files will be
+  possible during the snapshot, and to guarantee that no crash
+  recovery will be necessary when starting up on the snapshot. */
+  log_make_checkpoint();
+  /* If any FILE_MODIFY records were written by the checkpoint, an
+  extra write of a FILE_CHECKPOINT record could still be invoked by
+  buf_flush_page_cleaner(). Let us prevent that by invoking another
+  checkpoint (which will write the FILE_CHECKPOINT record). */
+  log_make_checkpoint();
+  ut_d(recv_no_log_write= true);
+  /* If this were not a no-op, an assertion would fail due to
+  recv_no_log_write. */
+  ut_d(log_make_checkpoint());
+}
+
+static void sst_enable_innodb_writes()
+{
+  ut_ad(recv_no_log_write);
+  ut_d(recv_no_log_write= false);
+  purge_sys.resume();
+  my_atomic_store32_explicit(&wsrep_sst_disable_writes, false,
+                             MY_MEMORY_ORDER_RELAXED);
+  const uint old_count= srv_n_fil_crypt_threads;
+  srv_n_fil_crypt_threads= 0;
+  fil_crypt_set_thread_cnt(old_count);
+}
+
+static void innodb_disable_internal_writes(bool disable)
+{
+  if (disable)
+    sst_disable_innodb_writes();
+  else
+    sst_enable_innodb_writes();
+}
 #endif /* WITH_WSREP */
 
 /********************************************************************//**
@@ -1911,7 +1984,7 @@ convert_error_code_to_mysql(
 				    "constraints that exceed max "
 				    "depth of %d. Please "
 				    "drop extra constraints and try "
-				    "again", DICT_FK_MAX_RECURSIVE_LOAD);
+				    "again", FK_MAX_CASCADE_DEL);
 		return(HA_ERR_FK_DEPTH_EXCEEDED);
 
 	case DB_CANT_CREATE_GEOMETRY_OBJECT:
@@ -2357,9 +2430,6 @@ os_file_t
 innobase_mysql_tmpfile(
 	const char*	path)
 {
-#ifdef WITH_INNODB_DISALLOW_WRITES
-	os_event_wait(srv_allow_writes_event);
-#endif /* WITH_INNODB_DISALLOW_WRITES */
 	File	fd;
 
 	DBUG_EXECUTE_IF(
@@ -2672,64 +2742,6 @@ overflow:
 	return(~(ulonglong) 0);
 }
 
-/********************************************************************//**
-Reset the autoinc value in the table.
-@return	DB_SUCCESS if all went well else error code */
-UNIV_INTERN
-dberr_t
-ha_innobase::innobase_reset_autoinc(
-/*================================*/
-	ulonglong	autoinc)	/*!< in: value to store */
-{
-	dberr_t		error;
-
-	error = innobase_lock_autoinc();
-
-	if (error == DB_SUCCESS) {
-
-		dict_table_autoinc_initialize(m_prebuilt->table, autoinc);
-
-		dict_table_autoinc_unlock(m_prebuilt->table);
-	}
-
-	return(error);
-}
-
-/*******************************************************************//**
-Reset the auto-increment counter to the given value, i.e. the next row
-inserted will get the given value. This is called e.g. after TRUNCATE
-is emulated by doing a 'DELETE FROM t'. HA_ERR_WRONG_COMMAND is
-returned by storage engines that don't support this operation.
-@return	0 or error code */
-UNIV_INTERN
-int
-ha_innobase::reset_auto_increment(
-/*==============================*/
-	ulonglong	value)		/*!< in: new value for table autoinc */
-{
-	DBUG_ENTER("ha_innobase::reset_auto_increment");
-
-	dberr_t	error;
-
-	update_thd(ha_thd());
-
-	error = row_lock_table_autoinc_for_mysql(m_prebuilt);
-
-	if (error != DB_SUCCESS) {
-		DBUG_RETURN(convert_error_code_to_mysql(
-				    error, m_prebuilt->table->flags, m_user_thd));
-	}
-
-	/* The next value can never be 0. */
-	if (value == 0) {
-		value = 1;
-	}
-
-	innobase_reset_autoinc(value);
-
-	DBUG_RETURN(0);
-}
-
 /*********************************************************************//**
 Initializes some fields in an InnoDB transaction object. */
 static
@@ -2746,7 +2758,7 @@ innobase_trx_init(
 	while holding lock_sys.mutex, by lock_rec_enqueue_waiting(),
 	will not end up acquiring LOCK_global_system_variables in
 	intern_sys_var_ptr(). */
-	THDVAR(thd, lock_wait_timeout);
+	(void) THDVAR(thd, lock_wait_timeout);
 
 	trx->check_foreigns = !thd_test_options(
 		thd, OPTION_NO_FOREIGN_KEY_CHECKS);
@@ -3571,9 +3583,6 @@ static int innodb_init_abort()
 	}
 	srv_tmp_space.shutdown();
 
-#ifdef WITH_INNODB_DISALLOW_WRITES
-	os_event_destroy(srv_allow_writes_event);
-#endif /* WITH_INNODB_DISALLOW_WRITES */
 	DBUG_RETURN(1);
 }
 
@@ -4280,6 +4289,7 @@ static int innodb_init(void* p)
 	innobase_hton->set_checkpoint=innobase_wsrep_set_checkpoint;
 	innobase_hton->get_checkpoint=innobase_wsrep_get_checkpoint;
 	innobase_hton->fake_trx_id=wsrep_fake_trx_id;
+	innobase_hton->disable_internal_writes=innodb_disable_internal_writes;
 #endif /* WITH_WSREP */
 
 	innobase_hton->tablefile_extensions = ha_innobase_exts;
@@ -6902,7 +6912,8 @@ innobase_mysql_fts_get_token(
 
 	ulint	mwc = 0;
 	ulint	length = 0;
-
+	bool	reset_token_str = false;
+reset:
 	token->f_str = const_cast<byte*>(doc);
 
 	while (doc < end) {
@@ -6913,6 +6924,9 @@ innobase_mysql_fts_get_token(
 			cs, &ctype, (uchar*) doc, (uchar*) end);
 		if (true_word_char(ctype, *doc)) {
 			mwc = 0;
+		} else if (*doc == '\'' && length == 1) {
+			/* Could be apostrophe */
+			reset_token_str = true;
 		} else if (!misc_word_char(*doc) || mwc) {
 			break;
 		} else {
@@ -6922,6 +6936,14 @@ innobase_mysql_fts_get_token(
 		++length;
 
 		doc += mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1);
+		if (reset_token_str) {
+			/* Reset the token if the single character
+			followed by apostrophe */
+			mwc = 0;
+			length = 0;
+			reset_token_str = false;
+			goto reset;
+		}
 	}
 
 	token->f_len = (uint) (doc - token->f_str) - mwc;
@@ -7680,6 +7702,11 @@ ha_innobase::build_template(
 
 	m_prebuilt->versioned_write = table->versioned_write(VERS_TRX_ID);
 	m_prebuilt->need_to_access_clustered = (index == clust_index);
+
+	if (m_prebuilt->in_fts_query) {
+		/* Do clustered index lookup to fetch the FTS_DOC_ID */
+		m_prebuilt->need_to_access_clustered = true;
+	}
 
 	/* Either m_prebuilt->index should be a secondary index, or it
 	should be the clustered index. */
@@ -9089,16 +9116,6 @@ ha_innobase::delete_row(
 			    error, m_prebuilt->table->flags, m_user_thd));
 }
 
-/** Delete all rows from the table.
-@return error number or 0 */
-
-int
-ha_innobase::delete_all_rows()
-{
-	DBUG_ENTER("ha_innobase::delete_all_rows");
-	DBUG_RETURN(HA_ERR_WRONG_COMMAND);
-}
-
 /**********************************************************************//**
 Removes a new lock set on a row, if it was not read optimistically. This can
 be called after a row has been read in the processing of an UPDATE or a DELETE
@@ -9630,6 +9647,14 @@ ha_innobase::change_active_index(
 	build_template(false);
 
 	DBUG_RETURN(0);
+}
+
+/* @return true if it's necessary to switch current statement log format from
+STATEMENT to ROW if binary log format is MIXED and autoincrement values
+are changed in the statement */
+bool ha_innobase::autoinc_lock_mode_stmt_unsafe() const
+{
+  return innobase_autoinc_lock_mode == AUTOINC_NO_LOCKING;
 }
 
 /***********************************************************************//**
@@ -12625,7 +12650,6 @@ bool create_table_info_t::row_size_is_acceptable(
   return true;
 }
 
-/* FIXME: row size check has some flaws and should be improved */
 dict_index_t::record_size_info_t dict_index_t::record_size_info() const
 {
   ut_ad(!(type & DICT_FTS));
@@ -12716,6 +12740,8 @@ dict_index_t::record_size_info_t dict_index_t::record_size_info() const
     {
       /* dict_index_add_col() should guarantee this */
       ut_ad(!f.prefix_len || f.fixed_len == f.prefix_len);
+      if (f.prefix_len)
+        field_max_size= f.prefix_len;
       /* Fixed lengths are not encoded
       in ROW_FORMAT=COMPACT. */
       goto add_field_size;
@@ -12769,7 +12795,8 @@ dict_index_t::record_size_info_t dict_index_t::record_size_info() const
     unique columns, result.shortest_size equals the size of the
     node pointer record minus the node pointer column. */
     if (i + 1 == dict_index_get_n_unique_in_tree(this) &&
-        result.shortest_size + REC_NODE_PTR_SIZE >= page_ptr_max)
+        result.shortest_size + REC_NODE_PTR_SIZE + (comp ? 0 : 2) >=
+        page_ptr_max)
     {
       result.set_too_big(i);
     }
@@ -12815,7 +12842,6 @@ bool create_table_info_t::row_size_is_acceptable(
   if (info.row_is_too_big())
   {
     ut_ad(info.get_overrun_size() != 0);
-    ut_ad(info.max_leaf_size != 0);
 
     const size_t idx= info.get_first_overrun_field_index();
     const dict_field_t *field= dict_index_get_nth_field(&index, idx);
@@ -14373,9 +14399,11 @@ ha_innobase::info_low(
 			stats.index_file_length
 				= ulonglong(stat_sum_of_other_index_sizes)
 				* size;
+			rw_lock_s_lock(&space->latch);
 			stats.delete_length = 1024
 				* fsp_get_available_space_in_free_extents(
 					*space);
+			rw_lock_s_unlock(&space->latch);
 		}
 		stats.check_time = 0;
 		stats.mrr_length_per_rec= (uint)ref_length +  8; // 8 = max(sizeof(void *));
@@ -16130,7 +16158,7 @@ struct ShowStatus {
 	};
 
 	/** Order by m_waits, in descending order. */
-	struct OrderByWaits: public std::binary_function<Value, Value, bool>
+	struct OrderByWaits
 	{
 		/** @return true if rhs < lhs */
 		bool operator()(
@@ -16776,8 +16804,8 @@ ha_innobase::get_auto_increment(
 
 	(3) It is restricted only for insert operations. */
 
-	if (increment > 1 && thd_sql_command(m_user_thd) != SQLCOM_ALTER_TABLE
-	    && autoinc < col_max_value) {
+	if (increment > 1 && increment <= ~autoinc && autoinc < col_max_value
+	    && thd_sql_command(m_user_thd) != SQLCOM_ALTER_TABLE) {
 
 		ulonglong prev_auto_inc = autoinc;
 
@@ -19788,15 +19816,31 @@ static MYSQL_SYSVAR_STR(ft_aux_table, innodb_ft_aux_table,
   "FTS internal auxiliary table to be checked",
   innodb_ft_aux_table_validate, NULL, NULL);
 
-static MYSQL_SYSVAR_ULONG(ft_cache_size, fts_max_cache_size,
-  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
-  "InnoDB Fulltext search cache size in bytes",
-  NULL, NULL, 8000000, 1600000, 80000000, 0);
+#if UNIV_WORD_SIZE == 4
 
-static MYSQL_SYSVAR_ULONG(ft_total_cache_size, fts_max_total_cache_size,
-  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
+static MYSQL_SYSVAR_SIZE_T(ft_cache_size, fts_max_cache_size,
+  PLUGIN_VAR_RQCMDARG,
+  "InnoDB Fulltext search cache size in bytes",
+  NULL, innodb_ft_cache_size_update, 8000000, 1600000, 1U << 29, 0);
+
+static MYSQL_SYSVAR_SIZE_T(ft_total_cache_size, fts_max_total_cache_size,
+  PLUGIN_VAR_RQCMDARG,
   "Total memory allocated for InnoDB Fulltext Search cache",
-  NULL, NULL, 640000000, 32000000, 1600000000, 0);
+  NULL, innodb_ft_total_cache_size_update, 640000000, 32000000, 1600000000, 0);
+
+#else
+
+static MYSQL_SYSVAR_SIZE_T(ft_cache_size, fts_max_cache_size,
+  PLUGIN_VAR_RQCMDARG,
+  "InnoDB Fulltext search cache size in bytes",
+  NULL, innodb_ft_cache_size_update, 8000000, 1600000, 1ULL << 40, 0);
+
+static MYSQL_SYSVAR_SIZE_T(ft_total_cache_size, fts_max_total_cache_size,
+  PLUGIN_VAR_RQCMDARG,
+  "Total memory allocated for InnoDB Fulltext Search cache",
+  NULL, innodb_ft_total_cache_size_update, 640000000, 32000000, 1ULL << 40, 0);
+
+#endif
 
 static MYSQL_SYSVAR_SIZE_T(ft_result_cache_limit, fts_result_cache_limit,
   PLUGIN_VAR_RQCMDARG,
@@ -20070,39 +20114,6 @@ static MYSQL_SYSVAR_ULONG(buf_dump_status_frequency, srv_buf_dump_status_frequen
   "status is printed when every 10% of number of buffer pool pages are "
   "dumped. Default is 0 (only start and end status is printed).",
   NULL, NULL, 0, 0, 100, 0);
-
-#ifdef WITH_INNODB_DISALLOW_WRITES
-/*******************************************************
- *    innobase_disallow_writes variable definition     *
- *******************************************************/
- 
-/* Must always init to FALSE. */
-static my_bool	innobase_disallow_writes	= FALSE;
-
-/**************************************************************************
-An "update" method for innobase_disallow_writes variable. */
-static
-void
-innobase_disallow_writes_update(THD*, st_mysql_sys_var*,
-				void* var_ptr, const void* save)
-{
-	const my_bool val = *static_cast<const my_bool*>(save);
-	*static_cast<my_bool*>(var_ptr) = val;
-	ut_a(srv_allow_writes_event);
-	mysql_mutex_unlock(&LOCK_global_system_variables);
-	if (val) {
-		os_event_reset(srv_allow_writes_event);
-	} else {
-		os_event_set(srv_allow_writes_event);
-	}
-	mysql_mutex_lock(&LOCK_global_system_variables);
-}
-
-static MYSQL_SYSVAR_BOOL(disallow_writes, innobase_disallow_writes,
-  PLUGIN_VAR_NOCMDOPT,
-  "Tell InnoDB to stop any writes to disk",
-  NULL, innobase_disallow_writes_update, FALSE);
-#endif /* WITH_INNODB_DISALLOW_WRITES */
 
 static MYSQL_SYSVAR_BOOL(random_read_ahead, srv_random_read_ahead,
   PLUGIN_VAR_NOCMDARG,
@@ -20534,9 +20545,6 @@ static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(change_buffering_debug),
   MYSQL_SYSVAR(disable_background_merge),
 #endif /* UNIV_DEBUG || UNIV_IBUF_DEBUG */
-#ifdef WITH_INNODB_DISALLOW_WRITES
-  MYSQL_SYSVAR(disallow_writes),
-#endif /* WITH_INNODB_DISALLOW_WRITES */
   MYSQL_SYSVAR(random_read_ahead),
   MYSQL_SYSVAR(read_ahead_threshold),
   MYSQL_SYSVAR(read_only),
@@ -21135,7 +21143,8 @@ innobase_get_computed_value(
 	TABLE*			mysql_table,
 	byte*			mysql_rec,
 	const dict_table_t*	old_table,
-	const upd_t*		update)
+	const upd_t*		update,
+	bool			ignore_warnings)
 {
 	byte		rec_buf2[REC_VERSION_56_MAX_INDEX_COL_LEN];
 	byte*		buf;
@@ -21233,7 +21242,9 @@ innobase_get_computed_value(
 
 	MY_BITMAP *old_write_set = dbug_tmp_use_all_columns(mysql_table, &mysql_table->write_set);
 	MY_BITMAP *old_read_set = dbug_tmp_use_all_columns(mysql_table, &mysql_table->read_set);
-	ret = mysql_table->update_virtual_field(mysql_table->field[col->m_col.ind]);
+	ret = mysql_table->update_virtual_field(
+		mysql_table->field[col->m_col.ind],
+		ignore_warnings);
 	dbug_tmp_restore_column_map(&mysql_table->read_set, old_read_set);
 	dbug_tmp_restore_column_map(&mysql_table->write_set, old_write_set);
 

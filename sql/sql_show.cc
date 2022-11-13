@@ -1172,7 +1172,8 @@ public:
       my_snprintf(m_view_access_denied_message, MYSQL_ERRMSG_SIZE,
                   ER_THD(thd, ER_TABLEACCESS_DENIED_ERROR), "SHOW VIEW",
                   m_sctx->priv_user,
-                  m_sctx->host_or_ip, m_top_view->get_table_name());
+                  m_sctx->host_or_ip,
+                  m_top_view->get_db_name(), m_top_view->get_table_name());
     }
     return m_view_access_denied_message_ptr;
   }
@@ -1264,7 +1265,8 @@ mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
       DBUG_PRINT("debug", ("check_table_access failed"));
       my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0),
               "SHOW", thd->security_ctx->priv_user,
-              thd->security_ctx->host_or_ip, table_list->alias.str);
+              thd->security_ctx->host_or_ip,
+              table_list->db.str, table_list->alias.str);
       goto exit;
     }
     DBUG_PRINT("debug", ("check_table_access succeeded"));
@@ -1293,7 +1295,8 @@ mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
     {
       my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0),
               "SHOW", thd->security_ctx->priv_user,
-              thd->security_ctx->host_or_ip, table_list->alias.str);
+              thd->security_ctx->host_or_ip,
+              table_list->db.str, table_list->alias.str);
       goto exit;
     }
   }
@@ -1551,7 +1554,7 @@ bool mysqld_show_create_db(THD *thd, LEX_CSTRING *dbname,
     buffer.append(STRING_WITH_LEN(" /*!40100"));
     buffer.append(STRING_WITH_LEN(" DEFAULT CHARACTER SET "));
     buffer.append(create.default_table_charset->csname);
-    if (!(create.default_table_charset->state & MY_CS_PRIMARY))
+    if (Charset(create.default_table_charset).can_have_collate_clause())
     {
       buffer.append(STRING_WITH_LEN(" COLLATE "));
       buffer.append(create.default_table_charset->name);
@@ -2013,7 +2016,7 @@ static void add_table_options(THD *thd, TABLE *table,
     {
       packet->append(STRING_WITH_LEN(" DEFAULT CHARSET="));
       packet->append(share->table_charset->csname);
-      if (!(share->table_charset->state & MY_CS_PRIMARY))
+      if (Charset(table->s->table_charset).can_have_collate_clause())
       {
         packet->append(STRING_WITH_LEN(" COLLATE="));
         packet->append(table->s->table_charset->name);
@@ -2251,22 +2254,13 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
     {
       if (field->charset() != share->table_charset)
       {
-	packet->append(STRING_WITH_LEN(" CHARACTER SET "));
-	packet->append(field->charset()->csname);
-      }
-      /*
-	For string types dump collation name only if
-	collation is not primary for the given charset
-
-        For generated fields don't print the COLLATE clause if
-        the collation matches the expression's collation.
-      */
-      if (!(field->charset()->state & MY_CS_PRIMARY) &&
-          (!field->vcol_info ||
-           field->charset() != field->vcol_info->expr->collation.collation))
-      {
-	packet->append(STRING_WITH_LEN(" COLLATE "));
-	packet->append(field->charset()->name);
+        packet->append(STRING_WITH_LEN(" CHARACTER SET "));
+        packet->append(field->charset()->csname);
+        if (Charset(field->charset()).can_have_collate_clause())
+        {
+          packet->append(STRING_WITH_LEN(" COLLATE "));
+          packet->append(field->charset()->name);
+        }
       }
     }
 
@@ -2660,7 +2654,8 @@ static int show_create_view(THD *thd, TABLE_LIST *table, String *buff)
          tbl;
          tbl= tbl->next_global)
     {
-      if (cmp(&table->view_db, tbl->view ? &tbl->view_db : &tbl->db))
+      if (!tbl->is_derived() &&
+          cmp(&table->view_db, tbl->view ? &tbl->view_db : &tbl->db))
       {
         table->compact_view_format= FALSE;
         break;
@@ -3598,6 +3593,7 @@ union Any_pointer {
   @param variable    [in]     Details of the variable.
   @param value_type  [in]     Variable type.
   @param show_type   [in]     Variable show type.
+  @param status_var  [in]     Status variable pointer
   @param charset     [out]    Character set of the value.
   @param buff        [in,out] Buffer to store the value.
                               (Needs to have enough memory
@@ -5142,6 +5138,7 @@ public:
 
 int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
 {
+  DBUG_ENTER("get_all_tables");
   LEX *lex= thd->lex;
   TABLE *table= tables->table;
   TABLE_LIST table_acl_check;
@@ -5159,7 +5156,29 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
   uint table_open_method= tables->table_open_method;
   bool can_deadlock;
   MEM_ROOT tmp_mem_root;
-  DBUG_ENTER("get_all_tables");
+  /*
+    We're going to open FRM files for tables.
+    In case of VIEWs that contain stored function calls,
+    these stored functions will be parsed and put to the SP cache.
+
+    Suppose we have a view containing a stored function call:
+      CREATE VIEW v1 AS SELECT f1() AS c1;
+    and now we're running:
+      SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME=f1();
+    If a parallel thread invalidates the cache,
+    e.g. by creating or dropping some stored routine,
+    the SELECT query will re-parse f1() when processing "v1"
+    and replace the outdated cached version of f1() to a new one.
+    But the old version of f1() is referenced from the m_sp member
+    of the Item_func_sp instances used in the WHERE condition.
+    We cannot destroy it. To avoid such clashes, let's remember
+    all old routines into a temporary SP cache collection
+    and process tables with a new empty temporary SP cache collection.
+    Then restore to the old SP cache collection at the end.
+  */
+  Sp_caches old_sp_caches;
+
+  old_sp_caches.sp_caches_swap(*thd);
 
   bzero(&tmp_mem_root, sizeof(tmp_mem_root));
 
@@ -5332,6 +5351,13 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
 err:
   thd->restore_backup_open_tables_state(&open_tables_state_backup);
   free_root(&tmp_mem_root, 0);
+
+  /*
+    Now restore to the saved SP cache collection
+    and clear the temporary SP cache collection.
+  */
+  old_sp_caches.sp_caches_swap(*thd);
+  old_sp_caches.sp_caches_clear();
 
   DBUG_RETURN(error);
 }
@@ -6003,6 +6029,15 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
   show_table->use_all_columns();               // Required for default
   restore_record(show_table, s->default_values);
 
+#ifndef NO_EMBEDDED_ACCESS_CHECKS
+  check_access(thd, SELECT_ACL, db_name->str,
+               &tables->grant.privilege, 0, 0, MY_TEST(tables->schema_table));
+  if (is_temporary_table(tables))
+  {
+    tables->grant.privilege|= TMP_TABLE_ACLS;
+  }
+#endif
+
   for (; (field= *ptr) ; ptr++)
   {
     if(field->invisible > INVISIBLE_USER)
@@ -6023,13 +6058,13 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
 
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     uint col_access;
-    check_access(thd,SELECT_ACL, db_name->str,
-                 &tables->grant.privilege, 0, 0, MY_TEST(tables->schema_table));
     col_access= get_column_grant(thd, &tables->grant,
                                  db_name->str, table_name->str,
                                  field->field_name.str) & COL_ACLS;
+
     if (!tables->schema_table && !col_access)
       continue;
+
     char *end= tmp;
     for (uint bitnr=0; col_access ; col_access>>=1,bitnr++)
     {
@@ -6959,19 +6994,18 @@ static int get_check_constraints_record(THD *thd, TABLE_LIST *tables,
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     TABLE_LIST table_acl_check;
     bzero((char*) &table_acl_check, sizeof(table_acl_check));
+
+    if (!(thd->col_access & TABLE_ACLS))
+    {
+      table_acl_check.db= *db_name;
+      table_acl_check.table_name= *table_name;
+      table_acl_check.grant.privilege= thd->col_access;
+      if (check_grant(thd, TABLE_ACLS, &table_acl_check, FALSE, 1, TRUE))
+        DBUG_RETURN(res);
+    }
 #endif
     for (uint i= 0; i < tables->table->s->table_check_constraints; i++)
     {
-#ifndef NO_EMBEDDED_ACCESS_CHECKS
-      if (!(thd->col_access & TABLE_ACLS))
-      {
-        table_acl_check.db= *db_name;
-        table_acl_check.table_name= *table_name;
-        table_acl_check.grant.privilege= thd->col_access;
-        if (check_grant(thd, TABLE_ACLS, &table_acl_check, FALSE, 1, TRUE))
-          continue;
-      }
-#endif
       Virtual_column_info *check= tables->table->check_constraints[i];
       table->field[0]->store(STRING_WITH_LEN("def"), system_charset_info);
       table->field[3]->store(check->name.str, check->name.length,
@@ -7092,13 +7126,15 @@ static bool store_trigger(THD *thd, Trigger *trigger,
   table->field[14]->store(STRING_WITH_LEN("OLD"), cs);
   table->field[15]->store(STRING_WITH_LEN("NEW"), cs);
 
-  if (trigger->create_time)
+  if (trigger->hr_create_time.val)
   {
+    /* timestamp is in microseconds */
     table->field[16]->set_notnull();
-    thd->variables.time_zone->gmt_sec_to_TIME(&timestamp,
-                                              (my_time_t)(trigger->create_time/100));
-    /* timestamp is with 6 digits */
-    timestamp.second_part= (trigger->create_time % 100) * 10000;
+    thd->variables.time_zone->
+      gmt_sec_to_TIME(&timestamp,
+                      (my_time_t)
+                      hrtime_to_time(trigger->hr_create_time));
+    timestamp.second_part= hrtime_sec_part(trigger->hr_create_time);
     ((Field_temporal_with_date*) table->field[16])->store_time_dec(&timestamp,
                                                                    2);
   }
@@ -8803,6 +8839,7 @@ bool optimize_schema_tables_memory_usage(List<TABLE_LIST> &tables)
         if (bitmap_is_set(table->read_set, i))
         {
           field->move_field(cur);
+          field->reset();
           *to_recinfo++= *from_recinfo;
           cur+= from_recinfo->length;
         }
@@ -8823,6 +8860,7 @@ bool optimize_schema_tables_memory_usage(List<TABLE_LIST> &tables)
         table->s->reclength= to_recinfo->length= 1;
         to_recinfo++;
       }
+      store_record(table, s->default_values);
       p->recinfo= to_recinfo;
 
       // TODO switch from Aria to Memory if all blobs were optimized away?
@@ -9236,7 +9274,7 @@ ST_FIELD_INFO columns_fields_info[]=
    OPEN_FRM_ONLY},
   {"COLUMN_TYPE", 65535, MYSQL_TYPE_STRING, 0, 0, "Type", OPEN_FRM_ONLY},
   {"COLUMN_KEY", 3, MYSQL_TYPE_STRING, 0, 0, "Key", OPEN_FRM_ONLY},
-  {"EXTRA", 30, MYSQL_TYPE_STRING, 0, 0, "Extra", OPEN_FRM_ONLY},
+  {"EXTRA", 80, MYSQL_TYPE_STRING, 0, 0, "Extra", OPEN_FRM_ONLY},
   {"PRIVILEGES", 80, MYSQL_TYPE_STRING, 0, 0, "Privileges", OPEN_FRM_ONLY},
   {"COLUMN_COMMENT", COLUMN_COMMENT_MAXLEN, MYSQL_TYPE_STRING, 0, 0, 
    "Comment", OPEN_FRM_ONLY},
@@ -10267,12 +10305,14 @@ static bool show_create_trigger_impl(THD *thd, Trigger *trigger)
            trigger->db_cl_name.length,
            system_charset_info);
 
-  if (trigger->create_time)
+  if (trigger->hr_create_time.val)
   {
     MYSQL_TIME timestamp;
-    thd->variables.time_zone->gmt_sec_to_TIME(&timestamp,
-                                              (my_time_t)(trigger->create_time/100));
-    timestamp.second_part= (trigger->create_time % 100) * 10000;
+    thd->variables.time_zone->
+      gmt_sec_to_TIME(&timestamp,
+                      (my_time_t)
+                      hrtime_to_time(trigger->hr_create_time));
+    timestamp.second_part= hrtime_sec_part(trigger->hr_create_time);
     p->store(&timestamp, 2);
   }
   else

@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2021, MariaDB Corporation.
+   Copyright (c) 2009, 2022, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -75,7 +75,14 @@ Query_tables_list::binlog_stmt_unsafe_errcode[BINLOG_STMT_UNSAFE_COUNT] =
   ER_BINLOG_UNSAFE_CREATE_SELECT_AUTOINC,
   ER_BINLOG_UNSAFE_UPDATE_IGNORE,
   ER_BINLOG_UNSAFE_INSERT_TWO_KEYS,
-  ER_BINLOG_UNSAFE_AUTOINC_NOT_FIRST
+  ER_BINLOG_UNSAFE_AUTOINC_NOT_FIRST,
+  /*
+    There is no need to add new error code as we plan to get rid of auto
+    increment lock mode variable, so we use existing error code below, add
+    the correspondent text to the existing error message during merging to
+    non-GA release.
+  */
+  ER_BINLOG_UNSAFE_SYSTEM_VARIABLE
 };
 
 
@@ -198,7 +205,6 @@ init_lex_with_single_table(THD *thd, TABLE *table, LEX *lex)
     return TRUE;
   context->resolve_in_table_list_only(table_list);
   lex->use_only_table_context= TRUE;
-  lex->context_analysis_only|= CONTEXT_ANALYSIS_ONLY_VCOL_EXPR;
   select_lex->cur_pos_in_select_list= UNDEF_POS;
   table->map= 1; //To ensure correct calculation of const item
   table_list->table= table;
@@ -2185,7 +2191,6 @@ int Lex_input_stream::scan_ident_delimited(THD *thd,
                                            Lex_ident_cli_st *str)
 {
   CHARSET_INFO *const cs= thd->charset();
-  uint double_quotes= 0;
   uchar c, quote_char= m_tok_start[0];
   DBUG_ASSERT(m_ptr == m_tok_start + 1);
 
@@ -2210,7 +2215,6 @@ int Lex_input_stream::scan_ident_delimited(THD *thd,
         if (yyPeek() != quote_char)
           break;
         c= yyGet();
-        double_quotes++;
         continue;
       }
     }
@@ -2317,6 +2321,7 @@ void st_select_lex::init_query()
   item_list.empty();
   min_max_opt_list.empty();
   join= 0;
+  cur_pos_in_select_list= UNDEF_POS;
   having= prep_having= where= prep_where= 0;
   cond_pushed_into_where= cond_pushed_into_having= 0;
   olap= UNSPECIFIED_OLAP_TYPE;
@@ -2430,23 +2435,9 @@ void st_select_lex_node::include_down(st_select_lex_node *upper)
 }
 
 
-void st_select_lex_node::add_slave(st_select_lex_node *slave_arg)
+void st_select_lex_node::attach_single(st_select_lex_node *slave_arg)
 {
-  for (; slave; slave= slave->next)
-    if (slave == slave_arg)
-      return;
-
-  if (slave)
-  {
-    st_select_lex_node *slave_arg_slave= slave_arg->slave;
-    /* Insert in the front of list of slaves if any. */
-    slave_arg->include_neighbour(slave);
-    /* include_neighbour() sets slave_arg->slave=0, restore it. */
-    slave_arg->slave= slave_arg_slave;
-    /* Count on include_neighbour() setting the master. */
-    DBUG_ASSERT(slave_arg->master == this);
-  }
-  else
+  DBUG_ASSERT(slave == 0);
   {
     slave= slave_arg;
     slave_arg->master= this;
@@ -2526,6 +2517,7 @@ void st_select_lex_node::fast_exclude()
   for (; slave; slave= slave->next)
     slave->fast_exclude();
   
+  prev= NULL; // to ensure correct behavior of st_select_lex_unit::is_excluded()
 }
 
 
@@ -2600,9 +2592,7 @@ void st_select_lex_node::exclude_from_tree()
 */
 void st_select_lex_node::exclude()
 {
-  /* exclude from global list */
-  fast_exclude();
-  /* exclude from other structures */
+  /* exclude the node from the tree  */
   exclude_from_tree();
   /* 
      We do not need following statements, because prev pointer of first 
@@ -2610,6 +2600,8 @@ void st_select_lex_node::exclude()
      if (master->slave == this)
        master->slave= next;
   */
+  /* exclude all nodes under this excluded node */
+  fast_exclude();
 }
 
 
@@ -4486,17 +4478,21 @@ void SELECT_LEX::update_used_tables()
   while ((tl= ti++))
   {
     TABLE_LIST *embedding= tl;
-    do
+    if (!is_eliminated_table(join->eliminated_tables, tl))
     {
-      bool maybe_null;
-      if ((maybe_null= MY_TEST(embedding->outer_join)))
+      do
       {
-        tl->table->maybe_null= maybe_null;
-        break;
+        bool maybe_null;
+        if ((maybe_null= MY_TEST(embedding->outer_join)))
+        {
+          tl->table->maybe_null= maybe_null;
+          break;
+        }
       }
+      while ((embedding= embedding->embedding));
     }
-    while ((embedding= embedding->embedding));
-    if (tl->on_expr)
+
+    if (tl->on_expr && !is_eliminated_table(join->eliminated_tables, tl))
     {
       tl->on_expr->update_used_tables();
       tl->on_expr->walk(&Item::eval_not_null_tables, 0, NULL);
@@ -4520,8 +4516,11 @@ void SELECT_LEX::update_used_tables()
       if (embedding->on_expr && 
           embedding->nested_join->join_list.head() == tl)
       {
-        embedding->on_expr->update_used_tables();
-        embedding->on_expr->walk(&Item::eval_not_null_tables, 0, NULL);
+        if (!is_eliminated_table(join->eliminated_tables, embedding))
+        {
+          embedding->on_expr->update_used_tables();
+          embedding->on_expr->walk(&Item::eval_not_null_tables, 0, NULL);
+        }
       }
       tl= embedding;
       embedding= tl->embedding;
@@ -6661,7 +6660,7 @@ bool LEX::maybe_start_compound_statement(THD *thd)
     if (!make_sp_head(thd, NULL, &sp_handler_procedure))
       return true;
     sphead->set_suid(SP_IS_NOT_SUID);
-    sphead->set_body_start(thd, thd->m_parser_state->m_lip.get_cpp_ptr());
+    sphead->set_body_start(thd, thd->m_parser_state->m_lip.get_cpp_tok_start());
   }
   return false;
 }
@@ -7886,6 +7885,40 @@ bool LEX::call_statement_start(THD *thd, const LEX_CSTRING *name1,
 }
 
 
+bool LEX::call_statement_start(THD *thd, const LEX_CSTRING &db,
+                                         const LEX_CSTRING &pkg,
+                                         const LEX_CSTRING &proc)
+{
+  Database_qualified_name q_db_pkg(db, pkg);
+  Database_qualified_name q_pkg_proc(pkg, proc);
+  sp_name *spname;
+
+  sql_command= SQLCOM_CALL;
+
+  if (check_db_name((LEX_STRING*) const_cast<LEX_CSTRING*>(&db)))
+  {
+    my_error(ER_WRONG_DB_NAME, MYF(0), db.str);
+    return true;
+  }
+  if (check_routine_name(&pkg) ||
+      check_routine_name(&proc))
+    return true;
+
+  // Concat `pkg` and `name` to `pkg.name`
+  LEX_CSTRING pkg_dot_proc;
+  if (q_pkg_proc.make_qname(thd->mem_root, &pkg_dot_proc) ||
+      check_ident_length(&pkg_dot_proc) ||
+      !(spname= new (thd->mem_root) sp_name(&db, &pkg_dot_proc, true)))
+    return true;
+
+  sp_handler_package_function.add_used_routine(thd->lex, thd, spname);
+  sp_handler_package_body.add_used_routine(thd->lex, thd, &q_db_pkg);
+
+  return !(m_sql_cmd= new (thd->mem_root) Sql_cmd_call(spname,
+                                              &sp_handler_package_procedure));
+}
+
+
 sp_package *LEX::get_sp_package() const
 {
   return sphead ? sphead->get_package() : NULL;
@@ -8138,6 +8171,56 @@ Item *LEX::make_item_func_call_generic(THD *thd, Lex_ident_cli_st *cdb,
   Create_qfunc *builder= find_qualified_function_builder(thd);
   DBUG_ASSERT(builder);
   return builder->create_with_db(thd, &db, &name, true, args);
+}
+
+
+/*
+  Create a 3-step qualified function call.
+  Currently it's possible for package routines only, e.g.:
+     SELECT db.pkg.func();
+*/
+Item *LEX::make_item_func_call_generic(THD *thd,
+                                       Lex_ident_cli_st *cdb,
+                                       Lex_ident_cli_st *cpkg,
+                                       Lex_ident_cli_st *cfunc,
+                                       List<Item> *args)
+{
+  static Lex_cstring dot(".", 1);
+  Lex_ident_sys db(thd, cdb), pkg(thd, cpkg), func(thd, cfunc);
+  Database_qualified_name q_db_pkg(db, pkg);
+  Database_qualified_name q_pkg_func(pkg, func);
+  sp_name *qname;
+
+  if (db.is_null() || pkg.is_null() || func.is_null())
+    return NULL; // EOM
+
+  if (check_db_name((LEX_STRING*) static_cast<LEX_CSTRING*>(&db)))
+  {
+    my_error(ER_WRONG_DB_NAME, MYF(0), db.str);
+    return NULL;
+  }
+  if (check_routine_name(&pkg) ||
+      check_routine_name(&func))
+    return NULL;
+
+  // Concat `pkg` and `name` to `pkg.name`
+  LEX_CSTRING pkg_dot_func;
+  if (q_pkg_func.make_qname(thd->mem_root, &pkg_dot_func) ||
+      check_ident_length(&pkg_dot_func) ||
+      !(qname= new (thd->mem_root) sp_name(&db, &pkg_dot_func, true)))
+    return NULL;
+
+  sp_handler_package_function.add_used_routine(thd->lex, thd, qname);
+  sp_handler_package_body.add_used_routine(thd->lex, thd, &q_db_pkg);
+
+  thd->lex->safe_to_cache_query= 0;
+
+  if (args && args->elements > 0)
+    return new (thd->mem_root) Item_func_sp(thd, thd->lex->current_context(),
+                                            qname, &sp_handler_package_function,
+                                            *args);
+  return new (thd->mem_root) Item_func_sp(thd, thd->lex->current_context(),
+                                          qname, &sp_handler_package_function);
 }
 
 

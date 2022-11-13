@@ -3607,7 +3607,7 @@ pthread_handler_t signal_hand(void *arg __attribute__((unused)))
       sql_print_information("Got signal %d to shutdown mysqld",sig);
 #endif
       /* switch to the old log message processing */
-      logger.set_handlers(LOG_FILE, global_system_variables.sql_log_slow ? LOG_FILE:LOG_NONE,
+      logger.set_handlers(global_system_variables.sql_log_slow ? LOG_FILE:LOG_NONE,
                           opt_log ? LOG_FILE:LOG_NONE);
       DBUG_PRINT("info",("Got signal: %d  abort_loop: %d",sig,abort_loop));
       if (!abort_loop)
@@ -3642,15 +3642,13 @@ pthread_handler_t signal_hand(void *arg __attribute__((unused)))
       /* reenable logs after the options were reloaded */
       if (log_output_options & LOG_NONE)
       {
-        logger.set_handlers(LOG_FILE,
-                            global_system_variables.sql_log_slow ?
+        logger.set_handlers(global_system_variables.sql_log_slow ?
                             LOG_TABLE : LOG_NONE,
                             opt_log ? LOG_TABLE : LOG_NONE);
       }
       else
       {
-        logger.set_handlers(LOG_FILE,
-                            global_system_variables.sql_log_slow ?
+        logger.set_handlers(global_system_variables.sql_log_slow ?
                             log_output_options : LOG_NONE,
                             opt_log ? log_output_options : LOG_NONE);
       }
@@ -4137,12 +4135,17 @@ static void my_malloc_size_cb_func(long long size, my_bool is_thread_specific)
       /* Ensure we don't get called here again */
       char buf[50], *buf2;
       thd->set_killed(KILL_QUERY);
-      my_snprintf(buf, sizeof(buf), "--max-thread-mem-used=%llu",
+      my_snprintf(buf, sizeof(buf), "--max-session-mem-used=%llu",
                   thd->variables.max_mem_used);
       if ((buf2= (char*) thd->alloc(256)))
       {
         my_snprintf(buf2, 256, ER_THD(thd, ER_OPTION_PREVENTS_STATEMENT), buf);
         thd->set_killed(KILL_QUERY, ER_OPTION_PREVENTS_STATEMENT, buf2);
+      }
+      else
+      {
+        thd->set_killed(KILL_QUERY, ER_OPTION_PREVENTS_STATEMENT,
+                        "--max-session-mem-used");
       }
     }
     DBUG_ASSERT((longlong) thd->status_var.local_memory_used >= 0 ||
@@ -4300,14 +4303,24 @@ static int init_common_variables()
   if (ignore_db_dirs_init())
     exit(1);
 
-#ifdef _WIN32
-  get_win_tzname(system_time_zone, sizeof(system_time_zone));
-#elif defined(HAVE_TZNAME)
   struct tm tm_tmp;
-  localtime_r(&server_start_time,&tm_tmp);
-  const char *tz_name=  tzname[tm_tmp.tm_isdst != 0 ? 1 : 0];
-  strmake_buf(system_time_zone, tz_name);
-#endif /* HAVE_TZNAME */
+  localtime_r(&server_start_time, &tm_tmp);
+
+#ifdef HAVE_TZNAME
+#ifdef _WIN32
+  /*
+   If env.variable TZ is set, derive timezone name from it.
+   Otherwise, use IANA tz name from get_win_tzname.
+  */
+  if (!getenv("TZ"))
+    get_win_tzname(system_time_zone, sizeof(system_time_zone));
+  else
+#endif
+  {
+    const char *tz_name= tzname[tm_tmp.tm_isdst != 0 ? 1 : 0];
+    strmake_buf(system_time_zone, tz_name);
+  }
+#endif
 
   /*
     We set SYSTEM time zone as reasonable default and
@@ -4745,15 +4758,15 @@ static int init_common_variables()
   /* check log options and issue warnings if needed */
   if (opt_log && opt_logname && *opt_logname &&
       !(log_output_options & (LOG_FILE | LOG_NONE)))
-    sql_print_warning("Although a path was specified for the "
-                      "--log option, log tables are used. "
+    sql_print_warning("Although a general log file was specified, "
+                      "log tables are used. "
                       "To enable logging to files use the --log-output option.");
 
   if (global_system_variables.sql_log_slow && opt_slow_logname &&
       *opt_slow_logname &&
       !(log_output_options & (LOG_FILE | LOG_NONE)))
-    sql_print_warning("Although a path was specified for the "
-                      "--log-slow-queries option, log tables are used. "
+    sql_print_warning("Although a slow query log file was specified, "
+                      "log tables are used. "
                       "To enable logging to files use the --log-output=file option.");
 
   if (!opt_logname || !*opt_logname)
@@ -5024,10 +5037,9 @@ static void init_ssl()
     DBUG_PRINT("info",("ssl_acceptor_fd: %p", ssl_acceptor_fd));
     if (!ssl_acceptor_fd)
     {
-      sql_print_warning("Failed to setup SSL");
-      sql_print_warning("SSL error: %s", sslGetErrString(error));
-      opt_use_ssl = 0;
-      have_ssl= SHOW_OPTION_DISABLED;
+      sql_print_error("Failed to setup SSL");
+      sql_print_error("SSL error: %s", sslGetErrString(error));
+      unireg_abort(1);
     }
     if (global_system_variables.log_warnings > 0)
     {
@@ -5566,7 +5578,7 @@ static int init_server_components()
       sql_print_warning("There were other values specified to "
                         "log-output besides NONE. Disabling slow "
                         "and general logs anyway.");
-    logger.set_handlers(LOG_FILE, LOG_NONE, LOG_NONE);
+    logger.set_handlers(LOG_NONE, LOG_NONE);
   }
   else
   {
@@ -5582,8 +5594,7 @@ static int init_server_components()
       /* purecov: end */
     }
 
-    logger.set_handlers(LOG_FILE,
-                        global_system_variables.sql_log_slow ?
+    logger.set_handlers(global_system_variables.sql_log_slow ?
                         log_output_options:LOG_NONE,
                         opt_log ? log_output_options:LOG_NONE);
   }

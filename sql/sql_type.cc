@@ -765,6 +765,11 @@ Type_handler_hybrid_field_type::aggregate_for_comparison(const Type_handler *h)
         m_type_handler= &type_handler_datetime;
     }
   }
+  else if ((a == INT_RESULT && b == STRING_RESULT) ||
+           (b == INT_RESULT && a == STRING_RESULT))
+  {
+    m_type_handler= &type_handler_newdecimal;
+  }
   else if ((a == INT_RESULT || a == DECIMAL_RESULT) &&
            (b == INT_RESULT || b == DECIMAL_RESULT))
   {
@@ -1099,7 +1104,6 @@ Type_handler_decimal_result::make_num_distinct_aggregator_field(
                                                             const Item *item)
                                                             const
 {
-  DBUG_ASSERT(item->decimals <= DECIMAL_MAX_SCALE);
   return new (mem_root)
          Field_new_decimal(NULL, item->max_length,
                            (uchar *) (item->maybe_null ? "" : 0),
