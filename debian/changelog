@@ -30,8 +30,6 @@ mariadb-10.3 (1:10.3.37-0ubuntu0.20.04.1) focal-security; urgency=medium
     - CVE-2022-32085
     - CVE-2022-32087
     - CVE-2022-32088
-  * Previous upstream release 10.3.35 included fix for MDEV-27937
-    (LP: #1964622)
 
  -- Otto Kekäläinen <otto@debian.org>  Sat, 12 Nov 2022 22:11:54 -0800
 
