@@ -1,3 +1,10 @@
+mariadb-10.3 (1:10.3.38-0ubuntu0.20.04.1) focal-security; urgency=medium
+
+  * New upstream version 10.3.38. Includes fix for a major
+    performance/memory consumption issue (MDEV-29988) (LP: #2006882).
+
+ -- Otto Kekäläinen <otto@debian.org>  Thu, 09 Feb 2023 22:57:07 -0800
+
 mariadb-10.3 (1:10.3.37-0ubuntu0.20.04.1) focal-security; urgency=medium
 
   * SECURITY UPDATE: New upstream version 10.3.37 includes fixes for security
