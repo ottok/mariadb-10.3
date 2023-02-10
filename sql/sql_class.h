@@ -5455,7 +5455,7 @@ class select_insert :public select_result_interceptor {
   int prepare(List<Item> &list, SELECT_LEX_UNIT *u);
   virtual int prepare2(JOIN *join);
   virtual int send_data(List<Item> &items);
-  virtual bool store_values(List<Item> &values, bool ignore_errors);
+  virtual bool store_values(List<Item> &values);
   virtual bool can_rollback_data() { return 0; }
   bool prepare_eof();
   bool send_ok_packet();
@@ -5497,7 +5497,7 @@ public:
   int prepare(List<Item> &list, SELECT_LEX_UNIT *u);
 
   int binlog_show_create_table(TABLE **tables, uint count);
-  bool store_values(List<Item> &values, bool ignore_errors);
+  bool store_values(List<Item> &values);
   bool send_eof();
   virtual void abort_result_set();
   virtual bool can_rollback_data() { return 1; }
@@ -5580,6 +5580,12 @@ public:
   uint  sum_func_count;   
   uint  hidden_field_count;
   uint	group_parts,group_length,group_null_parts;
+
+  /*
+    If we're doing a GROUP BY operation, shows which one is used:
+    true  TemporaryTableWithPartialSums algorithm (see end_update()).
+    false OrderedGroupBy algorithm (see end_write_group()).
+  */
   uint	quick_group;
   /**
     Enabled when we have atleast one outer_sum_func. Needed when used
@@ -6513,7 +6519,12 @@ inline int handler::ha_ft_read(uchar *buf)
 {
   int error= ft_read(buf);
   if (!error)
+  {
     update_rows_read();
+
+    if (table->vfield && buf == table->record[0])
+      table->update_virtual_fields(this, VCOL_UPDATE_FOR_READ);
+  }
 
   table->status=error ? STATUS_NOT_FOUND: 0;
   return error;

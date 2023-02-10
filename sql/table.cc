@@ -2629,6 +2629,8 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
         share->stored_fields--;
         if (reg_field->flags & BLOB_FLAG)
           share->virtual_not_stored_blob_fields++;
+        if (reg_field->flags & PART_KEY_FLAG)
+          vcol_info->set_vcol_type(VCOL_GENERATED_VIRTUAL_INDEXED);
         /* Correct stored_rec_length as non stored fields are last */
         recpos= (uint) (reg_field->ptr - record);
         if (share->stored_rec_length >= recpos)
@@ -3008,7 +3010,7 @@ class Vcol_expr_context
   bool inited;
   THD *thd;
   TABLE *table;
-  Query_arena backup_arena;
+  Query_arena backup_arena, *stmt_arena;
   table_map old_map;
   Security_context *save_security_ctx;
   sql_mode_t save_sql_mode;
@@ -3018,6 +3020,7 @@ public:
     inited(false),
     thd(_thd),
     table(_table),
+    stmt_arena(thd->stmt_arena),
     old_map(table->map),
     save_security_ctx(thd->security_ctx),
     save_sql_mode(thd->variables.sql_mode) {}
@@ -3038,6 +3041,7 @@ bool Vcol_expr_context::init()
     thd->security_ctx= tl->security_ctx;
 
   thd->set_n_backup_active_arena(table->expr_arena, &backup_arena);
+  thd->stmt_arena= thd;
 
   inited= true;
   return false;
@@ -3051,6 +3055,7 @@ Vcol_expr_context::~Vcol_expr_context()
   thd->security_ctx= save_security_ctx;
   thd->restore_active_arena(table->expr_arena, &backup_arena);
   thd->variables.sql_mode= save_sql_mode;
+  thd->stmt_arena= stmt_arena;
 }
 
 
@@ -3159,7 +3164,7 @@ bool Virtual_column_info::fix_and_check_expr(THD *thd, TABLE *table)
              get_vcol_type_name(), name.str);
     DBUG_RETURN(1);
   }
-  else if (unlikely(res.errors & VCOL_AUTO_INC))
+  else if (res.errors & VCOL_AUTO_INC && vcol_type != VCOL_GENERATED_VIRTUAL)
   {
     /*
       An auto_increment field may not be used in an expression for
@@ -3170,10 +3175,17 @@ bool Virtual_column_info::fix_and_check_expr(THD *thd, TABLE *table)
       pointer at that time
     */
     myf warn= table->s->frm_version < FRM_VER_EXPRESSSIONS ? ME_JUST_WARNING : 0;
-    my_error(ER_VIRTUAL_COLUMN_FUNCTION_IS_NOT_ALLOWED, MYF(warn),
+    my_error(ER_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED, MYF(warn),
              "AUTO_INCREMENT", get_vcol_type_name(), res.name);
     if (!warn)
       DBUG_RETURN(1);
+  }
+  else if (vcol_type != VCOL_GENERATED_VIRTUAL && vcol_type != VCOL_DEFAULT &&
+           res.errors & VCOL_NOT_STRICTLY_DETERMINISTIC)
+  {
+    my_error(ER_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED, MYF(0),
+             res.name, get_vcol_type_name(), name.str);
+    DBUG_RETURN(1);
   }
   flags= res.errors;
 
@@ -8822,15 +8834,16 @@ bool TABLE_LIST::change_refs_to_fields()
   List_iterator<Item> li(used_items);
   Item_direct_ref *ref;
   Field_iterator_view field_it;
+  Name_resolution_context *ctx;
   THD *thd= table->in_use;
+  Item **materialized_items;
   DBUG_ASSERT(is_merged_derived());
 
   if (!used_items.elements)
     return FALSE;
 
-  Item **materialized_items=
-      (Item **)thd->calloc(sizeof(void *) * table->s->fields);
-  Name_resolution_context *ctx= new Name_resolution_context(this);
+  materialized_items= (Item **)thd->calloc(sizeof(void *) * table->s->fields);
+  ctx= new (thd->mem_root) Name_resolution_context(this);
   if (!materialized_items || !ctx)
     return TRUE;
 

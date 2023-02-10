@@ -1,8 +1,8 @@
-commit: 3303748fd13399ba39ce4d646153d086c5a09445
-date: 2022-11-02 12:49:24 +0100
-build-date: 2022-11-02 11:52:44 +0000 
-short: 3303748
+commit: c73985f2ce8a391582787f3e310a011c1a712bec
+date: 2023-01-28 15:21:23 +0200
+build-date: 2023-01-28 13:25:29 +0000 
+short: c73985f
 branch: HEAD
 
 
-MariaDB source 10.3.37
+MariaDB source 10.3.38

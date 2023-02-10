@@ -6075,6 +6075,10 @@ int mysql_discard_or_import_tablespace(THD *thd,
   if (unlikely(error))
     goto err;
 
+  if (discard)
+    tdc_remove_table(thd, TDC_RT_REMOVE_NOT_OWN, table_list->table->s->db.str,
+                     table_list->table->s->table_name.str, true);
+
   /*
     The 0 in the call below means 'not in a transaction', which means
     immediate invalidation; that is probably what we wish here
@@ -8328,6 +8332,8 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
           } /* if (def->change.str) */
         } /* while (def) */
       } /* if (part_field_list || subpart_field_list) */
+      // Force reopen because new column name is on thd->mem_root
+      table->mark_table_for_reopen();
     } /* if (part_info) */
   }
 #endif
@@ -9631,6 +9637,7 @@ bool mysql_alter_table(THD *thd, const LEX_CSTRING *new_db,
   if (check_engine(thd, alter_ctx.new_db.str, alter_ctx.new_name.str, create_info))
     DBUG_RETURN(true);
 
+  create_info->vers_check_native();
   if (create_info->vers_info.fix_alter_info(thd, alter_info, create_info, table))
   {
     DBUG_RETURN(true);

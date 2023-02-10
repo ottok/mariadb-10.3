@@ -89,18 +89,35 @@ void stmt_set_error(MYSQL_STMT *stmt,
                   ...)
 {
   va_list ap;
-  const char *error= NULL;
 
-  if (error_nr >= CR_MIN_ERROR && error_nr <= CR_MYSQL_LAST_ERROR)
-    error= ER(error_nr);
-  else if (error_nr >= CER_MIN_ERROR && error_nr <= CR_MARIADB_LAST_ERROR)
-    error= CER(error_nr);
+  const char *errmsg;
 
   stmt->last_errno= error_nr;
   ma_strmake(stmt->sqlstate, sqlstate, SQLSTATE_LENGTH);
+
+  if (!format)
+  {
+    if (IS_MYSQL_ERROR(error_nr) || IS_MARIADB_ERROR(error_nr))
+      errmsg= ER(error_nr);
+    else {
+      snprintf(stmt->last_error, MYSQL_ERRMSG_SIZE - 1,
+               ER_UNKNOWN_ERROR_CODE, error_nr);
+      return;
+    }
+  }
+
+  /* Fix for CONC-627: If this is a server error message, we don't
+     need to substitute and possible variadic arguments will be
+     ignored */
+  if (!IS_MYSQL_ERROR(error_nr) && !IS_MARIADB_ERROR(error_nr))
+  {
+    strncpy(stmt->last_error, format, MYSQL_ERRMSG_SIZE - 1);
+    return;
+  }
+
   va_start(ap, format);
-  vsnprintf(stmt->last_error, MYSQL_ERRMSG_SIZE,
-            format ? format : error ? error : "", ap);
+  vsnprintf(stmt->last_error, MYSQL_ERRMSG_SIZE - 1,
+            format ? format : errmsg, ap);
   va_end(ap);
   return;
 }
@@ -707,6 +724,7 @@ unsigned char* mysql_stmt_execute_generate_simple_request(MYSQL_STMT *stmt, size
   size_t length= 1024;
   size_t free_bytes= 0;
   size_t null_byte_offset= 0;
+  uchar *tmp_start;
   uint i;
 
   uchar *start= NULL, *p;
@@ -735,8 +753,9 @@ unsigned char* mysql_stmt_execute_generate_simple_request(MYSQL_STMT *stmt, size
     {
       size_t offset= p - start;
       length+= offset + null_count + 20;
-      if (!(start= (uchar *)realloc(start, length)))
+      if (!(tmp_start= (uchar *)realloc(start, length)))
         goto mem_error;
+      start= tmp_start;
       p= start + offset;
     }
 
@@ -758,8 +777,9 @@ unsigned char* mysql_stmt_execute_generate_simple_request(MYSQL_STMT *stmt, size
       {
         size_t offset= p - start;
         length= offset + stmt->param_count * 2 + 20;
-        if (!(start= (uchar *)realloc(start, length)))
+        if (!(tmp_start= (uchar *)realloc(start, length)))
           goto mem_error;
+        start= tmp_start;
         p= start + offset;
       }
       for (i = 0; i < stmt->param_count; i++)
@@ -828,8 +848,9 @@ unsigned char* mysql_stmt_execute_generate_simple_request(MYSQL_STMT *stmt, size
       {
         size_t offset= p - start;
         length= MAX(2 * length, offset + size + 20);
-        if (!(start= (uchar *)realloc(start, length)))
+        if (!(tmp_start= (uchar *)realloc(start, length)))
           goto mem_error;
+        start= tmp_start;
         p= start + offset;
       }
       if (((stmt->params[i].is_null && *stmt->params[i].is_null) ||
@@ -902,6 +923,7 @@ unsigned char* mysql_stmt_execute_generate_bulk_request(MYSQL_STMT *stmt, size_t
   size_t length= 1024;
   size_t free_bytes= 0;
   ushort flags= 0;
+  uchar *tmp_start;
   uint i, j;
 
   uchar *start= NULL, *p;
@@ -953,8 +975,9 @@ unsigned char* mysql_stmt_execute_generate_bulk_request(MYSQL_STMT *stmt, size_t
       {
         size_t offset= p - start;
         length= offset + stmt->param_count * 2 + 20;
-        if (!(start= (uchar *)realloc(start, length)))
+        if (!(tmp_start= (uchar *)realloc(start, length)))
           goto mem_error;
+        start= tmp_start;
         p= start + offset;
       }
       for (i = 0; i < stmt->param_count; i++)
@@ -1039,8 +1062,9 @@ unsigned char* mysql_stmt_execute_generate_bulk_request(MYSQL_STMT *stmt, size_t
         {
           size_t offset= p - start;
           length= MAX(2 * length, offset + size + 20);
-          if (!(start= (uchar *)realloc(start, length)))
+          if (!(tmp_start= (uchar *)realloc(start, length)))
             goto mem_error;
+          start= tmp_start;
           p= start + offset;
         }
 
