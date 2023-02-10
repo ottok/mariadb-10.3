@@ -2513,7 +2513,7 @@ void log_slow_statement(THD *thd)
   if ((thd->server_status &
        (SERVER_QUERY_NO_INDEX_USED | SERVER_QUERY_NO_GOOD_INDEX_USED)) &&
       !(thd->query_plan_flags & QPLAN_STATUS) &&
-      !slow_filter_masked(thd, QPLAN_NOT_USING_INDEX))
+      (thd->variables.log_slow_filter & QPLAN_NOT_USING_INDEX))
   {
     thd->query_plan_flags|= QPLAN_NOT_USING_INDEX;
     /* We are always logging no index queries if enabled in filter */
@@ -5248,7 +5248,7 @@ mysql_execute_command(THD *thd)
       List_iterator <LEX_USER> user_list(lex->users_list);
       while ((user= user_list++))
       {
-        if (specialflag & SPECIAL_NO_RESOLVE &&
+        if (opt_skip_name_resolve &&
             hostname_requires_resolving(user->host.str))
           push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
                               ER_WARN_HOSTNAME_WONT_WORK,
@@ -8662,8 +8662,8 @@ TABLE_LIST *st_select_lex::convert_right_join()
 void st_select_lex::prepare_add_window_spec(THD *thd)
 {
   LEX *lex= thd->lex;
-  lex->save_group_list= group_list;
-  lex->save_order_list= order_list;
+  save_group_list= group_list;
+  save_order_list= order_list;
   lex->win_ref= NULL;
   lex->win_frame= NULL;
   lex->frame_top_bound= NULL;
@@ -8690,8 +8690,8 @@ bool st_select_lex::add_window_def(THD *thd,
                                                       win_part_list_ptr,
                                                       win_order_list_ptr,
                                                       win_frame);
-  group_list= thd->lex->save_group_list;
-  order_list= thd->lex->save_order_list;
+  group_list= save_group_list;
+  order_list= save_order_list;
   if (parsing_place != SELECT_LIST)
   {
     fields_in_window_functions+= win_part_list_ptr->elements +
@@ -8717,8 +8717,8 @@ bool st_select_lex::add_window_spec(THD *thd,
                                                          win_part_list_ptr,
                                                          win_order_list_ptr,
                                                          win_frame);
-  group_list= thd->lex->save_group_list;
-  order_list= thd->lex->save_order_list;
+  group_list= save_group_list;
+  order_list= save_order_list;
   if (parsing_place != SELECT_LIST)
   {
     fields_in_window_functions+= win_part_list_ptr->elements +

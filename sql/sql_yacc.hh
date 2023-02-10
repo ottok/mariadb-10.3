@@ -789,9 +789,10 @@ extern int MYSQLdebug;
     CONDITIONLESS_JOIN = 999,
     ON_SYM = 1000,
     PREC_BELOW_NOT = 1001,
-    PREC_BELOW_IDENTIFIER_OPT_SPECIAL_CASE = 1002,
-    USER = 1003,
-    PREC_BELOW_CONTRACTION_TOKEN2 = 1004
+    LOW_PRIORITY_NOT = 1002,
+    PREC_BELOW_IDENTIFIER_OPT_SPECIAL_CASE = 1003,
+    USER = 1004,
+    PREC_BELOW_CONTRACTION_TOKEN2 = 1005
   };
 #endif
 
@@ -909,7 +910,7 @@ union YYSTYPE
   enum Column_definition::enum_column_versioning vers_column_versioning;
   enum plsql_cursor_attr_t plsql_cursor_attr;
 
-#line 913 "/home/buildbot/git/mkdist/sql/sql_yacc.hh" /* yacc.c:1909  */
+#line 914 "/home/buildbot/git/mkdist/sql/sql_yacc.hh" /* yacc.c:1909  */
 };
 # define YYSTYPE_IS_TRIVIAL 1
 # define YYSTYPE_IS_DECLARED 1

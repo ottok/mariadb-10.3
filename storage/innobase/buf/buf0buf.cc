@@ -1141,7 +1141,7 @@ buf_page_is_corrupted(
 			DBUG_EXECUTE_IF(
 				"page_intermittent_checksum_mismatch", {
 				static int page_counter;
-				if (page_counter++ == 2) return true;
+				if (page_counter++ == 3) return true;
 			});
 
 			if ((checksum_field1 != crc32
@@ -5414,7 +5414,7 @@ loop:
 		}
 #ifdef BTR_CUR_HASH_ADAPT
 		if (drop_hash_entry) {
-			btr_search_drop_page_hash_index(block);
+			btr_search_drop_page_hash_index(block, false);
 		}
 #endif /* BTR_CUR_HASH_ADAPT */
 
