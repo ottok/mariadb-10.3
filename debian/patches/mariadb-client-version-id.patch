@@ -1,0 +1,53 @@
+Forwarded: https://github.com/mariadb-corporation/mariadb-connector-c/pull/219
+Author: Otto Kekäläinen <otto@debian.org>
+Subject: Revert inappropriate libmariadb stable ABI version changes
+
+This reverts commits made on January 2023:
+https://github.com/mariadb-corporation/mariadb-connector-c/commit/d204e83104222844251b221e9be7eb3dd9f8d63d
+https://github.com/mariadb-corporation/mariadb-connector-c/commit/d712484dab1e234805cc12f51cc5cec1d648bebb
+
+In MariaDB 10.3.38 users complained that some of the software that relied on
+MariaDB stopped working. This was due to functions mysql_get_client_info() and
+mysql_get_client_version() which suddenly started to emit 3.1.20 and 30120
+instead of the expected 10.3.38 and 100338.
+
+The functions had been emitting the MariaDB server version for at least the past
+8 years. There was no good justification to break the ABI in this way in a
+stable release.
+
+The issue with libqt5sql5-mysql failing was reported in https://bugs.debian.org/1031863,
+which includes links to more similar issues due to this change.
+
+Libraries *must* have a stable ABI, including the version they advertise. If a
+library changes behaviour in a backwards incompatible manner, even if it is to
+fix a bug, it should bump the version and not just silently get shipped.
+
+This commit fixes if for both MariaDB 10.3, 10.4 and 10.5 which all include
+the MariaDB Connector C branch 3.1 at v3.1.20 (d204e83).
+
+The 10.6 series uses branch 3.3 at v3.3.4 (12bd1d5), which had this change
+*before* 10.6 was widely used, and thus users did not end up having a breaking
+change in a (fully) stable release.
+
+Thus this fix is needed only on the 3.1 branch in MariaDB Connector C.
+
+--- a/libmariadb/libmariadb/mariadb_lib.c
++++ b/libmariadb/libmariadb/mariadb_lib.c
+@@ -2866,7 +2866,7 @@ mysql_get_proto_info(MYSQL *mysql)
+ const char * STDCALL
+ mysql_get_client_info(void)
+ {
+-  return (char*) MARIADB_PACKAGE_VERSION;
++  return (char*) MARIADB_CLIENT_VERSION_STR;
+ }
+ 
+ static size_t get_store_length(size_t length)
+@@ -3881,7 +3881,7 @@ int STDCALL mysql_set_server_option(MYSQ
+ 
+ ulong STDCALL mysql_get_client_version(void)
+ {
+-  return MARIADB_PACKAGE_VERSION_ID;
++  return MARIADB_VERSION_ID;
+ }
+ 
+ ulong STDCALL mysql_hex_string(char *to, const char *from, unsigned long len)
