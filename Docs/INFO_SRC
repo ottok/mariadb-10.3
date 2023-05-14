@@ -1,8 +1,8 @@
-commit: c73985f2ce8a391582787f3e310a011c1a712bec
-date: 2023-01-28 15:21:23 +0200
-build-date: 2023-01-28 13:25:29 +0000 
-short: c73985f
+commit: ca001cf2048f0152689e1895e2dc15486dd0b1af
+date: 2023-05-02 20:13:48 +0200
+build-date: 2023-05-03 04:32:47 +0000 
+short: ca001cf2048
 branch: HEAD
 
 
-MariaDB source 10.3.38
+MariaDB source 10.3.39

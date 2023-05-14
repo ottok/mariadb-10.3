@@ -618,6 +618,12 @@ int test_conc21(MYSQL *mysql)
   int major=0, minor= 0, patch=0;
   SKIP_MAXSCALE;
 
+  if (strlen(mysql_get_server_info(mysql)) > 63)
+  {
+    diag("server name is too long - skip until rpl hack was removed");
+    return SKIP;
+  }
+
   rc= mysql_query(mysql, "SELECT @@version");
   check_mysql_rc(rc, mysql);
 
@@ -1202,6 +1208,7 @@ static int test_auth256(MYSQL *my)
   if (!my_test_connect(mysql, hostname, "sha256user", "foo", NULL, port, socketname, 0))
   {
     diag("error: %s", mysql_error(mysql));
+    diag("host: %s", this_host);
     mysql_close(mysql);
     return FAIL;
   }
@@ -1922,7 +1929,45 @@ static int test_conc490(MYSQL *my __attribute__((unused)))
   return OK;
 }
 
+static int test_conc632(MYSQL *my __attribute__((unused)))
+{
+  MYSQL *mysql= mysql_init(NULL);
+  int rc;
+
+  if (!my_test_connect(mysql, hostname, username, password, schema, port, socketname, CLIENT_REMEMBER_OPTIONS))
+  {
+    diag("Connection failed. Error: %s", mysql_error(mysql));
+    mysql_close(mysql);
+    return FAIL;
+  }
+
+  rc= mysql_query(mysql, "DROP PROCEDURE conc632");
+
+  rc= mysql_query(mysql, "CREATE PROCEDURE conc632() "
+                         "BEGIN "
+                         "  SELECT 1;"
+                         "  SELECT 2;"
+                         "END");
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_query(mysql, "CALL conc632()");
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_reset_connection(mysql);
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_ping(mysql);
+  check_mysql_rc(rc, mysql);
+
+  rc= mysql_query(mysql, "DROP PROCEDURE conc632");
+  check_mysql_rc(rc, mysql);
+
+  mysql_close(mysql);
+  return OK;
+}
+
 struct my_tests_st my_tests[] = {
+  {"test_conc632", test_conc632, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_conc490", test_conc490, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_gtid", test_gtid, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},
   {"test_conc496", test_conc496, TEST_CONNECTION_DEFAULT, 0, NULL, NULL},

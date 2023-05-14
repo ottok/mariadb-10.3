@@ -891,7 +891,7 @@ unpack_fields(const MYSQL *mysql,
     for (i=0; i < field_count; i++)
     {
       uint length= (uint)(row->data[i+1] - row->data[i] - 1);
-      if (!row->data[i] && row->data[i][length])
+      if (!row->data[i] || row->data[i][length])
         goto error;
 
       *(char **)(((char *)field) + rset_field_offsets[i*2])=
@@ -1356,7 +1356,6 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
   MA_PVIO_CINFO  cinfo= {NULL, NULL, 0, -1, NULL};
   MARIADB_PVIO   *pvio= NULL;
   char    *scramble_data;
-  my_bool is_maria= 0;
   const char *scramble_plugin;
   uint pkt_length, scramble_len, pkt_scramble_len= 0;
   NET	*net= &mysql->net;
@@ -1566,7 +1565,6 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
   if (strncmp(end, MA_RPL_VERSION_HACK, sizeof(MA_RPL_VERSION_HACK) - 1) == 0)
   {
     mysql->server_version= strdup(end + sizeof(MA_RPL_VERSION_HACK) - 1);
-    is_maria= 1;
   }
   else
   {
@@ -1575,7 +1573,6 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
       SET_CLIENT_ERROR(mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, 0);
       goto error;
     }
-    is_maria= mariadb_connection(mysql);
   }
   end+= strlen(end) + 1;
 
@@ -1606,7 +1603,7 @@ MYSQL *mthd_my_real_connect(MYSQL *mysql, const char *host, const char *user,
     pkt_scramble_len= uint1korr(end + 7);
 
     /* check if MariaD2B specific capabilities are available */
-    if (is_maria && !(mysql->server_capabilities & CLIENT_MYSQL))
+    if (mariadb_connection(mysql) && !(mysql->server_capabilities & CLIENT_MYSQL))
     {
       mysql->extension->mariadb_server_capabilities= (ulonglong) uint4korr(end + 14);
     }
@@ -1814,7 +1811,7 @@ my_bool STDCALL mariadb_reconnect(MYSQL *mysql)
     if (stmt->state != MYSQL_STMT_INITTED)
     {
       stmt->state= MYSQL_STMT_INITTED;
-      SET_CLIENT_STMT_ERROR(stmt, CR_SERVER_LOST, SQLSTATE_UNKNOWN, 0);
+      stmt_set_error(stmt, CR_SERVER_LOST, SQLSTATE_UNKNOWN, 0);
     }
   }
 
@@ -1851,7 +1848,7 @@ void ma_invalidate_stmts(MYSQL *mysql, const char *function_name)
     {
       MYSQL_STMT *stmt= (MYSQL_STMT *)li_stmt->data;
       stmt->mysql= NULL;
-      SET_CLIENT_STMT_ERROR(stmt, CR_STMT_CLOSED, SQLSTATE_UNKNOWN, 0, function_name);
+      stmt_set_error(stmt, CR_STMT_CLOSED, SQLSTATE_UNKNOWN, 0, function_name);
     }
     mysql->stmts= NULL;
   }
@@ -2482,12 +2479,16 @@ mysql_use_result(MYSQL *mysql)
   }
   if (!(result=(MYSQL_RES*) calloc(1, sizeof(*result)+
 				      sizeof(ulong)*mysql->field_count)))
+  {
+    SET_CLIENT_ERROR(mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, 0);
     return(0);
+  }
   result->lengths=(ulong*) (result+1);
   if (!(result->row=(MYSQL_ROW)
 	malloc(sizeof(result->row[0])*(mysql->field_count+1))))
   {					/* Ptrs: to one row */
     free(result);
+    SET_CLIENT_ERROR(mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, 0);
     return(0);
   }
   result->fields=	mysql->fields;
@@ -4240,12 +4241,21 @@ int STDCALL mysql_reset_connection(MYSQL *mysql)
 
   /* skip result sets */
   if (mysql->status == MYSQL_STATUS_USE_RESULT ||
-      mysql->status == MYSQL_STATUS_GET_RESULT ||
-      mysql->status & SERVER_MORE_RESULTS_EXIST)
+      mysql->status == MYSQL_STATUS_GET_RESULT)
   {
     mthd_my_skip_result(mysql);
-    mysql->status= MYSQL_STATUS_READY;
   }
+
+  if (mysql->server_status & SERVER_MORE_RESULTS_EXIST)
+  {
+    while (mysql_next_result(mysql))
+    {
+      MYSQL_RES *res= mysql_use_result(mysql);
+      mysql_free_result(res);
+    }
+  }
+
+  mysql->status= MYSQL_STATUS_READY;
 
   rc= ma_simple_command(mysql, COM_RESET_CONNECTION, 0, 0, 0, 0);
   if (rc && mysql->options.reconnect)
