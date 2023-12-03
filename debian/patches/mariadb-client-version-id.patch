@@ -33,7 +33,7 @@ Thus this fix is needed only on the 3.1 branch in MariaDB Connector C.
 
 --- a/libmariadb/libmariadb/mariadb_lib.c
 +++ b/libmariadb/libmariadb/mariadb_lib.c
-@@ -2866,7 +2866,7 @@ mysql_get_proto_info(MYSQL *mysql)
+@@ -2867,7 +2867,7 @@ mysql_get_proto_info(MYSQL *mysql)
  const char * STDCALL
  mysql_get_client_info(void)
  {
@@ -42,7 +42,7 @@ Thus this fix is needed only on the 3.1 branch in MariaDB Connector C.
  }
  
  static size_t get_store_length(size_t length)
-@@ -3881,7 +3881,7 @@ int STDCALL mysql_set_server_option(MYSQ
+@@ -3882,7 +3882,7 @@ int STDCALL mysql_set_server_option(MYSQ
  
  ulong STDCALL mysql_get_client_version(void)
  {

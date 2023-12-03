@@ -1,8 +1,18 @@
-mariadb-10.3 (1:10.3.38-0ubuntu0.20.04.2) UNRELEASED; urgency=medium
+mariadb-10.3 (1:10.3.39-0ubuntu0.20.04.1) focal-security; urgency=medium
 
-  * Add patch to revert upstream libmariadb API change
+  * SECURITY UPDATE: New upstream version 10.3.39 includes fixes for the
+    following security vulnerabilities (LP: #2045452):
+    - CVE-2022-47015
+  * Add patch to revert upstream libmariadb API change (Debian Bug#1031773)
+  * Make SysV init script explicit on its dependencies (Debian Bug#1035949)
+  * Both of the changes above was included in the MariaDB Server version
+    1:10.3.39-0+deb10u1 in Deban Buster without any reported regressions
+    since June 2023 and are thus safe and appropriate to include in Ubuntu
+    20.04 (Focal) as well
+  * According to https://mariadb.org/about/#maintenance-policy this
+    was the last minor maintenance release for MariaDB 10.3 series
 
- -- Otto Kekäläinen <otto@debian.org>  Sat, 15 Apr 2023 20:19:10 -0700
+ -- Otto Kekäläinen <otto@debian.org>  Sat, 02 Dec 2023 00:23:50 -0800
 
 mariadb-10.3 (1:10.3.38-0ubuntu0.20.04.1) focal-security; urgency=medium
 
