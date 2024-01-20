@@ -1,0 +1,86 @@
+From: =?utf-8?b?TWFya28gTcOka2Vsw6Q=?= <marko.makela@mariadb.com>
+Date: Fri, 27 Oct 2023 13:13:49 +0300
+Subject: MDEV-32578 row_merge_fts_doc_tokenize() handles parser plugin
+ inconsistently
+
+When mysql/mysql-server@0c954c2289a75d90d1088356b1092437ebf45a1d
+added a plugin interface for FULLTEXT INDEX tokenization to MySQL 5.7,
+fts_tokenize_ctx::processed_len got a second meaning, which is only
+partly implemented in row_merge_fts_doc_tokenize().
+
+This inconsistency could cause a crash when using FULLTEXT...WITH PARSER.
+A test case that would crash MySQL 8.0 when using an n-gram parser and
+single-character words would fail to crash in MySQL 5.7, because the
+buf_full condition in row_merge_fts_doc_tokenize() was not met.
+
+This change is inspired by
+mysql/mysql-server@38e9a0779aeea2d197c727e306a910c56b26a47c
+that appeared in MySQL 5.7.44.
+origin: https://github.com/MariaDB/server/commit/15ae97b1c2c14f1263cdc853673c4129625323de
+bug-debian-security: https://deb.freexian.com/extended-lts/tracker/CVE-2023-22084
+bug-debian: https://bugs.debian.org/1055034
+---
+ storage/innobase/include/row0ftsort.h |  6 +++++-
+ storage/innobase/row/row0ftsort.cc    | 11 ++++++++---
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/storage/innobase/include/row0ftsort.h b/storage/innobase/include/row0ftsort.h
+index 3a65e1c..bb11a5f 100644
+--- a/storage/innobase/include/row0ftsort.h
++++ b/storage/innobase/include/row0ftsort.h
+@@ -108,7 +108,10 @@ typedef UT_LIST_BASE_NODE_T(row_fts_token_t)     fts_token_list_t;
+ 
+ /** Structure stores information from string tokenization operation */
+ struct fts_tokenize_ctx {
+-	ulint			processed_len;  /*!< processed string length */
++	/** the processed string length in bytes
++	(when using the built-in tokenizer),
++	or the number of row_merge_fts_doc_tokenize_by_parser() calls */
++	ulint			processed_len;
+ 	ulint			init_pos;       /*!< doc start position */
+ 	ulint			buf_used;       /*!< the sort buffer (ID) when
+ 						tokenization stops, which
+@@ -119,6 +122,7 @@ struct fts_tokenize_ctx {
+ 	ib_rbt_t*		cached_stopword;/*!< in: stopword list */
+ 	dfield_t		sort_field[FTS_NUM_FIELDS_SORT];
+ 						/*!< in: sort field */
++	/** parsed tokens (when using an external parser) */
+ 	fts_token_list_t	fts_token_list;
+ 
+ 	fts_tokenize_ctx() :
+diff --git a/storage/innobase/row/row0ftsort.cc b/storage/innobase/row/row0ftsort.cc
+index b45b5d1..3847524 100644
+--- a/storage/innobase/row/row0ftsort.cc
++++ b/storage/innobase/row/row0ftsort.cc
+@@ -505,7 +505,10 @@ row_merge_fts_doc_tokenize(
+ 
+ 	/* Tokenize the data and add each word string, its corresponding
+ 	doc id and position to sort buffer */
+-	while (t_ctx->processed_len < doc->text.f_len) {
++	while (parser
++               ? (!t_ctx->processed_len
++                  || UT_LIST_GET_LEN(t_ctx->fts_token_list))
++               : t_ctx->processed_len < doc->text.f_len) {
+ 		ulint		idx = 0;
+ 		ulint		cur_len;
+ 		doc_id_t	write_doc_id;
+@@ -847,7 +850,8 @@ DECLARE_THREAD(fts_parallel_tokenization)(
+ 			/* Not yet finish processing the "doc" on hand,
+ 			continue processing it */
+ 			ut_ad(doc.text.f_str);
+-			ut_ad(t_ctx.processed_len < doc.text.f_len);
++			ut_ad(buf[0]->index->parser
++			      || t_ctx.processed_len < doc.text.f_len);
+ 		}
+ 
+ 		processed = row_merge_fts_doc_tokenize(
+@@ -857,7 +861,8 @@ DECLARE_THREAD(fts_parallel_tokenization)(
+ 
+ 		/* Current sort buffer full, need to recycle */
+ 		if (!processed) {
+-			ut_ad(t_ctx.processed_len < doc.text.f_len);
++			ut_ad(buf[0]->index->parser
++			      || t_ctx.processed_len < doc.text.f_len);
+ 			ut_ad(t_ctx.rows_added[t_ctx.buf_used]);
+ 			break;
+ 		}

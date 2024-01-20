@@ -13,3 +13,4 @@ MDEV-18768-automate-auth_socket-to_unix_socket-upgrade.patch
 mroonga-path-reproducible-build.patch
 env-perl-usr-bin-perl.patch
 mariadb-client-version-id.patch
+0012-MDEV-32578-row_merge_fts_doc_tokenize-handles-parser.patch
