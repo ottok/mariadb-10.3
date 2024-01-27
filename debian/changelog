@@ -1,14 +1,5 @@
 mariadb-10.3 (1:10.3.39-0ubuntu0.20.04.2) focal-security; urgency=medium
 
-  * SECURITY UPDATE: Additional Ubuntu update to fix the following security
-    vulnerability for MariaDB version no longer maintained by upstream
-    (LP: #2045452):
-    - CVE-2023-22084
-
- -- Otto Kekäläinen <otto@debian.org>  Tue, 23 Jan 2024 19:35:52 -0800
-
-mariadb-10.3 (1:10.3.39-0ubuntu0.20.04.1) focal-security; urgency=medium
-
   * SECURITY UPDATE: New upstream version 10.3.39 includes fixes for the
     following security vulnerabilities (LP: #2045452):
     - CVE-2022-47015
@@ -18,6 +9,11 @@ mariadb-10.3 (1:10.3.39-0ubuntu0.20.04.1) focal-security; urgency=medium
     1:10.3.39-0+deb10u1 in Deban Buster without any reported regressions
     since June 2023 and are thus safe and appropriate to include in Ubuntu
     20.04 (Focal) as well
+  * Include extra patch for CVE-2023-22084: A vulnerability allowed high
+    privileged attacker with network access via multiple protocols to compromise
+    the server. Successful attacks of this vulnerability can result in
+    unauthorized ability to cause a hang or frequently repeatable crash
+    (complete DOS) the server (Debian Bug#1055034)
   * According to https://mariadb.org/about/#maintenance-policy this
     was the last minor maintenance release for MariaDB 10.3 series
 
